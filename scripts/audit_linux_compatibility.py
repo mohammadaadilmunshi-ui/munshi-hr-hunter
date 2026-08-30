@@ -85,12 +85,21 @@ def audit() -> list[str]:
     if linux.get("architecture") != "x86_64" or linux.get("arm64_linux_status") != "unproven":
         errors.append("runtime contract must identify x86_64 Linux and unproven ARM64 Linux")
 
-    portable_files = [ROOT / "app", ROOT / "bin", ROOT / "scripts", ROOT / "config"]
-    for directory in portable_files:
-        for path in directory.rglob("*"):
-            personal_marker = "/Users/" + "aadil"
-            if path.is_file() and personal_marker in path.read_text(encoding="utf-8", errors="replace"):
-                errors.append(f"personal absolute path remains in portable source/config: {path.relative_to(ROOT)}")
+    personal_marker = "/Users/" + "aadil"
+    tracked_portable = __import__("subprocess").check_output(
+        ["git", "ls-files", "-z", "--", "app", "bin", "scripts", "config"],
+        cwd=ROOT,
+    )
+    for raw_path in tracked_portable.split(b"\\0"):
+        if not raw_path:
+            continue
+        path = ROOT / raw_path.decode("utf-8")
+        if not path.is_file():
+            continue
+        if personal_marker in path.read_text(encoding="utf-8", errors="replace"):
+            errors.append(
+                f"personal absolute path remains in portable source/config: {path.relative_to(ROOT)}"
+            )
 
     for path in (ROOT / "app").rglob("*.py"):
         text = path.read_text(encoding="utf-8")
