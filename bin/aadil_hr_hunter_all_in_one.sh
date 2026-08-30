@@ -38,10 +38,12 @@ umask 077
 
 VERSION="1.1.0"
 
-PROJECT="${AADIL_HR_HUNTER_PROJECT:-$HOME/Aadil-HR-Hunter}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PROJECT="${AADIL_HR_HUNTER_PROJECT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 APP_DIR="$PROJECT/app"
 ENV_FILE="$PROJECT/.env"
-PYTHON="$PROJECT/.venv/bin/python"
+PYTHON="${AADIL_HR_HUNTER_PYTHON:-$PROJECT/.venv/bin/python}"
+if [ ! -x "$PYTHON" ]; then PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"; fi
 LEGACY_VENV="$PROJECT/.venv_runtime"
 
 RUNTIME_DIR="${AADIL_HR_HUNTER_RUNTIME:-$HOME/.aadil_hr_hunter_runtime}"
@@ -49,11 +51,29 @@ PID_DIR="$RUNTIME_DIR/pids"
 LOG_DIR="$RUNTIME_DIR/logs"
 LOCK_DIR="$RUNTIME_DIR/controller.lock"
 
-PROJECT_LOG_DIR="$PROJECT/logs"
+PROJECT_LOG_DIR="${AADIL_HR_HUNTER_LOGS:-$PROJECT/logs}"
 BACKUP_DIR="$PROJECT/patch_backups/all_in_one_startup_controller"
 
-N8N_DB="$HOME/.n8n/database.sqlite"
+N8N_DB="${N8N_DATABASE_PATH:-${N8N_USER_FOLDER:-$HOME/.n8n}/database.sqlite}"
 HUNTER_DB="$PROJECT/data/hunter.db"
+
+N8N_HOST="127.0.0.1"
+N8N_PORT="5678"
+N8N_PROTOCOL="http"
+FASTAPI_HOST="127.0.0.1"
+FASTAPI_PORT="8000"
+STREAMLIT_HOST="127.0.0.1"
+STREAMLIT_PORT="8501"
+OLLAMA_HOST="127.0.0.1"
+OLLAMA_PORT="11434"
+OLLAMA_BASE_URL="http://127.0.0.1:11434"
+OLLAMA_ENABLED="false"
+OLLAMA_REQUIRED="false"
+N8N_SECURE_COOKIE="false"
+N8N_BLOCK_ENV_ACCESS_IN_NODE="false"
+N8N_RUNNERS_HEARTBEAT_INTERVAL="120"
+N8N_RUNNERS_TASK_TIMEOUT="300"
+N8N_RUNNERS_MAX_OLD_SPACE_SIZE="4096"
 
 BIN_DIR="$PROJECT/bin"
 INSTALLED_CONTROLLER="$BIN_DIR/aadil_hr_hunter_all_in_one.sh"
@@ -86,6 +106,8 @@ CORE_TELEGRAM_PLIST="$HOME/Library/LaunchAgents/${CORE_TELEGRAM_LABEL}.plist"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin"
 
 FORCE=0
+
+is_macos() { [ "$(uname -s)" = "Darwin" ]; }
 
 timestamp() {
   date '+%Y-%m-%d %H:%M:%S'
@@ -129,8 +151,10 @@ ensure_dirs() {
     "$LOG_DIR" \
     "$PROJECT_LOG_DIR" \
     "$BIN_DIR" \
-    "$HOME/Library/LaunchAgents" \
     "$BACKUP_DIR"
+  if is_macos; then
+    mkdir -p "$HOME/Library/LaunchAgents"
+  fi
 }
 
 acquire_controller_lock() {
@@ -175,7 +199,9 @@ preflight() {
 
   command_exists curl || die "curl is required."
   command_exists lsof || die "lsof is required."
-  command_exists launchctl || die "launchctl is required."
+  if is_macos; then
+    command_exists launchctl || die "launchctl is required on macOS."
+  fi
   command_exists sqlite3 || die "sqlite3 is required."
 
   "$PYTHON" - <<'PY' >/dev/null 2>&1 || die "Project Python dependencies are incomplete."
@@ -222,12 +248,22 @@ PY
 
   export N8N_PORT FASTAPI_PORT STREAMLIT_PORT
   export N8N_HOST="${N8N_HOST:-127.0.0.1}"
+  export FASTAPI_HOST="${FASTAPI_HOST:-127.0.0.1}"
+  export STREAMLIT_HOST="${STREAMLIT_HOST:-127.0.0.1}"
   export N8N_PROTOCOL="${N8N_PROTOCOL:-http}"
   export N8N_SECURE_COOKIE="${N8N_SECURE_COOKIE:-false}"
   export N8N_BLOCK_ENV_ACCESS_IN_NODE="${N8N_BLOCK_ENV_ACCESS_IN_NODE:-false}"
   export N8N_RUNNERS_HEARTBEAT_INTERVAL="${N8N_RUNNERS_HEARTBEAT_INTERVAL:-120}"
   export N8N_RUNNERS_TASK_TIMEOUT="${N8N_RUNNERS_TASK_TIMEOUT:-300}"
   export N8N_RUNNERS_MAX_OLD_SPACE_SIZE="${N8N_RUNNERS_MAX_OLD_SPACE_SIZE:-4096}"
+  export OLLAMA_HOST="${OLLAMA_HOST:-127.0.0.1}"
+  export OLLAMA_PORT="${OLLAMA_PORT:-11434}"
+  export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://${OLLAMA_HOST}:${OLLAMA_PORT}}"
+  export OLLAMA_ENABLED="${OLLAMA_ENABLED:-false}"
+  export OLLAMA_REQUIRED="${OLLAMA_REQUIRED:-false}"
+  case "$(printf '%s' "$OLLAMA_REQUIRED" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on|required|enabled) export OLLAMA_ENABLED=true ;;
+  esac
   export PYTHONUNBUFFERED=1
   export PYTHONPATH="$PROJECT${PYTHONPATH:+:$PYTHONPATH}"
 }
@@ -356,12 +392,15 @@ remove_stale_pid_files() {
 
 launch_loaded() {
   local label="$1"
+  is_macos || return 1
   launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1
 }
 
 launch_bootstrap() {
   local label="$1"
   local plist="$2"
+
+  is_macos || return 1
 
   if launch_loaded "$label"; then
     return 0
@@ -378,6 +417,8 @@ launch_bootout() {
   local label="$1"
   local plist="$2"
 
+  is_macos || return 0
+
   if ! launch_loaded "$label"; then
     return 0
   fi
@@ -389,6 +430,7 @@ launch_bootout() {
 
 launch_kickstart() {
   local label="$1"
+  is_macos || return 0
   launchctl kickstart "gui/$(id -u)/$label" >/dev/null 2>&1
 }
 
@@ -547,6 +589,7 @@ timer_plist_valid() {
 }
 
 ensure_timer_plists() {
+  is_macos || { log "Non-macOS mode: LaunchAgent timer generation skipped."; return 0; }
   ensure_dirs
 
   if ! timer_plist_valid "$TIMER_RANDOM_PLIST" "app.randomized_source_runner" "300"; then
@@ -563,6 +606,7 @@ ensure_timer_plists() {
 }
 
 start_timers() {
+  is_macos || { log "Non-macOS mode: timer lifecycle delegated to an external scheduler."; return 0; }
   ensure_timer_plists
 
   if launch_bootstrap "$TIMER_RANDOM_LABEL" "$TIMER_RANDOM_PLIST"; then
@@ -583,6 +627,7 @@ start_timers() {
 }
 
 stop_timers() {
+  is_macos || return 0
   local rc=0
 
   if launch_bootout "$TIMER_RANDOM_LABEL" "$TIMER_RANDOM_PLIST"; then
@@ -603,6 +648,7 @@ stop_timers() {
 }
 
 kick_timers() {
+  is_macos || { log "Non-macOS mode: timer kick delegated to an external scheduler."; return 0; }
   start_timers || return 1
 
   if find_project_pid "app\.randomized_source_runner" >/dev/null 2>&1; then
@@ -734,16 +780,16 @@ service_is_healthy() {
 
   case "$service" in
     ollama)
-      http_ok "http://127.0.0.1:11434/api/tags"
+      http_ok "$OLLAMA_BASE_URL/api/tags"
       ;;
     n8n)
-      http_ok "http://127.0.0.1:${N8N_PORT}/healthz"
+      http_ok "http://${N8N_HOST}:${N8N_PORT}/healthz"
       ;;
     fastapi)
-      http_ok "http://127.0.0.1:${FASTAPI_PORT}/health"
+      http_ok "http://${FASTAPI_HOST}:${FASTAPI_PORT}/health"
       ;;
     streamlit)
-      http_ok "http://127.0.0.1:${STREAMLIT_PORT}/_stcore/health"
+      http_ok "http://${STREAMLIT_HOST}:${STREAMLIT_PORT}/_stcore/health"
       ;;
     telegram)
       find_project_pid "app\.telegram_listener" >/dev/null 2>&1
@@ -782,6 +828,11 @@ service_pid() {
 start_ollama() {
   local pid
 
+  case "$(printf '%s' "$OLLAMA_ENABLED" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on|required|enabled) ;;
+    *) log "Ollama is disabled (set OLLAMA_ENABLED=true to enable)."; return 0 ;;
+  esac
+
   if service_is_healthy ollama; then
     pid="$(service_pid ollama)"
     write_pid ollama "$pid"
@@ -789,7 +840,7 @@ start_ollama() {
     return 0
   fi
 
-  if [ -d "/Applications/Ollama.app" ]; then
+  if is_macos && [ -d "/Applications/Ollama.app" ]; then
     log "Opening Ollama.app."
     open -gja "/Applications/Ollama.app" >/dev/null 2>&1 || true
   elif command_exists ollama; then
@@ -804,7 +855,7 @@ start_ollama() {
     die "Ollama is not installed."
   fi
 
-  wait_http "Ollama" "http://127.0.0.1:11434/api/tags" 45 ||
+  wait_http "Ollama" "$OLLAMA_BASE_URL/api/tags" 45 ||
     return 1
 
   pid="$(service_pid ollama)"
@@ -843,7 +894,7 @@ start_fastapi_manual() {
   (
     cd "$PROJECT" || exit 1
     nohup "$PYTHON" -m uvicorn app.api:app \
-      --host 127.0.0.1 \
+      --host "$FASTAPI_HOST" \
       --port "$FASTAPI_PORT" \
       >> "$PROJECT_LOG_DIR/fastapi_controller.log" 2>&1 < /dev/null &
     printf '%s\n' "$!" > "$PID_DIR/fastapi.pid"
@@ -856,7 +907,7 @@ start_streamlit_manual() {
   (
     cd "$PROJECT" || exit 1
     nohup "$PYTHON" -m streamlit run "$APP_DIR/dashboard.py" \
-      --server.address 127.0.0.1 \
+      --server.address "$STREAMLIT_HOST" \
       --server.port "$STREAMLIT_PORT" \
       --server.headless true \
       >> "$PROJECT_LOG_DIR/streamlit_controller.log" 2>&1 < /dev/null &
@@ -929,7 +980,7 @@ start_core_service() {
   label="$(core_label_for_service "$service")"
   plist="$(core_plist_for_service "$service")"
 
-  if [ -f "$plist" ]; then
+  if is_macos && [ -f "$plist" ]; then
     log "Starting $service through LaunchAgent $label."
 
     launch_bootstrap "$label" "$plist" ||
@@ -948,15 +999,15 @@ start_core_service() {
 
   case "$service" in
     n8n)
-      wait_http "n8n" "http://127.0.0.1:${N8N_PORT}/healthz" 75 ||
+      wait_http "n8n" "http://${N8N_HOST}:${N8N_PORT}/healthz" 75 ||
         return 1
       ;;
     fastapi)
-      wait_http "FastAPI" "http://127.0.0.1:${FASTAPI_PORT}/health" 45 ||
+      wait_http "FastAPI" "http://${FASTAPI_HOST}:${FASTAPI_PORT}/health" 45 ||
         return 1
       ;;
     streamlit)
-      wait_http "Streamlit" "http://127.0.0.1:${STREAMLIT_PORT}/_stcore/health" 60 ||
+      wait_http "Streamlit" "http://${STREAMLIT_HOST}:${STREAMLIT_PORT}/_stcore/health" 60 ||
         return 1
       ;;
     telegram)
@@ -998,7 +1049,7 @@ start_all() {
   start_core_service fastapi || rc=1
   start_core_service streamlit || rc=1
   start_core_service telegram || rc=1
-  start_timers || rc=1
+  if is_macos; then start_timers || rc=1; else log "Non-macOS mode: scheduler lifecycle delegated to external process manager."; fi
 
   reconcile_pids
 
@@ -1013,9 +1064,9 @@ start_all() {
   if strict_health_check >/dev/null 2>&1; then
     ok "FULL STACK READY"
     printf '\n'
-    printf 'n8n:       http://127.0.0.1:%s\n' "$N8N_PORT"
-    printf 'Dashboard: http://127.0.0.1:%s\n' "$STREAMLIT_PORT"
-    printf 'FastAPI:   http://127.0.0.1:%s/health\n' "$FASTAPI_PORT"
+    printf 'n8n:       http://%s:%s\n' "$N8N_HOST" "$N8N_PORT"
+    printf 'Dashboard: http://%s:%s\n' "$STREAMLIT_HOST" "$STREAMLIT_PORT"
+    printf 'FastAPI:   http://%s:%s/health\n' "$FASTAPI_HOST" "$FASTAPI_PORT"
   else
     fail "Startup finished, but strict health verification failed."
     return 1
@@ -1085,7 +1136,7 @@ stop_ollama() {
 
   pid="$(service_pid ollama)"
 
-  if [ -d "/Applications/Ollama.app" ]; then
+  if is_macos && [ -d "/Applications/Ollama.app" ]; then
     osascript -e 'tell application "Ollama" to quit' >/dev/null 2>&1 || true
     sleep 2
   fi
@@ -1179,6 +1230,11 @@ print_timer_status() {
   local label="$1"
   local friendly="$2"
   local line
+
+  if ! is_macos; then
+    printf 'ℹ️  %-22s EXTERNAL SCHEDULER\n' "$friendly"
+    return 0
+  fi
 
   if launch_loaded "$label"; then
     line="$(
@@ -1318,10 +1374,10 @@ status_report() {
 
   section "AADIL HR HUNTER STATUS"
 
-  print_service_status "Ollama" ollama "http://127.0.0.1:11434"
-  print_service_status "n8n" n8n "http://127.0.0.1:${N8N_PORT}"
-  print_service_status "FastAPI" fastapi "http://127.0.0.1:${FASTAPI_PORT}/health"
-  print_service_status "Streamlit" streamlit "http://127.0.0.1:${STREAMLIT_PORT}"
+  print_service_status "Ollama" ollama "$OLLAMA_BASE_URL"
+  print_service_status "n8n" n8n "http://${N8N_HOST}:${N8N_PORT}"
+  print_service_status "FastAPI" fastapi "http://${FASTAPI_HOST}:${FASTAPI_PORT}/health"
+  print_service_status "Streamlit" streamlit "http://${STREAMLIT_HOST}:${STREAMLIT_PORT}"
   print_service_status "Telegram listener" telegram ""
 
   printf '\n'
@@ -1452,11 +1508,15 @@ PY
   printf 'STREAMLIT_PORT=%s\n' "$STREAMLIT_PORT"
   printf 'N8N_BLOCK_ENV_ACCESS_IN_NODE=%s\n' "$N8N_BLOCK_ENV_ACCESS_IN_NODE"
 
-  ensure_timer_plists
+  if is_macos; then ensure_timer_plists; fi
 
   printf '\nLaunchAgent plists:\n'
-  plutil -lint "$TIMER_RANDOM_PLIST" || rc=1
-  plutil -lint "$TIMER_HOURLY_PLIST" || rc=1
+  if is_macos; then
+    plutil -lint "$TIMER_RANDOM_PLIST" || rc=1
+    plutil -lint "$TIMER_HOURLY_PLIST" || rc=1
+  else
+    printf 'LaunchAgent plists: skipped (external scheduler mode)\n'
+  fi
 
   printf '\nDatabases:\n'
   printf 'n8n:    %s\n' "$(database_status "$N8N_DB" || true)"
@@ -1609,8 +1669,12 @@ open_urls() {
   preflight
   load_env_safely
 
-  open "http://127.0.0.1:${N8N_PORT}" >/dev/null 2>&1 || true
-  open "http://127.0.0.1:${STREAMLIT_PORT}" >/dev/null 2>&1 || true
+  if is_macos && command_exists open; then
+    open "http://${N8N_HOST}:${N8N_PORT}" >/dev/null 2>&1 || true
+    open "http://${STREAMLIT_HOST}:${STREAMLIT_PORT}" >/dev/null 2>&1 || true
+  else
+    log "Browser opening is macOS-only; URLs are available from status."
+  fi
 
   ok "Opened n8n and the Streamlit dashboard."
 }
@@ -1628,12 +1692,12 @@ service_run() {
       ;;
     fastapi)
       exec "$PYTHON" -m uvicorn app.api:app \
-        --host 127.0.0.1 \
+        --host "$FASTAPI_HOST" \
         --port "$FASTAPI_PORT"
       ;;
     streamlit)
       exec "$PYTHON" -m streamlit run "$APP_DIR/dashboard.py" \
-        --server.address 127.0.0.1 \
+        --server.address "$STREAMLIT_HOST" \
         --server.port "$STREAMLIT_PORT" \
         --server.headless true
       ;;
@@ -1709,6 +1773,8 @@ EOF
 install_autostart() {
   local active
 
+  is_macos || die "LaunchAgent autostart is macOS-only; use an external process manager."
+
   acquire_controller_lock
   preflight
   load_env_safely
@@ -1754,11 +1820,11 @@ install_autostart() {
   launch_bootstrap "$CORE_TELEGRAM_LABEL" "$CORE_TELEGRAM_PLIST" ||
     die "Could not load $CORE_TELEGRAM_LABEL"
 
-  wait_http "n8n" "http://127.0.0.1:${N8N_PORT}/healthz" 75 ||
+  wait_http "n8n" "http://${N8N_HOST}:${N8N_PORT}/healthz" 75 ||
     return 1
-  wait_http "FastAPI" "http://127.0.0.1:${FASTAPI_PORT}/health" 45 ||
+  wait_http "FastAPI" "http://${FASTAPI_HOST}:${FASTAPI_PORT}/health" 45 ||
     return 1
-  wait_http "Streamlit" "http://127.0.0.1:${STREAMLIT_PORT}/_stcore/health" 60 ||
+  wait_http "Streamlit" "http://${STREAMLIT_HOST}:${STREAMLIT_PORT}/_stcore/health" 60 ||
     return 1
 
   elapsed=0
@@ -1922,9 +1988,9 @@ Daily use:
   "$HOME_COMMAND" logs telegram
 
 URLs:
-  n8n:       http://127.0.0.1:5678
-  Streamlit: http://127.0.0.1:8501
-  FastAPI:   http://127.0.0.1:8000/health
+  n8n:       http://$N8N_HOST:$N8N_PORT
+  Streamlit: http://$STREAMLIT_HOST:$STREAMLIT_PORT
+  FastAPI:   http://$FASTAPI_HOST:$FASTAPI_PORT/health
 EOF
 }
 

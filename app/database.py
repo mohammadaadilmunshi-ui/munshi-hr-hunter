@@ -9,15 +9,13 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from app.platform_config import database_path, project_root
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+
+ROOT_DIR = project_root()
 load_dotenv(ROOT_DIR / ".env")
 
-database_setting = os.getenv("DATABASE_PATH", "data/hunter.db")
-DB_PATH = Path(database_setting)
-
-if not DB_PATH.is_absolute():
-    DB_PATH = ROOT_DIR / DB_PATH
+DB_PATH = database_path()
 
 
 BOOTSTRAP_CONFIG_PATH = ROOT_DIR / "config" / "bootstrap.json"

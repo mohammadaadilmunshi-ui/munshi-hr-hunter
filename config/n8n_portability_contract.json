@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "workflow_id": "L1u2xZkgFpi7KEuv",
+  "canonical_workflow": "n8n/workflows/canonical_hr_hunter_workflow.json",
+  "renderer_policy": "The canonical workflow is immutable source. A future deployment renderer may substitute these endpoint variables in a generated copy only.",
+  "endpoint_variables": {
+    "fastapi_base_url": "FASTAPI_BASE_URL",
+    "n8n_base_url": "N8N_BASE_URL",
+    "ollama_base_url": "OLLAMA_BASE_URL"
+  },
+  "known_source_assumptions": [
+    "The workflow contains localhost/127.0.0.1 URLs for the Mac single-host runtime.",
+    "The callback targets the FastAPI status-update route.",
+    "The Ollama HTTP node is optional and must not be required in cloud default mode."
+  ],
+  "cloud_contract": {
+    "fastapi_callback_path": "/api/n8n/status-update",
+    "required_network_rule": "n8n must reach the internal FastAPI service by service DNS or an explicitly configured private URL.",
+    "secrets_source": "runtime environment or secret manager; never workflow JSON"
+  }
+}
