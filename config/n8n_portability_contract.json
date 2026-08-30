@@ -2,7 +2,13 @@
   "schema_version": 1,
   "workflow_id": "L1u2xZkgFpi7KEuv",
   "canonical_workflow": "n8n/workflows/canonical_hr_hunter_workflow.json",
+  "canonical_workflow_sha256": "501f144f35c5ae514a2c96004763232014ae78fa3a266f33a582f780cb22534f",
   "renderer_policy": "The canonical workflow is immutable source. A future deployment renderer may substitute these endpoint variables in a generated copy only.",
+  "canonical_source_policy": {
+    "immutable": true,
+    "cloud_workflow_rewrite_forbidden": true,
+    "renderer_output_must_be_generated": true
+  },
   "endpoint_variables": {
     "fastapi_base_url": "FASTAPI_BASE_URL",
     "n8n_base_url": "N8N_BASE_URL",
@@ -16,6 +22,10 @@
   "cloud_contract": {
     "fastapi_callback_path": "/api/n8n/status-update",
     "required_network_rule": "n8n must reach the internal FastAPI service by service DNS or an explicitly configured private URL.",
-    "secrets_source": "runtime environment or secret manager; never workflow JSON"
+    "secrets_source": "runtime environment or secret manager; never workflow JSON",
+    "ollama_default": {
+      "OLLAMA_ENABLED": false,
+      "OLLAMA_REQUIRED": false
+    }
   }
 }

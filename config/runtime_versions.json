@@ -1,0 +1,15 @@
+{
+  "production_source_environment": {
+    "python": "3.12.14",
+    "node": "24.16.0",
+    "npm": "11.13.0",
+    "n8n": "2.22.5",
+    "architecture": "arm64"
+  },
+  "linux_ci_proof_target": {
+    "python": "3.12",
+    "architecture": "x86_64",
+    "arm64_linux_status": "unproven"
+  },
+  "authoritative": true
+}

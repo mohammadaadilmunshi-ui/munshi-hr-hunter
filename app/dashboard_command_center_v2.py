@@ -16,9 +16,11 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 
+from app.platform_config import endpoint_url, n8n_database_path
+
 VERSION = "2.0.0"
 ET = ZoneInfo("America/New_York")
-N8N_DB = Path.home() / ".n8n" / "database.sqlite"
+N8N_DB = n8n_database_path()
 FINAL_QUEUE_STATES = {"completed", "failed", "cancelled", "canceled", "closed"}
 
 
@@ -1241,15 +1243,15 @@ def load_snapshot(
     services = {
         "FastAPI": _service(
             "FastAPI",
-            "http://127.0.0.1:8000/health",
+            endpoint_url("fastapi", "/health"),
         ),
         "n8n": _service(
             "n8n",
-            "http://127.0.0.1:5678/healthz",
+            endpoint_url("n8n", "/healthz"),
         ),
         "Ollama": _service(
             "Ollama",
-            "http://127.0.0.1:11434/api/tags",
+            endpoint_url("ollama", "/api/tags"),
         ),
         "Telegram": {
             "name": "Telegram",
@@ -1573,11 +1575,11 @@ def _controls(snapshot: dict[str, Any]) -> None:
         )
     with right:
         st.markdown(
-            '''
+            f'''
             <div class="muted" style="text-align:right">
-                <a href="http://127.0.0.1:5678" target="_blank">n8n</a>
-                · <a href="http://127.0.0.1:8000/docs" target="_blank">FastAPI</a>
-                · <a href="http://127.0.0.1:8501" target="_blank">Streamlit</a>
+                <a href="{endpoint_url("n8n")}" target="_blank">n8n</a>
+                · <a href="{endpoint_url("fastapi", "/docs")}" target="_blank">FastAPI</a>
+                · <a href="{endpoint_url("streamlit")}" target="_blank">Streamlit</a>
             </div>
             ''',
             unsafe_allow_html=True,

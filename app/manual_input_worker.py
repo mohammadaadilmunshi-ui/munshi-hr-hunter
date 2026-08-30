@@ -28,6 +28,7 @@ from app.runtime_config import (
     n8n_database_path,
     n8n_workflow_id,
     service_endpoint,
+    is_macos,
 )
 
 LOCK_PATH = ROOT_DIR / "data" / "telegram_manual_n8n.lock"
@@ -41,10 +42,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def port_open(port: int) -> bool:
+def port_open(port: int, host: str = "127.0.0.1") -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.75)
-        return sock.connect_ex(("127.0.0.1", port)) == 0
+        return sock.connect_ex((host, port)) == 0
 
 
 def n8n_connection() -> sqlite3.Connection:
@@ -114,6 +115,8 @@ def release_lock() -> None:
 
 
 def service_loaded(label: str) -> bool:
+    if not is_macos():
+        return False
     completed = subprocess.run(
         ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
         stdout=subprocess.DEVNULL,
@@ -124,6 +127,8 @@ def service_loaded(label: str) -> bool:
 
 
 def pause_scraper_scheduler() -> bool:
+    if not is_macos():
+        return False
     orchestration = get_setting("orchestration", {}) or {}
     label = str(orchestration.get("source_worker_launch_agent") or "").strip()
     if not label:
@@ -151,6 +156,8 @@ def pause_scraper_scheduler() -> bool:
 
 
 def restore_scraper_scheduler(was_loaded: bool) -> None:
+    if not is_macos():
+        return
     orchestration = get_setting("orchestration", {}) or {}
     label = str(orchestration.get("source_worker_launch_agent") or "").strip()
     plist = launch_agent_plist(label) if label else Path()
@@ -659,11 +666,11 @@ def run_manual(run_id: int) -> None:
                 + "\n".join(workers[:8])
             )
 
-        _n8n_host, n8n_port = service_endpoint("n8n")
-        _api_host, api_port = service_endpoint("fastapi")
-        if not port_open(n8n_port):
+        n8n_host, n8n_port = service_endpoint("n8n")
+        api_host, api_port = service_endpoint("fastapi")
+        if not port_open(n8n_port, n8n_host):
             raise RuntimeError(f"n8n is offline on configured port {n8n_port}.")
-        if not port_open(api_port):
+        if not port_open(api_port, api_host):
             raise RuntimeError(f"FastAPI is offline on configured port {api_port}.")
         if not n8n_database_path().exists():
             raise RuntimeError("The configured n8n database is missing.")

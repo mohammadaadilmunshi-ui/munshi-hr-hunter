@@ -103,7 +103,11 @@ CORE_FASTAPI_PLIST="$HOME/Library/LaunchAgents/${CORE_FASTAPI_LABEL}.plist"
 CORE_STREAMLIT_PLIST="$HOME/Library/LaunchAgents/${CORE_STREAMLIT_LABEL}.plist"
 CORE_TELEGRAM_PLIST="$HOME/Library/LaunchAgents/${CORE_TELEGRAM_LABEL}.plist"
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin"
+if is_macos; then
+  export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin"
+else
+  export PATH="/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin"
+fi
 
 FORCE=0
 

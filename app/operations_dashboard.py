@@ -34,6 +34,7 @@ from app.presentation_analytics import (
     rejection_intelligence,
 )
 from app.runtime_recovery import RuntimeRecovery
+from app.runtime_config import service_endpoint
 from app.ui_time import (
     format_local,
     format_local_clock,
@@ -319,8 +320,8 @@ def _overview() -> None:
         bounds,
     )
     integration = get_setting("integration_health", {}) or {}
-    n8n = dict((integration.get("services") or {}).get("n8n") or {})
-    n8n_up = _service_up(str(n8n.get("host", "127.0.0.1")), int(n8n.get("port", 0)))
+    n8n_host, n8n_port = service_endpoint("n8n")
+    n8n_up = _service_up(n8n_host, n8n_port)
     workflow_id = str((integration.get("n8n_read_only_snapshot") or {}).get("workflow_id") or "")
     n8n_history, _ = n8n_execution_metrics(workflow_id)
     orchestration = get_setting("orchestration", {}) or {}

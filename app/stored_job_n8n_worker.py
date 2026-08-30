@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from app.database import ROOT_DIR, get_connection
-from app.runtime_config import downstream_int, n8n_database_path, n8n_workflow_id
+from app.runtime_config import downstream_int, n8n_database_path, n8n_workflow_id, service_endpoint
 
 LOCK_DIR = ROOT_DIR / "data"
 GLOBAL_LOCK = LOCK_DIR / "production_dispatch_active.lock"
@@ -65,13 +65,18 @@ def _clear_stale_lock(path: Path) -> None:
         path.unlink(missing_ok=True)
 
 
-def _port_open(port: int) -> bool:
+def _port_open(port: int, host: str = "127.0.0.1") -> bool:
     sock = socket.socket()
     sock.settimeout(0.5)
     try:
-        return sock.connect_ex(("127.0.0.1", port)) == 0
+        return sock.connect_ex((host, port)) == 0
     finally:
         sock.close()
+
+
+def _service_port_open(name: str) -> bool:
+    host, port = service_endpoint(name)
+    return _port_open(port, host)
 
 
 def _get_chat_id() -> int:
@@ -647,13 +652,13 @@ def start_stored_job_run(
             ),
         }
 
-    if not _port_open(5678):
+    if not _service_port_open("n8n"):
         return {
             "success": False,
             "started": False,
             "message": "n8n is offline on port 5678. No webhook was called.",
         }
-    if not _port_open(8000):
+    if not _service_port_open("fastapi"):
         return {
             "success": False,
             "started": False,
@@ -822,9 +827,9 @@ def run(job_id: int, chat_id: int | None = None) -> dict[str, Any]:
             raise RuntimeError(
                 f"Daily manual n8n limit reached ({used}/{limit})."
             )
-        if not _port_open(5678):
+        if not _service_port_open("n8n"):
             raise RuntimeError("n8n is offline on port 5678.")
-        if not _port_open(8000):
+        if not _service_port_open("fastapi"):
             raise RuntimeError("FastAPI is offline on port 8000.")
 
         _edit_progress(

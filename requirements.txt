@@ -1,9 +1,14 @@
 fastapi
+beautifulsoup4
+httpx
 pandas
+playwright
 pycountry
+pydantic
 pytest
 python-dotenv
 python-telegram-bot==22.8
+requests
 streamlit
 uvicorn
 python-jobspy==1.1.82

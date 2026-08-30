@@ -104,9 +104,9 @@ def service_endpoint(name: str) -> tuple[str, int]:
 
 
 def launch_agent_plist(label: str) -> Path:
-    directory = str(integration_health().get("launch_agents_directory") or "").strip()
     if not is_macos():
         raise RuntimeError("LaunchAgents are only available on macOS; use an external process manager.")
+    directory = str(integration_health().get("launch_agents_directory") or "").strip()
     if not directory:
         directory = str(Path.home() / "Library" / "LaunchAgents")
     return Path(directory).expanduser() / f"{label}.plist"
