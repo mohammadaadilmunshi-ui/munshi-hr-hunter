@@ -1,0 +1,188 @@
+{
+  "schema_version": 3,
+  "mode": "OPT",
+  "eligibility": {
+    "label": "United States nationwide",
+    "country_codes": ["US"],
+    "unknown_country_policy": "reject",
+    "worldwide_remote_us_eligible": false,
+    "remote_allowed": true,
+    "hybrid_allowed": true,
+    "onsite_allowed": true
+  },
+  "location_rule_purposes": {
+    "New Jersey": "preference",
+    "Philadelphia": "preference",
+    "New York City": "preference",
+    "United States": "eligibility",
+    "United States Remote": "eligibility"
+  },
+  "experience_policy": {
+    "reject_required_min_years": 2,
+    "required_markers": [
+      "required",
+      "requires",
+      "minimum",
+      "at least",
+      "must have",
+      "must possess",
+      "need to have",
+      "requirements"
+    ],
+    "preferred_markers": [
+      "preferred",
+      "ideally",
+      "desired",
+      "nice to have",
+      "a plus"
+    ],
+    "optional_markers": [
+      "optional",
+      "not required",
+      "plus but not required"
+    ],
+    "experience_context_terms": [
+      "experience",
+      "years in",
+      "years with",
+      "years working",
+      "professional background",
+      "work history"
+    ],
+    "non_candidate_experience_contexts": [
+      "benefits vest",
+      "benefit eligibility begins",
+      "retirement vesting",
+      "paid time off accrual",
+      "company history",
+      "founded",
+      "serving customers for",
+      "equal opportunity",
+      "minimum age",
+      "driving history",
+      "software engineer role",
+      "engineering role",
+      "nursing role",
+      "clinical role",
+      "sales role"
+    ]
+  },
+  "title_only_hard_rejects": [
+    "senior",
+    "sr",
+    "director",
+    "vice president",
+    "vp",
+    "chief",
+    "head of",
+    "principal",
+    "manager",
+    "lead"
+  ],
+  "role_negative_contexts": [
+    "patient recruitment",
+    "patient recruiter",
+    "clinical recruitment",
+    "clinical recruiting",
+    "clinical trial recruitment",
+    "research participant recruitment",
+    "participant recruitment",
+    "procurement sourcing",
+    "strategic sourcing",
+    "vendor sourcing",
+    "supplier sourcing",
+    "supply chain sourcing",
+    "product benefits",
+    "benefits product",
+    "insurance benefits product",
+    "customer benefits",
+    "sales compensation product",
+    "compensation product",
+    "talent agency",
+    "talent management agency",
+    "sports talent",
+    "modeling talent"
+  ],
+  "role_families": [
+    {
+      "name": "HR CORE",
+      "title_phrases": ["human resources", "hr generalist", "hr coordinator", "hr specialist", "hr assistant", "hr associate"],
+      "queries": ["Human Resources Analyst", "Human Resources Coordinator", "HR Generalist", "HR Specialist"]
+    },
+    {
+      "name": "PEOPLE ANALYTICS",
+      "title_phrases": ["people analytics", "people data", "workforce insights", "talent analytics"],
+      "queries": ["People Analytics Analyst", "People Data Analyst", "Workforce Insights Analyst"]
+    },
+    {
+      "name": "WORKFORCE ANALYTICS",
+      "title_phrases": ["workforce analytics", "workforce planning", "workforce analyst"],
+      "queries": ["Workforce Analytics Analyst", "Workforce Planning Analyst"]
+    },
+    {
+      "name": "HRIS",
+      "title_phrases": ["hris", "human resources information systems", "people systems", "hr systems"],
+      "queries": ["HRIS Analyst", "HRIS Coordinator", "People Systems Analyst"]
+    },
+    {
+      "name": "HR DATA",
+      "title_phrases": ["hr data", "hr reporting", "employee data", "human resources data"],
+      "queries": ["HR Data Analyst", "HR Reporting Analyst", "Employee Data Analyst"]
+    },
+    {
+      "name": "TALENT ACQUISITION",
+      "title_phrases": ["talent acquisition", "corporate recruiter", "talent sourcer", "recruiter"],
+      "queries": ["Talent Acquisition Analyst", "Talent Acquisition Coordinator", "Corporate Recruiter", "Talent Sourcer"]
+    },
+    {
+      "name": "RECRUITING OPERATIONS",
+      "title_phrases": ["recruiting operations", "recruitment operations", "recruiting coordinator", "recruitment coordinator", "university recruiting", "campus recruiting"],
+      "queries": ["Recruiting Operations Analyst", "Recruiting Coordinator", "University Recruiting Coordinator", "Campus Recruiting Coordinator"]
+    },
+    {
+      "name": "PEOPLE OPERATIONS",
+      "title_phrases": ["people operations", "hr operations", "human resources operations", "talent operations", "people coordinator"],
+      "queries": ["People Operations Analyst", "People Operations Coordinator", "HR Operations Analyst", "Talent Operations Coordinator"]
+    },
+    {
+      "name": "TOTAL REWARDS",
+      "title_phrases": ["total rewards", "rewards analyst", "rewards coordinator"],
+      "queries": ["Total Rewards Analyst", "Total Rewards Coordinator"]
+    },
+    {
+      "name": "COMPENSATION",
+      "title_phrases": ["compensation analyst", "compensation coordinator", "compensation specialist", "compensation associate"],
+      "queries": ["Compensation Analyst", "Compensation Coordinator"]
+    },
+    {
+      "name": "BENEFITS",
+      "title_phrases": ["benefits analyst", "benefits coordinator", "benefits specialist", "benefits associate", "compensation and benefits"],
+      "queries": ["Benefits Analyst", "Benefits Coordinator", "Compensation and Benefits Analyst"]
+    },
+    {
+      "name": "ORGANIZATIONAL EFFECTIVENESS",
+      "title_phrases": ["organizational effectiveness", "organizational development", "organization development", "people strategy"],
+      "queries": ["Organizational Development Analyst", "Organizational Effectiveness Analyst", "People Strategy Analyst"]
+    },
+    {
+      "name": "HR COMPLIANCE",
+      "title_phrases": ["hr compliance", "human resources compliance", "employee relations"],
+      "queries": ["HR Compliance Analyst", "Employee Relations Analyst"]
+    },
+    {
+      "name": "TALENT MANAGEMENT",
+      "title_phrases": ["talent management", "talent intelligence", "people programs", "employee engagement"],
+      "queries": ["Talent Management Analyst", "Talent Intelligence Analyst", "People Programs Analyst", "Employee Engagement Analyst"]
+    },
+    {
+      "name": "LEARNING & DEVELOPMENT",
+      "title_phrases": ["learning and development", "learning & development", "l and d", "training coordinator"],
+      "queries": ["Learning and Development Analyst", "Learning and Development Coordinator"]
+    },
+    {
+      "name": "HR BUSINESS PARTNER",
+      "title_phrases": ["hr business partner", "human resources business partner", "associate people partner", "people partner"],
+      "queries": ["HR Business Partner", "Associate People Partner"]
+    }
+  ]
+}

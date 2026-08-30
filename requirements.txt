@@ -1,0 +1,9 @@
+fastapi
+pandas
+pycountry
+pytest
+python-dotenv
+python-telegram-bot==22.8
+streamlit
+uvicorn
+python-jobspy==1.1.82

@@ -1,0 +1,59 @@
+{
+  "version": "google_indeed_scrapling_max_caps_v1",
+  "scrapling_version": "0.4.10",
+  "common": {
+    "cadence_minutes": 180,
+    "delay_min_seconds": 4,
+    "delay_max_seconds": 10,
+    "active_work_skip": true,
+    "max_sources_per_scheduler_tick": 1,
+    "blocked_backoff_minutes": [
+      30,
+      60,
+      180
+    ],
+    "stop_after_consecutive_blocks_in_run": 2,
+    "no_proxy_rotation": true,
+    "no_captcha_solving": true,
+    "send_to_n8n": false
+  },
+  "sources": {
+    "google_jobs": {
+      "display_name": "Google Jobs (Scrapling)",
+      "actor": "google_jobs_scrapling",
+      "phase_minute": 0,
+      "max_raw_jobs": 100,
+      "max_pages": 6,
+      "max_detail_fetches": 40,
+      "daily_request_ceiling": 400,
+      "hours_old": 168
+    },
+    "indeed": {
+      "display_name": "Indeed (Scrapling)",
+      "actor": "indeed_scrapling",
+      "phase_minute": 20,
+      "max_raw_jobs": 75,
+      "max_pages": 4,
+      "max_detail_fetches": 30,
+      "daily_request_ceiling": 300,
+      "hours_old": 168
+    }
+  },
+  "search_terms": [
+    "Human Resources Intern",
+    "HR Intern",
+    "Talent Acquisition Intern",
+    "Recruiting Intern",
+    "People Operations Intern",
+    "HR Analytics Intern",
+    "People Analytics Intern",
+    "Workforce Analytics Intern",
+    "HRIS Intern",
+    "Compensation Analytics Intern"
+  ],
+  "locations": [
+    "New Jersey",
+    "New York, NY",
+    "Philadelphia, PA"
+  ]
+}

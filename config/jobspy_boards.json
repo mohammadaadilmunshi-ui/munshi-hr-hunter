@@ -1,0 +1,91 @@
+{
+  "version": "google_merged_dashboard_serpapi_v5_2",
+  "scheduler_check_seconds": 300,
+  "sources": {
+    "google": {
+      "source_key": "google_jobs_jobspy",
+      "display_name": "Google Jobs",
+      "site_name": "google",
+      "default_enabled": true,
+      "default_cadence_minutes": 180,
+      "minimum_cadence_minutes": 180,
+      "phase_minute": 0,
+      "results_per_request": 10,
+      "requests_per_run": 2,
+      "max_zero_result_fallback_requests": 2,
+      "max_raw_jobs": 100,
+      "hours_old": 168,
+      "backoff_minutes": [
+        180,
+        360,
+        720
+      ],
+      "serpapi_requests_per_run": 2,
+      "jobspy_fallback_requests": 1,
+      "provider_order": [
+        "serpapi",
+        "jobspy"
+      ]
+    },
+    "indeed": {
+      "source_key": "indeed_jobspy",
+      "display_name": "Indeed Jobs (JobSpy)",
+      "legacy_display_names": [
+        "Indeed (JobSpy)"
+      ],
+      "site_name": "indeed",
+      "default_enabled": true,
+      "default_cadence_minutes": 180,
+      "minimum_cadence_minutes": 180,
+      "phase_minute": 20,
+      "results_per_request": 20,
+      "requests_per_run": 4,
+      "max_raw_jobs": 75,
+      "hours_old": 168,
+      "backoff_minutes": [
+        180,
+        360,
+        720
+      ]
+    },
+    "linkedin": {
+      "source_key": "linkedin_jobspy",
+      "display_name": "LinkedIn Jobs (JobSpy)",
+      "site_name": "linkedin",
+      "default_enabled": true,
+      "default_cadence_minutes": 180,
+      "minimum_cadence_minutes": 180,
+      "phase_minute": 40,
+      "results_per_request": 20,
+      "requests_per_run": 2,
+      "max_raw_jobs": 40,
+      "hours_old": 168,
+      "linkedin_fetch_description": false,
+      "backoff_minutes": [
+        180,
+        360,
+        720
+      ]
+    }
+  },
+  "general_jobspy": {
+    "enabled": true,
+    "sites": [
+      "zip_recruiter"
+    ],
+    "cadence_minutes": 180,
+    "reason": "Google, Indeed, and LinkedIn are managed by independent staggered workers."
+  },
+  "safety": {
+    "max_sources_per_tick": 1,
+    "skip_while_manual_or_n8n_active": true,
+    "no_n8n_calls": true,
+    "no_captcha_solving": true,
+    "no_automatic_proxy_rotation": true,
+    "linkedin_description_fetch": false,
+    "retired_scrapling_routes_locked_disabled": true,
+    "global_cross_source_fingerprint_guard": true,
+    "single_google_dashboard_row": true,
+    "serpapi_key_never_logged": true
+  }
+}

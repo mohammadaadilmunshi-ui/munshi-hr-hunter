@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.aadil.hr-hunter.randomized-sources</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/aadil/Aadil-HR-Hunter/.venv/bin/python</string>
+    <string>-u</string>
+    <string>-m</string>
+    <string>app.randomized_source_runner</string>
+    <string>--scheduled</string>
+    <string>--quiet-start</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/aadil/Aadil-HR-Hunter</string>
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/aadil/Aadil-HR-Hunter/logs/randomized_sources_scheduler.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/aadil/Aadil-HR-Hunter/logs/randomized_sources_scheduler_error.log</string>
+</dict>
+</plist>

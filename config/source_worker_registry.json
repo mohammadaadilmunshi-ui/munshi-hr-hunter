@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "workers": {
+    "Adzuna": "app.adzuna_worker",
+    "Arbeitnow": "app.arbeitnow_worker",
+    "Ashby": "app.ashby_worker",
+    "BambooHR": "app.bamboohr_worker",
+    "Comeet": "app.comeet_worker",
+    "Dice": "app.dice_worker",
+    "Employer Board Discovery": "app.employer_board_discovery_worker",
+    "Google Jobs": "app.google_jobs_worker",
+    "Greenhouse": "app.greenhouse_worker",
+    "Indeed Jobs (JobSpy)": "app.indeed_jobspy_worker",
+    "Jobicy": "app.jobicy_worker",
+    "JobSpy": "app.jobspy_worker",
+    "Lever": "app.lever_worker",
+    "LinkedIn Jobs (JobSpy)": "app.linkedin_jobspy_worker",
+    "NYC Open Data": "app.nyc_open_data_worker",
+    "Personio": "app.personio_worker",
+    "Pinpoint": "app.pinpoint_worker",
+    "Recruitee": "app.recruitee_worker",
+    "Remote OK": "app.remote_ok_worker",
+    "Remotive": "app.remotive_worker",
+    "SmartRecruiters": "app.smartrecruiters_worker",
+    "We Work Remotely": "app.we_work_remotely_worker",
+    "Workable": "app.workable_worker",
+    "Workday": "app.workday_worker"
+  },
+  "retired_source_keys": ["googlejobsscrapling", "indeedscrapling"]
+}

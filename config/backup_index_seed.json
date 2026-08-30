@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "storage_baseline": {
+    "measured_at": "2026-08-23T23:28:00-04:00",
+    "project_bytes": 189975130112,
+    "disk_free_bytes": 622173794304
+  },
+  "backups": [
+    {
+      "backup_path": "rollback/AADIL_HR_HUNTER_20260823_232529/hunter.db",
+      "sha256": "a0aff0372ac3d93d9a764504450c38858223ff5a066c04fd6be5cc062fb619a4",
+      "size_bytes": 51171328,
+      "backup_type": "hunter_database",
+      "verified": true,
+      "restore_scope": "Hunter production SQLite before engagement",
+      "retained_reason": "Newest verified pre-repair Hunter rollback"
+    },
+    {
+      "backup_path": "rollback/AADIL_HR_HUNTER_20260823_232529/hunter_before_ashby_reconciliation_20260824_0708.db",
+      "sha256": "cf763d9f2706e18253b3887c31e576384dc4643873c4272026c93a1217c4a619",
+      "size_bytes": 76492800,
+      "backup_type": "hunter_database_milestone",
+      "verified": true,
+      "restore_scope": "Hunter production SQLite before controlled live-data reconciliation",
+      "retained_reason": "Previous known-good live acceptance point"
+    },
+    {
+      "backup_path": "rollback/AADIL_HR_HUNTER_20260823_232529/hunter_acceptance_20260824_0735.db",
+      "sha256": "9609c796e2d52d534ea34cb2dd2e1f07d89b846622738484546776ab9966a212",
+      "size_bytes": 85082112,
+      "backup_type": "hunter_database_acceptance",
+      "verified": true,
+      "restore_scope": "Hunter production SQLite after final controlled scheduler and yield acceptance",
+      "retained_reason": "Newest verified current Hunter rollback"
+    },
+    {
+      "backup_path": "rollback/AADIL_HR_HUNTER_20260823_232529/source_and_config.tar.gz",
+      "sha256": "0973a4fb0b6f8215f12661dd6a352d37ebedcfcbe50062b36f61a5315036b93e",
+      "size_bytes": 2044922,
+      "backup_type": "source_configuration",
+      "verified": true,
+      "restore_scope": "Pre-repair source, configuration, scheduler definitions, and patch state",
+      "retained_reason": "Previous compact pre-repair code rollback"
+    },
+    {
+      "backup_path": "rollback/AADIL_HR_HUNTER_20260823_232529/source_and_config_acceptance_20260824_0735.tar.gz",
+      "sha256": "166baa7fbe44b36906b4e615615d3ed860a31576ab7c0458102077902627df64",
+      "size_bytes": 506749,
+      "backup_type": "source_configuration_acceptance",
+      "verified": true,
+      "restore_scope": "Accepted source, configuration, migrations, scripts, and regression tests",
+      "retained_reason": "Newest verified current code rollback"
+    },
+    {
+      "backup_path": "rollback/AADIL_HR_HUNTER_20260823_232529/milestone_source_20260724.tar.gz",
+      "sha256": "4ab462255e5833c3952545d81d089e237d18811f8b3314e0a6309b8b1863faef",
+      "size_bytes": 203169160,
+      "backup_type": "source_milestone",
+      "verified": true,
+      "restore_scope": "July 24 source-only milestone",
+      "retained_reason": "Compact replacement for deleted recursive 86.5 GiB backup"
+    },
+    {
+      "backup_path": "patch_backups/AADIL_HR_HUNTER_REPAIR_V2_1_20260823_223751/n8n_before.sqlite",
+      "sha256": "da9d82750e438a080c1dc7bd128ab368084692864e96eb688e0c2735eb83ed9d",
+      "size_bytes": 1669804032,
+      "backup_type": "n8n_database_read_only_snapshot",
+      "verified": true,
+      "restore_scope": "n8n before the last pre-engagement patch",
+      "retained_reason": "Verified pre-unfreeze n8n rollback anchor retained for controlled engineering"
+    },
+    {
+      "backup_path": "patch_backups/opt_us_nationwide_integrity_v1/20260807_010619/n8n_database.sqlite",
+      "sha256": "a933e6a3399cf91c21bd8d997282d6a11925b08a6b673cd3a1a9ee3ca50861f4",
+      "size_bytes": 1669804032,
+      "backup_type": "n8n_database_read_only_snapshot",
+      "verified": true,
+      "restore_scope": "n8n OPT nationwide milestone",
+      "retained_reason": "Previous verified rollback generation"
+    },
+    {
+      "backup_path": "backups/n8n_deep_salvage_v2_5_20260707_230836/recovered_patched_database.sqlite",
+      "sha256": "e43d164511a065f5c293c7105274f05f694a299f2699d8b05d3a24c458a2e5c5",
+      "size_bytes": 590483456,
+      "backup_type": "n8n_database_recovery_milestone",
+      "verified": true,
+      "restore_scope": "Known-good recovered n8n database",
+      "retained_reason": "Material recovery milestone"
+    }
+  ]
+}

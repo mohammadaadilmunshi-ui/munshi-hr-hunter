@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "providers": [
+    {"provider": "Greenhouse", "source_name": "Greenhouse", "fixture_evidence": "app.greenhouse_adapter_test"},
+    {"provider": "Ashby", "source_name": "Ashby", "fixture_evidence": "app.ashby_adapter_test"},
+    {"provider": "Lever", "source_name": "Lever", "fixture_evidence": "app.lever_adapter_test"},
+    {"provider": "SmartRecruiters", "source_name": "SmartRecruiters", "fixture_evidence": "app.smartrecruiters_adapter_test"},
+    {"provider": "Personio", "source_name": "Personio"},
+    {"provider": "Comeet", "source_name": "Comeet"},
+    {"provider": "Pinpoint", "source_name": "Pinpoint"},
+    {"provider": "Recruitee", "source_name": "Recruitee"},
+    {"provider": "Workable", "source_name": "Workable"},
+    {"provider": "Arbeitnow", "source_name": "Arbeitnow"},
+    {"provider": "Remote OK", "source_name": "Remote OK"},
+    {"provider": "Jobicy", "source_name": "Jobicy"},
+    {"provider": "Remotive", "source_name": "Remotive"},
+    {"provider": "LinkedIn / JobSpy", "source_name": "LinkedIn Jobs (JobSpy)"},
+    {"provider": "Indeed / JobSpy", "source_name": "Indeed Jobs (JobSpy)"},
+    {"provider": "Google Jobs / JobSpy", "source_name": "Google Jobs"},
+    {"provider": "ZipRecruiter / JobSpy", "source_name": "JobSpy"},
+    {"provider": "Workday", "source_name": "Workday", "fixture_evidence": "tests.test_adapters"},
+    {"provider": "BambooHR", "source_name": "BambooHR", "fixture_evidence": "tests.test_adapters"}
+  ]
+}

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+PROJECT="${AADIL_HR_HUNTER_PROJECT:-$HOME/Aadil-HR-Hunter}"
+ACTION="${1:-start}"
+shift || true
+
+case "$ACTION" in
+  start) exec "$PROJECT/bin/start_aadil_hr_hunter.sh" "$@" ;;
+  restart) exec "$PROJECT/bin/start_aadil_hr_hunter.sh" --restart "$@" ;;
+  status) exec "$PROJECT/bin/status_aadil_hr_hunter.sh" "$@" ;;
+  stop) exec "$PROJECT/bin/stop_aadil_hr_hunter.sh" "$@" ;;
+  *) echo "Usage: aadil-hr-hunter {start|restart|status|stop}" >&2; exit 2 ;;
+esac

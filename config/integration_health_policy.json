@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "services": {
+    "fastapi": {
+      "host": "127.0.0.1",
+      "port": 8000
+    },
+    "streamlit": {
+      "host": "127.0.0.1",
+      "port": 8501
+    },
+    "n8n": {
+      "host": "127.0.0.1",
+      "port": 5678,
+      "read_only": false
+    }
+  },
+  "telegram_heartbeat_path": "data/telegram_listener_heartbeat.json",
+  "launch_agents_directory": "/Users/aadil/Library/LaunchAgents",
+  "runtime_path": "/Users/aadil/.aadil_hr_hunter_runtime",
+  "n8n_database_path": "/Users/aadil/.n8n/database.sqlite",
+  "n8n_read_only_snapshot": {
+    "workflow_id": "L1u2xZkgFpi7KEuv",
+    "active": true,
+    "active_version_id": "20a43f93-ec77-4be4-a727-dc08242f2d6c",
+    "workflow_updated_at": "2026-08-24 02:37:53.731",
+    "nodes_sha256": "6ed8aafd9994d1aa0a254712781927b1c3c718212ba9f6b3aa919a2695fbdccf",
+    "connections_sha256": "e937dc4de8292abd1d563b71e9e5cf847db2a8189c6f15eb62a5ca9aebd38f6c",
+    "database_quick_check": "ok",
+    "checked_at": "2026-08-24T04:20:00Z",
+    "mutation_allowed": true,
+    "baseline_role": "pre_unfreeze_immutable_reference",
+    "baseline_preserved": true
+  },
+  "n8n_change_control": {
+    "schema_version": 1,
+    "mode": "controlled_mutation",
+    "mutation_allowed": true,
+    "workflow_id": "L1u2xZkgFpi7KEuv",
+    "pre_unfreeze_active_version_id": "20a43f93-ec77-4be4-a727-dc08242f2d6c",
+    "pre_unfreeze_nodes_sha256": "6ed8aafd9994d1aa0a254712781927b1c3c718212ba9f6b3aa919a2695fbdccf",
+    "pre_unfreeze_connections_sha256": "e937dc4de8292abd1d563b71e9e5cf847db2a8189c6f15eb62a5ca9aebd38f6c",
+    "unfrozen_at": "2026-08-24T19:09:13.180254+00:00",
+    "rollback_directory": "/Users/aadil/Aadil-HR-Hunter/rollback/n8n_controlled_unfreeze_v12_20260824_150907",
+    "guardrails": {
+      "require_zero_running_executions_before_mutation": true,
+      "require_zero_open_hunter_dispatches_before_structural_mutation": true,
+      "require_prechange_backup": true,
+      "preserve_workflow_id": true,
+      "preserve_callback_contract": true,
+      "preserve_credentials_unless_explicitly_authorized": true,
+      "one_bounded_mutation_tranche_at_a_time": true
+    }
+  }
+}

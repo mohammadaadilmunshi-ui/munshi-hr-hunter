@@ -1,0 +1,107 @@
+# ==============================================================
+# MUNSHI HR HUNTER — CANONICAL SOURCE CONTROL EXCLUSIONS
+# ==============================================================
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+*.crt
+*.cer
+*service-account*.json
+*service_account*.json
+.aadil_hr_hunter_secrets*
+*_secrets.backup
+
+# Python
+.venv/
+.venv*/
+venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Databases / persistent state
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3
+data/
+!data/.gitkeep
+
+# n8n runtime database and state
+.n8n/
+n8n-runtime/
+
+# Runtime / process state
+.runtime/
+run/
+*.pid
+*.lock
+*.sock
+
+# Logs
+logs/
+*.log
+
+# Backups / rollback / quarantine
+backups/
+patch_backups/
+rollback/
+quarantine/
+patch_state/
+patched_exports/
+
+# Generated diagnostics / evidence / reports
+diagnostics/
+evidence/
+reports/
+artifacts/
+tmp/
+temp/
+
+# Browser state
+browser_profiles/
+user_data/
+playwright/.auth/
+storage_state*.json
+cookies*.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build/distribution
+build/
+dist/
+*.egg-info/
+
+# Local Codex scratch state
+.codex/

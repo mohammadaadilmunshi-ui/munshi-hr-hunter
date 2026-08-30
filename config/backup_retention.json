@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "cleanup_roots": [
+    "backups",
+    "patch_backups"
+  ],
+  "protected_paths": [
+    ".env",
+    "app",
+    "config",
+    "data/hunter.db",
+    "rollback",
+    "patch_backups/AADIL_HR_HUNTER_REPAIR_V2_1_20260823_223751/n8n_before.sqlite",
+    "patch_backups/AADIL_HR_HUNTER_REPAIR_V2_1_20260823_223751/hunter_before.sqlite",
+    "patch_backups/opt_us_nationwide_integrity_v1/20260807_010619/n8n_database.sqlite",
+    "patch_backups/opt_us_nationwide_integrity_v1/20260807_010619/hunter.db",
+    "backups/n8n_deep_salvage_v2_5_20260707_230836/recovered_patched_database.sqlite"
+  ],
+  "large_generated_database_extensions": [
+    ".sqlite",
+    ".db",
+    ".sql"
+  ],
+  "minimum_generated_database_bytes": 104857600,
+  "retention_reason": {
+    "patch_backups/AADIL_HR_HUNTER_REPAIR_V2_1_20260823_223751/n8n_before.sqlite": "Newest verified pre-engagement n8n rollback database",
+    "patch_backups/AADIL_HR_HUNTER_REPAIR_V2_1_20260823_223751/hunter_before.sqlite": "Previous Hunter production database",
+    "patch_backups/opt_us_nationwide_integrity_v1/20260807_010619/n8n_database.sqlite": "Previous verified OPT-policy n8n milestone",
+    "patch_backups/opt_us_nationwide_integrity_v1/20260807_010619/hunter.db": "Previous verified OPT-policy Hunter milestone",
+    "backups/n8n_deep_salvage_v2_5_20260707_230836/recovered_patched_database.sqlite": "Known-good n8n recovery milestone",
+    "rollback": "Current compact source, configuration, scheduler, and Hunter DB rollback set"
+  }
+}

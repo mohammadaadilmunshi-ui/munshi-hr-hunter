@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "boards": [
+    {
+      "company_name": "Workday",
+      "provider": "Workday",
+      "tenant": "workday",
+      "site_name": "Workday",
+      "board_url": "https://workday.wd5.myworkdayjobs.com",
+      "careers_url": "https://workday.wd5.myworkdayjobs.com/en-US/Workday",
+      "us_relevance": "high",
+      "enabled": false,
+      "priority_weight": 20,
+      "health_status": "live_verified",
+      "last_job_count": 3,
+      "notes": "2026-08-24 bounded public CXS probe: list plus three details; normalization and exclusive targeting passed with accounting delta zero. Board includes 42 U.S. postings in the observed country facet."
+    },
+    {
+      "company_name": "South Sound 911",
+      "provider": "BambooHR",
+      "tenant": "southsound911",
+      "site_name": null,
+      "board_url": "https://southsound911.bamboohr.com/careers",
+      "careers_url": "https://southsound911.bamboohr.com/careers",
+      "us_relevance": "confirmed",
+      "enabled": false,
+      "priority_weight": 15,
+      "health_status": "live_verified",
+      "last_job_count": 2,
+      "notes": "2026-08-24 bounded public list plus detail probe; Tacoma, Washington locations normalized and exclusive targeting passed with accounting delta zero."
+    }
+  ]
+}

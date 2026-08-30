@@ -1,0 +1,22 @@
+[client]
+showSidebarNavigation = false
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#AD8142"
+backgroundColor = "#F4F1E9"
+secondaryBackgroundColor = "#FBFAF6"
+textColor = "#0C2030"
+linkColor = "#2E5F7B"
+font = "Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+headingFont = "Avenir Next, Inter, -apple-system, sans-serif"
+baseRadius = "medium"
+buttonRadius = "small"
+
+[theme.sidebar]
+primaryColor = "#D1AE72"
+backgroundColor = "#081722"
+secondaryBackgroundColor = "#102838"
+textColor = "#F7F5EF"
+linkColor = "#E7D6B8"

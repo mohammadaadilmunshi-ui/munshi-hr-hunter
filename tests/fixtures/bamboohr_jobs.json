@@ -1,0 +1,32 @@
+{
+  "board": {
+    "company_name": "Fixture Bamboo Employer",
+    "tenant": "fixture",
+    "board_url": "https://fixture.bamboohr.com/careers"
+  },
+  "list": {
+    "result": [
+      {
+        "id": "42",
+        "jobOpeningName": "HR Operations Analyst",
+        "location": {
+          "city": "New York",
+          "state": "NY",
+          "country": "United States"
+        },
+        "department": "People Operations",
+        "employmentStatus": "Full-Time"
+      }
+    ]
+  },
+  "detail": {
+    "result": {
+      "jobOpening": {
+        "id": "42",
+        "jobOpeningName": "HR Operations Analyst",
+        "jobDescription": "Two years of HR experience preferred, but not required.",
+        "datePosted": "2026-08-22"
+      }
+    }
+  }
+}

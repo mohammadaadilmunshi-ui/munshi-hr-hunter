@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "strategy": "randomized_source_runner",
+  "maintenance_mode": false,
+  "source_tick_seconds": 300,
+  "coordinator_interval_seconds": 3600,
+  "allow_overlapping_source_cycles": false,
+  "max_parallel_source_workers": 1,
+  "source_worker_launch_agent": "com.aadil.hr-hunter.randomized-sources",
+  "coordinator_launch_agent": "com.aadil.hr-hunter.unified-hourly",
+  "retired_launch_agents": [
+    "com.aadil.hr-hunter.daily-safe-start",
+    "com.aadil.hr-hunter.enabled-sources-hourly"
+  ]
+}

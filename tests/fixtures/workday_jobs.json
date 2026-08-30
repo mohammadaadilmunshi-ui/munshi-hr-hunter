@@ -1,0 +1,41 @@
+{
+  "board": {
+    "company_name": "Fixture Workday Employer",
+    "tenant": "fixture",
+    "site_name": "Careers",
+    "board_url": "https://fixture.wd5.myworkdayjobs.com",
+    "careers_url": "https://fixture.wd5.myworkdayjobs.com/en-US/Careers"
+  },
+  "list": {
+    "total": 1,
+    "jobPostings": [
+      {
+        "title": "People Analytics Analyst",
+        "externalPath": "/job/Austin-TX/People-Analytics-Analyst_REQ-100",
+        "locationsText": "Austin, TX",
+        "postedOn": "Posted Today",
+        "jobReqId": "REQ-100"
+      }
+    ]
+  },
+  "detail": {
+    "jobPostingInfo": {
+      "title": "People Analytics Analyst",
+      "jobReqId": "REQ-100",
+      "location": "Austin, TX, United States",
+      "country": {
+        "descriptor": "United States of America",
+        "id": "fixture-country"
+      },
+      "jobRequisitionLocation": {
+        "country": {
+          "descriptor": "United States of America",
+          "alpha2Code": "US"
+        }
+      },
+      "timeType": "Full time",
+      "postedOn": "2026-08-23",
+      "jobDescription": "One year of data analysis experience preferred, but not required."
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "settings": {
+    "authorization": {
+      "authorization_mode": "UNCONFIGURED"
+    },
+    "runtime": {
+      "app_mode": "development",
+      "timezone": "UTC",
+      "telegram_enabled": false,
+      "n8n_enabled": false,
+      "real_scrapers_enabled": false
+    },
+    "scoring": {},
+    "targeting": {
+      "schema_version": 1,
+      "target_roles": [],
+      "target_tracks": [],
+      "hard_reject_keywords": [],
+      "company_blacklist": [],
+      "company_watchlist": [],
+      "boosted_keywords": []
+    },
+    "source_run_notifications": {
+      "enabled": true,
+      "terminal_summary_required": true,
+      "apply_to_enabled_sources_only": true,
+      "empty_result_alerts": true,
+      "error_alerts": true,
+      "configuration_warning_alerts": true,
+      "cadence_skip_alerts": false,
+      "disabled_source_alerts": false,
+      "include_filter_reasons": true,
+      "cooldown_minutes": 0,
+      "missed_due_alert_interval_minutes": 30,
+      "notification_style": "one_terminal_card_per_run"
+    }
+  },
+  "locations": [],
+  "sources": []
+}

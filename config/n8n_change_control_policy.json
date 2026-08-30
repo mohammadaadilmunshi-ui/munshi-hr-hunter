@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "mode": "controlled_mutation",
+  "mutation_allowed": true,
+  "canonical_workflow_id": "L1u2xZkgFpi7KEuv",
+  "unfrozen_at": "2026-08-24T19:09:13.180254+00:00",
+  "pre_unfreeze_baseline": {
+    "version_id": "20a43f93-ec77-4be4-a727-dc08242f2d6c",
+    "node_count": 128,
+    "nodes_sha256": "6ed8aafd9994d1aa0a254712781927b1c3c718212ba9f6b3aa919a2695fbdccf",
+    "connections_sha256": "e937dc4de8292abd1d563b71e9e5cf847db2a8189c6f15eb62a5ca9aebd38f6c",
+    "rollback_directory": "/Users/aadil/Aadil-HR-Hunter/rollback/n8n_controlled_unfreeze_v12_20260824_150907"
+  },
+  "rules": [
+    "Do not mutate n8n while canonical executions are running.",
+    "Do not structurally mutate n8n while Hunter downstream dispatches are open.",
+    "Create a verified pre-change snapshot before each bounded mutation tranche.",
+    "Preserve workflow identity, ingress contract, callback contract, and credentials unless explicitly authorized.",
+    "After each tranche, record graph/hash/version differences and run controlled validation.",
+    "Keep the pre-unfreeze baseline immutable as the recovery anchor."
+  ]
+}

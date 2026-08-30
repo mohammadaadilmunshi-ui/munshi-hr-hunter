@@ -1,0 +1,51 @@
+{
+  "version": "google_indeed_jobspy_all_in_one_v2",
+  "scheduler_check_seconds": 300,
+  "sources": {
+    "google": {
+      "source_key": "google_jobs_jobspy",
+      "display_name": "Google Jobs (JobSpy)",
+      "site_name": "google",
+      "phase_minute": 0,
+      "cadence_minutes": 180,
+      "results_per_search_plan": 25,
+      "max_raw_jobs": 100,
+      "hours_old": 168,
+      "backoff_minutes": [
+        180,
+        360,
+        720
+      ]
+    },
+    "indeed": {
+      "source_key": "indeed_jobspy",
+      "display_name": "Indeed (JobSpy)",
+      "site_name": "indeed",
+      "phase_minute": 20,
+      "cadence_minutes": 180,
+      "results_per_search_plan": 20,
+      "max_raw_jobs": 75,
+      "hours_old": 168,
+      "backoff_minutes": [
+        180,
+        360,
+        720
+      ]
+    }
+  },
+  "general_jobspy": {
+    "enabled": true,
+    "sites": [
+      "zip_recruiter"
+    ],
+    "cadence_minutes": 240,
+    "reason": "Google and Indeed are managed independently by this bundle."
+  },
+  "safety": {
+    "max_sources_per_tick": 1,
+    "skip_while_manual_or_n8n_active": true,
+    "no_n8n_calls": true,
+    "no_captcha_solving": true,
+    "no_proxy_rotation": true
+  }
+}
