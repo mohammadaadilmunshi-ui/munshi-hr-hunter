@@ -47,6 +47,12 @@
   "future_topology": {
     "hunter_services_same_pid_namespace": true,
     "dice_requires_playwright_chromium": true,
+    "hunter_supervisor": {
+      "entrypoint": "docker/hunter-entrypoint.sh",
+      "required_lanes": ["fastapi", "streamlit"],
+      "optional_lanes": ["telegram", "discovery-scheduler", "coordinator"],
+      "scheduler_exclusion": "HUNTER_ENABLE_DISCOVERY_SCHEDULER and HUNTER_ENABLE_COORDINATOR must not both be true"
+    },
     "no_postgresql_redis_queue_mode_or_state_migration_in_this_stage": true,
     "secrets_runtime_injected_only": true
   },
