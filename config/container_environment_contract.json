@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "contract_kind": "future_container_environment_source_contract",
+  "project": {
+    "name": "munshi-hr-hunter",
+    "hunter_project_path": "/app/hunter",
+    "hunter_data_path": "/app/hunter/data",
+    "hunter_runtime_path": "/app/hunter/.runtime",
+    "hunter_logs_path": "/app/hunter/logs",
+    "n8n_data_path": "/app/n8n/data",
+    "n8n_logs_path": "/app/n8n/logs"
+  },
+  "environment": {
+    "FASTAPI_HOST": "0.0.0.0",
+    "STREAMLIT_HOST": "0.0.0.0",
+    "FASTAPI_BASE_URL": "http://hunter:8000",
+    "N8N_BASE_URL": "http://n8n:5678",
+    "OLLAMA_BASE_URL": "http://ollama:11434",
+    "DICE_BROWSER_EXECUTABLE": "/usr/bin/chromium",
+    "HR_AGENT_OLLAMA_MODEL": "gemma3:4b",
+    "HR_AGENT_OLLAMA_TIMEOUT_SECONDS": 600,
+    "HR_AGENT_PROCESS_TIMEOUT_SECONDS": 240
+  },
+  "runtime_targets": {
+    "n8n_version": "2.22.5",
+    "python_version": "3.12",
+    "architecture": {
+      "x86_64": "proven",
+      "arm64_linux": "unproven"
+    }
+  },
+  "workflow_policy": {
+    "canonical_n8n_workflow_immutable": true,
+    "generated_deployment_workflow_required": true,
+    "canonical_workflow_must_not_be_overwritten": true
+  },
+  "hr_agent": {
+    "adapter_source_path": "integrations/hr_agent/n8n_hr_score.py",
+    "subprocess_isolation": true,
+    "ollama_required_for_hr_agent_scoring": true,
+    "direct_n8n_ollama_lane": {
+      "OLLAMA_ENABLED": false,
+      "OLLAMA_REQUIRED": false,
+      "meaning": "These flags gate only the optional legacy/direct n8n Ollama lane; they do not disable or satisfy the HR score adapter Ollama dependency."
+    }
+  },
+  "future_topology": {
+    "hunter_services_same_pid_namespace": true,
+    "dice_requires_playwright_chromium": true,
+    "no_postgresql_redis_queue_mode_or_state_migration_in_this_stage": true,
+    "secrets_runtime_injected_only": true
+  },
+  "stage_policy": "Source-only contract; Docker has not started and production state has not migrated."
+}
