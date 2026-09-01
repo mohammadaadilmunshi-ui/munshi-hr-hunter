@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "contract_kind": "netcup_shadow_environment_contract",
+  "target": {
+    "provider": "Netcup",
+    "product": "RS 2000 G12",
+    "os": "Ubuntu 24.04 LTS",
+    "architecture": "x86_64",
+    "minimum_cpu_count": 8,
+    "minimum_memory_mib": 14500,
+    "minimum_disk_gib": 450
+  },
+  "compose": {
+    "base": "compose.yaml",
+    "shadow_layer": "compose.netcup-shadow.yaml",
+    "project_name": "munshi-netcup-shadow",
+    "services": ["hunter", "n8n", "ollama"],
+    "named_volumes": [
+      "hunter_data",
+      "hunter_runtime",
+      "hunter_logs",
+      "n8n_data",
+      "ollama_models"
+    ],
+    "public_ports": [22],
+    "loopback_ports": [5678, 8000, 8501],
+    "forbidden_public_ports": [5678, 8000, 8501, 11434]
+  },
+  "environment": {
+    "FASTAPI_BASE_URL": "http://hunter:8000",
+    "N8N_BASE_URL": "http://n8n:5678",
+    "OLLAMA_BASE_URL": "http://ollama:11434",
+    "HR_AGENT_OLLAMA_MODEL": "gemma3:4b",
+    "DICE_BROWSER_EXECUTABLE": "/usr/bin/chromium",
+    "HUNTER_ENABLE_TELEGRAM": "false",
+    "HUNTER_ENABLE_DISCOVERY_SCHEDULER": "false",
+    "HUNTER_ENABLE_COORDINATOR": "false",
+    "TELEGRAM_ENABLED": "false",
+    "DISCOVERY_ENABLED": "false",
+    "SCHEDULER_ENABLED": "false",
+    "COORDINATOR_ENABLED": "false",
+    "PRODUCTION_CALLBACKS_ENABLED": "false",
+    "CLOUD_SHADOW_MODE": "true",
+    "PRODUCTION_STATE_IMPORTED": "false"
+  },
+  "runtime": {
+    "n8n_version": "2.22.5",
+    "ollama_model": "gemma3:4b",
+    "canonical_workflow_sha256": "501f144f35c5ae514a2c96004763232014ae78fa3a266f33a582f780cb22534f",
+    "generated_workflow_path": "/opt/munshi/runtime/n8n/cloud_shadow_workflow.json"
+  },
+  "safety": {
+    "production_mac_authority": true,
+    "production_mac_mutation_count": 0,
+    "production_state_import_allowed": false,
+    "production_credentials_allowed": false,
+    "public_dashboards_allowed": false,
+    "dns_changes_allowed": false,
+    "cutover_allowed": false,
+    "service_communication": "docker_dns_only",
+    "initial_admin_access": "ssh_tunnels"
+  }
+}

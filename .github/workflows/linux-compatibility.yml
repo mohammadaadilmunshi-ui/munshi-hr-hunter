@@ -29,9 +29,13 @@ jobs:
         run: python scripts/validate_container_environment_contract.py
       - name: Validate n8n portability contract
         run: python scripts/validate_n8n_portability.py
+      - name: Validate Netcup shadow contract
+        run: python scripts/validate_netcup_shadow.py
       - name: Audit Linux compatibility
         run: python scripts/audit_linux_compatibility.py
       - name: Run focused portability tests
-        run: python -m pytest tests/test_platform_config.py tests/test_linux_compatibility.py tests/test_container_environment_contract.py tests/test_hr_agent_portability.py tests/test_n8n_deployment_renderer.py
+        run: python -m pytest tests/test_platform_config.py tests/test_linux_compatibility.py tests/test_container_environment_contract.py tests/test_hr_agent_portability.py tests/test_n8n_deployment_renderer.py tests/test_netcup_shadow.py
+      - name: Validate Netcup shell syntax
+        run: bash -n scripts/netcup/*.sh
       - name: Import direct third-party dependencies
         run: python -c "import bs4, dotenv, fastapi, httpx, jobspy, pandas, playwright, pycountry, pydantic, requests, streamlit, telegram, uvicorn"

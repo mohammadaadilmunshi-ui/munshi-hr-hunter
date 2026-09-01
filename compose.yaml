@@ -25,8 +25,8 @@ services:
       - hunter_runtime:/app/hunter/.runtime
       - hunter_logs:/app/hunter/logs
     ports:
-      - "127.0.0.1:8000:8000"
-      - "127.0.0.1:8501:8501"
+      - "${HUNTER_FASTAPI_PORT_MAPPING:-127.0.0.1:8000:8000}"
+      - "${HUNTER_STREAMLIT_PORT_MAPPING:-127.0.0.1:8501:8501}"
     networks: [application]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
@@ -46,7 +46,7 @@ services:
     volumes:
       - n8n_data:/home/node/.n8n
     ports:
-      - "127.0.0.1:5678:5678"
+      - "${N8N_PORT_MAPPING:-127.0.0.1:5678:5678}"
     networks: [application]
     healthcheck:
       test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:5678/healthz || exit 1"]

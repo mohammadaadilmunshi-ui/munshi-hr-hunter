@@ -1,0 +1,55 @@
+services:
+  hunter:
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      FASTAPI_BASE_URL: http://hunter:8000
+      N8N_BASE_URL: http://n8n:5678
+      OLLAMA_BASE_URL: http://ollama:11434
+      HUNTER_ENABLE_TELEGRAM: "false"
+      HUNTER_ENABLE_DISCOVERY_SCHEDULER: "false"
+      HUNTER_ENABLE_COORDINATOR: "false"
+      TELEGRAM_ENABLED: "false"
+      DISCOVERY_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      COORDINATOR_ENABLED: "false"
+      PRODUCTION_CALLBACKS_ENABLED: "false"
+      CLOUD_SHADOW_MODE: "true"
+      PRODUCTION_STATE_IMPORTED: "false"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  n8n:
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      CLOUD_SHADOW_MODE: "true"
+      PRODUCTION_CALLBACKS_ENABLED: "false"
+      PRODUCTION_STATE_IMPORTED: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+  ollama:
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      OLLAMA_KEEP_ALIVE: 10m
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"

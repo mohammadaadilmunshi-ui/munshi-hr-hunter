@@ -45,7 +45,7 @@ def validate(root: Path = ROOT) -> list[str]:
         "HR model": "HR_AGENT_OLLAMA_MODEL: ${HR_AGENT_OLLAMA_MODEL:-gemma3:4b}" in compose,
         "HR timeouts": "HR_AGENT_OLLAMA_TIMEOUT_SECONDS: ${HR_AGENT_OLLAMA_TIMEOUT_SECONDS:-600}" in compose and "HR_AGENT_PROCESS_TIMEOUT_SECONDS: ${HR_AGENT_PROCESS_TIMEOUT_SECONDS:-240}" in compose,
         "no Ollama build pull": not re.search(r"(?im)^(RUN|CMD|ENTRYPOINT).*ollama\s+(pull|run)", dockerfile),
-        "loopback ports": all(port in compose for port in ('127.0.0.1:8000:8000', '127.0.0.1:8501:8501', '127.0.0.1:5678:5678')),
+        "loopback port defaults": all(port in compose for port in ('HUNTER_FASTAPI_PORT_MAPPING:-127.0.0.1:8000:8000', 'HUNTER_STREAMLIT_PORT_MAPPING:-127.0.0.1:8501:8501', 'N8N_PORT_MAPPING:-127.0.0.1:5678:5678')),
         "no public Ollama port": "ports:" not in compose.split("  ollama:", 1)[1].split("\nnetworks:", 1)[0],
         "named volumes": all(f"  {volume}:" in compose for volume in ("hunter_data", "hunter_runtime", "hunter_logs", "n8n_data", "ollama_models")),
     }
