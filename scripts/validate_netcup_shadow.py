@@ -40,6 +40,7 @@ REQUIRED_FILES = (
     "docs/cloud/STAGE8B_NETCUP_PREPARATION.md",
     "docs/cloud/STAGE8B_NETCUP_BOOTSTRAP.md",
     "docs/cloud/STAGE8B_NETCUP_BACKUP_DESIGN.md",
+    "docs/cloud/STAGE8B_WAITING_FOR_NETCUP.md",
     "docs/cloud/STAGE9_NETCUP_SHADOW_PARITY.md",
     "docs/cloud/STAGE9_NETCUP_ENDURANCE.md",
     "docs/cloud/STAGE10_STATE_MIGRATION_PLAN.md",
