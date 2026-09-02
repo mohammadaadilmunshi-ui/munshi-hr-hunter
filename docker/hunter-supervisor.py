@@ -14,6 +14,25 @@ def enabled(name: str) -> bool:
     return os.getenv(name, "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def coordinator_command(python: str) -> list[str]:
+    mode = os.getenv("HUNTER_COORDINATOR_MODE", "production").strip().lower()
+    if mode not in {"test", "production"}:
+        raise SystemExit("HUNTER_COORDINATOR_MODE must be test or production.")
+    timeout = max(60, int(os.getenv("HUNTER_COORDINATOR_WORKER_TIMEOUT", "420")))
+    command = [
+        python,
+        "-m",
+        "app.unified_hourly_coordinator",
+        "--mode",
+        mode,
+        "--worker-timeout",
+        str(timeout),
+    ]
+    if enabled("HUNTER_COORDINATOR_SKIP_WORKERS"):
+        command.append("--skip-workers")
+    return command
+
+
 @dataclass
 class Lane:
     name: str
@@ -69,12 +88,10 @@ def main() -> int:
         children.append(Lane("telegram", [python, "-m", "app.telegram_listener"]))
     discovery = enabled("HUNTER_ENABLE_DISCOVERY_SCHEDULER")
     coordinator = enabled("HUNTER_ENABLE_COORDINATOR")
-    if discovery and coordinator:
-        raise SystemExit("Enable only one Hunter discovery scheduler lane at a time.")
     if discovery:
         children.append(Lane("discovery-scheduler", [python, "-m", "app.randomized_source_runner", "--scheduled"], repeat=True, interval=max(30, int(os.getenv("HUNTER_DISCOVERY_INTERVAL_SECONDS", "3600")))))
     if coordinator:
-        children.append(Lane("coordinator", [python, "-m", "app.unified_hourly_coordinator"], repeat=True, interval=max(30, int(os.getenv("HUNTER_COORDINATOR_INTERVAL_SECONDS", "3600")))))
+        children.append(Lane("coordinator", coordinator_command(python), repeat=True, interval=max(30, int(os.getenv("HUNTER_COORDINATOR_INTERVAL_SECONDS", "3600")))))
 
     signal.signal(signal.SIGTERM, terminate_children)
     signal.signal(signal.SIGINT, terminate_children)
