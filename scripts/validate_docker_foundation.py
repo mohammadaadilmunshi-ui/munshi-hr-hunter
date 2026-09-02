@@ -37,6 +37,10 @@ def validate(root: Path = ROOT) -> list[str]:
             errors.append(f"missing Compose service: {service[:-1]}")
     checks = {
         "n8n exact image": "image: n8nio/n8n:2.22.5" in compose,
+        "n8n user-folder parent": (
+            "N8N_USER_FOLDER: /home/node" in compose
+            and "N8N_USER_FOLDER: /home/node/.n8n" not in compose
+        ),
         "Hunter Dockerfile": "dockerfile: Dockerfile" in compose,
         "separate Ollama service": "  ollama:" in compose,
         "no PostgreSQL/Redis": not re.search(r"(?im)^\s*(postgres(?:ql)?|redis):", compose),

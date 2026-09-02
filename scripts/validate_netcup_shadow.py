@@ -188,6 +188,8 @@ def validate(root: Path = ROOT) -> list[str]:
         errors.append("administrative ports must bind only to loopback")
     if re.search(r"(?m)^\s*-\s*[\"']?(?:0\.0\.0\.0:)?11434:", base + override):
         errors.append("Ollama must not have a host port mapping")
+    if "N8N_USER_FOLDER: /home/node" not in base or "N8N_USER_FOLDER: /home/node/.n8n" in base:
+        errors.append("n8n user folder must be the parent of the mounted .n8n state directory")
     if any(token in base + override for token in ("/Users/", "Aadil-HR-Hunter", "~/.n8n")):
         errors.append("Compose contains a forbidden Mac production path")
     if "HUNTER_ENABLE_TELEGRAM" not in supervisor or "HUNTER_ENABLE_DISCOVERY_SCHEDULER" not in supervisor or "HUNTER_ENABLE_COORDINATOR" not in supervisor:

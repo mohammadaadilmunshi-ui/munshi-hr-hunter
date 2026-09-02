@@ -24,5 +24,7 @@ def test_compose_uses_internal_endpoints_and_named_state() -> None:
     assert "OLLAMA_BASE_URL: http://ollama:11434" in compose
     assert "hunter_data:/app/hunter/data" in compose
     assert "n8n_data:/home/node/.n8n" in compose
+    assert "N8N_USER_FOLDER: /home/node" in compose
+    assert "N8N_USER_FOLDER: /home/node/.n8n" not in compose
     assert "HUNTER_FASTAPI_PORT_MAPPING:-127.0.0.1:8000:8000" in compose
     assert "N8N_PORT_MAPPING:-127.0.0.1:5678:5678" in compose

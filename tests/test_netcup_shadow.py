@@ -175,3 +175,22 @@ def test_shadow_verifier_uses_configured_image_reference_and_runtime_arch() -> N
     )
     assert 'exec -T "$service" uname -m </dev/null' in verifier
     assert "docker inspect -f '{{.Image}}' \"$cid\"" not in verifier
+
+def test_endurance_n8n_integrity_uses_consistent_sqlite_online_backup() -> None:
+    watcher = (
+        ROOT / "scripts/netcup/endurance_watch.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "src.backup(dst)" in watcher
+    assert 'src.execute("pragma query_only=ON")' in watcher
+    assert '-v "$n8n_volume:/n8n"' in watcher
+    assert "n8n online_backup_failed" in watcher
+    assert "database.sqlite-wal" not in watcher
+    assert "database.sqlite-shm" not in watcher
+    assert 'docker cp "$n8n_cid:/home/node/.n8n/database.sqlite"' not in watcher
+
+
+def test_netcup_shadow_requires_n8n_user_folder_parent_layout() -> None:
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    assert "N8N_USER_FOLDER: /home/node" in compose
+    assert "N8N_USER_FOLDER: /home/node/.n8n" not in compose

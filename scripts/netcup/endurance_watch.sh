@@ -122,12 +122,22 @@ while (( $(date +%s) < end_epoch )); do
   fi
   n8n_copy="$watch_dir/database.sqlite"
   n8n_cid=$("${compose[@]}" ps -q n8n)
-  docker cp "$n8n_cid:/home/node/.n8n/database.sqlite-wal" "$watch_dir/database.sqlite-wal" >/dev/null 2>&1 || true
-  docker cp "$n8n_cid:/home/node/.n8n/database.sqlite-shm" "$watch_dir/database.sqlite-shm" >/dev/null 2>&1 || true
-  if ! docker cp "$n8n_cid:/home/node/.n8n/database.sqlite" "$n8n_copy" >/dev/null 2>&1 || [[ "$(sqlite3 "$n8n_copy" 'pragma integrity_check;' 2>/dev/null)" != ok ]]; then
-    record_event DATABASE_INTEGRITY_FAILURE n8n
+  n8n_volume=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/home/node/.n8n"}}{{.Name}}{{end}}{{end}}' "$n8n_cid" 2>/dev/null || true)
+  hunter_cid=$("${compose[@]}" ps -q hunter)
+  hunter_image=$(docker inspect -f '{{.Config.Image}}' "$hunter_cid" 2>/dev/null || true)
+  backup_container="munshi-n8n-integrity-$$"
+  rm -f "$n8n_copy"
+
+  if [[ -z "$n8n_volume" || -z "$hunter_image" ]]; then
+    record_event DATABASE_INTEGRITY_FAILURE "n8n snapshot_metadata_unavailable"
+  elif ! timeout 45s docker run --rm     --name "$backup_container"     --network none     --user 0:0     --entrypoint python     -v "$n8n_volume:/n8n"     -v "$watch_dir:/out"     "$hunter_image"     -c 'import sqlite3; src=sqlite3.connect("file:/n8n/database.sqlite?mode=ro", uri=True, timeout=30); src.execute("pragma query_only=ON"); dst=sqlite3.connect("/out/database.sqlite"); src.backup(dst); ok=dst.execute("pragma integrity_check").fetchone()[0]; dst.close(); src.close(); raise SystemExit(0 if ok=="ok" else 1)'     >/dev/null 2>&1
+  then
+    docker rm -f "$backup_container" >/dev/null 2>&1 || true
+    record_event DATABASE_INTEGRITY_FAILURE "n8n online_backup_failed"
+  elif [[ "$(sqlite3 "$n8n_copy" 'pragma integrity_check;' 2>/dev/null)" != ok ]]; then
+    record_event DATABASE_INTEGRITY_FAILURE "n8n backup_integrity_failed"
   fi
-  rm -f "$n8n_copy" "$watch_dir/database.sqlite-wal" "$watch_dir/database.sqlite-shm"
+  rm -f "$n8n_copy"
 
   current_log_bytes=0
   for cid in $("${compose[@]}" ps -q); do
