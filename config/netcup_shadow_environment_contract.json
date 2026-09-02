@@ -1,14 +1,20 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "contract_kind": "netcup_shadow_environment_contract",
   "target": {
     "provider": "Netcup",
     "product": "RS 2000 G12",
+    "provider_cpu_contract": "AMD EPYC 9645, 8 dedicated cores",
+    "provider_storage_contract": "512 GB NVMe SSD",
+    "virtualization": "KVM",
+    "guest_storage_evidence": "capacity and root free space; device name and ROTA are informational only",
     "os": "Ubuntu 24.04 LTS",
     "architecture": "x86_64",
     "minimum_cpu_count": 8,
-    "minimum_memory_mib": 14500,
-    "minimum_disk_gib": 450
+    "minimum_memory_gib": 14.5,
+    "minimum_presented_disk_bytes": 480000000000,
+    "minimum_root_free_bytes": 20000000000,
+    "timezone": "America/New_York"
   },
   "compose": {
     "base": "compose.yaml",

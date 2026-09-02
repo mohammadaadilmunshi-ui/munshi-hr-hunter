@@ -15,6 +15,8 @@
 
 The validator records a machine-readable JSON report under `/opt/munshi/reports`. It returns only `GO_STAGE9_CLOUD_SHADOW` when every required check passes; otherwise it returns `NO_GO_STAGE9_CLOUD_SHADOW`. A passing initial validator is not the final Stage 9 proof until reboot and endurance milestones also pass.
 
+Physical storage performance is a Stage 9 concern. `scripts/netcup/benchmark_host.sh` records block-device metadata and runs a bounded 512 MiB, 30-second `fio` probe after deployment. Results are interpreted as observed guest performance; `/dev/vda`, absence of a guest `nvme*` name, and `ROTA=1` do not contradict Netcup's 512 GB NVMe SSD provider contract under KVM.
+
 Expected final safety fields remain:
 
 ```text

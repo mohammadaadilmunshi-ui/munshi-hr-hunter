@@ -31,6 +31,7 @@ public_key=${public_key:-"$identity.pub"}
 [[ -f "$public_key" ]] || netcup_die "public key does not exist: $public_key"
 netcup_require_command ssh
 netcup_require_command scp
+netcup_require_command python3
 netcup_verify_remote_identity "$host" "$identity" "$ssh_user"
 
 forensic_file=$(mktemp "${TMPDIR:-/tmp}/munshi-netcup-forensic.XXXXXX")
@@ -41,7 +42,7 @@ cp "$public_key" "$key_file"
 chmod 600 "$key_file"
 
 netcup_ssh "$host" "$identity" "$ssh_user" 'set -eu
-printf "FORENSIC_VERSION=1\n"
+printf "FORENSIC_VERSION=2\n"
 printf "UNAME_S=%s\n" "$(uname -s)"
 printf "UNAME_M=%s\n" "$(uname -m)"
 . /etc/os-release
@@ -50,13 +51,16 @@ printf "HOSTNAME=%s\n" "$(hostname -f 2>/dev/null || hostname)"
 printf "CPU_COUNT=%s\n" "$(getconf _NPROCESSORS_ONLN)"
 printf "CPU_MODEL=%s\n" "$(lscpu | awk -F: '\''/Model name/{sub(/^[[:space:]]+/,"",$2); print $2; exit}'\'')"
 printf "MEM_KIB=%s\n" "$(awk '\''/MemTotal/{print $2}'\'' /proc/meminfo)"
-printf "ROOT_DISK_BYTES=%s\n" "$(lsblk -bndo SIZE,TYPE | awk '\''$2=="disk"{if($1>m)m=$1}END{print m+0}'\'')"
-printf "NVME_COUNT=%s\n" "$(lsblk -dno NAME | awk '\''/^nvme/{n++}END{print n+0}'\'')"
+printf "PRESENTED_DISK_BYTES=%s\n" "$(lsblk -bndo SIZE,TYPE | awk '\''$2=="disk"{if($1>m)m=$1}END{print m+0}'\'')"
+printf "ROOT_SOURCE=%s\n" "$(findmnt -nro SOURCE /)"
+printf "ROOT_FSTYPE=%s\n" "$(findmnt -nro FSTYPE /)"
+printf "ROOT_FS_BYTES=%s\n" "$(df -B1 --output=size / | tail -n1 | tr -d '\''[:space:]'\'')"
+printf "ROOT_FREE_BYTES=%s\n" "$(df -B1 --output=avail / | tail -n1 | tr -d '\''[:space:]'\'')"
 printf "SYSTEMD_STATE=%s\n" "$(systemctl is-system-running 2>/dev/null || true)"
 uname -a
 lscpu
 free -h
-lsblk -e7 -o NAME,MODEL,SERIAL,SIZE,TYPE,FSTYPE,MOUNTPOINTS
+lsblk -e7 -b -o NAME,KNAME,PATH,MODEL,SERIAL,SIZE,ROTA,TYPE,FSTYPE,MOUNTPOINTS
 df -hT
 ip -brief addr
 ip route
@@ -67,14 +71,8 @@ if command -v curl >/dev/null 2>&1; then
 fi
 ' | tee "$forensic_file"
 
-value() { sed -n "s/^$1=//p" "$forensic_file" | head -n1; }
-[[ "$(value UNAME_S)" == "Linux" ]] || netcup_die "RESULT: NO_GO_NETCUP_HARDWARE_MISMATCH (not Linux)"
-[[ "$(value UNAME_M)" == "x86_64" ]] || netcup_die "RESULT: NO_GO_NETCUP_HARDWARE_MISMATCH (not x86_64)"
-[[ "$(value OS_ID)" == "ubuntu" && "$(value OS_VERSION_ID)" == "24.04" ]] || netcup_die "unsupported OS; safely reprovision Ubuntu 24.04 LTS x86_64"
-(( $(value CPU_COUNT) >= 8 )) || netcup_die "RESULT: NO_GO_NETCUP_HARDWARE_MISMATCH (fewer than 8 CPUs)"
-(( $(value MEM_KIB) >= 14500000 )) || netcup_die "RESULT: NO_GO_NETCUP_HARDWARE_MISMATCH (less than approximately 16 GB RAM)"
-(( $(value ROOT_DISK_BYTES) >= 480000000000 )) || netcup_die "RESULT: NO_GO_NETCUP_HARDWARE_MISMATCH (disk below expected class)"
-(( $(value NVME_COUNT) >= 1 )) || netcup_die "RESULT: NO_GO_NETCUP_HARDWARE_MISMATCH (no NVMe device presented)"
+python3 "$SCRIPT_DIR/netcup_hardware_gate.py" "$forensic_file" ||
+  netcup_die "pre-mutation Netcup hardware gate failed"
 
 netcup_scp "$host" "$identity" "$ssh_user" "$key_file" /tmp/munshi_netcup_authorized_key.pub
 
@@ -83,6 +81,9 @@ set -euo pipefail
 [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || exit 70
 . /etc/os-release
 [[ "$ID" == ubuntu && "$VERSION_ID" == 24.04 ]] || exit 71
+
+timedatectl set-timezone America/New_York
+[[ "$(timedatectl show -p Timezone --value)" == "America/New_York" ]] || exit 72
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
@@ -165,6 +166,7 @@ report="/opt/munshi/reports/bootstrap_$(date -u +%Y%m%dT%H%M%SZ).txt"
   printf 'os=%s\n' "$PRETTY_NAME"
   printf 'cpu_count=%s\n' "$(nproc)"
   printf 'cpu_model=%s\n' "$(lscpu | awk -F: '/Model name/{sub(/^[[:space:]]+/,"",$2); print $2; exit}')"
+  printf 'timezone=%s\n' "$(timedatectl show -p Timezone --value)"
   printf 'docker=%s\n' "$(docker --version)"
   printf 'compose=%s\n' "$(docker compose version)"
   printf 'firewall=%s\n' "$(ufw status | head -n1)"

@@ -25,6 +25,7 @@ REQUIRED_FILES = (
     "compose.netcup-shadow.yaml",
     "config/netcup_shadow_environment_contract.json",
     "scripts/netcup/_common.sh",
+    "scripts/netcup/netcup_hardware_gate.py",
     "scripts/netcup/bootstrap_netcup_host.sh",
     "scripts/netcup/deploy_shadow.sh",
     "scripts/netcup/verify_shadow.sh",
@@ -137,9 +138,32 @@ def validate(root: Path = ROOT) -> list[str]:
     verify = (root / "scripts/netcup/verify_shadow.sh").read_text(encoding="utf-8")
     endurance = (root / "scripts/netcup/endurance_watch.sh").read_text(encoding="utf-8")
     operator = (root / "scripts/netcup/run_stage8b_stage9.sh").read_text(encoding="utf-8")
-    for token in ("Ubuntu", "x86_64", "CPU_COUNT", "MEM_KIB", "NVME_COUNT", "ufw", "unattended-upgrades", "docker-ce", "/opt/munshi"):
+    for token in ("x86_64", "CPU_COUNT", "MEM_KIB", "PRESENTED_DISK_BYTES", "ROOT_FREE_BYTES", "ROTA", "netcup_hardware_gate.py", "timedatectl set-timezone America/New_York", "timedatectl show -p Timezone --value", "ufw", "unattended-upgrades", "docker-ce", "/opt/munshi"):
         if token not in bootstrap:
             errors.append(f"bootstrap is missing safety/capability token: {token}")
+    if "NVME_COUNT" in bootstrap or "no NVMe device presented" in bootstrap:
+        errors.append("bootstrap must not require an NVMe-named guest device")
+    target = contract.get("target", {})
+    expected_target = {
+        "provider_cpu_contract": "AMD EPYC 9645, 8 dedicated cores",
+        "provider_storage_contract": "512 GB NVMe SSD",
+        "virtualization": "KVM",
+        "minimum_memory_gib": 14.5,
+        "minimum_presented_disk_bytes": 480000000000,
+        "minimum_root_free_bytes": 20000000000,
+        "timezone": "America/New_York",
+    }
+    for key, expected in expected_target.items():
+        if target.get(key) != expected:
+            errors.append(f"Netcup target contract must set {key}={expected}")
+    benchmark = (root / "scripts/netcup/benchmark_host.sh").read_text(encoding="utf-8")
+    for token in ("fio_512MiB_bounded", "--size=512M", "--runtime=30"):
+        if token not in benchmark:
+            errors.append(f"Stage 9 benchmark is missing bounded storage evidence: {token}")
+    hardware_gate = (root / "scripts/netcup/netcup_hardware_gate.py").read_text(encoding="utf-8")
+    for token in ("Ubuntu 24.04", "AMD_EPYC", "MIN_MEMORY_KIB = 15_204_352", "MIN_PRESENTED_DISK_BYTES = 480_000_000_000", "MIN_ROOT_FREE_BYTES = 20_000_000_000", "PASS_VIRTUAL_BLOCK_CAPACITY"):
+        if token not in hardware_gate:
+            errors.append(f"hardware gate is missing required classification evidence: {token}")
     for token in ("git clone", "git -C", "render_n8n_deployment_workflow.py", "gemma3:4b", "PRODUCTION_STATE_IMPORTED=false", "HUNTER_ENABLE_TELEGRAM=false"):
         if token not in deploy:
             errors.append(f"deployment is missing required behavior: {token}")

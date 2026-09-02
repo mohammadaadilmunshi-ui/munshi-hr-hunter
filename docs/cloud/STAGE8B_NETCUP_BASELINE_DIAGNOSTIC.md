@@ -8,7 +8,7 @@
 - Main SHA: `374d9ae2a9a0cb8fa85825803a9c2f25205b8866`
 - Canonical workflow SHA-256: `501f144f35c5ae514a2c96004763232014ae78fa3a266f33a582f780cb22534f`
 - Expected cloud architecture: Linux `x86_64`/`amd64`
-- Expected host: Ubuntu 24.04 LTS, approximately 8 CPUs, 16 GiB RAM, and 512 GB NVMe
+- Expected provider contract: Ubuntu 24.04 LTS guest on RS 2000 G12 KVM, 8 dedicated AMD EPYC 9645 cores, 16 GB RAM, and 512 GB NVMe SSD backing
 - Production Mac mutations: `0`
 
 ## Authority and repository state
@@ -48,7 +48,7 @@ The repository contains Stage 6B Docker foundation source, validators, focused t
 Known cloud risks and remaining blockers are:
 
 - Netcup provisioning, IP address, datacenter, and initial SSH access are not yet supplied.
-- Actual OS, architecture, CPU, RAM, NVMe capacity, filesystem, and network must be forensically verified before remote mutation.
+- Actual OS, architecture, CPU, RAM, presented block capacity, root free space/filesystem, and network must be forensically verified before remote mutation. Guest device naming and `ROTA` are virtual-presentation metadata, not proof of the provider's physical NVMe backing.
 - Long-duration n8n 2.22.5 ARM64 stability is not proven; the intended Netcup runtime is x86_64.
 - `ollama/ollama:latest` is not digest-pinned; the deployed architecture and model must be inspected and recorded.
 - The base Compose layer lacks cloud restart policies, bounded logging, and explicit comprehensive shadow flags.
