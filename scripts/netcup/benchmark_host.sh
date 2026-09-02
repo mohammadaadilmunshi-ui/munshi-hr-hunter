@@ -49,7 +49,7 @@ compose=(docker compose --project-name "$project" --env-file "$env_file" -f comp
   printf '\n[docker_hunter_build_timing]\n'
   /usr/bin/time -f 'elapsed_seconds=%e max_rss_kib=%M' "${compose[@]}" build hunter
   printf '\n[ollama_inference_timing]\n'
-  /usr/bin/time -f 'elapsed_seconds=%e max_rss_kib=%M' "${compose[@]}" exec -T ollama ollama run gemma3:4b 'Reply with exactly BENCHMARK_READY.'
+  /usr/bin/time -f 'elapsed_seconds=%e max_rss_kib=%M' "${compose[@]}" exec -T ollama ollama run gemma3:4b 'Reply with exactly BENCHMARK_READY.' </dev/null
   printf '\n[chromium_startup_timing]\n'
   /usr/bin/time -f 'elapsed_seconds=%e max_rss_kib=%M' "${compose[@]}" exec -T hunter python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(executable_path='/usr/bin/chromium',headless=True,args=['--no-sandbox']); pg=b.new_page(); pg.set_content('<h1>benchmark</h1>'); assert pg.text_content('h1')=='benchmark'; b.close(); p.stop()"
 } 2>&1 | tee "$report"
