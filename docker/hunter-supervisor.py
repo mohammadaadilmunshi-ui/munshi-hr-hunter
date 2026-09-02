@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.request
 from dataclasses import dataclass
 
 
@@ -67,6 +68,24 @@ def start(lane: Lane) -> None:
     print(f"Hunter lane started: {lane.name} (pid={lane.process.pid})", flush=True)
 
 
+def wait_for_fastapi(lane: Lane, timeout_seconds: int = 120) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if lane.process is None or lane.process.poll() is not None:
+            return False
+        try:
+            response = urllib.request.urlopen(
+                "http://127.0.0.1:8000/health",
+                timeout=2,
+            )
+            if response.status == 200:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
 def stop_all() -> None:
     for lane in children:
         process = lane.process
@@ -97,6 +116,9 @@ def main() -> int:
     signal.signal(signal.SIGINT, terminate_children)
     for lane in children:
         start(lane)
+        if lane.name == "fastapi" and not wait_for_fastapi(lane):
+            print("FastAPI did not become ready before writer lanes.", file=sys.stderr, flush=True)
+            return 1
 
     try:
         while not stopping:
