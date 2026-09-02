@@ -2,14 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from app import database
 from scripts.netcup.netcup_hardware_gate import (
     classify_hardware,
     parse_forensic_report,
 )
-from scripts.validate_netcup_shadow import CANONICAL_SHA256, validate
+from scripts.validate_netcup_shadow import (
+    CANONICAL_SHA256,
+    OPERATOR_PORTABILITY_PATTERNS,
+    validate,
+    validate_netcup_operator_portability,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,6 +37,78 @@ def test_example_contains_placeholders_only() -> None:
     assert "REPLACE_WITH_SYNTHETIC_SHADOW_KEY" in example
     assert "TELEGRAM_ENABLED=false" in example
     assert "PRODUCTION_STATE_IMPORTED=false" in example
+
+
+def test_netcup_operator_shell_is_macos_bash_32_portable() -> None:
+    assert validate_netcup_operator_portability(ROOT) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        "lower=${host,,}",
+        "upper=${host^^}",
+        "declare -A values",
+        "mapfile -t values < input",
+        "readarray -t values < input",
+    ),
+)
+def test_operator_portability_patterns_reject_known_bash_4_constructs(
+    source: str,
+) -> None:
+    assert any(pattern.search(source) for pattern, _ in OPERATOR_PORTABILITY_PATTERNS)
+
+
+def test_host_validation_is_case_insensitive_under_macos_bash_32() -> None:
+    common = ROOT / "scripts/netcup/_common.sh"
+    rejected = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            'source "$1"; netcup_validate_host LOCALHOST',
+            "netcup-host-validation",
+            str(common),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rejected.returncode == 1
+    assert "refusing localhost" in rejected.stderr
+    assert "bad substitution" not in rejected.stderr
+
+    accepted = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            'source "$1"; netcup_validate_host Example.COM',
+            "netcup-host-validation",
+            str(common),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+
+
+def test_shared_checksum_helper_has_a_macos_compatible_path() -> None:
+    common = ROOT / "scripts/netcup/_common.sh"
+    completed = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            'PATH=/usr/bin:/bin; source "$1"; netcup_canonical_sha "$2"',
+            "netcup-checksum",
+            str(common),
+            str(ROOT),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == CANONICAL_SHA256
 
 
 def test_real_netcup_vda_rota1_fixture_passes_storage_classification() -> None:

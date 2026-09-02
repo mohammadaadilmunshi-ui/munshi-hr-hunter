@@ -48,6 +48,72 @@ REQUIRED_FILES = (
     "docs/cloud/STAGE12_CONTROLLED_CUTOVER_PLAN.md",
 )
 
+NETCUP_OPERATOR_SHELL_SCRIPTS = (
+    "_common.sh",
+    "bootstrap_netcup_host.sh",
+    "classify_failure.sh",
+    "deploy_shadow.sh",
+    "local_preapproval_validate.sh",
+    "reboot_proof.sh",
+    "run_stage8b_stage9.sh",
+)
+NETCUP_REMOTE_ONLY_SHELL_SCRIPTS = (
+    "benchmark_host.sh",
+    "endurance_report.sh",
+    "endurance_watch.sh",
+    "verify_shadow.sh",
+)
+OPERATOR_PORTABILITY_PATTERNS = (
+    (re.compile(r"\$\{[^}\n]*(?:,,|\^\^)[^}\n]*\}"), "Bash 4 case-conversion expansion"),
+    (re.compile(r"\$\{[^}\n]*@[A-Za-z][^}\n]*\}"), "Bash 4 parameter transformation"),
+    (re.compile(r"(?m)^\s*(?:builtin\s+)?declare\s+-[A-Za-z]*A[A-Za-z]*(?:\s|$)"), "Bash 4 associative array"),
+    (re.compile(r"(?m)(?:^|[;&|]\s*)(?:mapfile|readarray|coproc)(?:\s|$)"), "Bash 4 builtin"),
+    (re.compile(r"(?m)(?:^|[;&|]\s*)wait\s+-n(?:\s|$)"), "Bash 4 wait -n"),
+    (re.compile(r"(?m)^\s*shopt\s+-s\s+[^\n]*\bglobstar\b"), "Bash 4 globstar"),
+    (re.compile(r"(?:&>>|\|&)"), "Bash 4 redirection or pipeline operator"),
+    (re.compile(r"\bread\s+-[A-Za-z]*[Ni][A-Za-z]*(?:\s|$)"), "Bash 4 read option"),
+    (re.compile(r"\b(?:stat\s+-c|readlink\s+-f|date\s+-d|sed\s+-r|grep\s+-P|timeout(?:\s|$)|/usr/bin/time\s+-f)"), "GNU-only command option"),
+)
+
+
+def _local_operator_source(source: str) -> str:
+    """Remove explicitly delimited Ubuntu-only heredoc bodies from a wrapper."""
+    local_lines: list[str] = []
+    in_remote_heredoc = False
+    for line in source.splitlines(keepends=True):
+        if not in_remote_heredoc and "<<'REMOTE'" in line:
+            in_remote_heredoc = True
+            local_lines.append(line)
+        elif in_remote_heredoc and line.rstrip("\r\n") == "REMOTE":
+            in_remote_heredoc = False
+            local_lines.append(line)
+        elif not in_remote_heredoc:
+            local_lines.append(line)
+    return "".join(local_lines)
+
+
+def validate_netcup_operator_portability(root: Path = ROOT) -> list[str]:
+    errors: list[str] = []
+    script_dir = root / "scripts/netcup"
+    actual_scripts = {path.name for path in script_dir.glob("*.sh")}
+    classified_scripts = set(NETCUP_OPERATOR_SHELL_SCRIPTS) | set(
+        NETCUP_REMOTE_ONLY_SHELL_SCRIPTS
+    )
+    for name in sorted(actual_scripts - classified_scripts):
+        errors.append(f"Netcup shell script lacks local/remote classification: {name}")
+    for name in sorted(classified_scripts - actual_scripts):
+        errors.append(f"classified Netcup shell script is missing: {name}")
+
+    for name in NETCUP_OPERATOR_SHELL_SCRIPTS:
+        path = script_dir / name
+        if not path.is_file():
+            continue
+        source = _local_operator_source(path.read_text(encoding="utf-8"))
+        for pattern, label in OPERATOR_PORTABILITY_PATTERNS:
+            if pattern.search(source):
+                errors.append(f"{name} uses unsupported macOS Bash 3.2 construct: {label}")
+    return errors
+
 
 def parse_example_env(path: Path) -> dict[str, str]:
     result: dict[str, str] = {}
@@ -77,6 +143,7 @@ def validate(root: Path = ROOT) -> list[str]:
             errors.append(f"missing {label}: {path.relative_to(root)}")
     if errors:
         return errors
+    errors.extend(validate_netcup_operator_portability(root))
 
     contract = json.loads(paths["contract"].read_text(encoding="utf-8"))
     example = parse_example_env(paths["environment example"])

@@ -17,9 +17,11 @@ netcup_require_command() {
 
 netcup_validate_host() {
   local host=${1:-}
+  local host_lower
   [[ -n "$host" ]] || netcup_die "an explicit Netcup host is required"
   [[ "$host" =~ ^[A-Za-z0-9._:-]+$ ]] || netcup_die "host contains unsafe characters"
-  case "${host,,}" in
+  host_lower=$(printf '%s' "$host" | LC_ALL=C tr '[:upper:]' '[:lower:]')
+  case "$host_lower" in
     localhost|localhost.*|127.*|0.0.0.0|::1|\[::1\]) netcup_die "refusing localhost as a Netcup target" ;;
   esac
   [[ "$host" != *"/Users/"* && "$host" != *"Aadil-HR-Hunter"* ]] || netcup_die "refusing a Mac production path"
@@ -54,5 +56,16 @@ netcup_verify_remote_identity() {
 
 netcup_canonical_sha() {
   local root=$1
-  sha256sum "$root/n8n/workflows/canonical_hr_hunter_workflow.json" | awk '{print $1}'
+  netcup_sha256_file "$root/n8n/workflows/canonical_hr_hunter_workflow.json"
+}
+
+netcup_sha256_file() {
+  local path=$1
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+  else
+    netcup_die "required SHA-256 utility is unavailable (sha256sum or shasum)"
+  fi
 }
