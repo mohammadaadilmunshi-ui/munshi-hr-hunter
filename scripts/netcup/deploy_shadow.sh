@@ -86,7 +86,7 @@ compose=(docker compose --project-name "$project" --env-file "$env_file" -f comp
 "${compose[@]}" pull n8n ollama
 "${compose[@]}" build --pull hunter
 "${compose[@]}" up -d hunter n8n ollama
-"${compose[@]}" exec -T ollama ollama pull gemma3:4b
+"${compose[@]}" exec -T ollama ollama pull gemma3:4b </dev/null
 
 commit=$(git rev-parse HEAD)
 report="$root/reports/deployment_$(date -u +%Y%m%dT%H%M%SZ).json"
