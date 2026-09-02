@@ -39,3 +39,11 @@ def test_fastapi_readiness_gate_precedes_writer_lanes(monkeypatch) -> None:
     lane.process = Process()
     monkeypatch.setattr(module["urllib"].request, "urlopen", lambda *_args, **_kwargs: Response())
     assert module["wait_for_fastapi"](lane, timeout_seconds=1) is True
+
+
+def test_repeating_lane_tracks_independent_restart_deadline() -> None:
+    module = runpy.run_path(str(ROOT / "docker" / "hunter-supervisor.py"))
+    lane = module["Lane"]("discovery", ["python"], repeat=True, interval=300)
+    assert lane.next_start_at is None
+    lane.next_start_at = 123.0
+    assert lane.next_start_at == 123.0

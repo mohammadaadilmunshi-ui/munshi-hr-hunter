@@ -42,6 +42,7 @@ class Lane:
     repeat: bool = False
     interval: int = 3600
     process: subprocess.Popen[str] | None = None
+    next_start_at: float | None = None
 
 
 children: list[Lane] = []
@@ -65,6 +66,7 @@ def start(lane: Lane) -> None:
         cwd="/app/hunter",
         start_new_session=True,
     )
+    lane.next_start_at = None
     print(f"Hunter lane started: {lane.name} (pid={lane.process.pid})", flush=True)
 
 
@@ -123,13 +125,22 @@ def main() -> int:
     try:
         while not stopping:
             for lane in children:
-                if lane.process is None or lane.process.poll() is None:
+                if lane.process is None:
+                    if lane.repeat and lane.next_start_at is not None and time.monotonic() >= lane.next_start_at:
+                        start(lane)
+                    continue
+                if lane.process.poll() is None:
                     continue
                 code = lane.process.returncode
-                if lane.repeat and not stopping and code == 0:
-                    time.sleep(lane.interval)
-                    if not stopping:
-                        start(lane)
+                if lane.repeat and not stopping:
+                    outcome = "completed" if code == 0 else "failed"
+                    lane.process = None
+                    lane.next_start_at = time.monotonic() + lane.interval
+                    print(
+                        f"Hunter repeating lane {outcome}: {lane.name} ({code}); "
+                        f"retry in {lane.interval}s",
+                        flush=True,
+                    )
                     continue
                 if not stopping and lane.required:
                     print(f"Required Hunter lane exited: {lane.name} ({code})", file=sys.stderr, flush=True)
