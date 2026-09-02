@@ -162,3 +162,16 @@ def test_fresh_database_has_portable_runtime_relations(tmp_path: Path, monkeypat
         ).fetchone()[0] >= 0
     finally:
         connection.close()
+
+def test_shadow_verifier_uses_configured_image_reference_and_runtime_arch() -> None:
+    verifier = (
+        ROOT / "scripts/netcup/verify_shadow.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "docker inspect -f '{{.Config.Image}}' \"$cid\"" in verifier
+    assert (
+        "docker image inspect -f '{{.Architecture}}' \"$image_ref\""
+        in verifier
+    )
+    assert 'exec -T "$service" uname -m </dev/null' in verifier
+    assert "docker inspect -f '{{.Image}}' \"$cid\"" not in verifier

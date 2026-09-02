@@ -69,8 +69,11 @@ for service in hunter n8n ollama; do
   if [[ -z "$cid" ]]; then fail "$service container exists"; continue; fi
   [[ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" == true ]] && pass "$service running" || fail "$service running"
   [[ "$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$cid" 2>/dev/null)" == unless-stopped ]] && pass "$service restart policy" || fail "$service restart policy"
-  image=$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null)
-  [[ "$(docker image inspect -f '{{.Architecture}}' "$image" 2>/dev/null)" == amd64 ]] && pass "$service image is amd64" || fail "$service image is amd64"
+  image_ref=$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null)
+  image_arch=$(docker image inspect -f '{{.Architecture}}' "$image_ref" 2>/dev/null || true)
+  [[ "$image_arch" == amd64 ]] && pass "$service image is amd64" || fail "$service image is amd64"
+  runtime_arch=$("${compose[@]}" exec -T "$service" uname -m </dev/null 2>/dev/null | tr -d '\r\n' || true)
+  [[ "$runtime_arch" == x86_64 ]] && pass "$service runtime is x86_64" || fail "$service runtime is x86_64"
 done
 
 inspect_json=$(mktemp "${TMPDIR:-/tmp}/munshi-inspect.XXXXXX")
