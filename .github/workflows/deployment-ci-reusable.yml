@@ -52,8 +52,8 @@ jobs:
 
       - name: Validate deployment shell
         run: |
-          bash -n scripts/netcup/deploy_production_release.sh
-          bash -n scripts/netcup/verify_production_runtime_contract.sh
+          bash -n deploy/netcup/deploy_production_release.sh
+          bash -n deploy/netcup/verify_production_runtime_contract.sh
 
       - name: Build production Hunter image
         run: docker build --tag munshi-hunter:deployment-ci .
