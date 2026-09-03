@@ -4,6 +4,24 @@ from pathlib import Path
 from typing import Any
 
 from app.database import get_setting
+from app.platform_config import (
+    database_path,
+    endpoint_url,
+    fastapi_endpoint,
+    is_macos,
+    logs_directory,
+    n8n_database_path as portable_n8n_database_path,
+    n8n_endpoint,
+    n8n_user_directory,
+    ollama_endpoint,
+    ollama_enabled,
+    ollama_required,
+    platform_mode,
+    project_root,
+    runtime_directory,
+    scheduler_backend,
+    streamlit_endpoint,
+)
 
 
 def integration_health() -> dict[str, Any]:
@@ -45,8 +63,9 @@ def telegram_batch_limit(requested: int | None = None) -> int:
 def n8n_database_path() -> Path:
     configured = str(integration_health().get("n8n_database_path") or "").strip()
     if not configured:
-        raise RuntimeError("n8n_database_path is not configured in canonical integration health state.")
-    return Path(configured).expanduser()
+        return portable_n8n_database_path()
+    path = Path(configured).expanduser()
+    return path if path.is_absolute() else project_root() / path
 
 
 def n8n_workflow_id() -> str:
@@ -66,6 +85,10 @@ def downstream_int(key: str, *, minimum: int = 0) -> int:
 
 
 def service_endpoint(name: str) -> tuple[str, int]:
+    portable = {"fastapi": fastapi_endpoint, "streamlit": streamlit_endpoint, "n8n": n8n_endpoint}
+    if name in portable:
+        endpoint = portable[name]()
+        return endpoint.host, endpoint.port
     services = integration_health().get("services") or {}
     service = services.get(name) if isinstance(services, dict) else None
     if not isinstance(service, dict):
@@ -81,7 +104,18 @@ def service_endpoint(name: str) -> tuple[str, int]:
 
 
 def launch_agent_plist(label: str) -> Path:
+    if not is_macos():
+        raise RuntimeError("LaunchAgents are only available on macOS; use an external process manager.")
     directory = str(integration_health().get("launch_agents_directory") or "").strip()
     if not directory:
-        raise RuntimeError("launch_agents_directory is not configured.")
+        directory = str(Path.home() / "Library" / "LaunchAgents")
     return Path(directory).expanduser() / f"{label}.plist"
+
+
+__all__ = [
+    "database_path", "endpoint_url", "logs_directory", "n8n_database_path",
+    "n8n_endpoint", "n8n_user_directory", "ollama_endpoint", "ollama_enabled",
+    "ollama_required", "platform_mode", "project_root", "runtime_directory",
+    "scheduler_backend", "service_endpoint", "streamlit_endpoint", "fastapi_endpoint",
+    "launch_agent_plist",
+]

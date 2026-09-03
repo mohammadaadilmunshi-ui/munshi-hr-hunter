@@ -1,0 +1,77 @@
+services:
+  hunter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      FASTAPI_HOST: 0.0.0.0
+      STREAMLIT_HOST: 0.0.0.0
+      FASTAPI_BASE_URL: http://hunter:8000
+      N8N_BASE_URL: http://n8n:5678
+      OLLAMA_BASE_URL: http://ollama:11434
+      HR_AGENT_OLLAMA_MODEL: ${HR_AGENT_OLLAMA_MODEL:-gemma3:4b}
+      HR_AGENT_OLLAMA_TIMEOUT_SECONDS: ${HR_AGENT_OLLAMA_TIMEOUT_SECONDS:-600}
+      HR_AGENT_PROCESS_TIMEOUT_SECONDS: ${HR_AGENT_PROCESS_TIMEOUT_SECONDS:-240}
+      DICE_BROWSER_EXECUTABLE: /usr/bin/chromium
+      HUNTER_API_SECRET: ${HUNTER_API_SECRET:?Set HUNTER_API_SECRET at runtime}
+      HUNTER_ENABLE_TELEGRAM: ${HUNTER_ENABLE_TELEGRAM:-false}
+      HUNTER_ENABLE_DISCOVERY_SCHEDULER: ${HUNTER_ENABLE_DISCOVERY_SCHEDULER:-false}
+      HUNTER_ENABLE_COORDINATOR: ${HUNTER_ENABLE_COORDINATOR:-false}
+      HUNTER_COORDINATOR_SKIP_WORKERS: ${HUNTER_COORDINATOR_SKIP_WORKERS:-false}
+      HUNTER_COORDINATOR_MODE: ${HUNTER_COORDINATOR_MODE:-production}
+      HUNTER_COORDINATOR_WORKER_TIMEOUT: ${HUNTER_COORDINATOR_WORKER_TIMEOUT:-420}
+      AADIL_HR_HUNTER_PROJECT: /app/hunter
+      AADIL_HR_HUNTER_RUNTIME: /app/hunter/.runtime
+      AADIL_HR_HUNTER_LOGS: /app/hunter/logs
+    volumes:
+      - hunter_data:/app/hunter/data
+      - hunter_runtime:/app/hunter/.runtime
+      - hunter_logs:/app/hunter/logs
+    ports:
+      - "${HUNTER_FASTAPI_PORT_MAPPING:-127.0.0.1:8000:8000}"
+      - "${HUNTER_STREAMLIT_PORT_MAPPING:-127.0.0.1:8501:8501}"
+    networks: [application]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  n8n:
+    image: n8nio/n8n:2.22.5
+    environment:
+      N8N_HOST: 0.0.0.0
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_USER_FOLDER: /home/node
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    ports:
+      - "${N8N_PORT_MAPPING:-127.0.0.1:5678:5678}"
+    networks: [application]
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    networks: [application]
+    # Model provisioning is an explicit later parity step; no pull command is run here.
+
+networks:
+  application:
+    driver: bridge
+
+volumes:
+  hunter_data:
+  hunter_runtime:
+  hunter_logs:
+  n8n_data:
+  ollama_models:

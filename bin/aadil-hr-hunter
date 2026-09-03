@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-PROJECT="${AADIL_HR_HUNTER_PROJECT:-$HOME/Aadil-HR-Hunter}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PROJECT="${AADIL_HR_HUNTER_PROJECT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 ACTION="${1:-start}"
 shift || true
 

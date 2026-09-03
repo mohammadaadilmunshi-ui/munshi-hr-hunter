@@ -9,15 +9,13 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from app.platform_config import database_path, project_root
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+
+ROOT_DIR = project_root()
 load_dotenv(ROOT_DIR / ".env")
 
-database_setting = os.getenv("DATABASE_PATH", "data/hunter.db")
-DB_PATH = Path(database_setting)
-
-if not DB_PATH.is_absolute():
-    DB_PATH = ROOT_DIR / DB_PATH
+DB_PATH = database_path()
 
 
 BOOTSTRAP_CONFIG_PATH = ROOT_DIR / "config" / "bootstrap.json"
@@ -451,6 +449,42 @@ CREATE TABLE IF NOT EXISTS storage_metrics (
     reclaimed_bytes INTEGER NOT NULL DEFAULT 0,
     detail_json TEXT NOT NULL DEFAULT '{}'
 );
+
+CREATE TABLE IF NOT EXISTS source_random_schedule (
+    source_name TEXT PRIMARY KEY COLLATE NOCASE,
+    next_run_at TEXT,
+    last_scheduled_at TEXT,
+    last_started_at TEXT,
+    last_completed_at TEXT,
+    base_cadence_minutes INTEGER NOT NULL DEFAULT 60,
+    jitter_minutes INTEGER NOT NULL DEFAULT 0,
+    schedule_reason TEXT NOT NULL DEFAULT 'seeded',
+    schedule_state TEXT NOT NULL DEFAULT 'cooldown',
+    last_worker_status TEXT,
+    last_worker_returncode INTEGER,
+    consecutive_scheduler_failures INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_random_schedule_next_run
+ON source_random_schedule(next_run_at);
+
+CREATE TABLE IF NOT EXISTS telegram_delivery_claims (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL UNIQUE,
+    claim_token TEXT NOT NULL UNIQUE,
+    delivery_state TEXT NOT NULL DEFAULT 'reserved',
+    chat_id TEXT,
+    message_id INTEGER,
+    error_type TEXT,
+    reserved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sent_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_telegram_delivery_claims_state
+ON telegram_delivery_claims(delivery_state, updated_at);
 """
 
 
@@ -472,6 +506,7 @@ def get_connection() -> sqlite3.Connection:
 
 
 JOB_DETAIL_COLUMNS: dict[str, str] = {
+    "added_at": "TEXT",
     "employment_type": "TEXT",
     "hours_per_week": "TEXT",
     "responsibilities": "TEXT",
@@ -556,6 +591,35 @@ def ensure_operational_columns(connection: sqlite3.Connection) -> None:
                     f'ALTER TABLE "{table}" ADD COLUMN "{name}" {ddl}'
                 )
 
+
+def ensure_runtime_truth_view(connection: sqlite3.Connection) -> None:
+    """Expose fresh-volume source runtime state without historical-only setup."""
+    connection.execute(
+        """
+        CREATE VIEW IF NOT EXISTS source_runtime_truth_v1 AS
+        SELECT
+            h.*,
+            s.next_run_at,
+            s.last_scheduled_at,
+            s.last_started_at,
+            s.last_completed_at,
+            COALESCE(s.base_cadence_minutes, h.cadence_minutes) AS base_cadence_minutes,
+            COALESCE(s.jitter_minutes, 0) AS jitter_minutes,
+            COALESCE(s.schedule_reason, 'not_scheduled') AS schedule_reason,
+            COALESCE(
+                s.schedule_state,
+                CASE WHEN h.enabled = 1 THEN 'cooldown' ELSE 'disabled' END
+            ) AS schedule_state,
+            s.last_worker_status,
+            s.last_worker_returncode,
+            COALESCE(s.consecutive_scheduler_failures, 0) AS consecutive_scheduler_failures
+        FROM source_health AS h
+        LEFT JOIN source_random_schedule AS s
+          ON lower(s.source_name) = lower(h.source_name)
+        """
+    )
+
+
 def seed_defaults(connection: sqlite3.Connection) -> None:
     for key, value in DEFAULT_SETTINGS.items():
         connection.execute(
@@ -622,6 +686,12 @@ def initialize_database() -> Path:
         connection.executescript(SCHEMA_SQL)
         ensure_job_detail_columns(connection)
         ensure_operational_columns(connection)
+        ensure_runtime_truth_view(connection)
+        from app.n8n_dispatch import ensure_schema as ensure_n8n_dispatch_schema
+        from app.universal_n8n_progress import ensure_schema as ensure_n8n_progress_schema
+
+        ensure_n8n_dispatch_schema(connection)
+        ensure_n8n_progress_schema(connection)
         seed_defaults(connection)
         connection.commit()
     finally:

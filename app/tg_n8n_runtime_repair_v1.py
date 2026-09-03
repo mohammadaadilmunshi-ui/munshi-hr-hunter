@@ -84,9 +84,9 @@ def load_project_env() -> dict[str, str]:
     return loaded
 
 
-def _port_open(port: int) -> bool:
+def _port_open(port: int, host: str = "127.0.0.1") -> bool:
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=1):
+        with socket.create_connection((host, port), timeout=1):
             return True
     except OSError:
         return False
@@ -105,9 +105,9 @@ def runtime_preflight() -> dict[str, Any]:
     n8n_host, n8n_port = service_endpoint("n8n")
     api_host, api_port = service_endpoint("fastapi")
     state = {
-        "n8n_port": _port_open(n8n_port),
+        "n8n_port": _port_open(n8n_port, n8n_host),
         "n8n_health": _http_status(f"http://{n8n_host}:{n8n_port}/healthz"),
-        "fastapi_port": _port_open(api_port),
+        "fastapi_port": _port_open(api_port, api_host),
         "fastapi_health": _http_status(f"http://{api_host}:{api_port}/health"),
     }
     state["healthy"] = (

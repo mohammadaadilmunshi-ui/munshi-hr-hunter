@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
+
 from app import api, database, telegram_sync
 from app.job_store import save_job
 from app.n8n_dispatch import build_payload, insert_queue_item
@@ -114,6 +117,18 @@ def test_duplicate_callback_is_acknowledged_without_replayed_side_effects(
     assert receipts == 1
     assert results == 1
     assert events == 1
+
+
+def test_explicit_callback_disable_blocks_cloud_mutation(hunter_db, monkeypatch) -> None:
+    monkeypatch.setenv("PRODUCTION_CALLBACKS_ENABLED", "false")
+    payload = api.N8nStatusUpdate(
+        row_id=1,
+        job_fingerprint="blocked-callback",
+        n8n_status="completed",
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        api.n8n_status_update(payload)
+    assert exc_info.value.status_code == 503
 
 
 def test_unavailable_n8n_is_recorded_without_losing_queue_item(hunter_db, monkeypatch) -> None:
