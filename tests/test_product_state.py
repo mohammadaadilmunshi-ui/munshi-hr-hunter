@@ -32,6 +32,22 @@ def test_job_filter_uses_parameters_and_exclusion(hunter_db) -> None:
     assert count == 1 and rows[0]["title"] == "HR Analyst"
 
 
+def test_job_search_scope_is_truthful_and_parameterized(hunter_db) -> None:
+    from app.database import get_connection
+    connection = get_connection()
+    try:
+        job_id = _job(connection, title="Operations Analyst")
+        connection.execute("UPDATE jobs SET company_name='Scope Co', description_raw='needle only in description' WHERE id=?", (job_id,))
+        connection.commit()
+    finally: connection.close()
+    rows, count = fetch_jobs(query="needle", search_scope="title_description", page_size=10)
+    assert count == 1 and rows[0]["title"] == "Operations Analyst"
+    rows, count = fetch_jobs(query="needle", search_scope="title_company", page_size=10)
+    assert count == 0 and rows == []
+    rows, count = fetch_jobs(query="Scope", search_scope="title_company", page_size=10)
+    assert count == 1 and rows[0]["company_name"] == "Scope Co"
+
+
 def test_new_lanes_are_disabled_and_unlimited_is_valid(hunter_db) -> None:
     create_lane("HR lane", {"keywords": "HR"}, 70, "unlimited", None)
     lane = lanes()[0]

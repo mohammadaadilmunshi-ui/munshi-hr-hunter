@@ -12,8 +12,9 @@ from typing import Any
 import streamlit as st
 
 from app.product_state import (
-    candidate_facts, create_lane, fetch_jobs, job_filters, lanes, save_candidate_fact,
-    save_volume_policy, set_job_state, tracker_rows, volume_policy,
+    candidate_facts, create_lane, delete_lane, fetch_jobs, job_filters, lanes,
+    save_candidate_fact, save_volume_policy, set_job_state, set_lane_enabled,
+    tracker_rows, update_lane, volume_policy,
 )
 from app.product_ui import esc, page_intro, pastel_for, safe_link, score_ring
 
@@ -119,12 +120,12 @@ def _job_detail() -> None:
 
 def _search_filters(namespace: str) -> dict[str, Any]:
     values = job_filters()
-    defaults = st.session_state.setdefault(f"{namespace}_filters", {"query": "", "exclude": "", "location": "", "source": "", "workplace": "", "employment_type": "", "minimum_score": 0.0, "saved_only": False})
+    defaults = st.session_state.setdefault(f"{namespace}_filters", {"query": "", "exclude": "", "location": "", "source": "", "workplace": "", "employment_type": "", "minimum_score": 0.0, "saved_only": False, "search_scope": "title_description"})
     with st.form(f"{namespace}_search_form"):
         st.markdown('<div class="search-shell">', unsafe_allow_html=True)
         search_left, search_right = st.columns((.95, 3.5))
         with search_left:
-            st.selectbox("Search scope", ["Title + description", "Title + company"], key=f"{namespace}_scope", label_visibility="collapsed")
+            scope = st.selectbox("Search scope", ["title_description", "title_company"], index=["title_description", "title_company"].index(defaults.get("search_scope", "title_description")), format_func=lambda value: {"title_description": "Title + description", "title_company": "Title + company"}[value], key=f"{namespace}_scope", label_visibility="collapsed")
         with search_right:
             query = st.text_input("Search jobs", value=defaults["query"], placeholder="Search by title, company, or keyword…", label_visibility="collapsed")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -138,7 +139,7 @@ def _search_filters(namespace: str) -> dict[str, Any]:
         saved = st.checkbox("Saved only", value=bool(defaults["saved_only"]))
         submitted = st.form_submit_button("Update results", type="primary")
     if submitted:
-        defaults.update({"query": query, "exclude": exclude, "location": location, "source": source, "workplace": workplace, "employment_type": employment, "minimum_score": minimum, "saved_only": saved})
+        defaults.update({"query": query, "exclude": exclude, "location": location, "source": source, "workplace": workplace, "employment_type": employment, "minimum_score": minimum, "saved_only": saved, "search_scope": scope})
     return defaults
 
 
@@ -194,24 +195,39 @@ def browse_jobs() -> None:
 
 
 def _manual_add() -> None:
-    from app.manual_input import missing_required_fields, parse_manual_job_text
+    from app.manual_input import missing_required_fields, parse_manual_job_text, persist_manual_job
     with st.expander("Add your own job", expanded=True):
-        st.caption("Paste a URL and the full job description. MUNSHI will identify missing structured fields; it will not fabricate them.")
+        st.caption("Paste an application URL and full labeled job text. MUNSHI will show parsed data and missing fields; it will not fabricate them.")
         with st.form("product_manual_analyze"):
             url = st.text_input("Job URL", placeholder="https://careers.example.com/jobs/…")
-            description = st.text_area("Full job description", height=180)
+            description = st.text_area("Full labeled job text", height=220, placeholder="Job Title: ...\nCompany Name: ...\nLocation: ...\nJob Description: ...")
             analyze = st.form_submit_button("Analyze job", type="primary")
         if analyze:
-            raw = f"Application: {url}\nJob Description: {description}"
+            raw = f"Application: {url}\n{description}".strip()
             parsed = parse_manual_job_text(raw)
             missing = missing_required_fields(parsed)
-            st.session_state["manual_analysis"] = {"missing": missing, "fields": parsed.get("fields", {})}
+            st.session_state["manual_analysis"] = {"missing": missing, "fields": parsed.get("fields", {}), "raw": raw}
         result = st.session_state.get("manual_analysis")
         if result:
             if result["missing"]:
                 st.warning("Missing required fields: " + ", ".join(result["missing"]) + ". Add labeled title, company, location, URL, and full job description to continue through the existing canonical manual path.")
             else:
-                st.success("The pasted job contains the required fields. Use the existing monitored manual-input workflow to persist and prepare it; this screen does not start background work automatically.")
+                st.success("The pasted job contains required fields. Review the parsed values, then explicitly confirm persistence through the canonical manual-job store.")
+            st.json(result["fields"])
+            if not result["missing"]:
+                confirmed = st.checkbox("I confirm these parsed fields are accurate and should be persisted.", key="product_manual_confirm")
+                if st.button("Persist job", key="product_manual_persist", type="primary", disabled=not confirmed):
+                    saved = persist_manual_job(result["raw"])
+                    st.session_state["product_manual_saved_job_id"] = saved["job_id"]
+                    st.success(f"Job {saved['job_id']} was persisted through the canonical manual path.")
+            job_id = st.session_state.get("product_manual_saved_job_id")
+            if job_id and st.button("Prepare persisted job", key="product_manual_prepare"):
+                from app.stored_job_n8n_worker import start_stored_job_run
+                prepared = start_stored_job_run(int(job_id), actor="dashboard_product_manual_input")
+                if prepared.get("success"):
+                    st.success(str(prepared.get("message") or "Preparation request processed."))
+                else:
+                    st.warning(str(prepared.get("message") or "Preparation was not started."))
 
 
 def auto_prepare() -> None:
@@ -225,19 +241,38 @@ def auto_prepare() -> None:
         current_lanes = lanes()
         if current_lanes:
             for lane in current_lanes:
-                st.markdown(f"<div class='lane-card'><strong>{esc(lane['name'])}</strong><br><span class='quiet'>{'Enabled' if lane['enabled'] else 'Disabled by default'} · {esc(lane['volume_mode']).replace('_',' ').title()} · minimum score {lane.get('min_score') or 'not set'}</span></div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='lane-card'><strong>{esc(lane['name'])}</strong><br><span class='quiet'>{'Enabled' if lane['enabled'] else 'Disabled'} · minimum score {lane.get('min_score') or 'not set'}</span></div>", unsafe_allow_html=True)
+                controls = st.columns(4)
+                with controls[0]:
+                    if st.button("Disable" if lane["enabled"] else "Enable", key=f"lane_enable_{lane['id']}"):
+                        set_lane_enabled(int(lane["id"]), not bool(lane["enabled"])); st.rerun()
+                with controls[1]:
+                    if st.button("Edit", key=f"lane_edit_{lane['id']}"):
+                        st.session_state["product_edit_lane"] = int(lane["id"]); st.rerun()
+                with controls[2]:
+                    if st.button("Delete", key=f"lane_delete_{lane['id']}"):
+                        delete_lane(int(lane["id"])); st.rerun()
         else:
-            st.info("No saved lanes yet. Create one below; it will remain disabled until an explicit future enable action through canonical automation policy.")
+            st.info("No saved lanes yet. Create one below; it stays disabled until you explicitly enable it.")
         with st.expander("Add a lane", expanded=False):
             with st.form("product_lane_form"):
                 name = st.text_input("Lane name", placeholder="HR operations · Northeast")
                 keywords = st.text_input("Role keywords", placeholder="HR coordinator, people operations")
                 minimum = st.number_input("Minimum Hunter score", min_value=0.0, max_value=100.0, value=70.0)
-                lane_mode = st.selectbox("Lane volume", ["unlimited", "custom_limit", "paused"], format_func=lambda v: {"unlimited":"Unlimited", "custom_limit":"Custom daily limit", "paused":"Paused"}[v])
-                lane_limit = st.number_input("Daily limit", min_value=1, value=10, disabled=lane_mode != "custom_limit")
                 if st.form_submit_button("Save disabled lane", type="primary"):
-                    create_lane(name, {"keywords": keywords}, minimum, lane_mode, lane_limit)
+                    create_lane(name, {"keywords": keywords}, minimum, "unlimited", None)
                     st.success("Lane saved disabled. Rendering this page has not queued any work."); st.rerun()
+        editable = next((lane for lane in current_lanes if int(lane["id"]) == st.session_state.get("product_edit_lane")), None)
+        if editable:
+            with st.form("product_lane_edit_form"):
+                edit_name = st.text_input("Lane name", value=str(editable["name"]))
+                try: edit_keywords = json.loads(str(editable["filter_json"])).get("keywords", "")
+                except (TypeError, ValueError, json.JSONDecodeError): edit_keywords = ""
+                edit_keywords = st.text_input("Role keywords", value=str(edit_keywords))
+                edit_minimum = st.number_input("Minimum Hunter score", min_value=0.0, max_value=100.0, value=float(editable["min_score"] or 0))
+                if st.form_submit_button("Save lane changes", type="primary"):
+                    update_lane(int(editable["id"]), name=edit_name, filters={"keywords": edit_keywords}, min_score=edit_minimum)
+                    st.session_state.pop("product_edit_lane", None); st.rerun()
     with right:
         st.markdown("<div class='split-panel'><div class='page-kicker-product'>APPLICATION VOLUME</div><h3>User-owned controls</h3></div>", unsafe_allow_html=True)
         with st.form("product_volume_form"):
@@ -266,14 +301,36 @@ def tracker() -> None:
 
 
 def _inbox() -> None:
-    st.markdown('<div class="split-panel"><h3>Gmail is not configured</h3><p class="quiet">The inbox architecture is present but does not connect, sync, send, or invent messages until the owner provides OAuth client credentials and <code>MUNSHI_VAULT_KEY</code> server-side.</p></div>', unsafe_allow_html=True)
-    from app.gmail_integration import gmail_configuration_status
+    from app.gmail_integration import begin_authorization, connection_status, disconnect, gmail_configuration_status, stored_messages, sync_messages
     status = gmail_configuration_status()
     st.caption(f"OAuth client: {status['oauth_client']} · Vault: {status['vault']} · Scope: Gmail read-only")
-    if status["ready"]:
-        st.info("OAuth client provisioning is available. Connection initiation is intentionally a separate explicit authorization action.")
-    else:
+    if not status["ready"]:
+        st.markdown('<div class="split-panel"><h3>Gmail is not configured</h3><p class="quiet">Provide OAuth client configuration and <code>MUNSHI_VAULT_KEY</code> server-side before connection is available. MUNSHI does not send email.</p></div>', unsafe_allow_html=True)
         st.button("Connect Gmail", disabled=True, help="Provision OAuth client credentials and MUNSHI_VAULT_KEY on the server first.")
+        return
+    connection = connection_status()
+    if not connection["connected"]:
+        if st.button("Connect Gmail", key="gmail_connect", type="primary"):
+            st.session_state["gmail_authorization_url"] = begin_authorization()
+        if st.session_state.get("gmail_authorization_url"):
+            st.link_button("Continue to Google", st.session_state["gmail_authorization_url"], type="primary")
+        return
+    st.success(f"Gmail connected: {connection['account']}. Last sync: {connection['last_sync_at'] or 'never'}")
+    actions = st.columns(2)
+    with actions[0]:
+        if st.button("Sync now", key="gmail_sync"):
+            try: st.success(f"Synchronized {sync_messages()} new message(s).")
+            except RuntimeError as error: st.warning(str(error))
+    with actions[1]:
+        if st.button("Disconnect", key="gmail_disconnect"):
+            disconnect(); st.session_state.pop("gmail_authorization_url", None); st.rerun()
+    category = st.selectbox("Category", ["All", "interview", "assessment", "offer", "rejection", "verification", "reminder", "applied", "unclassified"], key="gmail_category")
+    query = st.text_input("Search synchronized messages", key="gmail_query")
+    messages = stored_messages(category=category, query=query)
+    if messages:
+        st.dataframe([{ "Category": item["category"], "Subject": item["subject"], "From": item["sender"], "Received": item["received_at"], "Snippet": item["snippet"] } for item in messages], hide_index=True, use_container_width=True)
+    else:
+        st.info("No synchronized Gmail messages match this filter.")
 
 
 def profile() -> None:

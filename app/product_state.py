@@ -7,6 +7,7 @@ the existing guarded worker.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -103,10 +104,14 @@ def job_filters() -> dict[str, list[str]]:
     }
 
 
+SEARCH_SCOPES = {"title_description", "title_company"}
+
+
 def fetch_jobs(
     *, query: str = "", exclude: str = "", location: str = "", source: str = "",
     workplace: str = "", employment_type: str = "", minimum_score: float = 0,
     saved_only: bool = False, include_skipped: bool = False, page: int = 1,
+    search_scope: str = "title_description",
     page_size: int = 16,
 ) -> tuple[list[dict[str, Any]], int]:
     """Parameterized, stable job-browser query. Unknown/null data stays null."""
@@ -118,8 +123,15 @@ def fetch_jobs(
         conditions.append("COALESCE(s.saved, 0) = 1")
     if query.strip():
         needle = f"%{query.strip()}%"
-        conditions.append("(j.title LIKE ? COLLATE NOCASE OR j.company_name LIKE ? COLLATE NOCASE OR j.description_raw LIKE ? COLLATE NOCASE)")
-        params.extend((needle, needle, needle))
+        scope = str(search_scope or "").strip().casefold()
+        if scope not in SEARCH_SCOPES:
+            scope = "title_description"
+        if scope == "title_company":
+            conditions.append("(j.title LIKE ? COLLATE NOCASE OR j.company_name LIKE ? COLLATE NOCASE)")
+            params.extend((needle, needle))
+        else:
+            conditions.append("(j.title LIKE ? COLLATE NOCASE OR j.description_raw LIKE ? COLLATE NOCASE)")
+            params.extend((needle, needle))
     if exclude.strip():
         conditions.append("(j.title NOT LIKE ? COLLATE NOCASE AND j.company_name NOT LIKE ? COLLATE NOCASE AND j.description_raw NOT LIKE ? COLLATE NOCASE)")
         needle = f"%{exclude.strip()}%"
@@ -237,6 +249,78 @@ def create_lane(name: str, filters: dict[str, Any], min_score: float, mode: str,
         connection.commit()
     finally:
         connection.close()
+
+
+def update_lane(
+    lane_id: int, *, name: str, filters: dict[str, Any], min_score: float | None,
+) -> None:
+    """Edit a saved target filter; lane volume is intentionally not an authority."""
+    if not name.strip():
+        raise ValueError("A lane name is required.")
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        connection.execute(
+            """UPDATE auto_prepare_lanes
+               SET name=?, filter_json=?, min_score=?, updated_at=CURRENT_TIMESTAMP
+               WHERE id=?""",
+            (name.strip()[:120], json.dumps(filters, sort_keys=True), min_score, int(lane_id)),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def set_lane_enabled(lane_id: int, enabled: bool) -> None:
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        connection.execute(
+            "UPDATE auto_prepare_lanes SET enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (int(bool(enabled)), int(lane_id)),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def delete_lane(lane_id: int) -> None:
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        connection.execute("DELETE FROM auto_prepare_lanes WHERE id=?", (int(lane_id),))
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _lane_keywords(lane: dict[str, Any]) -> tuple[str, ...]:
+    try:
+        filters = json.loads(str(lane.get("filter_json") or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return ()
+    raw = filters.get("keywords", "") if isinstance(filters, dict) else ""
+    values = raw if isinstance(raw, (list, tuple)) else re.split(r"[,\n]+", str(raw or ""))
+    return tuple(dict.fromkeys(str(value).strip().casefold() for value in values if str(value).strip()))
+
+
+def enabled_lanes(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Return saved enabled filters in deterministic order for the producer."""
+    ensure_schema(connection)
+    return [dict(row) for row in connection.execute(
+        "SELECT * FROM auto_prepare_lanes WHERE enabled=1 ORDER BY id ASC"
+    ).fetchall()]
+
+
+def lane_matches_job(lane: dict[str, Any], job: dict[str, Any]) -> bool:
+    """A lane can only narrow automatic candidates; blank/malformed filters match none."""
+    keywords = _lane_keywords(lane)
+    if not keywords:
+        return False
+    text = "\n".join(str(job.get(key) or "") for key in (
+        "title", "description_raw", "description", "target_track",
+    )).casefold()
+    return any(keyword in text for keyword in keywords)
 
 
 def candidate_facts() -> list[dict[str, Any]]:

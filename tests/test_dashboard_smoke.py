@@ -51,6 +51,25 @@ def test_dashboard_render_does_not_change_usajobs_runtime_policy() -> None:
     assert before == after
 
 
+def test_product_render_does_not_queue_work(hunter_db) -> None:
+    from app.database import get_connection
+    connection = get_connection()
+    try:
+        before = connection.execute("SELECT COUNT(*) FROM n8n_dispatch_queue").fetchone()[0]
+    finally:
+        connection.close()
+    app = AppTest.from_file(str(ROOT / "app" / "dashboard.py"), default_timeout=30)
+    app.run()
+    next(button for button in app.button if button.label == "Auto Prepare").click()
+    app.run()
+    connection = get_connection()
+    try:
+        after = connection.execute("SELECT COUNT(*) FROM n8n_dispatch_queue").fetchone()[0]
+    finally:
+        connection.close()
+    assert before == after
+
+
 def test_product_shell_and_routes_are_present() -> None:
     dashboard_source = (ROOT / "app" / "dashboard.py").read_text(encoding="utf-8")
     shell_source = (ROOT / "app" / "product_shell.py").read_text(encoding="utf-8")
@@ -59,6 +78,9 @@ def test_product_shell_and_routes_are_present() -> None:
     assert "initial_sidebar_state=\"collapsed\"" in dashboard_source
     assert "NAVIGATION" in shell_source
     assert "st.query_params" in shell_source
+    assert "product_tracker_tab" in shell_source
+    assert "product_profile_tab" in shell_source
+    assert "product_settings_section" in shell_source
     assert "@media (max-width:720px)" in css_source
     assert "AADIL HR HUNTER" not in dashboard_source
     assert valid_view("tracker") == "tracker"
