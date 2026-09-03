@@ -15,7 +15,7 @@ from app.operations_dashboard import render  # noqa: E402
 
 
 st.set_page_config(
-    page_title="MUNSHI Apply",
+    page_title="MUNSHI Apply | Executive Intelligence",
     page_icon=str(Path(__file__).resolve().parent / "assets" / "munshi_favicon.png"),
     layout="wide",
     initial_sidebar_state="expanded",

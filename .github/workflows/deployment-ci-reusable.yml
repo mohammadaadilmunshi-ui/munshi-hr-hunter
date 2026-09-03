@@ -1,0 +1,75 @@
+name: Deployment CI Reusable
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  production-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact deployment SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install production lock
+        run: python -m pip install -r requirements.lock.txt
+
+      - name: Verify packages
+        run: python -m pip check
+
+      - name: Compile source
+        run: python -m compileall -q app scripts integrations
+
+      - name: Run existing portability validation
+        run: |
+          python scripts/validate_container_environment_contract.py
+          python scripts/validate_n8n_portability.py
+          python scripts/validate_netcup_shadow.py
+          python scripts/audit_linux_compatibility.py
+
+      - name: Run focused production tests
+        run: |
+          python -m pytest \
+            tests/test_platform_config.py \
+            tests/test_linux_compatibility.py \
+            tests/test_container_environment_contract.py \
+            tests/test_hr_agent_portability.py \
+            tests/test_n8n_deployment_renderer.py \
+            tests/test_netcup_shadow.py
+
+      - name: Validate deployment shell
+        run: |
+          set -euo pipefail
+          for script in deploy/netcup/*.sh; do
+            echo "bash -n $script"
+            bash -n "$script"
+          done
+
+      - name: Build production Hunter image
+        run: docker build --tag munshi-hunter:deployment-ci .
+
+      - name: Verify JobSpy runtime contract in built image
+        run: |
+          docker run --rm -i --entrypoint python munshi-hunter:deployment-ci - <<'PY'
+          import hashlib, importlib.metadata, pathlib
+          runner = pathlib.Path("/app/hunter/tools/runners/jobspy_runner.py")
+          assert importlib.metadata.version("python-jobspy") == "1.1.82"
+          assert runner.is_file()
+          digest = hashlib.sha256(runner.read_bytes()).hexdigest()
+          assert digest == "4904e6456eb721ac80d3ff8c62001c4a7fc13c5152309be09135e47538b56661", digest
+          print("JOBSPY_IMAGE_CONTRACT=PASS")
+          print("JOBSPY_RUNNER_SHA256=", digest)
+          PY
