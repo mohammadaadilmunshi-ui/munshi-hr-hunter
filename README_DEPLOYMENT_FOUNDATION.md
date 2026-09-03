@@ -37,6 +37,13 @@ Deployment transport hardening:
 - Netcup verifies and imports the bundle locally; production deployment no longer depends on an unauthenticated outbound GitHub fetch.
 - The forced-command string is sent without literal shell quotes around the validated SHA/branch values.
 - The production repository stays attached to the requested source branch at the exact deployed SHA, preserving later rollback behavior.
+- Rollback always restores the previous Hunter image tag even if a new build finished but container recreation never completed.
 - `Deployment Transport Guard` statically verifies these invariants and exercises a real Git-bundle ancestry handoff in CI.
+
+Deploy-key bootstrap hardening:
+- The installer can consume an exact-SHA clean temporary Git worktree through `--source-root` / `--source-sha`, so the live production checkout does not need to move just to install the stable gateway/wrapper/verifier.
+- The live production repository must still be clean.
+- Wrapper and `authorized_keys` installation is transactional; verifier or `sshd -t` failure restores the previous state.
+- Only the Ed25519 public key is installed on Netcup.
 
 The deployment workflow remains manual, exact-SHA gated, single-concurrency, Hunter-only, and rollback-capable.
