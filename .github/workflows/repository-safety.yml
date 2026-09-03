@@ -176,7 +176,7 @@ jobs:
               "SSH_ORIGINAL_COMMAND",
               "/opt/munshi/bin/deploy-production-release",
               "([0-9a-f]{40})",
-              'exec "$DEPLOY" --commit "$commit" --branch "$branch"',
+              'exec "$PRODUCTION_DEPLOY" --commit "$commit" --branch "$branch"',
           ):
               assert token in gateway_text, f"deployment gateway missing: {token}"
 
@@ -189,6 +189,67 @@ jobs:
               assert token in installer_text, f"deploy-key installer missing: {token}"
 
           print("PRODUCTION_DEPLOY_ANTI_REGRESSION_GUARD=PASS")
+          PY
+
+      - name: Verify staging deploy isolation contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path(".github/workflows/netcup-staging-deploy.yml")
+          deploy = Path("deploy/netcup/deploy_staging_release.sh")
+          verify = Path("deploy/netcup/verify_staging_runtime_contract.sh")
+          installer = Path("deploy/netcup/install_staging_deploy_gateway_extension.sh")
+
+          if not any(p.is_file() for p in (workflow, deploy, verify, installer)):
+              print("Staging deployment files not present; staging guard skipped.")
+              raise SystemExit(0)
+
+          for p in (workflow, deploy, verify, installer):
+              assert p.is_file(), f"missing paired staging deployment file: {p}"
+
+          workflow_text = workflow.read_text(encoding="utf-8")
+          deploy_text = deploy.read_text(encoding="utf-8")
+          verify_text = verify.read_text(encoding="utf-8")
+          installer_text = installer.read_text(encoding="utf-8")
+          text = deploy_text + "\n" + verify_text + "\n" + installer_text
+
+          assert "environment: staging" in workflow_text
+          assert "environment: production" not in workflow_text
+          assert "workflow_dispatch" in workflow_text
+          for trigger in ("push:", "pull_request:", "schedule:"):
+              assert trigger not in workflow_text, f"staging deployment must remain manual during proof: {trigger}"
+
+          required = (
+              "munshi-netcup-staging",
+              "/home/munshi/munshi-staging-v1",
+              "--no-deps --force-recreate hunter",
+              "STAGING_N8N_RECREATED=NO",
+              "STAGING_OLLAMA_RECREATED=NO",
+              "STAGING_EDGE_RECREATED=NO",
+              "PRODUCTION_CONTAINERS_UNCHANGED=PASS",
+              "PRODUCTION_DEPLOYMENT_PERFORMED=NO",
+              "STAGING_SIDE_EFFECT_FLAGS=PASS",
+              "STAGING_VOLUME_ISOLATION=PASS",
+              "STAGING_RAW_PORTS_LOOPBACK_ONLY=PASS",
+              "STAGING_DASHBOARD_CONFIG=PASS",
+              "AUTHORIZED_KEYS_CHANGED=NO",
+          )
+          for token in required:
+              assert token in text, f"missing staging isolation token: {token}"
+
+          forbidden = (
+              "docker compose down -v",
+              "docker volume rm",
+              "down --volumes",
+              "rm -rf /opt/munshi",
+          )
+          for token in forbidden:
+              assert token not in text, f"destructive staging token present: {token}"
+
+          print("STAGING_DEPLOY_ISOLATION_GUARD=PASS")
           PY
 
       - name: Verify dashboard proxy remains authenticated and loopback-only
