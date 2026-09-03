@@ -13,9 +13,10 @@ The intended operating model is:
 5. Merge or select an exact approved commit.
 6. Manually run **Netcup Production Deploy** from GitHub Actions.
 7. GitHub connects with a restricted deployment SSH credential.
-8. Netcup's stable `/opt/munshi/bin/deploy-production-release` wrapper performs a Hunter-only deployment.
-9. Health/integrity checks run.
-10. On failure the wrapper restores the previous Git SHA and previous Hunter image.
+8. Netcup's forced-command gateway validates the requested exact SHA/branch deploy command.
+9. A stable `/opt/munshi/bin/deploy-production-release` wrapper performs a Hunter-only deployment.
+10. A stable `/opt/munshi/bin/verify-production-runtime-contract` verifier checks the live environment before and after deployment.
+11. On failure the wrapper restores the previous Git SHA and previous Hunter image.
 
 ## Critical production invariant
 
@@ -49,7 +50,7 @@ The workflow uses `workflow_dispatch` and requires:
 
 ## Required GitHub secrets
 
-Configure these only after the production deployment user/key is created:
+Configure these only after the production deployment key is created and the server-side gateway is approved:
 
 - `NETCUP_HOST`
 - `NETCUP_DEPLOY_USER`
@@ -64,20 +65,33 @@ Create an environment named `production`.
 
 If repository protection features are available, restrict deployment branches and optionally add a reviewer. Even without a reviewer, keep the workflow manual and exact-SHA based.
 
-## Stable server-side wrapper
+## Stable server-side wrappers
 
-The GitHub workflow does not execute arbitrary repository shell over SSH. It invokes:
+The GitHub workflow does not get an unrestricted shell on Netcup.
 
-`/opt/munshi/bin/deploy-production-release`
+A GitHub-specific SSH public key is installed with a forced command:
 
-The server copy should be protected from routine application writes.
+`/opt/munshi/bin/github-deploy-gateway`
 
-The version-controlled production-only sources are deliberately outside the legacy `scripts/netcup` operator directory:
+The gateway ignores arbitrary shell input and accepts only the exact command shape:
+
+`/opt/munshi/bin/deploy-production-release --commit <40-char-sha> --branch <approved-branch>`
+
+The live deployment then uses two stable root-owned/protected copies:
+
+- `/opt/munshi/bin/deploy-production-release`
+- `/opt/munshi/bin/verify-production-runtime-contract`
+
+The version-controlled sources are deliberately outside the legacy `scripts/netcup` operator directory:
 
 - `deploy/netcup/deploy_production_release.sh`
 - `deploy/netcup/verify_production_runtime_contract.sh`
+- `deploy/netcup/github_deploy_gateway.sh`
+- `deploy/netcup/install_github_deploy_key.sh`
 
-This keeps the established Stage 8B/9 local-vs-remote script classifier unchanged. Install/update the stable wrapper only in a separate infrastructure change after CI and review.
+The installer refuses to activate the deploy key unless the Stage 13 server-side endurance status contains `STATE=PASS`.
+
+The installer only consumes a public SSH key. The private GitHub Actions deployment key is never copied to Netcup.
 
 ## What production deploy is allowed to change
 
@@ -151,7 +165,10 @@ After Stage 13 endurance passes:
 3. Verify CI.
 4. Rebase/fast-forward this deployment-foundation work onto the synchronized head.
 5. Review the deployment diff.
-6. Only then configure the production environment/secrets and install the stable server wrapper.
+6. Create the dedicated GitHub deploy keypair.
+7. Install only its public key through the Stage13-gated forced-command installer.
+8. Configure the GitHub `production` environment and secrets.
+9. Only then perform a controlled non-production/staging proof before the first production GitHub-driven deploy.
 
 ## Phone-first future workflow
 
