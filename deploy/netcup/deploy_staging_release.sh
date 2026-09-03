@@ -106,7 +106,7 @@ from pathlib import Path
 
 stamp = sys.argv[1]
 src = Path("/app/hunter/data/hunter.db")
-dst = Path("/app/hunter/runtime") / f"hunter-predeploy-{stamp}.db"
+dst = Path("/tmp") / f"hunter-predeploy-{stamp}.db"
 
 source = sqlite3.connect(src)
 dest = sqlite3.connect(dst)
@@ -122,8 +122,8 @@ if result != "ok":
 print(dst)
 PY
 
-docker cp "$H:/app/hunter/runtime/hunter-predeploy-$stamp.db" "$db_backup"
-docker exec "$H" rm -f "/app/hunter/runtime/hunter-predeploy-$stamp.db"
+docker cp "$H:/tmp/hunter-predeploy-$stamp.db" "$db_backup"
+docker exec "$H" rm -f "/tmp/hunter-predeploy-$stamp.db"
 chmod 600 "$db_backup"
 
 python3 - "$db_backup" <<'PY'
