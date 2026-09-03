@@ -1,0 +1,89 @@
+name: Netcup Production Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Exact 40-character Git SHA to deploy"
+        required: true
+        type: string
+      source_branch:
+        description: "Git branch that must contain the SHA"
+        required: true
+        default: "feat/cloud-migration-foundation"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-production
+  cancel-in-progress: false
+
+jobs:
+  validate-request:
+    runs-on: ubuntu-latest
+    outputs:
+      commit_sha: ${{ steps.validate.outputs.commit_sha }}
+      source_branch: ${{ steps.validate.outputs.source_branch }}
+    steps:
+      - name: Validate deployment request
+        id: validate
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+          REQUESTED_BRANCH: ${{ inputs.source_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "commit_sha must be a full lowercase 40-character Git SHA" >&2
+            exit 2
+          }
+          [[ "$REQUESTED_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || {
+            echo "source_branch contains unsupported characters" >&2
+            exit 3
+          }
+          echo "commit_sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
+          echo "source_branch=$REQUESTED_BRANCH" >> "$GITHUB_OUTPUT"
+
+  ci:
+    needs: validate-request
+    uses: ./.github/workflows/deployment-ci-reusable.yml
+    with:
+      commit_sha: ${{ needs.validate-request.outputs.commit_sha }}
+
+  deploy:
+    needs: [validate-request, ci]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - name: Configure restricted SSH
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_deploy"
+          chmod 600 "$HOME/.ssh/netcup_deploy"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy exact approved SHA to Netcup
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          DEPLOY_SHA: ${{ needs.validate-request.outputs.commit_sha }}
+          DEPLOY_BRANCH: ${{ needs.validate-request.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          ssh \
+            -i "$HOME/.ssh/netcup_deploy" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$NETCUP_USER@$NETCUP_HOST" \
+            "/opt/munshi/bin/deploy-production-release --commit '$DEPLOY_SHA' --branch '$DEPLOY_BRANCH'"
