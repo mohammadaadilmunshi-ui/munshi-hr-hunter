@@ -56,7 +56,15 @@ def test_unlimited_only_removes_product_quota_not_canonical_gates(hunter_db) -> 
     connection = database.get_connection()
     try:
         allowed = _seed(connection, suffix="unlimited-ok")
-        blocked = _seed(connection, title="Senior HR Operations Analyst", suffix="unlimited-blocked")
+        # Persist an initially eligible historical row, then make it ineligible.
+        # The final producer boundary must re-evaluate canonical targeting rather
+        # than trusting a previously stored status/score.
+        blocked = _seed(connection, suffix="unlimited-blocked")
+        connection.execute(
+            "UPDATE jobs SET title='Senior HR Operations Analyst' WHERE id=?",
+            (blocked,),
+        )
+        connection.commit()
     finally: connection.close()
     plan, candidate_ids = _plan_ids(hunter_db)
     assert plan["auto_limit"] is None
