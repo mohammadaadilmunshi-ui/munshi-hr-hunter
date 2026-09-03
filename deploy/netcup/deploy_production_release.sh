@@ -14,6 +14,18 @@ O="munshi-netcup-shadow-ollama-1"
 
 commit=""
 branch=""
+bundle_file=""
+deploy_ref=""
+
+cleanup() {
+  if [[ -n "${bundle_file:-}" ]]; then
+    rm -f "$bundle_file" 2>/dev/null || true
+  fi
+  if [[ -n "${deploy_ref:-}" && -d "$REPO/.git" ]]; then
+    git -C "$REPO" update-ref -d "$deploy_ref" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
 
 while (($#)); do
   case "$1" in
@@ -25,7 +37,12 @@ done
 
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "--commit must be a full lowercase Git SHA" >&2; exit 3; }
 [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "--branch invalid" >&2; exit 4; }
+git check-ref-format --branch "$branch" >/dev/null || { echo "--branch is not a valid Git branch name" >&2; exit 4; }
 [[ -x "$VERIFY" ]] || { echo "stable verifier missing: $VERIFY" >&2; exit 5; }
+
+bundle_file="$(mktemp /tmp/munshi-github-deploy.XXXXXX.bundle)"
+timeout 120s cat > "$bundle_file" || { echo "deployment bundle transfer timed out" >&2; exit 6; }
+[[ -s "$bundle_file" ]] || { echo "deployment bundle is empty" >&2; exit 7; }
 
 compose=(
   docker compose
@@ -64,7 +81,11 @@ rollback() {
   rc=$?
   trap - ERR
   echo "=== AUTOMATIC DEPLOYMENT ROLLBACK rc=$rc ===" >&2
-  git checkout -q -B "$old_branch" "$old_head" || true
+  if [[ -n "$old_branch" ]]; then
+    git checkout -q -B "$old_branch" "$old_head" || true
+  else
+    git checkout -q --detach "$old_head" || true
+  fi
   if (( recreated )); then
     docker tag "$old_hunter_image_id" "$hunter_image_name" || true
     "${compose[@]}" up -d --no-deps --force-recreate hunter || true
@@ -121,19 +142,27 @@ PY
 )"
 [[ "$open_queue" == "0" ]] || { echo "open n8n queue=$open_queue" >&2; exit 23; }
 
-echo "=== VERIFY GITHUB-PUBLISHED TARGET ==="
-git fetch --prune origin "$branch"
+echo "=== VERIFY GITHUB-PUBLISHED TARGET BUNDLE ==="
+git bundle verify "$bundle_file"
+bundle_ref="refs/remotes/origin/$branch"
+deploy_ref="refs/remotes/github-deploy/$branch"
+git fetch --no-tags "$bundle_file" "+$bundle_ref:$deploy_ref"
 git cat-file -e "$commit^{commit}"
-git merge-base --is-ancestor "$commit" "origin/$branch" || { echo "requested SHA is not contained in origin/$branch" >&2; exit 24; }
+git merge-base --is-ancestor "$commit" "$deploy_ref" || {
+  echo "requested SHA is not contained in bundled source branch" >&2
+  exit 24
+}
+echo "GITHUB_BUNDLE_IMPORT=PASS"
 
 echo "=== ROLLBACK IMAGE ==="
 docker tag "$old_hunter_image_id" "$rollback_tag"
 echo "rollback_image=$rollback_tag"
 echo "old_head=$old_head"
 
-echo "=== CHECKOUT EXACT SHA ==="
-git checkout -q --detach "$commit"
+echo "=== CHECKOUT EXACT SHA ON SOURCE BRANCH ==="
+git checkout -q -B "$branch" "$commit"
 [[ "$(git rev-parse HEAD)" == "$commit" ]]
+[[ "$(git branch --show-current)" == "$branch" ]]
 
 echo "=== STATIC DEPLOYMENT VALIDATION ==="
 bash -n deploy/netcup/deploy_production_release.sh
@@ -169,6 +198,7 @@ echo "=== POSTDEPLOY CONTRACT ==="
 
 echo "=== DEPLOYMENT RESULT ==="
 echo "DEPLOYED_SHA=$commit"
+echo "DEPLOYED_BRANCH=$branch"
 echo "PREVIOUS_SHA=$old_head"
 echo "ROLLBACK_IMAGE=$rollback_tag"
 echo "N8N_RECREATED=NO"
