@@ -173,7 +173,7 @@ backup_name="$(basename "$db_backup")"
 host_uid="$(id -u)"
 host_gid="$(id -g)"
 
-timeout 1200s docker run --rm \
+timeout 1200s docker run --rm -i \
   --network none \
   --user 0:0 \
   --volumes-from "$H":ro \
