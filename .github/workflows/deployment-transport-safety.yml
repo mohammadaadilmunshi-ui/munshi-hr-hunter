@@ -86,6 +86,11 @@ jobs:
               '[[ "$(git branch --show-current)" == "$branch" ]]',
               'docker tag "$old_hunter_image_id" "$hunter_image_name" || true',
               'ROLLBACK_IMAGE_TAG_RESTORED=YES',
+              'from app.database import DB_PATH',
+              'src = Path(DB_PATH)',
+              'dst = Path("/tmp") / f"hunter-predeploy-{stamp}.db"',
+              'sqlite3.connect(f"file:{src}?mode=ro", uri=True)',
+              'docker cp "$H:/tmp/hunter-predeploy-$stamp.db" "$db_backup"',
               'GITHUB_STAGING_BUNDLE_IMPORT=PASS',
               'STAGING_N8N_RECREATED=NO',
               'STAGING_OLLAMA_RECREATED=NO',
@@ -96,6 +101,8 @@ jobs:
           )
           for token in staging_deploy_required:
               assert token in staging_deploy, f"staging server deployment token missing: {token}"
+
+          assert '/app/hunter/runtime/hunter-predeploy-' not in staging_deploy, "staging DB backup must not depend on unwritable /app/hunter/runtime"
 
           forbidden_server_fetches = (
               "git fetch --prune origin",
