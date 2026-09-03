@@ -25,6 +25,10 @@ Describe whether this can affect Hunter, Telegram, scheduler/coordinator, n8n, O
 - [ ] If Hunter can be recreated, the proven five-layer Compose contract is preserved.
 - [ ] n8n and Ollama are not recreated as a normal Hunter deployment side effect.
 - [ ] Rollback is documented for any runtime-impacting change.
+- [ ] Netcup deployment does not depend on unauthenticated outbound GitHub fetches.
+- [ ] GitHub → Netcup deployment transport preserves exact Git SHA/branch ancestry.
+- [ ] Successful deployment keeps production attached to the approved source branch at the exact deployed SHA.
+- [ ] Deploy-key installation uses an exact approved source SHA and is rollback-safe.
 
 ## Verification
 
@@ -32,6 +36,8 @@ List the exact checks/tests run and their results.
 
 - [ ] Linux Compatibility
 - [ ] Docker Foundation
+- [ ] Repository Safety Guard
+- [ ] Deployment Transport Guard where deployment files are present
 - [ ] Focused pytest / regression tests
 - [ ] Shell syntax where applicable
 - [ ] JobSpy runtime/image contract where applicable
