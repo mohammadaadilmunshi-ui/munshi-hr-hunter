@@ -19,6 +19,9 @@ WORKDIR /app/hunter
 COPY requirements.lock.txt ./requirements.lock.txt
 RUN python -m pip install --no-cache-dir -r requirements.lock.txt
 
+# Canonical JobSpy subprocess runner required by app/sources/jobspy.py.
+COPY tools/runners/jobspy_runner.py ./tools/runners/jobspy_runner.py
+
 # Copy source only. Runtime state, secrets, local launchers, and browser data
 # are excluded by .dockerignore and are supplied by Compose volumes/env.
 COPY app ./app
