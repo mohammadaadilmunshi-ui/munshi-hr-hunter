@@ -24,6 +24,7 @@ jobs:
           workflow = Path(".github/workflows/netcup-production-deploy.yml").read_text(encoding="utf-8")
           deploy = Path("deploy/netcup/deploy_production_release.sh").read_text(encoding="utf-8")
           gateway = Path("deploy/netcup/github_deploy_gateway.sh").read_text(encoding="utf-8")
+          installer = Path("deploy/netcup/install_github_deploy_key.sh").read_text(encoding="utf-8")
 
           workflow_required = (
               'git fetch --no-tags origin "$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"',
@@ -67,6 +68,20 @@ jobs:
           )
           for token in gateway_required:
               assert token in gateway, f"gateway token missing: {token}"
+
+          installer_required = (
+              '--source-root',
+              '--source-sha',
+              'git -C "$SOURCE_ROOT" rev-parse HEAD',
+              'git -C "$REPO" status --porcelain',
+              'APPROVED_SOURCE_SHA=',
+              'ROLLBACK GITHUB DEPLOY KEY INSTALL',
+              'RESULT=GITHUB_DEPLOY_KEY_INSTALL_ROLLED_BACK',
+              'INSTALL_TRANSACTION=PASS',
+              'PRIVATE_KEY_INSTALLED_ON_SERVER=NO',
+          )
+          for token in installer_required:
+              assert token in installer, f"deploy-key bootstrap token missing: {token}"
 
           print("DEPLOYMENT_TRANSPORT_STATIC_GUARD=PASS")
           PY
