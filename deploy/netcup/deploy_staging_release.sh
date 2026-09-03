@@ -104,11 +104,16 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from app.database import DB_PATH
+
 stamp = sys.argv[1]
-src = Path("/app/hunter/data/hunter.db")
+src = Path(DB_PATH)
 dst = Path("/tmp") / f"hunter-predeploy-{stamp}.db"
 
-source = sqlite3.connect(src)
+if not src.is_file():
+    raise SystemExit(f"staging source DB is missing: {src}")
+
+source = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
 dest = sqlite3.connect(dst)
 try:
     source.backup(dest)
