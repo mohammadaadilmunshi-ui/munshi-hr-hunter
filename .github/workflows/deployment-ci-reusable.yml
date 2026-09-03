@@ -57,6 +57,8 @@ jobs:
             echo "bash -n $script"
             bash -n "$script"
           done
+          grep -Fq 'docker run --rm -i' deploy/netcup/deploy_production_release.sh
+          echo "PRODUCTION_BACKUP_CONTAINER_STDIN_CONTRACT=PASS"
 
       - name: Build production Hunter image
         run: docker build --tag munshi-hunter:deployment-ci .
