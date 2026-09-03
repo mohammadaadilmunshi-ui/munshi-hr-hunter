@@ -31,12 +31,22 @@ def test_product_primary_views_render_without_exception(label: str, key: str) ->
     assert not app.exception, label
 
 
-def test_dashboard_render_does_not_change_usajobs_runtime_policy() -> None:
+def test_dashboard_render_does_not_change_usajobs_runtime_policy(hunter_db) -> None:
     from app.database import get_connection
 
     connection = get_connection()
     try:
-        before = connection.execute("SELECT enabled FROM source_health WHERE source_name='USAJobs'").fetchone()[0]
+        connection.execute(
+            """
+            INSERT INTO source_health (source_name, source_tier, enabled)
+            VALUES ('USAJobs', 1, 0)
+            ON CONFLICT(source_name) DO UPDATE SET enabled=excluded.enabled
+            """
+        )
+        connection.commit()
+        before = connection.execute(
+            "SELECT enabled FROM source_health WHERE source_name='USAJobs'"
+        ).fetchone()[0]
     finally:
         connection.close()
     app = AppTest.from_file(str(ROOT / "app" / "dashboard.py"), default_timeout=30)
@@ -45,7 +55,9 @@ def test_dashboard_render_does_not_change_usajobs_runtime_policy() -> None:
     app.run()
     connection = get_connection()
     try:
-        after = connection.execute("SELECT enabled FROM source_health WHERE source_name='USAJobs'").fetchone()[0]
+        after = connection.execute(
+            "SELECT enabled FROM source_health WHERE source_name='USAJobs'"
+        ).fetchone()[0]
     finally:
         connection.close()
     assert before == after
