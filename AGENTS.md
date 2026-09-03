@@ -23,6 +23,8 @@ Do not assume the GitHub branch is identical to the live server. During the clou
 7. Never copy an older local/Mac database over the cloud production database.
 8. Never publish or replace the canonical n8n workflow merely because current/published version IDs differ.
 9. Never remove Telegram, scheduler, coordinator, targeting, ATS/HR quality gates, or n8n callback safeguards without explicit scope and regression evidence.
+10. Never make Netcup production deployment depend on an unauthenticated outbound GitHub fetch. Approved deployment source must arrive through the authenticated GitHub Actions transport and restricted SSH path.
+11. Never leave production in detached-HEAD state after a normal successful deployment; keep the approved source branch attached to the exact deployed SHA.
 
 ## Proven production Compose contract
 
@@ -50,9 +52,11 @@ Production promotion must:
 
 - use an exact 40-character Git SHA;
 - verify that SHA belongs to the approved source branch;
+- transport approved Git objects from authenticated GitHub Actions to Netcup through the restricted SSH deployment channel;
 - refuse a dirty production working tree;
 - verify no unsafe active/manual worker state;
 - preserve rollback evidence;
+- keep the production checkout attached to the approved source branch at the exact deployed SHA;
 - build/recreate Hunter only;
 - prove n8n and Ollama container identity/start time did not change;
 - run post-deploy health and database checks;
@@ -68,6 +72,7 @@ For agent-authored changes:
 - explain production impact and rollback in the PR;
 - do not merge a PR with known synchronization blockers;
 - run the existing Linux and Docker compatibility workflows;
+- run Deployment Transport Guard when deployment transport is present;
 - add focused regression tests for defects being fixed;
 - treat CI failures as evidence to diagnose, not as checks to weaken.
 
@@ -81,6 +86,7 @@ At minimum:
 - Netcup foundation validator passes;
 - shell syntax checks pass;
 - JobSpy image/runtime contract passes when that production history is present;
+- Deployment Transport Guard passes for GitHub → Netcup deployment changes;
 - no tracked secrets/databases/private keys are introduced;
 - five-layer production tokens remain in deployment tooling;
 - no automatic production trigger is introduced.
