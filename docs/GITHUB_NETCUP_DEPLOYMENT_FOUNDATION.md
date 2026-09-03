@@ -12,11 +12,13 @@ The intended operating model is:
 4. Review the PR from phone.
 5. Merge or select an exact approved commit.
 6. Manually run **Netcup Production Deploy** from GitHub Actions.
-7. GitHub connects with a restricted deployment SSH credential.
-8. Netcup's forced-command gateway validates the requested exact SHA/branch deploy command.
-9. A stable `/opt/munshi/bin/deploy-production-release` wrapper performs a Hunter-only deployment.
-10. A stable `/opt/munshi/bin/verify-production-runtime-contract` verifier checks the live environment before and after deployment.
-11. On failure the wrapper restores the previous Git SHA and previous Hunter image.
+7. GitHub verifies that the exact SHA belongs to the requested source branch using its authenticated checkout.
+8. GitHub creates a Git bundle containing that authenticated branch history.
+9. GitHub streams the bundle over a restricted deployment SSH credential.
+10. Netcup's forced-command gateway validates the exact SHA/branch command shape.
+11. A stable `/opt/munshi/bin/deploy-production-release` wrapper verifies/imports the streamed bundle locally and performs a Hunter-only deployment.
+12. A stable `/opt/munshi/bin/verify-production-runtime-contract` verifier checks the live environment before and after deployment.
+13. On failure the wrapper restores the previous Git SHA/branch state and previous Hunter image.
 
 ## Critical production invariant
 
@@ -43,10 +45,14 @@ Production deployment is intentionally **not** triggered by every push.
 The workflow uses `workflow_dispatch` and requires:
 
 - exact 40-character commit SHA
-- source branch containing that SHA
+- valid Git source branch containing that SHA
 - successful deployment CI
 - a GitHub `production` environment
 - a concurrency group that permits only one production deployment at a time
+
+The Netcup production host does **not** need a GitHub PAT, personal GitHub credential, or outbound authenticated Git remote for deployment. The approved source history is transported as a Git bundle over the same restricted SSH channel used to invoke deployment.
+
+This avoids the anonymous HTTPS-fetch failure mode previously observed from Netcup while preserving exact Git commit objects and ancestry verification.
 
 ## Required GitHub secrets
 
@@ -77,6 +83,8 @@ The gateway ignores arbitrary shell input and accepts only the exact command sha
 
 `/opt/munshi/bin/deploy-production-release --commit <40-char-sha> --branch <approved-branch>`
 
+The workflow constructs that command from values already validated by the workflow and sends it without literal quote characters around the SHA or branch, so the server-side forced-command regex receives the canonical form it expects.
+
 The live deployment then uses two stable root-owned/protected copies:
 
 - `/opt/munshi/bin/deploy-production-release`
@@ -93,9 +101,31 @@ The installer refuses to activate the deploy key unless the Stage 13 server-side
 
 The installer only consumes a public SSH key. The private GitHub Actions deployment key is never copied to Netcup.
 
+## Git bundle deployment transport
+
+GitHub Actions performs the source-side trust work:
+
+1. Check out the exact requested SHA.
+2. Fetch the requested source branch using the workflow's authenticated GitHub checkout credentials.
+3. Prove the requested SHA is an ancestor of that branch.
+4. Create a Git bundle from the authenticated branch ref.
+5. Verify the bundle locally.
+6. Stream the bundle through stdin over the restricted SSH deployment connection.
+
+Netcup then:
+
+1. Saves the streamed bundle to a temporary file.
+2. Verifies the bundle with `git bundle verify`.
+3. Imports it into a temporary deployment-only remote ref.
+4. Proves the requested SHA is contained in the bundled branch history.
+5. Checks out the exact SHA on the requested local source branch, rather than leaving production in detached-HEAD state.
+6. Removes the temporary bundle/deployment ref on exit.
+
+No `git fetch origin` is required on Netcup during deployment.
+
 ## What production deploy is allowed to change
 
-- Git checkout in `/opt/munshi/repo`
+- Git checkout/ref in `/opt/munshi/repo` to the exact approved SHA
 - Hunter Docker image
 - Hunter container
 
@@ -128,7 +158,7 @@ Do **not** activate `n8n.munshi.systems` in this first change. n8n has different
 
 ## Staging
 
-Recommended second phase:
+Recommended next phase:
 
 `https://staging-dashboard.munshi.systems`
 
@@ -140,35 +170,28 @@ Do not point staging at the production Hunter database in read-write mode. Build
 - coordinator/discovery disabled unless specifically being tested
 - read-only snapshot or synthetic data
 
-That allows Codex UI changes to be reviewed from a phone before production promotion.
+That allows Codex/UI/runtime deployment changes to be reviewed from a phone before production promotion.
 
-## Current synchronization blocker
+## Current migration/deployment state
 
-At preparation time the proven Netcup repository is ahead of GitHub.
+The earlier GitHub ↔ Netcup synchronization blocker is resolved.
 
-Proven Netcup head:
+- Proven Netcup head: `7ce1cd33fbe98094cabdd8b9be92f37d75e3e413`
+- GitHub `feat/cloud-migration-foundation`: synchronized to the same exact SHA
+- Deployment foundation branch: reconciled onto the proven history without force-push
+- Stage 13 cloud-only endurance: PASS
+- Controlled Netcup reboot/recovery: PASS with one recovered transient startup SQLite contention observation
+- Reconciled CI before transport hardening: Repository Safety Guard PASS, Linux Compatibility PASS, Docker Foundation PASS
 
-`7ce1cd33fbe98094cabdd8b9be92f37d75e3e413`
+The deployment path remains **not activated**. Remaining activation gates are:
 
-GitHub `feat/cloud-migration-foundation` observed head:
-
-`e932154461ba03a048a346d3e6d487e655cd4c8e`
-
-The proven Netcup SHA is not currently present in GitHub object history.
-
-Do not merge or activate the production deploy path from this preparatory branch until the missing proven commits are synchronized without rewriting history.
-
-After Stage 13 endurance passes:
-
-1. Verify Netcup repo remains clean and at the expected proven head.
-2. Synchronize the missing proven commits to GitHub without rewriting history.
-3. Verify CI.
-4. Rebase/fast-forward this deployment-foundation work onto the synchronized head.
-5. Review the deployment diff.
-6. Create the dedicated GitHub deploy keypair.
-7. Install only its public key through the Stage13-gated forced-command installer.
-8. Configure the GitHub `production` environment and secrets.
-9. Only then perform a controlled non-production/staging proof before the first production GitHub-driven deploy.
+1. Complete CI for the deployment-transport hardening patch.
+2. Review the final deployment diff.
+3. Create a dedicated GitHub Actions deploy keypair.
+4. Install only its public key through the Stage13-gated forced-command installer.
+5. Configure the GitHub `production` environment and secrets.
+6. Perform a controlled non-production/staging deployment proof.
+7. Only then consider the first GitHub-driven production promotion.
 
 ## Phone-first future workflow
 
@@ -177,10 +200,10 @@ Phone / Codex:
 - open PR
 - inspect CI
 - review staging
-- merge
+- merge/select approved source SHA
 - open Actions
 - run `Netcup Production Deploy`
-- paste/select the exact approved SHA
+- paste/select the exact approved SHA and source branch
 - inspect deployment result
 
 Mac is not required for normal operation.
