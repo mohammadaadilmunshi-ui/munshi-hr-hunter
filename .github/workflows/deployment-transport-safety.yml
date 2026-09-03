@@ -69,6 +69,17 @@ jobs:
               '[[ "$(git branch --show-current)" == "$branch" ]]',
               'docker tag "$old_hunter_image_id" "$hunter_image_name" || true',
               'ROLLBACK_IMAGE_TAG_RESTORED=YES',
+              '=== PRODUCTION HUNTER DB PREDEPLOY BACKUP ===',
+              'from app.database import DB_PATH',
+              'backup_required_bytes=$((db_bytes + 1073741824))',
+              '--network none',
+              '--volumes-from "$H":ro',
+              '--mount "type=bind,src=$backup_dir,dst=/backup"',
+              'sqlite3.connect(f"file:{src}?mode=ro", uri=True, timeout=30)',
+              'source.backup(dest)',
+              'PRODUCTION_DB_BACKUP_CONTAINER_QUICK_CHECK=PASS',
+              'PRODUCTION_DB_BACKUP_QUICK_CHECK=PASS',
+              'PRODUCTION_DB_BACKUP=$db_backup',
               'GITHUB_BUNDLE_IMPORT=PASS',
               'N8N_RECREATED=NO',
               'OLLAMA_RECREATED=NO',
@@ -76,6 +87,8 @@ jobs:
           )
           for token in production_deploy_required:
               assert token in production_deploy, f"production server deployment token missing: {token}"
+
+          assert '/tmp/hunter-predeploy-' not in production_deploy, "production DB backup must not stage the multi-GB database in container writable /tmp"
 
           staging_deploy_required = (
               'timeout 120s cat > "$bundle_file"',
