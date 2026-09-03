@@ -1,0 +1,39 @@
+# MUNSHI_PRODUCTION_WORKFLOW_REGISTRATION_ONLY_V1
+#
+# This file exists on the repository default branch only so GitHub registers
+# the manually dispatchable production workflow path.
+#
+# It intentionally performs NO deployment. The real production deployment
+# workflow may run only from the protected production branch after explicit
+# promotion approval, where the CI-proven workflow file lives.
+name: Netcup Production Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Exact 40-character Git SHA to deploy"
+        required: true
+        type: string
+      source_branch:
+        description: "Git branch that must contain the SHA"
+        required: true
+        default: "feat/cloud-migration-foundation"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  registration-only:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse deployment from default-branch registration stub
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "This is the inert MUNSHI production workflow registration stub."
+          echo "No production or staging deployment is permitted from main."
+          echo "Use the protected production branch only after explicit promotion approval."
+          echo "RESULT=REGISTRATION_STUB_REFUSED_DEPLOYMENT"
+          exit 64
