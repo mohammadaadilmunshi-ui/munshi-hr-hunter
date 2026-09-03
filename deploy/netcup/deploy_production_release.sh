@@ -143,6 +143,98 @@ PY
 )"
 [[ "$open_queue" == "0" ]] || { echo "open n8n queue=$open_queue" >&2; exit 23; }
 
+echo "=== PRODUCTION HUNTER DB PREDEPLOY BACKUP ==="
+backup_dir="$ROOT/backups"
+mkdir -p "$backup_dir"
+chmod 750 "$backup_dir"
+
+db_path="$(docker exec -i "$H" python - <<'PY'
+from app.database import DB_PATH
+print(DB_PATH)
+PY
+)"
+[[ -n "$db_path" ]] || { echo "production DB path unresolved" >&2; exit 24; }
+
+db_bytes="$(docker exec "$H" stat -c '%s' "$db_path")"
+[[ "$db_bytes" =~ ^[0-9]+$ ]] || { echo "production DB size unresolved" >&2; exit 25; }
+backup_free_bytes="$(df -PB1 "$backup_dir" | awk 'NR==2 {print $4}')"
+[[ "$backup_free_bytes" =~ ^[0-9]+$ ]] || { echo "production backup free space unresolved" >&2; exit 26; }
+backup_required_bytes=$((db_bytes + 1073741824))
+echo "PRODUCTION_DB_BYTES=$db_bytes"
+echo "PRODUCTION_BACKUP_FREE_BYTES=$backup_free_bytes"
+echo "PRODUCTION_BACKUP_REQUIRED_BYTES=$backup_required_bytes"
+(( backup_free_bytes >= backup_required_bytes )) || {
+  echo "insufficient production backup free space" >&2
+  exit 27
+}
+
+db_backup="$backup_dir/hunter-predeploy-$stamp.db"
+backup_name="$(basename "$db_backup")"
+host_uid="$(id -u)"
+host_gid="$(id -g)"
+
+timeout 1200s docker run --rm \
+  --network none \
+  --user 0:0 \
+  --volumes-from "$H":ro \
+  --mount "type=bind,src=$backup_dir,dst=/backup" \
+  --entrypoint python \
+  "$old_hunter_image_id" \
+  - "$db_path" "/backup/$backup_name" "$host_uid" "$host_gid" <<'PY'
+import os
+import sqlite3
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+uid = int(sys.argv[3])
+gid = int(sys.argv[4])
+
+if not src.is_file():
+    raise SystemExit(f"production source DB is missing: {src}")
+if dst.exists():
+    raise SystemExit(f"production backup destination already exists: {dst}")
+
+source = sqlite3.connect(f"file:{src}?mode=ro", uri=True, timeout=30)
+dest = sqlite3.connect(dst)
+try:
+    source.backup(dest)
+    result = dest.execute("PRAGMA quick_check").fetchone()[0]
+finally:
+    dest.close()
+    source.close()
+
+if result != "ok":
+    raise SystemExit(f"production backup quick_check failed: {result}")
+
+os.chown(dst, uid, gid)
+os.chmod(dst, 0o600)
+print(f"PRODUCTION_DB_BACKUP_CONTAINER_QUICK_CHECK=PASS path={dst}")
+PY
+
+[[ -f "$db_backup" ]] || { echo "production DB backup missing on host" >&2; exit 28; }
+[[ "$(stat -c '%u:%g' "$db_backup")" == "$host_uid:$host_gid" ]] || {
+  echo "production DB backup ownership mismatch" >&2
+  exit 29
+}
+
+python3 - "$db_backup" <<'PY'
+import sqlite3
+import sys
+
+p = sys.argv[1]
+db = sqlite3.connect(f"file:{p}?mode=ro", uri=True, timeout=30)
+try:
+    result = db.execute("PRAGMA quick_check").fetchone()[0]
+finally:
+    db.close()
+if result != "ok":
+    raise SystemExit(f"host production DB backup quick_check failed: {result}")
+print("PRODUCTION_DB_BACKUP_QUICK_CHECK=PASS")
+PY
+echo "PRODUCTION_DB_BACKUP=$db_backup"
+
 echo "=== VERIFY GITHUB-PUBLISHED TARGET BUNDLE ==="
 git bundle verify "$bundle_file"
 bundle_ref="refs/remotes/origin/$branch"
@@ -151,7 +243,7 @@ git fetch --no-tags "$bundle_file" "+$bundle_ref:$deploy_ref"
 git cat-file -e "$commit^{commit}"
 git merge-base --is-ancestor "$commit" "$deploy_ref" || {
   echo "requested SHA is not contained in bundled source branch" >&2
-  exit 24
+  exit 30
 }
 echo "GITHUB_BUNDLE_IMPORT=PASS"
 
@@ -184,7 +276,7 @@ for _ in $(seq 1 48); do
   if [[ "$health" == "healthy" ]]; then healthy=1; break; fi
   sleep 5
 done
-[[ "$healthy" == "1" ]] || { echo "Hunter did not return healthy" >&2; exit 30; }
+[[ "$healthy" == "1" ]] || { echo "Hunter did not return healthy" >&2; exit 40; }
 
 echo "=== VERIFY NON-HUNTER CONTAINERS UNCHANGED ==="
 [[ "$(docker inspect -f '{{.Id}}' "$N")" == "$n8n_id_before" ]]
@@ -202,6 +294,7 @@ echo "DEPLOYED_SHA=$commit"
 echo "DEPLOYED_BRANCH=$branch"
 echo "PREVIOUS_SHA=$old_head"
 echo "ROLLBACK_IMAGE=$rollback_tag"
+echo "PRODUCTION_DB_BACKUP=$db_backup"
 echo "N8N_RECREATED=NO"
 echo "OLLAMA_RECREATED=NO"
 echo "RESULT=PRODUCTION_DEPLOYMENT_PASS"
