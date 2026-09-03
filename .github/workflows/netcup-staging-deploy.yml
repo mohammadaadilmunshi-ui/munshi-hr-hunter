@@ -1,0 +1,40 @@
+# MUNSHI_STAGING_WORKFLOW_REGISTRATION_ONLY_V1
+#
+# This file exists on the repository default branch only so GitHub registers
+# the manually dispatchable workflow path.
+#
+# It intentionally performs NO deployment. The real staging deployment
+# workflow is executed only when this registered workflow is dispatched with
+# --ref feat/github-netcup-deployment-v1, where the CI-proven workflow file
+# lives.
+name: Netcup Staging Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Exact 40-character Git SHA to deploy to isolated staging"
+        required: true
+        type: string
+      source_branch:
+        description: "Git branch that must contain the SHA"
+        required: true
+        default: "feat/github-netcup-deployment-v1"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  registration-only:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse deployment from default-branch registration stub
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "This is the inert MUNSHI staging workflow registration stub."
+          echo "No staging or production deployment is permitted from main."
+          echo "Dispatch this workflow with --ref feat/github-netcup-deployment-v1."
+          echo "RESULT=REGISTRATION_STUB_REFUSED_DEPLOYMENT"
+          exit 64
