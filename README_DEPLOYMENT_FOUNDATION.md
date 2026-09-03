@@ -10,6 +10,7 @@ Files:
 - `.github/workflows/deployment-ci-reusable.yml`
 - `.github/workflows/netcup-production-deploy.yml`
 - `.github/workflows/repository-safety.yml`
+- `.github/workflows/deployment-transport-safety.yml`
 - `.github/PULL_REQUEST_TEMPLATE.md`
 - `AGENTS.md`
 - `deploy/netcup/deploy_production_release.sh`
@@ -36,5 +37,6 @@ Deployment transport hardening:
 - Netcup verifies and imports the bundle locally; production deployment no longer depends on an unauthenticated outbound GitHub fetch.
 - The forced-command string is sent without literal shell quotes around the validated SHA/branch values.
 - The production repository stays attached to the requested source branch at the exact deployed SHA, preserving later rollback behavior.
+- `Deployment Transport Guard` statically verifies these invariants and exercises a real Git-bundle ancestry handoff in CI.
 
 The deployment workflow remains manual, exact-SHA gated, single-concurrency, Hunter-only, and rollback-capable.
