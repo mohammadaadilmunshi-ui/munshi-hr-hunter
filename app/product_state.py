@@ -313,12 +313,16 @@ def enabled_lanes(connection: sqlite3.Connection) -> list[dict[str, Any]]:
 
 
 def lane_matches_job(lane: dict[str, Any], job: dict[str, Any]) -> bool:
-    """A lane can only narrow automatic candidates; blank/malformed filters match none."""
+    """Match lane role keywords only against role identity fields.
+
+    Lanes are narrowing role filters. Job-description prose must not broaden a
+    lane accidentally just because a generic keyword appears in responsibilities.
+    """
     keywords = _lane_keywords(lane)
     if not keywords:
         return False
     text = "\n".join(str(job.get(key) or "") for key in (
-        "title", "description_raw", "description", "target_track",
+        "title", "target_track",
     )).casefold()
     return any(keyword in text for keyword in keywords)
 
