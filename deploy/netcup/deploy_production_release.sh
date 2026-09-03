@@ -6,7 +6,7 @@ ROOT="${MUNSHI_ROOT:-/opt/munshi}"
 REPO="$ROOT/repo"
 ENV_FILE="$ROOT/secrets/netcup-shadow.env"
 PROJECT="${MUNSHI_COMPOSE_PROJECT:-munshi-netcup-shadow}"
-VERIFY="$REPO/deploy/netcup/verify_production_runtime_contract.sh"
+VERIFY="/opt/munshi/bin/verify-production-runtime-contract"
 
 H="munshi-netcup-shadow-hunter-1"
 N="munshi-netcup-shadow-n8n-1"
@@ -25,6 +25,7 @@ done
 
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "--commit must be a full lowercase Git SHA" >&2; exit 3; }
 [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "--branch invalid" >&2; exit 4; }
+[[ -x "$VERIFY" ]] || { echo "stable verifier missing: $VERIFY" >&2; exit 5; }
 
 compose=(
   docker compose
