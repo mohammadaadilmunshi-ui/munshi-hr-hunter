@@ -7,6 +7,7 @@ beautifulsoup4==4.15.0
 blinker==1.9.0
 cachetools==7.1.4
 certifi==2026.6.17
+cryptography==46.0.3
 charset-normalizer==3.4.7
 click==8.4.2
 fastapi==0.139.0

@@ -531,7 +531,25 @@ def plan_candidates(
     )
 
     threshold = _required_scoring_value(scoring, "auto_n8n_threshold", float)
-    auto_limit = _required_scoring_value(scoring, "daily_auto_n8n_limit", int)
+    # Legacy scoring limits remain intact until the owner explicitly saves the
+    # product automation preference.  Once saved, this is the canonical
+    # producer-side enforcement point (not a cosmetic dashboard-only limit).
+    product_policy = load_setting(connection, "product_automation_policy_v1", {})
+    product_policy_active = bool(product_policy)
+    product_mode = str(product_policy.get("mode") or "unlimited").casefold()
+    if product_policy_active and product_mode not in {
+        "unlimited", "custom_limit", "paused", "pause_after_batch"
+    }:
+        raise RuntimeError("Product automation policy has an invalid volume mode.")
+    auto_limit: int | None
+    if product_policy_active and product_mode == "unlimited":
+        auto_limit = None
+    elif product_policy_active and product_mode in {"paused", "pause_after_batch"}:
+        auto_limit = 0
+    elif product_policy_active and product_mode == "custom_limit":
+        auto_limit = max(1, int(product_policy.get("daily_limit") or 1))
+    else:
+        auto_limit = _required_scoring_value(scoring, "daily_auto_n8n_limit", int)
     manual_limit = _required_scoring_value(scoring, "daily_manual_n8n_limit", int)
 
     auto_used = count_today(
@@ -563,8 +581,9 @@ def plan_candidates(
         dict[str, Any]
     ] = []
 
-    if auto_used < auto_limit:
+    if auto_limit is None or auto_used < auto_limit:
         targeting_rules = load_rules()
+        remaining = None if auto_limit is None else max(0, auto_limit - auto_used)
         auto_candidates = [
             job
             for job in jobs
@@ -573,11 +592,12 @@ def plan_candidates(
                 threshold,
                 targeting_rules=targeting_rules,
             )
-        ][:1]
+        ][:remaining]
 
     return {
         "threshold": threshold,
         "auto_limit": auto_limit,
+        "product_volume_mode": product_mode if product_policy_active else "legacy",
         "manual_limit": (
             manual_limit
         ),

@@ -5,32 +5,30 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from app.product_state import tracker_status, valid_view
+from app.product_ui import pastel_for
+
 
 ROOT = Path(__file__).resolve().parent.parent
-PAGES = (
-    "Overview",
-    "Historical Intelligence",
-    "Source Health",
-    "Adapter Coverage",
-    "Targeting",
-    "Job Explorer",
-    "Query Performance",
-    "Queue / Actions",
-    "Credentials",
-    "System / Diagnostics",
-    "Storage",
-    "Backups",
+PRIMARY_VIEWS = (
+    ("Dashboard", "product_nav_dashboard"),
+    ("Browse jobs", "product_nav_jobs"),
+    ("Auto Prepare", "product_nav_auto-prepare"),
+    ("Tracker", "product_nav_tracker"),
+    ("Profile", "product_nav_profile"),
+    ("Research", "product_nav_research"),
+    ("Settings", "product_nav_settings"),
 )
 
 
-@pytest.mark.parametrize("page", PAGES)
-def test_operations_dashboard_page_renders_without_exception(page: str) -> None:
+@pytest.mark.parametrize(("label", "key"), PRIMARY_VIEWS)
+def test_product_primary_views_render_without_exception(label: str, key: str) -> None:
     app = AppTest.from_file(str(ROOT / "app" / "dashboard.py"), default_timeout=30)
     app.run()
-    navigation = next(button for button in app.sidebar.button if button.label == page)
+    navigation = next(button for button in app.button if button.label == label)
     navigation.click()
     app.run()
-    assert not app.exception
+    assert not app.exception, label
 
 
 def test_dashboard_render_does_not_change_usajobs_runtime_policy() -> None:
@@ -38,39 +36,49 @@ def test_dashboard_render_does_not_change_usajobs_runtime_policy() -> None:
 
     connection = get_connection()
     try:
-        before = connection.execute(
-            "SELECT enabled FROM source_health WHERE source_name='USAJobs'"
-        ).fetchone()[0]
+        before = connection.execute("SELECT enabled FROM source_health WHERE source_name='USAJobs'").fetchone()[0]
     finally:
         connection.close()
-
     app = AppTest.from_file(str(ROOT / "app" / "dashboard.py"), default_timeout=30)
     app.run()
-    next(button for button in app.sidebar.button if button.label == "Source Health").click()
+    next(button for button in app.button if button.label == "Settings").click()
     app.run()
-
     connection = get_connection()
     try:
-        after = connection.execute(
-            "SELECT enabled FROM source_health WHERE source_name='USAJobs'"
-        ).fetchone()[0]
+        after = connection.execute("SELECT enabled FROM source_health WHERE source_name='USAJobs'").fetchone()[0]
     finally:
         connection.close()
     assert before == after
 
 
-def test_public_branding_and_overview_do_not_market_usajobs() -> None:
+def test_product_shell_and_routes_are_present() -> None:
     dashboard_source = (ROOT / "app" / "dashboard.py").read_text(encoding="utf-8")
-    operations_source = (ROOT / "app" / "operations_dashboard.py").read_text(encoding="utf-8")
-    overview_source = operations_source.split("def _overview()", 1)[1].split("def _historical_intelligence()", 1)[0]
+    shell_source = (ROOT / "app" / "product_shell.py").read_text(encoding="utf-8")
+    css_source = (ROOT / "app" / "product_ui.py").read_text(encoding="utf-8")
     assert "MUNSHI Apply" in dashboard_source
-    assert "MUNSHI APPLY" in operations_source
+    assert "initial_sidebar_state=\"collapsed\"" in dashboard_source
+    assert "NAVIGATION" in shell_source
+    assert "st.query_params" in shell_source
+    assert "@media (max-width:720px)" in css_source
     assert "AADIL HR HUNTER" not in dashboard_source
-    assert "AADIL HR HUNTER" not in operations_source
-    assert "USAJobs" not in overview_source
+    assert valid_view("tracker") == "tracker"
+    assert valid_view("not-a-route") == "dashboard"
 
 
-def test_job_explorer_hides_machine_evidence_until_advanced_expander() -> None:
+def test_tracker_status_is_truth_bound() -> None:
+    assert tracker_status("completed") == "Prepared"
+    assert tracker_status("application_ready") == "Prepared"
+    assert tracker_status("submission_confirmed") == "Submitted"
+    assert tracker_status("unknown_backend_state") == "Other"
+    assert tracker_status(None, "processing") == "In progress"
+
+
+def test_job_card_tone_is_deterministic_and_safe() -> None:
+    assert pastel_for(123) == pastel_for(123)
+    assert pastel_for(123) != ""
+
+
+def test_advanced_job_explorer_keeps_machine_evidence_collapsed() -> None:
     source = (ROOT / "app" / "operations_dashboard.py").read_text(encoding="utf-8")
     explorer = source.split("def _job_explorer()", 1)[1].split("def _query_performance()", 1)[0]
     renderer = source.split("def _render_decision_intelligence(", 1)[1].split("def _job_explorer()", 1)[0]
@@ -93,13 +101,5 @@ def test_job_explorer_hides_machine_evidence_until_advanced_expander() -> None:
 def test_usajobs_credentials_and_runtime_labels_are_independent() -> None:
     from app.credentials_page import usajobs_status_labels
 
-    labels = usajobs_status_labels(
-        configured=True,
-        runtime_enabled=False,
-        connection_verified=True,
-    )
-    assert labels == {
-        "credentials": "Configured",
-        "connection": "Verified",
-        "runtime": "Disabled",
-    }
+    labels = usajobs_status_labels(configured=True, runtime_enabled=False, connection_verified=True)
+    assert labels == {"credentials": "Configured", "connection": "Verified", "runtime": "Disabled"}
