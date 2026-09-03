@@ -9,14 +9,21 @@ This branch is intentionally preparation-only.
 Files:
 - `.github/workflows/deployment-ci-reusable.yml`
 - `.github/workflows/netcup-production-deploy.yml`
+- `.github/workflows/repository-safety.yml`
+- `.github/PULL_REQUEST_TEMPLATE.md`
+- `AGENTS.md`
 - `deploy/netcup/deploy_production_release.sh`
 - `deploy/netcup/verify_production_runtime_contract.sh`
+- `deploy/netcup/github_deploy_gateway.sh`
+- `deploy/netcup/install_github_deploy_key.sh`
 - `deploy/caddy/Caddyfile.dashboard.template`
 - `docs/GITHUB_NETCUP_DEPLOYMENT_FOUNDATION.md`
 
 The package preserves the proven five-layer Compose production contract and performs Hunter-only deployment.
 
 The production-only wrappers live under `deploy/netcup/` so the legacy `scripts/netcup` Stage 8B/9 operator-classification contract remains unchanged.
+
+The future GitHub deployment key is restricted through a forced-command gateway, and its installer refuses activation until Stage 13 reports `STATE=PASS`. The server receives only the public key; the private deployment key remains in GitHub Actions secrets.
 
 Current known Git synchronization gap:
 - Netcup proven head: `7ce1cd33fbe98094cabdd8b9be92f37d75e3e413`
