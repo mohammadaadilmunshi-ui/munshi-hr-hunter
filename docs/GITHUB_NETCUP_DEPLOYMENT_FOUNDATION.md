@@ -123,6 +123,8 @@ Netcup then:
 
 No `git fetch origin` is required on Netcup during deployment.
 
+`Deployment Transport Guard` protects this contract on every PR. It checks the workflow/wrapper/gateway tokens, rejects the earlier quoted-command pattern and outbound Netcup fetch dependency, validates deployment shell syntax, and exercises a real Git-bundle ancestry import in temporary Git repositories.
+
 ## What production deploy is allowed to change
 
 - Git checkout/ref in `/opt/munshi/repo` to the exact approved SHA
@@ -182,6 +184,7 @@ The earlier GitHub ↔ Netcup synchronization blocker is resolved.
 - Stage 13 cloud-only endurance: PASS
 - Controlled Netcup reboot/recovery: PASS with one recovered transient startup SQLite contention observation
 - Reconciled CI before transport hardening: Repository Safety Guard PASS, Linux Compatibility PASS, Docker Foundation PASS
+- Deployment transport hardening: implemented in PR #2; hardened CI must be green at the final PR head before activation
 
 The deployment path remains **not activated**. Remaining activation gates are:
 
