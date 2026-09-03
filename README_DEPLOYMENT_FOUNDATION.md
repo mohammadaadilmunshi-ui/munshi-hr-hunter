@@ -1,10 +1,10 @@
 # MUNSHI GitHub → Netcup Deployment Foundation V1
 
-Prepared while Stage 13 cloud-only endurance is running.
+Prepared during the Stage 13 cloud-migration hardening sequence and reconciled onto the proven Netcup production history.
 
-**DO NOT ACTIVATE AGAINST LIVE NETCUP UNTIL STAGE 13 PASSES AND THE PROVEN NETCUP COMMITS ARE SYNCHRONIZED TO GITHUB.**
+**DO NOT ACTIVATE AGAINST LIVE NETCUP UNTIL THE DEPLOYMENT KEY, GITHUB PRODUCTION ENVIRONMENT, AND CONTROLLED NON-PRODUCTION/STAGING PROOF ARE COMPLETE.**
 
-This branch is intentionally preparation-only.
+This branch remains preparation-only and is intentionally still a draft PR.
 
 Files:
 - `.github/workflows/deployment-ci-reusable.yml`
@@ -25,9 +25,16 @@ The production-only wrappers live under `deploy/netcup/` so the legacy `scripts/
 
 The future GitHub deployment key is restricted through a forced-command gateway, and its installer refuses activation until Stage 13 reports `STATE=PASS`. The server receives only the public key; the private deployment key remains in GitHub Actions secrets.
 
-Current known Git synchronization gap:
-- Netcup proven head: `7ce1cd33fbe98094cabdd8b9be92f37d75e3e413`
-- GitHub migration branch: `e932154461ba03a048a346d3e6d487e655cd4c8e`
-- GitHub does not currently contain the proven Netcup SHA.
+Current synchronization state:
+- Proven Netcup / GitHub migration head: `7ce1cd33fbe98094cabdd8b9be92f37d75e3e413`
+- Deployment foundation reconciled onto that proven history: complete
+- Reconciled PR CI: Repository Safety Guard, Linux Compatibility, and Docker Foundation passed before transport hardening
 
-The deployment workflow is manual, exact-SHA gated, and expected to fail its JobSpy production contract until the missing production-proven history is synchronized.
+Deployment transport hardening:
+- GitHub Actions verifies the requested SHA against the requested source branch using its authenticated checkout.
+- GitHub Actions creates a Git bundle and streams it over the restricted deployment SSH connection.
+- Netcup verifies and imports the bundle locally; production deployment no longer depends on an unauthenticated outbound GitHub fetch.
+- The forced-command string is sent without literal shell quotes around the validated SHA/branch values.
+- The production repository stays attached to the requested source branch at the exact deployed SHA, preserving later rollback behavior.
+
+The deployment workflow remains manual, exact-SHA gated, single-concurrency, Hunter-only, and rollback-capable.
