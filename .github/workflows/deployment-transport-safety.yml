@@ -1,0 +1,115 @@
+name: Deployment Transport Guard
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deployment-transport-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify GitHub to Netcup transport contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path(".github/workflows/netcup-production-deploy.yml").read_text(encoding="utf-8")
+          deploy = Path("deploy/netcup/deploy_production_release.sh").read_text(encoding="utf-8")
+          gateway = Path("deploy/netcup/github_deploy_gateway.sh").read_text(encoding="utf-8")
+
+          workflow_required = (
+              'git fetch --no-tags origin "$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"',
+              'git merge-base --is-ancestor "$DEPLOY_SHA" "refs/remotes/origin/$DEPLOY_BRANCH"',
+              'git bundle create',
+              'git bundle verify "$RUNNER_TEMP/munshi-deploy.bundle"',
+              'DEPLOY_COMMAND="/opt/munshi/bin/deploy-production-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH"',
+              'cat "$RUNNER_TEMP/munshi-deploy.bundle" |',
+          )
+          for token in workflow_required:
+              assert token in workflow, f"workflow transport token missing: {token}"
+
+          assert "--commit '$DEPLOY_SHA'" not in workflow, "literal SHA quotes would break the forced-command gateway"
+          assert "--branch '$DEPLOY_BRANCH'" not in workflow, "literal branch quotes would break the forced-command gateway"
+
+          deploy_required = (
+              'timeout 120s cat > "$bundle_file"',
+              'git bundle verify "$bundle_file"',
+              'git fetch --no-tags "$bundle_file" "+$bundle_ref:$deploy_ref"',
+              'git merge-base --is-ancestor "$commit" "$deploy_ref"',
+              'git checkout -q -B "$branch" "$commit"',
+              '[[ "$(git branch --show-current)" == "$branch" ]]',
+              'GITHUB_BUNDLE_IMPORT=PASS',
+          )
+          for token in deploy_required:
+              assert token in deploy, f"server deployment transport token missing: {token}"
+
+          forbidden_server_fetches = (
+              "git fetch --prune origin",
+              'git fetch origin "$branch"',
+          )
+          for token in forbidden_server_fetches:
+              assert token not in deploy, f"Netcup deployment must not depend on outbound GitHub fetch: {token}"
+
+          gateway_required = (
+              "SSH_ORIGINAL_COMMAND",
+              "([0-9a-f]{40})",
+              'exec "$DEPLOY" --commit "$commit" --branch "$branch"',
+          )
+          for token in gateway_required:
+              assert token in gateway, f"gateway token missing: {token}"
+
+          print("DEPLOYMENT_TRANSPORT_STATIC_GUARD=PASS")
+          PY
+
+      - name: Validate deployment shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for script in deploy/netcup/*.sh; do
+            bash -n "$script"
+          done
+          echo "DEPLOYMENT_SHELL_SYNTAX=PASS"
+
+      - name: Exercise Git bundle ancestry transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/bundle-transport-test"
+          src="$root/source"
+          dst="$root/destination"
+          bundle="$root/deploy.bundle"
+          branch="feat/test-transport"
+
+          mkdir -p "$src" "$dst"
+
+          git -C "$src" init -q
+          git -C "$src" config user.name "MUNSHI CI"
+          git -C "$src" config user.email "ci@example.invalid"
+          printf 'one\n' > "$src/file.txt"
+          git -C "$src" add file.txt
+          git -C "$src" commit -qm first
+          first="$(git -C "$src" rev-parse HEAD)"
+          printf 'two\n' >> "$src/file.txt"
+          git -C "$src" commit -qam second
+          tip="$(git -C "$src" rev-parse HEAD)"
+          git -C "$src" update-ref "refs/remotes/origin/$branch" "$tip"
+
+          git -C "$src" merge-base --is-ancestor "$first" "refs/remotes/origin/$branch"
+          git -C "$src" bundle create "$bundle" "refs/remotes/origin/$branch"
+          git -C "$src" bundle verify "$bundle"
+
+          git -C "$dst" init -q
+          deploy_ref="refs/remotes/github-deploy/$branch"
+          git -C "$dst" fetch --no-tags "$bundle" "+refs/remotes/origin/$branch:$deploy_ref"
+          git -C "$dst" cat-file -e "$first^{commit}"
+          git -C "$dst" merge-base --is-ancestor "$first" "$deploy_ref"
+
+          echo "DEPLOYMENT_BUNDLE_TRANSPORT=PASS"
