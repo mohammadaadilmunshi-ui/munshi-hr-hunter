@@ -86,8 +86,9 @@ rollback() {
   else
     git checkout -q --detach "$old_head" || true
   fi
+  docker tag "$old_hunter_image_id" "$hunter_image_name" || true
+  echo "ROLLBACK_IMAGE_TAG_RESTORED=YES" >&2
   if (( recreated )); then
-    docker tag "$old_hunter_image_id" "$hunter_image_name" || true
     "${compose[@]}" up -d --no-deps --force-recreate hunter || true
     for _ in $(seq 1 48); do
       health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$H" 2>/dev/null || true)"
