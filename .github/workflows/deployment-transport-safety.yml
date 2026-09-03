@@ -14,33 +14,53 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify GitHub to Netcup transport contract
+      - name: Verify GitHub to Netcup transport contracts
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
 
-          workflow = Path(".github/workflows/netcup-production-deploy.yml").read_text(encoding="utf-8")
-          deploy = Path("deploy/netcup/deploy_production_release.sh").read_text(encoding="utf-8")
+          production_workflow = Path(".github/workflows/netcup-production-deploy.yml").read_text(encoding="utf-8")
+          staging_workflow = Path(".github/workflows/netcup-staging-deploy.yml").read_text(encoding="utf-8")
+          production_deploy = Path("deploy/netcup/deploy_production_release.sh").read_text(encoding="utf-8")
+          staging_deploy = Path("deploy/netcup/deploy_staging_release.sh").read_text(encoding="utf-8")
+          staging_verify = Path("deploy/netcup/verify_staging_runtime_contract.sh").read_text(encoding="utf-8")
           gateway = Path("deploy/netcup/github_deploy_gateway.sh").read_text(encoding="utf-8")
-          installer = Path("deploy/netcup/install_github_deploy_key.sh").read_text(encoding="utf-8")
+          production_installer = Path("deploy/netcup/install_github_deploy_key.sh").read_text(encoding="utf-8")
+          staging_installer = Path("deploy/netcup/install_staging_deploy_gateway_extension.sh").read_text(encoding="utf-8")
 
-          workflow_required = (
+          production_workflow_required = (
               'git fetch --no-tags origin "$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"',
               'git merge-base --is-ancestor "$DEPLOY_SHA" "refs/remotes/origin/$DEPLOY_BRANCH"',
               'git bundle create',
               'git bundle verify "$RUNNER_TEMP/munshi-deploy.bundle"',
               'DEPLOY_COMMAND="/opt/munshi/bin/deploy-production-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH"',
               'cat "$RUNNER_TEMP/munshi-deploy.bundle" |',
+              'environment: production',
+              'group: munshi-netcup-production',
           )
-          for token in workflow_required:
-              assert token in workflow, f"workflow transport token missing: {token}"
+          for token in production_workflow_required:
+              assert token in production_workflow, f"production workflow transport token missing: {token}"
 
-          assert "--commit '$DEPLOY_SHA'" not in workflow, "literal SHA quotes would break the forced-command gateway"
-          assert "--branch '$DEPLOY_BRANCH'" not in workflow, "literal branch quotes would break the forced-command gateway"
+          staging_workflow_required = (
+              'git fetch --no-tags origin "$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"',
+              'git merge-base --is-ancestor "$DEPLOY_SHA" "refs/remotes/origin/$DEPLOY_BRANCH"',
+              'git bundle create',
+              'git bundle verify "$RUNNER_TEMP/munshi-staging-deploy.bundle"',
+              'DEPLOY_COMMAND="/opt/munshi/bin/deploy-staging-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH"',
+              'cat "$RUNNER_TEMP/munshi-staging-deploy.bundle" |',
+              'environment: staging',
+              'group: munshi-netcup-staging',
+          )
+          for token in staging_workflow_required:
+              assert token in staging_workflow, f"staging workflow transport token missing: {token}"
 
-          deploy_required = (
+          for workflow_name, workflow in (("production", production_workflow), ("staging", staging_workflow)):
+              assert "--commit '$DEPLOY_SHA'" not in workflow, f"literal SHA quotes would break {workflow_name} forced-command gateway"
+              assert "--branch '$DEPLOY_BRANCH'" not in workflow, f"literal branch quotes would break {workflow_name} forced-command gateway"
+
+          production_deploy_required = (
               'timeout 120s cat > "$bundle_file"',
               'git bundle verify "$bundle_file"',
               'git fetch --no-tags "$bundle_file" "+$bundle_ref:$deploy_ref"',
@@ -50,26 +70,54 @@ jobs:
               'docker tag "$old_hunter_image_id" "$hunter_image_name" || true',
               'ROLLBACK_IMAGE_TAG_RESTORED=YES',
               'GITHUB_BUNDLE_IMPORT=PASS',
+              'N8N_RECREATED=NO',
+              'OLLAMA_RECREATED=NO',
+              'RESULT=PRODUCTION_DEPLOYMENT_PASS',
           )
-          for token in deploy_required:
-              assert token in deploy, f"server deployment transport token missing: {token}"
+          for token in production_deploy_required:
+              assert token in production_deploy, f"production server deployment token missing: {token}"
+
+          staging_deploy_required = (
+              'timeout 120s cat > "$bundle_file"',
+              'git bundle verify "$bundle_file"',
+              'git fetch --no-tags "$bundle_file" "+$bundle_ref:$deploy_ref"',
+              'git merge-base --is-ancestor "$commit" "$deploy_ref"',
+              'git checkout -q -B "$branch" "$commit"',
+              '[[ "$(git branch --show-current)" == "$branch" ]]',
+              'docker tag "$old_hunter_image_id" "$hunter_image_name" || true',
+              'ROLLBACK_IMAGE_TAG_RESTORED=YES',
+              'GITHUB_STAGING_BUNDLE_IMPORT=PASS',
+              'STAGING_N8N_RECREATED=NO',
+              'STAGING_OLLAMA_RECREATED=NO',
+              'STAGING_EDGE_RECREATED=NO',
+              'PRODUCTION_CONTAINERS_UNCHANGED=PASS',
+              'PRODUCTION_DEPLOYMENT_PERFORMED=NO',
+              'RESULT=STAGING_DEPLOYMENT_PASS',
+          )
+          for token in staging_deploy_required:
+              assert token in staging_deploy, f"staging server deployment token missing: {token}"
 
           forbidden_server_fetches = (
               "git fetch --prune origin",
               'git fetch origin "$branch"',
           )
           for token in forbidden_server_fetches:
-              assert token not in deploy, f"Netcup deployment must not depend on outbound GitHub fetch: {token}"
+              assert token not in production_deploy, f"production Netcup deploy must not depend on outbound GitHub fetch: {token}"
+              assert token not in staging_deploy, f"staging Netcup deploy must not depend on outbound GitHub fetch: {token}"
 
           gateway_required = (
               "SSH_ORIGINAL_COMMAND",
               "([0-9a-f]{40})",
-              'exec "$DEPLOY" --commit "$commit" --branch "$branch"',
+              'PRODUCTION_DEPLOY="/opt/munshi/bin/deploy-production-release"',
+              'STAGING_DEPLOY="/opt/munshi/bin/deploy-staging-release"',
+              'exec "$PRODUCTION_DEPLOY" --commit "$commit" --branch "$branch"',
+              'exec "$STAGING_DEPLOY" --commit "$commit" --branch "$branch"',
+              'request rejected by MUNSHI GitHub deployment gateway',
           )
           for token in gateway_required:
               assert token in gateway, f"gateway token missing: {token}"
 
-          installer_required = (
+          production_installer_required = (
               '--source-root',
               '--source-sha',
               'git -C "$SOURCE_ROOT" rev-parse HEAD',
@@ -80,8 +128,36 @@ jobs:
               'INSTALL_TRANSACTION=PASS',
               'PRIVATE_KEY_INSTALLED_ON_SERVER=NO',
           )
-          for token in installer_required:
-              assert token in installer, f"deploy-key bootstrap token missing: {token}"
+          for token in production_installer_required:
+              assert token in production_installer, f"deploy-key bootstrap token missing: {token}"
+
+          staging_installer_required = (
+              '--source-root',
+              '--source-sha',
+              'Stage 13 is not PASS',
+              'ROLLBACK STAGING GATEWAY EXTENSION',
+              'verify-staging-runtime-contract',
+              'deploy-staging-release',
+              'AUTHORIZED_KEYS_CHANGED=NO',
+              'PRODUCTION_DEPLOYMENT_PERFORMED=NO',
+              'STAGING_DEPLOYMENT_PERFORMED=NO',
+              'RESULT=STAGING_GATEWAY_EXTENSION_INSTALLED',
+          )
+          for token in staging_installer_required:
+              assert token in staging_installer, f"staging gateway installer token missing: {token}"
+
+          staging_verify_required = (
+              'STAGING_SIDE_EFFECT_FLAGS=PASS',
+              'STAGING_SIDE_EFFECT_PROCESSES=NONE',
+              'STAGING_VOLUME_ISOLATION=PASS',
+              'STAGING_RAW_PORTS_LOOPBACK_ONLY=PASS',
+              'STAGING_HTTP_HEALTH=PASS',
+              'STAGING_DASHBOARD_CONFIG=PASS',
+              'STAGING_HTTPS_UNAUTHENTICATED=401',
+              'RESULT=STAGING_RUNTIME_CONTRACT_PASS',
+          )
+          for token in staging_verify_required:
+              assert token in staging_verify, f"staging verifier token missing: {token}"
 
           print("DEPLOYMENT_TRANSPORT_STATIC_GUARD=PASS")
           PY
@@ -124,9 +200,12 @@ jobs:
           git -C "$src" bundle verify "$bundle"
 
           git -C "$dst" init -q
-          deploy_ref="refs/remotes/github-deploy/$branch"
-          git -C "$dst" fetch --no-tags "$bundle" "+refs/remotes/origin/$branch:$deploy_ref"
+          production_ref="refs/remotes/github-deploy/$branch"
+          staging_ref="refs/remotes/github-staging-deploy/$branch"
+          git -C "$dst" fetch --no-tags "$bundle" "+refs/remotes/origin/$branch:$production_ref"
+          git -C "$dst" fetch --no-tags "$bundle" "+refs/remotes/origin/$branch:$staging_ref"
           git -C "$dst" cat-file -e "$first^{commit}"
-          git -C "$dst" merge-base --is-ancestor "$first" "$deploy_ref"
+          git -C "$dst" merge-base --is-ancestor "$first" "$production_ref"
+          git -C "$dst" merge-base --is-ancestor "$first" "$staging_ref"
 
           echo "DEPLOYMENT_BUNDLE_TRANSPORT=PASS"
