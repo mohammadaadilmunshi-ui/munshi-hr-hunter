@@ -45,6 +45,13 @@ if not API_SECRET:
     )
 
 
+def production_callbacks_explicitly_disabled() -> bool:
+    value = os.getenv("PRODUCTION_CALLBACKS_ENABLED")
+    if value is None:
+        return False
+    return value.strip().lower() not in {"1", "true", "yes", "on"}
+
+
 @asynccontextmanager
 async def lifespan(_application: FastAPI):
     initialize_database()
@@ -339,6 +346,12 @@ def job_action(
 def n8n_status_update(
     payload: N8nStatusUpdate,
 ) -> dict[str, Any]:
+    if production_callbacks_explicitly_disabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Production callbacks are disabled on this runtime.",
+        )
+
     connection = get_connection()
 
     # Callback processing must be able to recover cleanly after restoring a

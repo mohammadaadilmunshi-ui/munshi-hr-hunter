@@ -20,7 +20,10 @@ Downloads
 Documents
 config/launchagents
 bin
-tools
+tools/*
+!tools/runners/
+tools/runners/*
+!tools/runners/jobspy_runner.py
 **/*.log
 **/*.tmp
 **/credentials*

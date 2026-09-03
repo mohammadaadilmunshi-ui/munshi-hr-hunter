@@ -7,11 +7,31 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.request
 from dataclasses import dataclass
 
 
 def enabled(name: str) -> bool:
     return os.getenv(name, "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def coordinator_command(python: str) -> list[str]:
+    mode = os.getenv("HUNTER_COORDINATOR_MODE", "production").strip().lower()
+    if mode not in {"test", "production"}:
+        raise SystemExit("HUNTER_COORDINATOR_MODE must be test or production.")
+    timeout = max(60, int(os.getenv("HUNTER_COORDINATOR_WORKER_TIMEOUT", "420")))
+    command = [
+        python,
+        "-m",
+        "app.unified_hourly_coordinator",
+        "--mode",
+        mode,
+        "--worker-timeout",
+        str(timeout),
+    ]
+    if enabled("HUNTER_COORDINATOR_SKIP_WORKERS"):
+        command.append("--skip-workers")
+    return command
 
 
 @dataclass
@@ -22,6 +42,7 @@ class Lane:
     repeat: bool = False
     interval: int = 3600
     process: subprocess.Popen[str] | None = None
+    next_start_at: float | None = None
 
 
 children: list[Lane] = []
@@ -45,7 +66,26 @@ def start(lane: Lane) -> None:
         cwd="/app/hunter",
         start_new_session=True,
     )
+    lane.next_start_at = None
     print(f"Hunter lane started: {lane.name} (pid={lane.process.pid})", flush=True)
+
+
+def wait_for_fastapi(lane: Lane, timeout_seconds: int = 120) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if lane.process is None or lane.process.poll() is not None:
+            return False
+        try:
+            response = urllib.request.urlopen(
+                "http://127.0.0.1:8000/health",
+                timeout=2,
+            )
+            if response.status == 200:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
 
 
 def stop_all() -> None:
@@ -69,28 +109,38 @@ def main() -> int:
         children.append(Lane("telegram", [python, "-m", "app.telegram_listener"]))
     discovery = enabled("HUNTER_ENABLE_DISCOVERY_SCHEDULER")
     coordinator = enabled("HUNTER_ENABLE_COORDINATOR")
-    if discovery and coordinator:
-        raise SystemExit("Enable only one Hunter discovery scheduler lane at a time.")
     if discovery:
         children.append(Lane("discovery-scheduler", [python, "-m", "app.randomized_source_runner", "--scheduled"], repeat=True, interval=max(30, int(os.getenv("HUNTER_DISCOVERY_INTERVAL_SECONDS", "3600")))))
     if coordinator:
-        children.append(Lane("coordinator", [python, "-m", "app.unified_hourly_coordinator"], repeat=True, interval=max(30, int(os.getenv("HUNTER_COORDINATOR_INTERVAL_SECONDS", "3600")))))
+        children.append(Lane("coordinator", coordinator_command(python), repeat=True, interval=max(30, int(os.getenv("HUNTER_COORDINATOR_INTERVAL_SECONDS", "3600")))))
 
     signal.signal(signal.SIGTERM, terminate_children)
     signal.signal(signal.SIGINT, terminate_children)
     for lane in children:
         start(lane)
+        if lane.name == "fastapi" and not wait_for_fastapi(lane):
+            print("FastAPI did not become ready before writer lanes.", file=sys.stderr, flush=True)
+            return 1
 
     try:
         while not stopping:
             for lane in children:
-                if lane.process is None or lane.process.poll() is None:
+                if lane.process is None:
+                    if lane.repeat and lane.next_start_at is not None and time.monotonic() >= lane.next_start_at:
+                        start(lane)
+                    continue
+                if lane.process.poll() is None:
                     continue
                 code = lane.process.returncode
-                if lane.repeat and not stopping and code == 0:
-                    time.sleep(lane.interval)
-                    if not stopping:
-                        start(lane)
+                if lane.repeat and not stopping:
+                    outcome = "completed" if code == 0 else "failed"
+                    lane.process = None
+                    lane.next_start_at = time.monotonic() + lane.interval
+                    print(
+                        f"Hunter repeating lane {outcome}: {lane.name} ({code}); "
+                        f"retry in {lane.interval}s",
+                        flush=True,
+                    )
                     continue
                 if not stopping and lane.required:
                     print(f"Required Hunter lane exited: {lane.name} ({code})", file=sys.stderr, flush=True)
