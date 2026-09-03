@@ -19,7 +19,7 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import pathlib, re, subprocess
+          import pathlib, subprocess
 
           tracked = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
           allowed_env_examples = {".env.example", ".env.netcup.shadow.example"}
@@ -117,6 +117,7 @@ jobs:
           assert "cancel-in-progress: false" in text
           assert "environment: production" in text
           assert "contents: read" in text
+          assert "ssh-keyscan" not in text, "do not bootstrap SSH host trust inside deployment workflow"
           print("MANUAL_PRODUCTION_DEPLOY_GUARD=PASS")
           PY
 
@@ -129,12 +130,20 @@ jobs:
 
           deploy = Path("deploy/netcup/deploy_production_release.sh")
           verify = Path("deploy/netcup/verify_production_runtime_contract.sh")
-          if not deploy.is_file() and not verify.is_file():
+          gateway = Path("deploy/netcup/github_deploy_gateway.sh")
+          installer = Path("deploy/netcup/install_github_deploy_key.sh")
+
+          if not any(p.is_file() for p in (deploy, verify, gateway, installer)):
               print("Deploy-only production scripts not present; contract guard skipped.")
               raise SystemExit(0)
-          assert deploy.is_file() and verify.is_file(), "deploy/verify production scripts must be paired"
 
-          text = deploy.read_text(encoding="utf-8") + "\n" + verify.read_text(encoding="utf-8")
+          for p in (deploy, verify, gateway, installer):
+              assert p.is_file(), f"missing paired deployment file: {p}"
+
+          deploy_text = deploy.read_text(encoding="utf-8")
+          verify_text = verify.read_text(encoding="utf-8")
+          text = deploy_text + "\n" + verify_text
+
           required = (
               "compose.yaml",
               "compose.netcup-shadow.yaml",
@@ -151,6 +160,8 @@ jobs:
           for token in required:
               assert token in text, f"missing deployment safety token: {token}"
 
+          assert 'VERIFY="/opt/munshi/bin/verify-production-runtime-contract"' in deploy_text, "deploy must use stable verifier"
+
           forbidden = (
               "docker compose down -v",
               "docker volume rm",
@@ -159,6 +170,23 @@ jobs:
           )
           for token in forbidden:
               assert token not in text, f"destructive production token present: {token}"
+
+          gateway_text = gateway.read_text(encoding="utf-8")
+          for token in (
+              "SSH_ORIGINAL_COMMAND",
+              "/opt/munshi/bin/deploy-production-release",
+              "([0-9a-f]{40})",
+              'exec "$DEPLOY" --commit "$commit" --branch "$branch"',
+          ):
+              assert token in gateway_text, f"deployment gateway missing: {token}"
+
+          installer_text = installer.read_text(encoding="utf-8")
+          for token in (
+              "STATE=PASS",
+              'restrict,command=\"/opt/munshi/bin/github-deploy-gateway\"',
+              "PRIVATE_KEY_INSTALLED_ON_SERVER=NO",
+          ):
+              assert token in installer_text, f"deploy-key installer missing: {token}"
 
           print("PRODUCTION_DEPLOY_ANTI_REGRESSION_GUARD=PASS")
           PY
