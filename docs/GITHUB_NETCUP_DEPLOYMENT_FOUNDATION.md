@@ -66,17 +66,18 @@ If repository protection features are available, restrict deployment branches an
 
 ## Stable server-side wrapper
 
-The workflow does not execute arbitrary repository shell over SSH. It invokes:
+The GitHub workflow does not execute arbitrary repository shell over SSH. It invokes:
 
 `/opt/munshi/bin/deploy-production-release`
 
 The server copy should be protected from routine application writes.
 
-The version-controlled source is:
+The version-controlled production-only sources are deliberately outside the legacy `scripts/netcup` operator directory:
 
-`scripts/netcup/deploy_production_release.sh`
+- `deploy/netcup/deploy_production_release.sh`
+- `deploy/netcup/verify_production_runtime_contract.sh`
 
-Install/update the stable wrapper only in a separate infrastructure change after CI and review.
+This keeps the established Stage 8B/9 local-vs-remote script classifier unchanged. Install/update the stable wrapper only in a separate infrastructure change after CI and review.
 
 ## What production deploy is allowed to change
 
