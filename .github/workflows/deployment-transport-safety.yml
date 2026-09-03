@@ -46,6 +46,8 @@ jobs:
               'git merge-base --is-ancestor "$commit" "$deploy_ref"',
               'git checkout -q -B "$branch" "$commit"',
               '[[ "$(git branch --show-current)" == "$branch" ]]',
+              'docker tag "$old_hunter_image_id" "$hunter_image_name" || true',
+              'ROLLBACK_IMAGE_TAG_RESTORED=YES',
               'GITHUB_BUNDLE_IMPORT=PASS',
           )
           for token in deploy_required:
