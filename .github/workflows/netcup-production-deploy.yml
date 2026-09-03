@@ -43,6 +43,10 @@ jobs:
             echo "source_branch contains unsupported characters" >&2
             exit 3
           }
+          git check-ref-format --branch "$REQUESTED_BRANCH" >/dev/null || {
+            echo "source_branch is not a valid Git branch name" >&2
+            exit 4
+          }
           echo "commit_sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
           echo "source_branch=$REQUESTED_BRANCH" >> "$GITHUB_OUTPUT"
 
@@ -58,6 +62,29 @@ jobs:
     environment: production
     timeout-minutes: 30
     steps:
+      - name: Checkout exact deployment SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-request.outputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Build authenticated deployment bundle
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ needs.validate-request.outputs.commit_sha }}
+          DEPLOY_BRANCH: ${{ needs.validate-request.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
+          git merge-base --is-ancestor "$DEPLOY_SHA" "refs/remotes/origin/$DEPLOY_BRANCH" || {
+            echo "requested SHA is not contained in origin/$DEPLOY_BRANCH" >&2
+            exit 10
+          }
+          git bundle create \
+            "$RUNNER_TEMP/munshi-deploy.bundle" \
+            "refs/remotes/origin/$DEPLOY_BRANCH"
+          git bundle verify "$RUNNER_TEMP/munshi-deploy.bundle"
+
       - name: Configure restricted SSH
         shell: bash
         env:
@@ -80,10 +107,12 @@ jobs:
           DEPLOY_BRANCH: ${{ needs.validate-request.outputs.source_branch }}
         run: |
           set -euo pipefail
-          ssh \
-            -i "$HOME/.ssh/netcup_deploy" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            "$NETCUP_USER@$NETCUP_HOST" \
-            "/opt/munshi/bin/deploy-production-release --commit '$DEPLOY_SHA' --branch '$DEPLOY_BRANCH'"
+          DEPLOY_COMMAND="/opt/munshi/bin/deploy-production-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH"
+          cat "$RUNNER_TEMP/munshi-deploy.bundle" | \
+            ssh \
+              -i "$HOME/.ssh/netcup_deploy" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              "$NETCUP_USER@$NETCUP_HOST" \
+              "$DEPLOY_COMMAND"
