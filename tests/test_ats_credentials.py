@@ -85,10 +85,13 @@ def test_wrong_key_and_unknown_versions_fail_closed(hunter_db, monkeypatch):
     try:
         monkeypatch.setenv("MUNSHI_VAULT_KEY", base64.urlsafe_b64encode(b"q" * 32).decode())
         with pytest.raises(CredentialError): _decrypt_for_integrity(connection=c, account_id=a["account_id"], tenant_id="default", user_id="local-owner", secret_kind="password", purpose="integrity-verification")
-        c.execute("UPDATE ats_credential_secrets SET key_version='tenant-env-v1' WHERE account_id=?", (a["account_id"],))
+        _key(monkeypatch)
         c.execute("UPDATE ats_credential_accounts SET provider='WORKDAY' WHERE account_id=?", (a["account_id"],)); c.commit()
         with pytest.raises(CredentialError): _decrypt_for_integrity(connection=c, account_id=a["account_id"], tenant_id="default", user_id="local-owner", secret_kind="password", purpose="integrity-verification")
-        _key(monkeypatch); c.execute("UPDATE ats_credential_secrets SET key_version='future-v9' WHERE account_id=?", (a["account_id"],)); c.commit()
+        c.execute("UPDATE ats_credential_accounts SET provider='ASHBY' WHERE account_id=?", (a["account_id"],))
+        c.execute("UPDATE ats_credential_secrets SET algorithm_version='future-aead-v9' WHERE account_id=?", (a["account_id"],)); c.commit()
+        with pytest.raises(CredentialError): _decrypt_for_integrity(connection=c, account_id=a["account_id"], tenant_id="default", user_id="local-owner", secret_kind="password", purpose="integrity-verification")
+        c.execute("UPDATE ats_credential_secrets SET algorithm_version='aes-gcm-v1', key_version='future-v9' WHERE account_id=?", (a["account_id"],)); c.commit()
         with pytest.raises(CredentialError): _decrypt_for_integrity(connection=c, account_id=a["account_id"], tenant_id="default", user_id="local-owner", secret_kind="password", purpose="integrity-verification")
     finally: c.close()
 
@@ -97,10 +100,10 @@ def test_cas_legal_transitions_and_block_purges_secret(hunter_db, monkeypatch):
     _key(monkeypatch)
     with pytest.raises(CredentialError): create_account(provider="workday", account_scope="bad", label="x", consent_version="v1", initial_state="AVAILABLE")
     a = create_account(provider="workday", account_scope="cas", label="x", consent_version="v1")
-    with pytest.raises(CredentialError): transition_account(account_id=a["account_id"], next_state="AVAILABLE", expected_revision=a["revision"], reason="not a public transition")
+    with pytest.raises(CredentialError): transition_account(account_id=a["account_id"], next_state="AVAILABLE", expected_revision=a["revision"], reason="CREDENTIAL_UPDATED")
     ready = store_secret(account_id=a["account_id"], secret_kind="password", secret="test-only-secret", expected_revision=a["revision"])
     with pytest.raises(CredentialError): store_secret(account_id=a["account_id"], secret_kind="password", secret="test-only-secret", expected_revision=a["revision"])
-    blocked = transition_account(account_id=a["account_id"], next_state="BLOCKED", expected_revision=ready["revision"], reason="user revoked")
+    blocked = transition_account(account_id=a["account_id"], next_state="BLOCKED", expected_revision=ready["revision"], reason="USER_REVOKED")
     assert blocked["state"] == "BLOCKED"
     c, row = _secret_row(a["account_id"])
     try: assert row is None
@@ -129,3 +132,76 @@ def test_cross_user_access_and_public_status_never_return_secret(hunter_db, monk
     with owner_context(tenant_id="team-c", user_id="member-c"):
         with pytest.raises(LookupError): account_status(account_id=a["account_id"])
         with pytest.raises(LookupError): store_secret(account_id=a["account_id"], secret_kind="password", secret="never-in-status", expected_revision=2)
+
+
+def test_integrity_verifier_requires_current_owner_and_available_state(hunter_db, monkeypatch):
+    _key(monkeypatch)
+    a = create_account(provider="workday", account_scope="internal-only", label="x", consent_version="v1")
+    ready = store_secret(account_id=a["account_id"], secret_kind="password", secret="test-only-secret", expected_revision=a["revision"])
+    c, _ = _secret_row(a["account_id"])
+    try:
+        monkeypatch.setenv("MUNSHI_TENANT_FOUNDATION_ENABLED", "1")
+        with owner_context(tenant_id="default", user_id="local-owner"):
+            assert _decrypt_for_integrity(connection=c, account_id=a["account_id"], tenant_id="default", user_id="local-owner", secret_kind="password", purpose="integrity-verification") == b"test-only-secret"
+            with pytest.raises(CredentialError):
+                _decrypt_for_integrity(connection=c, account_id=a["account_id"], tenant_id="other", user_id="other", secret_kind="password", purpose="integrity-verification")
+        c.execute("UPDATE ats_credential_accounts SET state='NEEDS_LOGIN' WHERE account_id=?", (a["account_id"],)); c.commit()
+        with pytest.raises(CredentialError):
+            _decrypt_for_integrity(connection=c, account_id=a["account_id"], tenant_id="default", user_id="local-owner", secret_kind="password", purpose="integrity-verification")
+    finally:
+        c.close()
+
+
+def test_aad_identity_mutations_fail_closed(hunter_db, monkeypatch):
+    _key(monkeypatch)
+    a = create_account(provider="workday", account_scope="aad-a", label="x", consent_version="v1")
+    b = create_account(provider="workday", account_scope="aad-b", label="x", consent_version="v1")
+    store_secret(account_id=a["account_id"], secret_kind="password", secret="test-only-secret", expected_revision=a["revision"])
+    c, _ = _secret_row(a["account_id"])
+    try:
+        # Rebinding a ciphertext to a different account reaches AES-GCM and fails its tag.
+        c.execute("UPDATE ats_credential_accounts SET state='AVAILABLE' WHERE account_id=?", (b["account_id"],))
+        c.execute("UPDATE ats_credential_secrets SET account_id=? WHERE account_id=?", (b["account_id"], a["account_id"])); c.commit()
+        with pytest.raises(CredentialError):
+            _decrypt_for_integrity(connection=c, account_id=b["account_id"], tenant_id="default", user_id="local-owner", secret_kind="password", purpose="integrity-verification")
+    finally:
+        c.close()
+
+
+def test_secret_kind_tamper_and_sensitive_reason_fail_closed(hunter_db, monkeypatch):
+    _key(monkeypatch)
+    a = create_account(provider="lever", account_scope="aad-kind", label="x", consent_version="v1")
+    store_secret(account_id=a["account_id"], secret_kind="password", secret="test-only-secret", expected_revision=a["revision"])
+    c, _ = _secret_row(a["account_id"])
+    try:
+        c.execute("UPDATE ats_credential_secrets SET secret_kind='otp' WHERE account_id=?", (a["account_id"],)); c.commit()
+        with pytest.raises(CredentialError):
+            _decrypt_for_integrity(connection=c, account_id=a["account_id"], tenant_id="default", user_id="local-owner", secret_kind="otp", purpose="integrity-verification")
+    finally:
+        c.close()
+    clean = create_account(provider="lever", account_scope="reason", label="x", consent_version="v1")
+    with pytest.raises(CredentialError):
+        transition_account(account_id=clean["account_id"], next_state="NEEDS_LOGIN", expected_revision=clean["revision"], reason="test-only-secret")
+
+
+@pytest.mark.parametrize(
+    ("new_tenant", "new_user"),
+    [("other-tenant", "local-owner"), ("default", "other-user")],
+)
+def test_tenant_or_user_metadata_tamper_reaches_aead_and_fails_closed(hunter_db, monkeypatch, new_tenant, new_user):
+    _key(monkeypatch)
+    a = create_account(provider="ashby", account_scope=f"aad-{new_tenant}-{new_user}", label="x", consent_version="v1")
+    store_secret(account_id=a["account_id"], secret_kind="password", secret="test-only-secret", expected_revision=a["revision"])
+    c, _ = _secret_row(a["account_id"])
+    try:
+        c.execute("INSERT OR IGNORE INTO tenants VALUES(?, 'Other', CURRENT_TIMESTAMP)", (new_tenant,))
+        c.execute("INSERT OR IGNORE INTO app_users VALUES(?, 'Other', CURRENT_TIMESTAMP)", (new_user,))
+        c.execute("INSERT OR IGNORE INTO tenant_memberships VALUES(?, ?, 'member', CURRENT_TIMESTAMP)", (new_tenant, new_user))
+        c.execute("UPDATE ats_credential_accounts SET tenant_id=?,user_id=? WHERE account_id=?", (new_tenant, new_user, a["account_id"]))
+        c.execute("UPDATE ats_credential_secrets SET tenant_id=?,user_id=? WHERE account_id=?", (new_tenant, new_user, a["account_id"])); c.commit()
+        monkeypatch.setenv("MUNSHI_TENANT_FOUNDATION_ENABLED", "1")
+        with owner_context(tenant_id=new_tenant, user_id=new_user):
+            with pytest.raises(CredentialError):
+                _decrypt_for_integrity(connection=c, account_id=a["account_id"], tenant_id=new_tenant, user_id=new_user, secret_kind="password", purpose="integrity-verification")
+    finally:
+        c.close()

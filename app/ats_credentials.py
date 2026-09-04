@@ -28,6 +28,10 @@ _TRANSITIONS = {
     "NOT_REQUIRED": frozenset({"REQUIRED", "BLOCKED"}),
     "BLOCKED": frozenset(),
 }
+_TRANSITION_REASONS = frozenset({
+    "ACCOUNT_CREATED", "CONSENT_UPDATED", "CREDENTIAL_UPDATED", "LOGIN_REQUIRED",
+    "VERIFICATION_REQUIRED", "USER_REVOKED", "PROVIDER_BLOCKED",
+})
 _SECRET_KIND = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 POLICIES = {"GREENHOUSE": "ACCOUNTLESS_POSSIBLE", "LEVER": "ACCOUNTLESS_POSSIBLE", "ASHBY": "ACCOUNTLESS_POSSIBLE", "SMARTRECRUITERS": "VARIABLE", "WORKDAY": "ACCOUNT_COMMON"}
 
@@ -63,6 +67,14 @@ def _valid_secret_kind(value: str) -> str:
     if not _SECRET_KIND.fullmatch(kind):
         raise CredentialError("Credential secret kind is invalid.")
     return kind
+
+
+def _valid_transition_reason(value: str) -> str:
+    """Only stable non-sensitive reason codes belong in the event ledger."""
+    reason = str(value or "").strip().upper()
+    if reason not in _TRANSITION_REASONS:
+        raise CredentialError("Credential transition is invalid.")
+    return reason
 
 
 def ensure_schema(connection: sqlite3.Connection) -> None:
@@ -148,7 +160,8 @@ def store_secret(*, account_id: str, secret_kind: str, secret: str, expected_rev
 def transition_account(*, account_id: str, next_state: str, expected_revision: int, reason: str) -> dict[str, Any]:
     """Legal metadata transition only; blocking irrevocably purges stored slots."""
     from app.database import get_connection
-    if next_state not in STATES or not str(reason or "").strip(): raise CredentialError("Credential transition is invalid.")
+    if next_state not in STATES: raise CredentialError("Credential transition is invalid.")
+    reason_code = _valid_transition_reason(reason)
     owner = current_owner(); c = get_connection()
     try:
         ensure_schema(c); c.execute("BEGIN IMMEDIATE"); row = _owned_account(c, account_id, owner.tenant_id, owner.user_id)
@@ -156,7 +169,7 @@ def transition_account(*, account_id: str, next_state: str, expected_revision: i
         changed = c.execute("UPDATE ats_credential_accounts SET state=?,revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE account_id=? AND tenant_id=? AND user_id=? AND revision=? AND state=?", (next_state, account_id, owner.tenant_id, owner.user_id, int(expected_revision), row["state"])).rowcount
         if changed != 1: raise CredentialError("Credential transition is not permitted.")
         if next_state == "BLOCKED": c.execute("DELETE FROM ats_credential_secrets WHERE account_id=? AND tenant_id=? AND user_id=?", (account_id, owner.tenant_id, owner.user_id))
-        _event(c, account_id, owner.tenant_id, owner.user_id, row["state"], next_state, str(reason)); c.commit()
+        _event(c, account_id, owner.tenant_id, owner.user_id, row["state"], next_state, reason_code); c.commit()
         return _status_from_connection(c, account_id, owner.tenant_id, owner.user_id)
     except Exception:
         c.rollback(); raise
@@ -174,8 +187,11 @@ def account_status(*, account_id: str) -> dict[str, Any]:
 def _decrypt_for_integrity(*, connection: sqlite3.Connection, account_id: str, tenant_id: str, user_id: str, secret_kind: str, purpose: str) -> bytes:
     """Private integrity verifier; not an API/UI password-view capability."""
     if purpose != "integrity-verification": raise CredentialError("Credential integrity verification is unavailable.")
+    owner = current_owner(connection)
+    if owner.tenant_id != tenant_id or owner.user_id != user_id:
+        raise CredentialError("Credential integrity verification is unavailable.")
     kind = _valid_secret_kind(secret_kind)
-    row = connection.execute("SELECT s.*,a.provider FROM ats_credential_secrets s JOIN ats_credential_accounts a ON a.account_id=s.account_id WHERE s.account_id=? AND s.tenant_id=? AND s.user_id=? AND s.secret_kind=? AND a.tenant_id=? AND a.user_id=?", (account_id, tenant_id, user_id, kind, tenant_id, user_id)).fetchone()
+    row = connection.execute("SELECT s.*,a.provider FROM ats_credential_secrets s JOIN ats_credential_accounts a ON a.account_id=s.account_id WHERE s.account_id=? AND s.tenant_id=? AND s.user_id=? AND s.secret_kind=? AND a.tenant_id=? AND a.user_id=? AND a.state='AVAILABLE'", (account_id, tenant_id, user_id, kind, tenant_id, user_id)).fetchone()
     if row is None or row["algorithm_version"] != ALGORITHM or row["key_version"] != KEY_VERSION: raise CredentialError("Credential integrity verification failed.")
     try:
         return _aes()(_key()).decrypt(bytes(row["nonce"]), bytes(row["ciphertext"]), _aad(tenant_id=tenant_id, user_id=user_id, account_id=account_id, provider=row["provider"], secret_kind=kind))

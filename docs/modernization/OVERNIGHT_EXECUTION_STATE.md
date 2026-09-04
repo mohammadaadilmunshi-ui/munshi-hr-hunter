@@ -79,8 +79,9 @@
 - Verification: Hunter focused Phase 9/8/schema tests — 12 passed; isolated Apply focused tests — 12 passed; compile/static and diff checks passed. Wrong signatures, malformed payloads, stale signed transport, tenant mismatch, replay conflicts, unsupported providers, and unresolved fields all fail closed or remain NEEDS_INPUT.
 - No real ATS/provider, n8n, email, browser, credential, or submission authority was invoked. Next: Phase 10 safe local credential foundation review.
 
-## 2026-09-04 — Phase 10 credential foundation partial
+## 2026-09-04 — Phase 10 ATS credential orchestration DONE
 
 - A separate tenant-bound ATS credential metadata/encrypted-slot model and additive migration 025 were added after Sol found the legacy vault unsuitable for tenant credentials.
 - AES-GCM AAD binds tenant, user, account, provider, secret kind, and versions. Metadata is write-only with respect to secrets; all provider action flags remain false.
-- Focused initial tests pass. Phase 10 remains PARTIAL pending exhaustive tamper, state-machine, and final security verification. No live credential, login, or external action was used.
+- Private integrity verification is runtime-owner and purpose bound, AVAILABLE-only, and fail-closed for tampering, wrong keys, versions, or identity metadata. CAS-backed legal transitions use non-sensitive reason codes; BLOCKED atomically purges slots.
+- Final Sol review: CLEAR, no HIGH/CRITICAL issue. Focused Phase 10/9/tenant/preparation/schema/staging-fixture gate: 44 passed; compile/static, diff, and migration-number checks passed. `PHASE_10=DONE`; no live credential, login, or external action was used.
