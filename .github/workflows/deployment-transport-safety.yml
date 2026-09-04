@@ -73,9 +73,11 @@ jobs:
               'from app.database import DB_PATH',
               'backup_required_bytes=$((db_bytes + 1073741824))',
               '--network none',
-              '--volumes-from "$H":ro',
+              'PRODUCTION_HUNTER_DATA_VOLUME=$hunter_data_volume',
+              '--mount "type=volume,src=$hunter_data_volume,dst=/app/hunter/data"',
               '--mount "type=bind,src=$backup_dir,dst=/backup"',
               'sqlite3.connect(f"file:{src}?mode=ro", uri=True, timeout=30)',
+              'source.execute("PRAGMA query_only=ON")',
               'source.backup(dest)',
               'PRODUCTION_DB_BACKUP_CONTAINER_QUICK_CHECK=PASS',
               'PRODUCTION_DB_BACKUP_QUICK_CHECK=PASS',
@@ -89,6 +91,7 @@ jobs:
               assert token in production_deploy, f"production server deployment token missing: {token}"
 
           assert '/tmp/hunter-predeploy-' not in production_deploy, "production DB backup must not stage the multi-GB database in container writable /tmp"
+          assert '--volumes-from "$H":ro' not in production_deploy, "production SQLite backup helper must not inherit all Hunter volumes read-only"
 
           staging_deploy_required = (
               'timeout 120s cat > "$bundle_file"',
