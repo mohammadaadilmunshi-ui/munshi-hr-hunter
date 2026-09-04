@@ -14,6 +14,7 @@ from fastapi import (
     FastAPI,
     Header,
     HTTPException,
+    Query,
     status,
 )
 from pydantic import BaseModel, Field
@@ -30,6 +31,7 @@ from app.database import (
     get_connection,
     initialize_database,
 )
+from app.gmail_integration import begin_authorization, complete_authorization
 
 
 load_dotenv(ROOT_DIR / ".env")
@@ -186,6 +188,32 @@ def health() -> dict[str, Any]:
         "database": DB_PATH.name,
         "timestamp": utc_now(),
     }
+
+
+@app.get(
+    "/api/gmail/oauth/start",
+    dependencies=[Depends(require_api_secret)],
+)
+def gmail_oauth_start() -> dict[str, str]:
+    """Authenticated initiation endpoint; it only returns a one-time Google URL."""
+    try:
+        return {"authorization_url": begin_authorization()}
+    except RuntimeError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from None
+
+
+@app.get("/api/gmail/oauth/callback")
+def gmail_oauth_callback(
+    code: str = Query(min_length=1, max_length=4096),
+    state_value: str = Query(alias="state", min_length=1, max_length=512),
+) -> dict[str, bool]:
+    """Google callback is state+PKCE protected because Google cannot send API auth."""
+    try:
+        complete_authorization(code, state_value)
+    except Exception:
+        # Do not reveal callback codes, state, token provider responses, or vault details.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail authorization could not be completed.") from None
+    return {"success": True}
 
 
 @app.get(

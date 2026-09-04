@@ -5,50 +5,74 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from app.product_state import tracker_status, valid_view
+from app.product_ui import esc, pastel_for
+
 
 ROOT = Path(__file__).resolve().parent.parent
-PAGES = (
-    "Overview",
-    "Historical Intelligence",
-    "Source Health",
-    "Adapter Coverage",
-    "Targeting",
-    "Job Explorer",
-    "Query Performance",
-    "Queue / Actions",
-    "Credentials",
-    "System / Diagnostics",
-    "Storage",
-    "Backups",
+PRIMARY_VIEWS = (
+    ("Dashboard", "dashboard"),
+    ("Browse jobs", "jobs"),
+    ("Auto Prepare", "auto-prepare"),
+    ("Tracker", "tracker"),
+    ("Profile", "profile"),
+    ("Research", "research"),
+    ("Settings", "settings"),
 )
 
 
-@pytest.mark.parametrize("page", PAGES)
-def test_operations_dashboard_page_renders_without_exception(page: str) -> None:
+@pytest.mark.parametrize(("label", "route"), PRIMARY_VIEWS)
+def test_product_primary_views_render_without_exception(label: str, route: str, hunter_db) -> None:
     app = AppTest.from_file(str(ROOT / "app" / "dashboard.py"), default_timeout=30)
+    app.session_state["product_view"] = route
     app.run()
-    navigation = next(button for button in app.sidebar.button if button.label == page)
-    navigation.click()
-    app.run()
-    assert not app.exception
+    assert not app.exception, label
 
 
-def test_dashboard_render_does_not_change_usajobs_runtime_policy() -> None:
+@pytest.mark.parametrize(
+    ("route", "state_key", "value"),
+    (
+        ("tracker", "product_tracker_tab", "Inbox"),
+        ("profile", "product_profile_tab", "Cover letters"),
+        ("profile", "product_profile_tab", "Profile details"),
+        ("settings", "product_settings_section", "Automation"),
+        ("settings", "product_settings_section", "Integrations"),
+        ("settings", "product_settings_section", "Profile & defaults"),
+        ("settings", "product_settings_section", "Credentials"),
+        ("settings", "product_settings_section", "Advanced / System"),
+    ),
+)
+def test_product_subroutes_render_without_exception(
+    route: str, state_key: str, value: str, hunter_db,
+) -> None:
+    app = AppTest.from_file(str(ROOT / "app" / "dashboard.py"), default_timeout=30)
+    app.session_state["product_view"] = route
+    app.session_state[state_key] = value
+    app.run()
+    assert not app.exception, f"{route}: {value}"
+
+
+def test_dashboard_render_does_not_change_usajobs_runtime_policy(hunter_db) -> None:
     from app.database import get_connection
 
     connection = get_connection()
     try:
+        connection.execute(
+            """
+            INSERT INTO source_health (source_name, source_tier, enabled)
+            VALUES ('USAJobs', 1, 0)
+            ON CONFLICT(source_name) DO UPDATE SET enabled=excluded.enabled
+            """
+        )
+        connection.commit()
         before = connection.execute(
             "SELECT enabled FROM source_health WHERE source_name='USAJobs'"
         ).fetchone()[0]
     finally:
         connection.close()
-
     app = AppTest.from_file(str(ROOT / "app" / "dashboard.py"), default_timeout=30)
+    app.session_state["product_view"] = "settings"
     app.run()
-    next(button for button in app.sidebar.button if button.label == "Source Health").click()
-    app.run()
-
     connection = get_connection()
     try:
         after = connection.execute(
@@ -59,18 +83,73 @@ def test_dashboard_render_does_not_change_usajobs_runtime_policy() -> None:
     assert before == after
 
 
-def test_public_branding_and_overview_do_not_market_usajobs() -> None:
+def test_product_render_does_not_queue_work(hunter_db) -> None:
+    from app.database import get_connection
+    connection = get_connection()
+    try:
+        before = connection.execute("SELECT COUNT(*) FROM n8n_dispatch_queue").fetchone()[0]
+    finally:
+        connection.close()
+    app = AppTest.from_file(str(ROOT / "app" / "dashboard.py"), default_timeout=30)
+    app.session_state["product_view"] = "auto-prepare"
+    app.run()
+    connection = get_connection()
+    try:
+        after = connection.execute("SELECT COUNT(*) FROM n8n_dispatch_queue").fetchone()[0]
+    finally:
+        connection.close()
+    assert before == after
+
+
+def test_product_shell_and_routes_are_present() -> None:
     dashboard_source = (ROOT / "app" / "dashboard.py").read_text(encoding="utf-8")
-    operations_source = (ROOT / "app" / "operations_dashboard.py").read_text(encoding="utf-8")
-    overview_source = operations_source.split("def _overview()", 1)[1].split("def _historical_intelligence()", 1)[0]
+    shell_source = (ROOT / "app" / "product_shell.py").read_text(encoding="utf-8")
+    css_source = (ROOT / "app" / "product_ui.py").read_text(encoding="utf-8")
     assert "MUNSHI Apply" in dashboard_source
-    assert "MUNSHI APPLY" in operations_source
+    assert "initial_sidebar_state=\"collapsed\"" in dashboard_source
+    assert "NAVIGATION" in shell_source
+    assert "st.query_params" in shell_source
+    assert "product_tracker_tab" in shell_source
+    assert "product_profile_tab" in shell_source
+    assert "product_settings_section" in shell_source
+    assert "@media (max-width:640px)" in css_source
+    assert "prefers-reduced-motion" in css_source
+    assert "<nav class=\"product-nav\"" in shell_source
+    assert "mobile-nav" in shell_source
+    assert 'target="_self"' in shell_source
+    assert 'href="?view=dashboard" target="_self"' in shell_source
+    assert "min-width:680px" not in css_source
     assert "AADIL HR HUNTER" not in dashboard_source
-    assert "AADIL HR HUNTER" not in operations_source
-    assert "USAJobs" not in overview_source
+    assert valid_view("tracker") == "tracker"
+    assert valid_view("not-a-route") == "dashboard"
 
 
-def test_job_explorer_hides_machine_evidence_until_advanced_expander() -> None:
+def test_tracker_status_is_truth_bound() -> None:
+    assert tracker_status("completed") == "Prepared"
+    assert tracker_status("application_ready") == "Prepared"
+    assert tracker_status("submission_confirmed") == "Submitted"
+    assert tracker_status("unknown_backend_state") == "Other"
+    assert tracker_status(None, "processing") == "In progress"
+
+
+def test_job_card_tone_is_deterministic_and_safe() -> None:
+    assert pastel_for(123) == pastel_for(123)
+    assert pastel_for(123) != ""
+    assert esc('<img src=x onerror="alert(1)">') == "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;"
+
+
+def test_product_detail_keeps_raw_machine_data_collapsed_and_settings_keep_advanced_access() -> None:
+    source = (ROOT / "app" / "product_pages.py").read_text(encoding="utf-8")
+    assert 'with st.expander("Advanced decision evidence", expanded=False):' in source
+    assert 'with st.expander("Raw machine evidence", expanded=False):' in source
+    assert '"Advanced / System"' in source
+    assert '"System / Diagnostics"' in source
+    assert "gmail_message_id" in (ROOT / "app" / "gmail_integration.py").read_text(encoding="utf-8")
+    assert "placeholder preview" in source
+    assert "artifact-line" not in source
+
+
+def test_advanced_job_explorer_keeps_machine_evidence_collapsed() -> None:
     source = (ROOT / "app" / "operations_dashboard.py").read_text(encoding="utf-8")
     explorer = source.split("def _job_explorer()", 1)[1].split("def _query_performance()", 1)[0]
     renderer = source.split("def _render_decision_intelligence(", 1)[1].split("def _job_explorer()", 1)[0]
@@ -93,13 +172,5 @@ def test_job_explorer_hides_machine_evidence_until_advanced_expander() -> None:
 def test_usajobs_credentials_and_runtime_labels_are_independent() -> None:
     from app.credentials_page import usajobs_status_labels
 
-    labels = usajobs_status_labels(
-        configured=True,
-        runtime_enabled=False,
-        connection_verified=True,
-    )
-    assert labels == {
-        "credentials": "Configured",
-        "connection": "Verified",
-        "runtime": "Disabled",
-    }
+    labels = usajobs_status_labels(configured=True, runtime_enabled=False, connection_verified=True)
+    assert labels == {"credentials": "Configured", "connection": "Verified", "runtime": "Disabled"}

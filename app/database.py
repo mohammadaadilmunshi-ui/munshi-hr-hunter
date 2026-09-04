@@ -688,10 +688,16 @@ def initialize_database() -> Path:
         ensure_operational_columns(connection)
         ensure_runtime_truth_view(connection)
         from app.n8n_dispatch import ensure_schema as ensure_n8n_dispatch_schema
+        from app.gmail_integration import ensure_schema as ensure_gmail_schema
+        from app.product_state import ensure_schema as ensure_product_schema
+        from app.secure_vault import ensure_schema as ensure_vault_schema
         from app.universal_n8n_progress import ensure_schema as ensure_n8n_progress_schema
 
         ensure_n8n_dispatch_schema(connection)
         ensure_n8n_progress_schema(connection)
+        ensure_product_schema(connection)
+        ensure_vault_schema(connection)
+        ensure_gmail_schema(connection)
         seed_defaults(connection)
         connection.commit()
     finally:

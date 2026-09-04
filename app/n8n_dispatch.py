@@ -15,6 +15,7 @@ import requests
 from app.job_detail import build_manual_job_text as build_structured_manual_job_text
 from app.database import DB_PATH, get_connection, get_setting as get_canonical_setting
 from app.application_runs_v1 import enhance_dispatch_payload, hard_work_authorization_block
+from app.product_state import enabled_lanes, lane_matches_job
 from app.targeting import evaluate_job, load_rules
 
 
@@ -531,7 +532,34 @@ def plan_candidates(
     )
 
     threshold = _required_scoring_value(scoring, "auto_n8n_threshold", float)
-    auto_limit = _required_scoring_value(scoring, "daily_auto_n8n_limit", int)
+    # Legacy scoring limits remain intact until the owner explicitly saves the
+    # product automation preference.  Once saved, this is the canonical
+    # producer-side enforcement point (not a cosmetic dashboard-only limit).
+    product_policy = load_setting(connection, "product_automation_policy_v1", {})
+    product_policy_active = bool(product_policy)
+    product_mode = str(product_policy.get("mode") or "unlimited").casefold()
+    if product_policy_active and product_mode not in {
+        "unlimited", "custom_limit", "paused", "pause_after_batch"
+    }:
+        raise RuntimeError("Product automation policy has an invalid volume mode.")
+    auto_limit: int | None
+    if product_policy_active and product_mode == "unlimited":
+        auto_limit = None
+    elif product_policy_active and product_mode in {"paused", "pause_after_batch"}:
+        auto_limit = 0
+    elif product_policy_active and product_mode == "custom_limit":
+        try:
+            raw_limit = product_policy["daily_limit"]
+            if isinstance(raw_limit, bool):
+                raise ValueError("boolean is not a quota")
+            configured_limit = int(raw_limit)
+        except (KeyError, TypeError, ValueError):
+            raise RuntimeError("Product automation policy has an invalid daily limit.") from None
+        if configured_limit < 1:
+            raise RuntimeError("Product automation policy has an invalid daily limit.")
+        auto_limit = configured_limit
+    else:
+        auto_limit = _required_scoring_value(scoring, "daily_auto_n8n_limit", int)
     manual_limit = _required_scoring_value(scoring, "daily_manual_n8n_limit", int)
 
     auto_used = count_today(
@@ -563,21 +591,37 @@ def plan_candidates(
         dict[str, Any]
     ] = []
 
-    if auto_used < auto_limit:
+    active_lanes = enabled_lanes(connection)
+
+    if auto_limit is None or auto_used < auto_limit:
         targeting_rules = load_rules()
-        auto_candidates = [
-            job
-            for job in jobs
-            if is_auto_eligible(
-                job,
-                threshold,
-                targeting_rules=targeting_rules,
-            )
-        ][:1]
+        remaining = None if auto_limit is None else max(0, auto_limit - auto_used)
+        for job in jobs:
+            # Canonical auto eligibility is always evaluated first.  Enabled
+            # product lanes are saved narrowing filters, never an alternate
+            # eligibility path or an override for work authorization/dedupe.
+            if not is_auto_eligible(job, threshold, targeting_rules=targeting_rules):
+                continue
+            matching = [lane for lane in active_lanes if lane_matches_job(lane, job)]
+            if active_lanes and not matching:
+                continue
+            lane_thresholds = [
+                float(lane["min_score"])
+                for lane in matching
+                if lane.get("min_score") is not None
+            ]
+            required_score = max([threshold, *lane_thresholds])
+            if float(job.get("hunter_score") or 0) < required_score:
+                continue
+            auto_candidates.append(job)
+            if remaining is not None and len(auto_candidates) >= remaining:
+                break
 
     return {
         "threshold": threshold,
         "auto_limit": auto_limit,
+        "product_volume_mode": product_mode if product_policy_active else "legacy",
+        "enabled_lane_count": len(active_lanes),
         "manual_limit": (
             manual_limit
         ),
