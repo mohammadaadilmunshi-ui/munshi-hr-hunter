@@ -7,6 +7,7 @@ import streamlit as st
 
 from app.product_state import valid_view, volume_policy
 from app.product_ui import esc, inject_css
+from app.product_v22 import brand_logo_data_uri, inject_v22_css, install_product_v22
 
 
 NAVIGATION = (
@@ -107,6 +108,7 @@ def _apply_deep_link_state(view: str) -> None:
 
 def render() -> None:
     inject_css()
+    inject_v22_css()
 
     view = _query_view()
     st.session_state["product_view"] = view
@@ -129,12 +131,13 @@ def render() -> None:
         for route, label in (*NAVIGATION, ("settings", "Settings"))
     )
     settings_link = _nav_link("settings", "Settings", view)
+    logo = brand_logo_data_uri()
 
     with st.container(key="product_top_bar"):
         st.markdown(
             f'''<header class="product-header">
                 <a class="brand" href="?view=dashboard" target="_self" aria-label="MUNSHI dashboard">
-                    <span class="brand-mark" aria-hidden="true">M</span>
+                    <span class="brand-mark" aria-hidden="true"><img src="{logo}" alt=""></span>
                     <span>MUNSHI</span>
                 </a>
                 <nav class="product-nav" aria-label="Primary navigation">
@@ -153,6 +156,8 @@ def render() -> None:
         )
 
     from app import product_pages
+
+    install_product_v22(product_pages)
 
     pages: dict[str, Callable[[], None]] = {
         "dashboard": product_pages.dashboard,

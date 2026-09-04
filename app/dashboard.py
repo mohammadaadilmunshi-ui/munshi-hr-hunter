@@ -16,7 +16,11 @@ from app.product_shell import render  # noqa: E402
 
 st.set_page_config(
     page_title="MUNSHI Apply | Job Intelligence",
-    page_icon=str(Path(__file__).resolve().parent / "assets" / "munshi_favicon.png"),
+    page_icon=str(
+        Path(__file__).resolve().parent
+        / "assets"
+        / "munshi_crown_favicon.png"
+    ),
     layout="wide",
     initial_sidebar_state="collapsed",
 )
