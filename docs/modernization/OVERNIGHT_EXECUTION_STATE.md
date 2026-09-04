@@ -58,3 +58,14 @@
 - Blocker: the GitHub `staging` environment permits only `feat/github-netcup-deployment-v1` and `feat/product-ui-v2`. The candidate branch is not in its custom deployment-branch policy, so the deploy job failed before any runner step or Netcup contact.
 - Runtime evidence: post-failure read-only host checks show staging still at `2687480625e2daa4210cf49f3dab28899e8f0043` / `feat/product-ui-v2`; staging and production contracts pass. No deploy, migration, seed, container recreation, database mutation, or production impact occurred.
 - Stop: do not bypass the GitHub staging authorization boundary. Await explicit administrator authorization to add the candidate branch to the staging-only environment policy, then restart from the immediate predeploy gate. Do not proceed to Phase 9.
+
+## 2026-09-04T16:06:49Z — Staging Release 1 deployed and verified
+
+- Status: `STAGING_RELEASE_1=DEPLOYED_AND_VERIFIED`.
+- Exact deployed SHA: `b0a45dfa529797800a4860f84ac6d545f6cc9c1e`; attached branch: `feat/autonomous-career-os-foundation`. The later documentation-only commit `9fb4fc4` was not substituted for the reviewed release.
+- GitHub workflow: Netcup Staging Deploy run `33893042880` passed request validation, CI, authenticated bundle transport, and canonical staging deployment.
+- Runtime: staging and production contracts passed after deployment. Staging migration schema 015–023 and database integrity passed. n8n/Ollama/edge and production containers were unchanged; production impact is NONE.
+- Fixtures: canonical tool dry-run then staging-only apply seeded 19 synthetic tester jobs. Fixture metadata, `.invalid` destinations, disabled action flags, no n8n receipts, and canonical-metric exclusion were verified.
+- Product semantics: Phase 0–8/staging suite 69 passed; Product UI suite 61 passed; Prepare != Submitted is verified. No external action authority was exercised; n8n remains authoritative.
+- Limitation: authenticated visual browser interaction could not run because the installed browser-control runtime client is absent. The protected HTTPS boundary, Streamlit/API health, database/API verification, and local/CI UI regression gates passed without bypassing authentication.
+- Next: do not proceed to Phase 9 in this session.

@@ -36,6 +36,11 @@ Staging mutation is authorized only after the reviewed local release candidate i
 
 `STAGING_RELEASE_1` is blocked before deployment by the GitHub staging-environment branch policy. Do not bypass this through a direct SSH deployment or by using the production workflow. A repository/environment administrator must explicitly authorize the candidate branch in the **staging-only** environment branch policy; then rerun the immediate predeploy gate and the same manual staging workflow with the already reviewed exact SHA.
 
+### Resolution — 2026-09-04
+
+- **VERIFIED:** The staging-only environment policy was manually updated to allow `feat/autonomous-career-os-foundation`; no policy was changed by this session.
+- **VERIFIED:** The immediate predeploy gate was repeated and Netcup Staging Deploy run `33893042880` deployed exactly `b0a45dfa529797800a4860f84ac6d545f6cc9c1e` successfully. See `STAGING_RELEASE_1_DEPLOYMENT.md` for the final evidence.
+
 ## Local staging-fixture source contract
 
 - **VERIFIED:** `migrations/023_staging_synthetic_fixtures.py` and `app/staging_fixtures.py` add an isolated, additive fixture ledger. Synthetic jobs are owned by that ledger and have `environment=staging`, `synthetic=true`, `is_test_data=true`, `source=staging_fixture`, and `external_actions_disabled=true` metadata.
