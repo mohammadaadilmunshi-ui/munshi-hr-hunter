@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from app.product_state import create_lane, fetch_jobs, lanes, save_volume_policy, set_job_state, tracker_status, volume_policy
+from app.product_state import (
+    activity_summary, create_lane, fetch_jobs, lanes, research_snapshot,
+    save_review_preference, save_volume_policy, set_job_state, tracker_status, volume_policy,
+)
 
 
 def _job(connection, *, title: str = "People Operations Analyst") -> int:
@@ -18,9 +21,13 @@ def test_save_skip_and_restore_are_persisted(hunter_db) -> None:
     assert total == 0 and visible == []
     skipped, total = fetch_jobs(include_skipped=True, page_size=10)
     assert total == 1 and skipped[0]["saved"] == 1 and skipped[0]["skipped"] == 1
+    passed, total = fetch_jobs(result_set="passed", page_size=10)
+    assert total == 1 and passed[0]["skipped"] == 1
     set_job_state(job_id, skipped=False)
     visible, total = fetch_jobs(page_size=10)
     assert total == 1 and visible[0]["saved"] == 1
+    saved, total = fetch_jobs(result_set="saved", page_size=10)
+    assert total == 1 and saved[0]["id"] == job_id
 
 
 def test_job_filter_uses_parameters_and_exclusion(hunter_db) -> None:
@@ -59,3 +66,40 @@ def test_new_lanes_are_disabled_and_unlimited_is_valid(hunter_db) -> None:
 def test_custom_volume_preference_is_persisted_for_dispatch(hunter_db) -> None:
     save_volume_policy("custom_limit", 17, True)
     assert volume_policy() == {"mode": "custom_limit", "daily_limit": 17, "review_first": True}
+
+
+def test_review_preference_does_not_activate_a_product_dispatch_policy(hunter_db) -> None:
+    from app.database import get_setting
+    save_review_preference(False)
+    assert get_setting("product_automation_policy_v1", {}) == {}
+    assert volume_policy()["review_first"] is False
+
+
+def test_activity_and_research_summaries_use_stored_evidence_only(hunter_db) -> None:
+    from app.database import get_connection
+    connection = get_connection()
+    try:
+        job_id = _job(connection, title="HR Research Analyst")
+        connection.execute(
+            """INSERT INTO n8n_results(job_id,job_fingerprint,send_mode,n8n_status,
+                                           final_ats_score,completed_at)
+               VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)""",
+            (job_id, "summary-result", "manual", "completed", 88),
+        )
+        connection.execute(
+            "UPDATE jobs SET hard_rejection_reason='Work authorization evidence missing', work_authorization='Not recorded' WHERE id=?",
+            (job_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    activity = activity_summary()
+    snapshot = research_snapshot()
+    assert activity["prepared_today"] == 1
+    assert activity["submitted_today"] == 0
+    assert snapshot["headline"]["jobs"] == 1
+    assert snapshot["ats"]["scored_packages"] == 1
+    assert snapshot["blockers"][0]["reason"] == "Work authorization evidence missing"
+    assert snapshot["top_matches"][0]["title"] == "HR Research Analyst"
+    assert snapshot["top_matches"][0]["hunter_score"] == 82
+    assert snapshot["query_performance"] == []

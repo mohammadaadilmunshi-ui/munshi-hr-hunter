@@ -273,7 +273,13 @@ def stored_messages(*, category: str = "All", query: str = "", limit: int = 100)
             needle = f"%{query.strip()}%"
             where.append("(subject LIKE ? COLLATE NOCASE OR sender LIKE ? COLLATE NOCASE OR snippet LIKE ? COLLATE NOCASE)")
             params.extend((needle, needle, needle))
-        rows = connection.execute(f"SELECT category,subject,sender,received_at,snippet FROM gmail_messages WHERE {' AND '.join(where)} ORDER BY received_at DESC, id DESC LIMIT ?", (*params, max(1, min(int(limit), 250)))).fetchall()
+        rows = connection.execute(
+            f"""SELECT gmail_message_id,category,subject,sender,received_at,snippet,
+                       body_text,classification_evidence
+                  FROM gmail_messages WHERE {' AND '.join(where)}
+                 ORDER BY received_at DESC, id DESC LIMIT ?""",
+            (*params, max(1, min(int(limit), 250))),
+        ).fetchall()
         return [dict(row) for row in rows]
     finally:
         connection.close()

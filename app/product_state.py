@@ -10,6 +10,7 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from typing import Any, Iterable
 
 from app.database import get_connection, get_setting, save_setting
@@ -105,6 +106,7 @@ def job_filters() -> dict[str, list[str]]:
 
 
 SEARCH_SCOPES = {"title_description", "title_company"}
+RESULT_SETS = {"all", "saved", "passed"}
 
 
 def fetch_jobs(
@@ -112,14 +114,20 @@ def fetch_jobs(
     workplace: str = "", employment_type: str = "", minimum_score: float = 0,
     saved_only: bool = False, include_skipped: bool = False, page: int = 1,
     search_scope: str = "title_description",
+    result_set: str = "all",
     page_size: int = 16,
 ) -> tuple[list[dict[str, Any]], int]:
     """Parameterized, stable job-browser query. Unknown/null data stays null."""
     conditions = ["COALESCE(s.hidden, 0) = 0"]
     params: list[Any] = []
-    if not include_skipped:
+    normalized_result_set = str(result_set or "all").strip().casefold()
+    if normalized_result_set not in RESULT_SETS:
+        normalized_result_set = "all"
+    if normalized_result_set == "passed":
+        conditions.append("COALESCE(s.skipped, 0) = 1")
+    elif not include_skipped:
         conditions.append("COALESCE(s.skipped, 0) = 0")
-    if saved_only:
+    if saved_only or normalized_result_set == "saved":
         conditions.append("COALESCE(s.saved, 0) = 1")
     if query.strip():
         needle = f"%{query.strip()}%"
@@ -220,10 +228,126 @@ def tracker_rows(limit: int = 100) -> list[dict[str, Any]]:
     return rows
 
 
+def activity_summary(*, limit: int = 250) -> dict[str, int]:
+    """Return bounded, evidence-backed activity counts for product surfaces.
+
+    These are intentionally derived from the same recent queue/result records as
+    the tracker.  They are not a quota, prediction, or assertion that an ATS
+    submission happened without a recorded submission state.
+    """
+    records = tracker_rows(limit=limit)
+    today = date.today().isoformat()
+
+    def happened_today(record: dict[str, Any]) -> bool:
+        value = record.get("completed_at") or record.get("sent_at") or record.get("updated_at") or record.get("queued_at")
+        try:
+            timestamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            # SQLite CURRENT_TIMESTAMP is UTC but has no offset. Treat it as
+            # such before comparing against the dashboard host's local day.
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+            return timestamp.astimezone().date().isoformat() == today
+        except (TypeError, ValueError):
+            return False
+
+    return {
+        "recent_evidence": len(records),
+        "prepared_today": sum(record["display_status"] == "Prepared" and happened_today(record) for record in records),
+        "submitted_today": sum(record["display_status"] == "Submitted" and happened_today(record) for record in records),
+        "needs_you": sum(record["display_status"] == "Needs you" for record in records),
+        "in_progress": sum(record["display_status"] == "In progress" for record in records),
+    }
+
+
+def research_snapshot() -> dict[str, Any]:
+    """Bounded, explainable read model for the customer-facing research view."""
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        headline = dict(connection.execute(
+            """SELECT COUNT(*) AS jobs, ROUND(AVG(hunter_score), 1) AS average_score,
+                      SUM(CASE WHEN hard_rejection_reason IS NOT NULL
+                                AND trim(hard_rejection_reason) != '' THEN 1 ELSE 0 END) AS blocked
+                 FROM jobs"""
+        ).fetchone())
+        source_quality = [dict(row) for row in connection.execute(
+            """SELECT COALESCE(NULLIF(trim(source), ''), 'Source not recorded') AS source,
+                      COUNT(*) AS opportunities, ROUND(AVG(hunter_score), 1) AS average_match,
+                      SUM(CASE WHEN hard_rejection_reason IS NULL
+                                OR trim(hard_rejection_reason) = '' THEN 1 ELSE 0 END) AS eligible_records
+                 FROM jobs GROUP BY COALESCE(NULLIF(trim(source), ''), 'Source not recorded')
+                 ORDER BY opportunities DESC, source ASC LIMIT 20"""
+        ).fetchall()]
+        blockers = [dict(row) for row in connection.execute(
+            """SELECT hard_rejection_reason AS reason, COUNT(*) AS count
+                 FROM jobs WHERE hard_rejection_reason IS NOT NULL
+                   AND trim(hard_rejection_reason) != ''
+                 GROUP BY hard_rejection_reason ORDER BY count DESC, reason ASC LIMIT 12"""
+        ).fetchall()]
+        authorization = [dict(row) for row in connection.execute(
+            """SELECT COALESCE(NULLIF(trim(work_authorization), ''), 'Not recorded') AS status,
+                      COUNT(*) AS count
+                 FROM jobs GROUP BY COALESCE(NULLIF(trim(work_authorization), ''), 'Not recorded')
+                 ORDER BY count DESC, status ASC LIMIT 12"""
+        ).fetchall()]
+        trends = [dict(row) for row in connection.execute(
+            """SELECT substr(first_seen_at, 1, 10) AS date, COUNT(*) AS opportunities,
+                      ROUND(AVG(hunter_score), 1) AS average_match
+                 FROM jobs WHERE trim(COALESCE(first_seen_at, '')) != ''
+                 GROUP BY substr(first_seen_at, 1, 10)
+                 ORDER BY date DESC LIMIT 14"""
+        ).fetchall()]
+        ats = dict(connection.execute(
+            """SELECT COUNT(final_ats_score) AS scored_packages,
+                      ROUND(AVG(final_ats_score), 1) AS average_ats_score
+                 FROM n8n_results WHERE final_ats_score IS NOT NULL"""
+        ).fetchone())
+        health = [dict(row) for row in connection.execute(
+            """SELECT source_name, health_status, last_success_at, jobs_found_last_run
+                 FROM source_health ORDER BY source_name LIMIT 30"""
+        ).fetchall()]
+        top_matches = [dict(row) for row in connection.execute(
+            """SELECT id, company_name, title, hunter_score, source, target_track,
+                      location_raw, remote_type, employment_type, work_authorization,
+                      hard_rejection_reason
+                 FROM jobs WHERE hunter_score IS NOT NULL
+                ORDER BY hunter_score DESC, first_seen_at DESC, id DESC LIMIT 8"""
+        ).fetchall()]
+        query_performance = [dict(row) for row in connection.execute(
+            """SELECT COALESCE(NULLIF(trim(query_name), ''), 'Query not recorded') AS query_name,
+                      COUNT(*) AS runs, COALESCE(SUM(raw_count), 0) AS raw_records,
+                      COALESCE(SUM(eligible_count), 0) AS eligible_records, MAX(started_at) AS last_run
+                 FROM source_runs
+                GROUP BY COALESCE(NULLIF(trim(query_name), ''), 'Query not recorded')
+                ORDER BY last_run DESC LIMIT 12"""
+        ).fetchall()]
+    finally:
+        connection.close()
+    return {
+        "headline": headline, "source_quality": source_quality,
+        "blockers": blockers, "authorization": authorization,
+        "trends": list(reversed(trends)), "ats": ats, "health": health,
+        "top_matches": top_matches, "query_performance": query_performance,
+    }
+
+
 def volume_policy() -> dict[str, Any]:
     policy = dict(get_setting("product_automation_policy_v1", {}) or {})
+    review_preference = dict(get_setting("product_review_preference_v1", {}) or {})
     mode = str(policy.get("mode") or "unlimited")
-    return {"mode": mode if mode in VALID_VOLUME_MODES else "unlimited", "daily_limit": policy.get("daily_limit"), "review_first": bool(policy.get("review_first", True))}
+    return {
+        "mode": mode if mode in VALID_VOLUME_MODES else "unlimited",
+        "daily_limit": policy.get("daily_limit"),
+        "review_first": bool(review_preference.get("review_first", policy.get("review_first", True))),
+    }
+
+
+def save_review_preference(review_first: bool) -> None:
+    """Persist a UI preference without activating or changing auto-dispatch policy."""
+    save_setting(
+        "product_review_preference_v1", {"review_first": bool(review_first)},
+        changed_by="streamlit:product-settings",
+    )
 
 
 def save_volume_policy(mode: str, daily_limit: int | None, review_first: bool) -> None:

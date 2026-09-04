@@ -7,7 +7,7 @@ import pytest
 
 from app.gmail_integration import (
     _state_hash, begin_authorization, classify_message, complete_authorization,
-    connection_status, gmail_configuration_status, upsert_message,
+    connection_status, gmail_configuration_status, stored_messages, upsert_message,
 )
 
 
@@ -17,9 +17,12 @@ def test_gmail_classification_is_conservative() -> None:
 
 
 def test_gmail_message_deduplication(hunter_db) -> None:
-    message = {"id": "gmail-message-1", "subject": "Application received", "sender": "jobs@example.test", "snippet": "Thank you for applying"}
+    message = {"id": "gmail-message-1", "subject": "Application received", "sender": "jobs@example.test", "snippet": "Thank you for applying", "body_text": "Stored read-only body"}
     assert upsert_message(message) is True
     assert upsert_message(message) is False
+    stored = stored_messages()
+    assert stored[0]["gmail_message_id"] == "gmail-message-1"
+    assert stored[0]["body_text"] == "Stored read-only body"
 
 
 def test_gmail_stays_not_configured_without_server_secrets(hunter_db, monkeypatch) -> None:

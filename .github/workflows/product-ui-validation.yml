@@ -44,4 +44,5 @@ jobs:
             tests/test_product_manual_input.py \
             tests/test_product_schema.py \
             tests/test_secure_vault.py \
-            tests/test_gmail_integration.py
+            tests/test_gmail_integration.py \
+            tests/test_product_ui_sol_remainder.py
