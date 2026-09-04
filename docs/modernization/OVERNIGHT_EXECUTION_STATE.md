@@ -50,3 +50,11 @@
 - Verification: Luna ran each Phase 8 test under a bounded timeout. A proven first-use SQLite nested-connection lock was repaired before verification.
 - Remaining work: read-only staging infrastructure discovery, synthetic isolated fixture system, and staging release readiness evidence. No staging mutation is authorized.
 - Next: read-only staging discovery.
+
+## 2026-09-04T15:03:52Z — Staging Release 1 blocked at GitHub environment boundary
+
+- Candidate: `b0a45dfa529797800a4860f84ac6d545f6cc9c1e` on `feat/autonomous-career-os-foundation`, pushed and remotely verified.
+- GitHub workflow: Netcup Staging Deploy run `33887145245`. Request validation and all reusable Ubuntu/Linux/Docker CI gates passed, including the JobSpy image/runtime contract.
+- Blocker: the GitHub `staging` environment permits only `feat/github-netcup-deployment-v1` and `feat/product-ui-v2`. The candidate branch is not in its custom deployment-branch policy, so the deploy job failed before any runner step or Netcup contact.
+- Runtime evidence: post-failure read-only host checks show staging still at `2687480625e2daa4210cf49f3dab28899e8f0043` / `feat/product-ui-v2`; staging and production contracts pass. No deploy, migration, seed, container recreation, database mutation, or production impact occurred.
+- Stop: do not bypass the GitHub staging authorization boundary. Await explicit administrator authorization to add the candidate branch to the staging-only environment policy, then restart from the immediate predeploy gate. Do not proceed to Phase 9.

@@ -25,6 +25,17 @@ Discovery timestamp: 2026-09-04 UTC. This was read-only; no staging or productio
 
 Staging mutation is authorized only after the reviewed local release candidate is committed, pushed, and its exact SHA is confirmed on the candidate branch. Runtime isolation, rollback, and health prerequisites are now positively proven. Production remains out of scope.
 
+## 2026-09-04 staging deployment authorization blocker
+
+- **VERIFIED:** Candidate commit `b0a45dfa529797800a4860f84ac6d545f6cc9c1e` was pushed to and resolved from `feat/autonomous-career-os-foundation` on GitHub.
+- **VERIFIED:** Manual workflow [Netcup Staging Deploy](../../.github/workflows/netcup-staging-deploy.yml) run `33887145245` accepted the exact SHA, completed all CI gates successfully (including Ubuntu image build and JobSpy contract), then failed before the deploy job created a runner step or contacted Netcup.
+- **VERIFIED:** GitHub environment `staging` enforces custom branch policies. Its only allowed branches are `feat/github-netcup-deployment-v1` and `feat/product-ui-v2`; `feat/autonomous-career-os-foundation` is not authorized. Deployment record `6267094765` is failed at the GitHub environment boundary.
+- **VERIFIED:** Read-only post-failure Netcup checks show staging remains on `2687480625e2daa4210cf49f3dab28899e8f0043` / `feat/product-ui-v2`, with both staging and production runtime contracts passing. No Netcup deployment command, migration, seed, container recreation, database mutation, or production change occurred.
+
+### Stop condition
+
+`STAGING_RELEASE_1` is blocked before deployment by the GitHub staging-environment branch policy. Do not bypass this through a direct SSH deployment or by using the production workflow. A repository/environment administrator must explicitly authorize the candidate branch in the **staging-only** environment branch policy; then rerun the immediate predeploy gate and the same manual staging workflow with the already reviewed exact SHA.
+
 ## Local staging-fixture source contract
 
 - **VERIFIED:** `migrations/023_staging_synthetic_fixtures.py` and `app/staging_fixtures.py` add an isolated, additive fixture ledger. Synthetic jobs are owned by that ledger and have `environment=staging`, `synthetic=true`, `is_test_data=true`, `source=staging_fixture`, and `external_actions_disabled=true` metadata.
