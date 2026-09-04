@@ -96,30 +96,53 @@ def _rows(sql: str, parameters: Iterable[Any] = ()) -> list[dict[str, Any]]:
 
 
 def job_filters() -> dict[str, list[str]]:
-    """Return only values actually represented in the jobs table."""
-    return {
-        "locations": [str(row["value"]) for row in _rows("SELECT DISTINCT location_raw AS value FROM jobs WHERE trim(COALESCE(location_raw,'')) != '' ORDER BY value LIMIT 100")],
-        "sources": [str(row["value"]) for row in _rows("SELECT DISTINCT source AS value FROM jobs WHERE trim(COALESCE(source,'')) != '' ORDER BY value LIMIT 100")],
-        "employment": [str(row["value"]) for row in _rows("SELECT DISTINCT employment_type AS value FROM jobs WHERE trim(COALESCE(employment_type,'')) != '' ORDER BY value LIMIT 40")],
-        "remote": [str(row["value"]) for row in _rows("SELECT DISTINCT remote_type AS value FROM jobs WHERE trim(COALESCE(remote_type,'')) != '' ORDER BY value LIMIT 20")],
+    """Return only filter values actually represented in canonical jobs."""
+    specs = {
+        "locations": ("location_raw", 500),
+        "sources": ("source", 150),
+        "employment": ("employment_type", 80),
+        "remote": ("remote_type", 40),
+        "target_tracks": ("target_track", 100),
     }
+    result: dict[str, list[str]] = {}
+    for key, (column, limit) in specs.items():
+        rows = _rows(
+            f"SELECT DISTINCT {column} AS value FROM jobs "
+            f"WHERE trim(COALESCE({column},'')) != '' "
+            f"ORDER BY value LIMIT {int(limit)}"
+        )
+        result[key] = [str(row["value"]) for row in rows]
+    return result
 
-
-SEARCH_SCOPES = {"title_description", "title_company"}
+SEARCH_SCOPES = {"all_fields", "title_description", "title_company"}
 RESULT_SETS = {"all", "saved", "passed"}
 
-
 def fetch_jobs(
-    *, query: str = "", exclude: str = "", location: str = "", source: str = "",
-    workplace: str = "", employment_type: str = "", minimum_score: float = 0,
-    saved_only: bool = False, include_skipped: bool = False, page: int = 1,
-    search_scope: str = "title_description",
+    *,
+    query: str = "",
+    exclude: str = "",
+    location: str = "",
+    source: str = "",
+    workplace: str = "",
+    employment_type: str = "",
+    minimum_score: float = 0,
+    maximum_score: float = 100,
+    target_track: str = "",
+    eligibility: str = "all",
+    freshness_days: int = 0,
+    ats_only: bool = False,
+    saved_only: bool = False,
+    include_skipped: bool = False,
+    page: int = 1,
+    search_scope: str = "all_fields",
     result_set: str = "all",
+    sort_by: str = "match_desc",
     page_size: int = 16,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Parameterized, stable job-browser query. Unknown/null data stays null."""
+    """Parameterized advanced job browser using stored canonical evidence."""
     conditions = ["COALESCE(s.hidden, 0) = 0"]
     params: list[Any] = []
+
     normalized_result_set = str(result_set or "all").strip().casefold()
     if normalized_result_set not in RESULT_SETS:
         normalized_result_set = "all"
@@ -129,47 +152,99 @@ def fetch_jobs(
         conditions.append("COALESCE(s.skipped, 0) = 0")
     if saved_only or normalized_result_set == "saved":
         conditions.append("COALESCE(s.saved, 0) = 1")
+
     if query.strip():
         needle = f"%{query.strip()}%"
         scope = str(search_scope or "").strip().casefold()
         if scope not in SEARCH_SCOPES:
-            scope = "title_description"
+            scope = "all_fields"
         if scope == "title_company":
             conditions.append("(j.title LIKE ? COLLATE NOCASE OR j.company_name LIKE ? COLLATE NOCASE)")
             params.extend((needle, needle))
-        else:
+        elif scope == "title_description":
             conditions.append("(j.title LIKE ? COLLATE NOCASE OR j.description_raw LIKE ? COLLATE NOCASE)")
             params.extend((needle, needle))
-    if exclude.strip():
-        conditions.append("(j.title NOT LIKE ? COLLATE NOCASE AND j.company_name NOT LIKE ? COLLATE NOCASE AND j.description_raw NOT LIKE ? COLLATE NOCASE)")
-        needle = f"%{exclude.strip()}%"
+        else:
+            conditions.append("(j.title LIKE ? COLLATE NOCASE OR j.company_name LIKE ? COLLATE NOCASE OR j.description_raw LIKE ? COLLATE NOCASE)")
+            params.extend((needle, needle, needle))
+
+    excluded_terms = tuple(dict.fromkeys(
+        term.strip()
+        for term in re.split(r"[,;\n]+", str(exclude or ""))
+        if term.strip()
+    ))
+    for term in excluded_terms:
+        needle = f"%{term}%"
+        conditions.append("(COALESCE(j.title,'') NOT LIKE ? COLLATE NOCASE AND COALESCE(j.company_name,'') NOT LIKE ? COLLATE NOCASE AND COALESCE(j.description_raw,'') NOT LIKE ? COLLATE NOCASE)")
         params.extend((needle, needle, needle))
-    for column, value in (("j.location_raw", location), ("j.source", source), ("j.remote_type", workplace), ("j.employment_type", employment_type)):
+
+    for column, value in (
+        ("j.location_raw", location),
+        ("j.source", source),
+        ("j.remote_type", workplace),
+        ("j.employment_type", employment_type),
+        ("j.target_track", target_track),
+    ):
         if value:
             conditions.append(f"{column} = ?")
             params.append(value)
-    if minimum_score > 0:
+
+    if float(minimum_score or 0) > 0:
         conditions.append("COALESCE(j.hunter_score, -1) >= ?")
         params.append(float(minimum_score))
+    if float(maximum_score if maximum_score is not None else 100) < 100:
+        conditions.append("COALESCE(j.hunter_score, 101) <= ?")
+        params.append(float(maximum_score))
+
+    normalized_eligibility = str(eligibility or "all").strip().casefold()
+    if normalized_eligibility == "unblocked":
+        conditions.append("(j.hard_rejection_reason IS NULL OR trim(j.hard_rejection_reason) = '')")
+    elif normalized_eligibility == "blocked":
+        conditions.append("(j.hard_rejection_reason IS NOT NULL AND trim(j.hard_rejection_reason) != '')")
+
+    days = max(0, min(int(freshness_days or 0), 3650))
+    if days:
+        conditions.append("datetime(j.first_seen_at) >= datetime('now', ?)")
+        params.append(f"-{days} days")
+    if ats_only:
+        conditions.append("r.final_ats_score IS NOT NULL")
+
     where = " AND ".join(conditions)
-    count = _rows(f"SELECT COUNT(*) AS count FROM jobs j LEFT JOIN product_job_state s ON s.job_id=j.id WHERE {where}", params)[0]["count"]
+    joins = """
+        LEFT JOIN product_job_state s ON s.job_id=j.id
+        LEFT JOIN n8n_results r
+          ON r.id=(SELECT r2.id FROM n8n_results r2 WHERE r2.job_id=j.id ORDER BY r2.id DESC LIMIT 1)
+    """
+    count = _rows(
+        f"SELECT COUNT(*) AS count FROM jobs j {joins} WHERE {where}",
+        params,
+    )[0]["count"]
+
+    sort_map = {
+        "match_desc": "COALESCE(j.hunter_score,-1) DESC, j.first_seen_at DESC, j.id DESC",
+        "newest": "j.first_seen_at DESC, j.id DESC",
+        "oldest": "j.first_seen_at ASC, j.id ASC",
+        "company": "LOWER(COALESCE(j.company_name,'')) ASC, COALESCE(j.hunter_score,-1) DESC, j.id DESC",
+        "ats_desc": "COALESCE(r.final_ats_score,-1) DESC, COALESCE(j.hunter_score,-1) DESC, j.id DESC",
+    }
+    order_by = sort_map.get(str(sort_by or "").strip().casefold(), sort_map["match_desc"])
     limit = max(1, min(int(page_size), 48))
     offset = max(0, int(page) - 1) * limit
+
     rows = _rows(
         f"""SELECT j.*, COALESCE(s.saved,0) AS saved, COALESCE(s.skipped,0) AS skipped,
                    r.n8n_status, r.final_ats_score, r.resume_pdf_url, r.cover_letter_doc_url,
                    q.queue_status
-            FROM jobs j
-            LEFT JOIN product_job_state s ON s.job_id=j.id
-            LEFT JOIN n8n_results r ON r.id=(SELECT r2.id FROM n8n_results r2 WHERE r2.job_id=j.id ORDER BY r2.id DESC LIMIT 1)
-            LEFT JOIN n8n_dispatch_queue q ON q.id=(SELECT q2.id FROM n8n_dispatch_queue q2 WHERE q2.job_id=j.id ORDER BY q2.id DESC LIMIT 1)
-            WHERE {where}
-            ORDER BY COALESCE(j.hunter_score,-1) DESC, j.first_seen_at DESC, j.id DESC
-            LIMIT ? OFFSET ?""",
+              FROM jobs j
+              {joins}
+              LEFT JOIN n8n_dispatch_queue q
+                ON q.id=(SELECT q2.id FROM n8n_dispatch_queue q2 WHERE q2.job_id=j.id ORDER BY q2.id DESC LIMIT 1)
+             WHERE {where}
+             ORDER BY {order_by}
+             LIMIT ? OFFSET ?""",
         [*params, limit, offset],
     )
     return rows, int(count)
-
 
 def set_job_state(job_id: int, *, saved: bool | None = None, skipped: bool | None = None) -> None:
     """Persist only an explicit user action; never called by a page render."""
@@ -192,41 +267,65 @@ def set_job_state(job_id: int, *, saved: bool | None = None, skipped: bool | Non
         connection.close()
 
 
+def _pretty_status(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.replace(":", " ").replace("_", " ").replace("-", " ")
+    words = [word for word in text.split() if word]
+    acronyms = {"ats": "ATS", "n8n": "n8n", "hr": "HR", "api": "API"}
+    return " ".join(acronyms.get(word.casefold(), word.capitalize()) for word in words)
+
+
 def tracker_status(raw_status: Any, queue_status: Any = None) -> str:
-    """Presentation-only status mapper: a completed package is never Submitted."""
+    """Map workflow evidence into genuine user-facing lifecycle states."""
     status = str(raw_status or "").strip().casefold()
     queue = str(queue_status or "").strip().casefold()
     if status in {"submitted", "submission_confirmed", "externally_submitted"}:
         return "Submitted"
-    if status in {"application_ready", "final_ready", "completed", "complete"}:
+    if status in {"application_ready", "final_ready", "final_ready_deterministic_95_plus", "completed", "complete", "package_prepared", "prepared"}:
         return "Prepared"
-    if status in {"ats_review_required", "review_required", "needs_review"}:
-        return "Needs you"
-    if status in {"failed", "error", "rejected"} or queue == "failed":
+    if status in {"ats_review_required", "review_required", "needs_review", "truth_review_required", "manual_review_required", "placement_or_polish_review_required"}:
+        return "Needs review"
+    if status in {"rejected_by_dashboard_targeting", "targeting_rejected", "blocked", "work_authorization_blocked", "eligibility_blocked"}:
+        return "Blocked"
+    if status in {"failed", "error"} or queue == "failed":
         return "Failed"
     if queue in {"pending", "queued", "accepted", "dispatching", "dispatched", "running", "waiting", "processing"}:
         return "In progress"
     if queue == "skipped":
         return "Skipped"
-    return "Other"
-
+    if status:
+        return f"Workflow: {_pretty_status(status)}"
+    if queue in {"completed", "complete"}:
+        return "Queue completed"
+    if queue:
+        return f"Queue: {_pretty_status(queue)}"
+    return "Status not recorded"
 
 def tracker_rows(limit: int = 100) -> list[dict[str, Any]]:
     rows = _rows(
         """SELECT j.id AS job_id,j.company_name,j.title,j.hunter_score,j.apply_url,
                    r.n8n_status,r.final_ats_score,r.resume_doc_url,r.resume_pdf_url,r.cover_letter_doc_url,
                    r.sent_at,r.completed_at,q.queue_status,q.queued_at,q.updated_at
-            FROM jobs j
-            LEFT JOIN n8n_results r ON r.id=(SELECT id FROM n8n_results WHERE job_id=j.id ORDER BY id DESC LIMIT 1)
-            LEFT JOIN n8n_dispatch_queue q ON q.id=(SELECT id FROM n8n_dispatch_queue WHERE job_id=j.id ORDER BY id DESC LIMIT 1)
-            WHERE r.id IS NOT NULL OR q.id IS NOT NULL
-            ORDER BY COALESCE(r.completed_at,q.updated_at,q.queued_at,j.updated_at) DESC LIMIT ?""",
-        (max(1, min(int(limit), 250)),),
+              FROM jobs j
+              LEFT JOIN n8n_results r ON r.id=(SELECT id FROM n8n_results WHERE job_id=j.id ORDER BY id DESC LIMIT 1)
+              LEFT JOIN n8n_dispatch_queue q ON q.id=(SELECT id FROM n8n_dispatch_queue WHERE job_id=j.id ORDER BY id DESC LIMIT 1)
+             WHERE r.id IS NOT NULL OR q.id IS NOT NULL
+             ORDER BY COALESCE(r.completed_at,q.updated_at,q.queued_at,j.updated_at) DESC LIMIT ?""",
+        (max(1, min(int(limit), 1000)),),
     )
     for row in rows:
-        row["display_status"] = tracker_status(row.get("n8n_status"), row.get("queue_status"))
+        raw_result = str(row.get("n8n_status") or "").strip()
+        raw_queue = str(row.get("queue_status") or "").strip()
+        row["display_status"] = tracker_status(raw_result, raw_queue)
+        evidence = []
+        if raw_result:
+            evidence.append(f"workflow={raw_result}")
+        if raw_queue:
+            evidence.append(f"queue={raw_queue}")
+        row["status_evidence"] = " · ".join(evidence) or "No raw lifecycle state recorded"
     return rows
-
 
 def activity_summary(*, limit: int = 250) -> dict[str, int]:
     """Return bounded, evidence-backed activity counts for product surfaces.
@@ -254,73 +353,84 @@ def activity_summary(*, limit: int = 250) -> dict[str, int]:
         "recent_evidence": len(records),
         "prepared_today": sum(record["display_status"] == "Prepared" and happened_today(record) for record in records),
         "submitted_today": sum(record["display_status"] == "Submitted" and happened_today(record) for record in records),
-        "needs_you": sum(record["display_status"] == "Needs you" for record in records),
+        "needs_you": sum(record["display_status"] == "Needs review" for record in records),
         "in_progress": sum(record["display_status"] == "In progress" for record in records),
     }
 
 
 def research_snapshot() -> dict[str, Any]:
-    """Bounded, explainable read model for the customer-facing research view."""
+    """Evidence-backed product research including lifetime discovery telemetry."""
+    from app.presentation_analytics import lifetime_metrics
+
     connection = get_connection()
     try:
         ensure_schema(connection)
         headline = dict(connection.execute(
             """SELECT COUNT(*) AS jobs, ROUND(AVG(hunter_score), 1) AS average_score,
-                      SUM(CASE WHEN hard_rejection_reason IS NOT NULL
-                                AND trim(hard_rejection_reason) != '' THEN 1 ELSE 0 END) AS blocked
+                      SUM(CASE WHEN hard_rejection_reason IS NOT NULL AND trim(hard_rejection_reason) != '' THEN 1 ELSE 0 END) AS blocked
                  FROM jobs"""
         ).fetchone())
         source_quality = [dict(row) for row in connection.execute(
             """SELECT COALESCE(NULLIF(trim(source), ''), 'Source not recorded') AS source,
                       COUNT(*) AS opportunities, ROUND(AVG(hunter_score), 1) AS average_match,
-                      SUM(CASE WHEN hard_rejection_reason IS NULL
-                                OR trim(hard_rejection_reason) = '' THEN 1 ELSE 0 END) AS eligible_records
+                      SUM(CASE WHEN hard_rejection_reason IS NULL OR trim(hard_rejection_reason) = '' THEN 1 ELSE 0 END) AS eligible_records
                  FROM jobs GROUP BY COALESCE(NULLIF(trim(source), ''), 'Source not recorded')
-                 ORDER BY opportunities DESC, source ASC LIMIT 20"""
+                 ORDER BY opportunities DESC, source ASC LIMIT 30"""
         ).fetchall()]
         blockers = [dict(row) for row in connection.execute(
             """SELECT hard_rejection_reason AS reason, COUNT(*) AS count
-                 FROM jobs WHERE hard_rejection_reason IS NOT NULL
-                   AND trim(hard_rejection_reason) != ''
-                 GROUP BY hard_rejection_reason ORDER BY count DESC, reason ASC LIMIT 12"""
+                 FROM jobs WHERE hard_rejection_reason IS NOT NULL AND trim(hard_rejection_reason) != ''
+                 GROUP BY hard_rejection_reason ORDER BY count DESC, reason ASC LIMIT 20"""
         ).fetchall()]
         authorization = [dict(row) for row in connection.execute(
-            """SELECT COALESCE(NULLIF(trim(work_authorization), ''), 'Not recorded') AS status,
-                      COUNT(*) AS count
+            """SELECT COALESCE(NULLIF(trim(work_authorization), ''), 'Not recorded') AS status, COUNT(*) AS count
                  FROM jobs GROUP BY COALESCE(NULLIF(trim(work_authorization), ''), 'Not recorded')
-                 ORDER BY count DESC, status ASC LIMIT 12"""
+                 ORDER BY count DESC, status ASC LIMIT 20"""
         ).fetchall()]
         trends = [dict(row) for row in connection.execute(
             """SELECT substr(first_seen_at, 1, 10) AS date, COUNT(*) AS opportunities,
                       ROUND(AVG(hunter_score), 1) AS average_match
                  FROM jobs WHERE trim(COALESCE(first_seen_at, '')) != ''
-                 GROUP BY substr(first_seen_at, 1, 10)
-                 ORDER BY date DESC LIMIT 14"""
+                 GROUP BY substr(first_seen_at, 1, 10) ORDER BY date DESC LIMIT 30"""
         ).fetchall()]
         ats = dict(connection.execute(
-            """SELECT COUNT(final_ats_score) AS scored_packages,
-                      ROUND(AVG(final_ats_score), 1) AS average_ats_score
+            """SELECT COUNT(final_ats_score) AS scored_packages, ROUND(AVG(final_ats_score), 1) AS average_ats_score
                  FROM n8n_results WHERE final_ats_score IS NOT NULL"""
         ).fetchone())
         health = [dict(row) for row in connection.execute(
             """SELECT source_name, health_status, last_success_at, jobs_found_last_run
-                 FROM source_health ORDER BY source_name LIMIT 30"""
+                 FROM source_health ORDER BY source_name LIMIT 50"""
         ).fetchall()]
         top_matches = [dict(row) for row in connection.execute(
             """SELECT id, company_name, title, hunter_score, source, target_track,
                       location_raw, remote_type, employment_type, work_authorization,
                       hard_rejection_reason
                  FROM jobs WHERE hunter_score IS NOT NULL
-                ORDER BY hunter_score DESC, first_seen_at DESC, id DESC LIMIT 8"""
+                ORDER BY hunter_score DESC, first_seen_at DESC, id DESC LIMIT 20"""
         ).fetchall()]
         query_performance = [dict(row) for row in connection.execute(
             """SELECT COALESCE(NULLIF(trim(query_name), ''), 'Query not recorded') AS query_name,
                       COUNT(*) AS runs, COALESCE(SUM(raw_count), 0) AS raw_records,
                       COALESCE(SUM(eligible_count), 0) AS eligible_records, MAX(started_at) AS last_run
-                 FROM source_runs
-                GROUP BY COALESCE(NULLIF(trim(query_name), ''), 'Query not recorded')
-                ORDER BY last_run DESC LIMIT 12"""
+                 FROM source_runs GROUP BY COALESCE(NULLIF(trim(query_name), ''), 'Query not recorded')
+                ORDER BY last_run DESC LIMIT 20"""
         ).fetchall()]
+        source_telemetry = [dict(row) for row in connection.execute(
+            """SELECT COALESCE(NULLIF(trim(source_name), ''), 'Source not recorded') AS source,
+                      COUNT(*) AS runs, COALESCE(SUM(raw_count),0) AS scanned,
+                      COALESCE(SUM(normalized_count),0) AS normalized,
+                      COALESCE(SUM(eligible_count),0) AS eligible,
+                      COALESCE(SUM(new_eligible_count),0) AS new_eligible,
+                      MAX(COALESCE(completed_at,started_at)) AS last_run
+                 FROM source_runs GROUP BY COALESCE(NULLIF(trim(source_name), ''), 'Source not recorded')
+                ORDER BY scanned DESC, source ASC LIMIT 30"""
+        ).fetchall()]
+        try:
+            lifetime = lifetime_metrics(connection)
+        except sqlite3.Error:
+            lifetime = {"runs": 0, "scanned": 0, "normalized": 0, "eligible": 0,
+                        "jobs_stored": int(headline.get("jobs") or 0), "decisions": 0,
+                        "jobs_delivered": 0, "jobs_dispatched": 0}
     finally:
         connection.close()
     return {
@@ -328,8 +438,8 @@ def research_snapshot() -> dict[str, Any]:
         "blockers": blockers, "authorization": authorization,
         "trends": list(reversed(trends)), "ats": ats, "health": health,
         "top_matches": top_matches, "query_performance": query_performance,
+        "source_telemetry": source_telemetry, "lifetime": lifetime,
     }
-
 
 def volume_policy() -> dict[str, Any]:
     policy = dict(get_setting("product_automation_policy_v1", {}) or {})
@@ -450,6 +560,35 @@ def lane_matches_job(lane: dict[str, Any], job: dict[str, Any]) -> bool:
     )).casefold()
     return any(keyword in text for keyword in keywords)
 
+
+def master_resume() -> dict[str, Any]:
+    """Return only an explicitly user-designated real resume artifact."""
+    record = dict(get_setting("candidate_master_resume_v1", {}) or {})
+    url = str(record.get("url") or "").strip()
+    if not url.startswith(("https://", "http://")):
+        return {}
+    return record
+
+
+def save_master_resume(job_id: int, url: str, label: str, *, source: str = "Existing generated resume artifact") -> None:
+    """Persist an explicit master-resume designation; never infer one."""
+    safe_url = str(url or "").strip()
+    if not safe_url.startswith(("https://", "http://")):
+        raise ValueError("A real HTTP(S) resume artifact is required.")
+    save_setting(
+        "candidate_master_resume_v1",
+        {
+            "job_id": int(job_id), "url": safe_url,
+            "label": str(label or "Master resume").strip()[:240],
+            "source": str(source or "Candidate selection").strip()[:160],
+            "designated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        changed_by="streamlit:product-profile",
+    )
+
+
+def clear_master_resume() -> None:
+    save_setting("candidate_master_resume_v1", {}, changed_by="streamlit:product-profile")
 
 def candidate_facts() -> list[dict[str, Any]]:
     return _rows("SELECT * FROM candidate_profile_facts ORDER BY fact_key")

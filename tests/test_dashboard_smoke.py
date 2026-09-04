@@ -128,7 +128,7 @@ def test_tracker_status_is_truth_bound() -> None:
     assert tracker_status("completed") == "Prepared"
     assert tracker_status("application_ready") == "Prepared"
     assert tracker_status("submission_confirmed") == "Submitted"
-    assert tracker_status("unknown_backend_state") == "Other"
+    assert tracker_status("unknown_backend_state") == "Workflow: Unknown Backend State"
     assert tracker_status(None, "processing") == "In progress"
 
 
@@ -143,9 +143,13 @@ def test_product_detail_keeps_raw_machine_data_collapsed_and_settings_keep_advan
     assert 'with st.expander("Advanced decision evidence", expanded=False):' in source
     assert 'with st.expander("Raw machine evidence", expanded=False):' in source
     assert '"Advanced / System"' in source
+    assert "@st.dialog" in source
+    assert "job-card-click" in source
+    assert 'st.button("Details"' not in source
+    assert "Opportunities scanned" in source
     assert '"System / Diagnostics"' in source
     assert "gmail_message_id" in (ROOT / "app" / "gmail_integration.py").read_text(encoding="utf-8")
-    assert "placeholder preview" in source
+    assert "No master resume designated yet" in source
     assert "artifact-line" not in source
 
 
