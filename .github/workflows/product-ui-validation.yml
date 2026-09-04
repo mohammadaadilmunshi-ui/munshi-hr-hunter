@@ -45,4 +45,5 @@ jobs:
             tests/test_product_schema.py \
             tests/test_secure_vault.py \
             tests/test_gmail_integration.py \
-            tests/test_product_ui_sol_remainder.py
+            tests/test_product_ui_sol_remainder.py \
+            tests/test_product_ui_v21.py

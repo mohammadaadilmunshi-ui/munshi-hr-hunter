@@ -41,6 +41,19 @@ def product_css() -> str:
     [data-testid="stRadio"] [role="radiogroup"]{gap:.35rem!important;flex-wrap:wrap!important}[data-testid="stRadio"] label{border-radius:999px;padding:.24rem .55rem!important;min-height:40px;background:#FFF;border:1px solid var(--m-border)}.st-key-product_settings_split [data-testid="stRadio"] label{width:100%;border-radius:12px;padding:.58rem .7rem!important}
     .st-key-product_job_grid div[data-testid="stHorizontalBlock"]:has([class*="st-key-product_card_"])>div[data-testid="stColumn"],.st-key-product_dashboard_grid div[data-testid="stHorizontalBlock"]:has([class*="st-key-product_card_"])>div[data-testid="stColumn"]{min-width:0!important}
 
+    /* V2.1 interaction polish: clickable cards, modal backdrop, compact filters. */
+    .job-card-click{display:block;color:inherit!important;text-decoration:none!important;border-radius:15px 15px 0 0;cursor:pointer;transition:transform .16s ease,box-shadow .16s ease}
+    .job-card-click:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(20,33,41,.10)}
+    .job-card-click:focus-visible{outline:3px solid rgba(155,110,45,.38)!important;outline-offset:3px}
+    [class*="st-key-product_card_"] .stButton>button{position:relative;z-index:3}
+    .stButton>button[kind="primary"],[data-testid="stBaseButton-primary"],[data-testid="stBaseButton-primary"] *,.stButton>button[kind="primary"] *{color:#FFF!important}
+    div[data-baseweb="modal"]{backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}
+    [data-testid="stDialog"] [role="dialog"]{border-radius:22px!important;border:1px solid var(--m-border)!important;box-shadow:0 26px 80px rgba(20,33,41,.22)!important}
+    [class*="st-key-product_"][class*="_search"] details{border:1px solid var(--m-border);border-radius:14px;padding:.15rem .65rem;background:var(--m-soft)}
+    [class*="st-key-product_"][class*="_search"] details summary{color:var(--m-forest);font-weight:720}
+    .pipeline-evidence{display:block;color:var(--m-muted);font-size:.68rem;margin-top:.2rem;overflow-wrap:anywhere}
+    .st-key-product_master_resume{background:linear-gradient(145deg,#F4FAF6,#FFF);border:1px solid #CFE1D6!important;box-shadow:0 9px 28px rgba(20,61,49,.06)}
+
     /* Final browser/contrast hardening after the Sol visual rescue. */
     [data-testid="stWidgetLabel"],
     [data-testid="stCheckbox"] label,

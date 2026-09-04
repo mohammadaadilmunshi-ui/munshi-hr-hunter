@@ -9,11 +9,13 @@ import json
 from datetime import datetime
 from typing import Any
 
+import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from app.product_state import (
-    activity_summary, candidate_facts, create_lane, delete_lane, fetch_jobs,
-    job_filters, lanes, research_snapshot, save_candidate_fact,
+    activity_summary, candidate_facts, clear_master_resume, create_lane, delete_lane, fetch_jobs,
+    job_filters, lanes, master_resume, research_snapshot, save_candidate_fact, save_master_resume,
     save_review_preference, save_volume_policy, set_job_state, set_lane_enabled, tracker_rows,
     update_lane, volume_policy,
 )
@@ -48,134 +50,237 @@ def _relative_time(value: Any) -> str:
         return "Date recorded"
 
 
+def _set_action_feedback(tone: str, message: str) -> None:
+    st.session_state["product_action_feedback"] = {"tone": str(tone), "message": str(message)}
+
+
+def _show_action_feedback() -> None:
+    feedback = st.session_state.pop("product_action_feedback", None)
+    if not isinstance(feedback, dict):
+        return
+    message = str(feedback.get("message") or "").strip()
+    if not message:
+        return
+    icon = {"success": "✅", "warning": "⚠️", "error": "❌", "info": "ℹ️"}.get(str(feedback.get("tone") or "info"), "ℹ️")
+    st.toast(message, icon=icon)
+
+
+def _toggle_job_saved(job_id: int, currently_saved: bool) -> None:
+    set_job_state(int(job_id), saved=not bool(currently_saved))
+    _set_action_feedback("success", "Removed from Saved jobs." if currently_saved else "Saved job.")
+
+
+def _toggle_job_skipped(job_id: int, currently_skipped: bool) -> None:
+    set_job_state(int(job_id), skipped=not bool(currently_skipped))
+    _set_action_feedback("success", "Restored job to results." if currently_skipped else "Passed on job.")
+
+
+def _prepare_job(job_id: int) -> None:
+    try:
+        from app.stored_job_n8n_worker import start_stored_job_run
+        result = start_stored_job_run(int(job_id), actor="dashboard_product_ui")
+        if result.get("success"):
+            _set_action_feedback("success", str(result.get("message") or "Preparation request processed."))
+        else:
+            _set_action_feedback("warning", str(result.get("message") or "Preparation was not started."))
+    except Exception:
+        _set_action_feedback("error", "The guarded preparation request could not be started. No submission was claimed.")
+
+
 def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
     job_id = int(row["id"])
     tone = pastel_for(job_id)
+    view = "jobs" if key_prefix == "jobs" else "dashboard"
     tags = [row.get("remote_type"), row.get("employment_type"), row.get("salary_raw")]
+    if row.get("saved"):
+        tags.append("Saved")
     tags_html = "".join(f'<span class="tag">{esc(tag)}</span>' for tag in tags if str(tag or "").strip())
     with st.container(key=f"product_card_{key_prefix}_{job_id}"):
         st.markdown(
-            f'''<div class="job-card"><div class="job-card-main" style="--card-bg:{tone}">
-            <div class="job-top"><span>{esc(row.get("location_raw"), "Location unknown")}<br><span class="quiet">{esc(_relative_time(row.get("first_seen_at")))}</span></span>{score_ring(row.get("hunter_score"), tone)}</div>
-            <div class="job-title">{esc(row.get("title"), "Untitled role")}</div>
-            <div>{tags_html}</div><div class="job-company">{esc(row.get("company_name"), "Company not recorded")}</div>
-            <div class="job-meta">{esc(row.get("source"), "Source unknown")}</div></div></div>''',
+            f"""<a class="job-card-click" href="?view={view}&amp;job={job_id}" target="_self" aria-label="Open {esc(row.get("title"), "job")} details">
+                <div class="job-card"><div class="job-card-main" style="--card-bg:{tone}">
+                <div class="job-top"><span>{esc(row.get("location_raw"), "Location unknown")}<br><span class="quiet">{esc(_relative_time(row.get("first_seen_at")))}</span></span>{score_ring(row.get("hunter_score"), tone)}</div>
+                <div class="job-title">{esc(row.get("title"), "Untitled role")}</div>
+                <div>{tags_html}</div><div class="job-company">{esc(row.get("company_name"), "Company not recorded")}</div>
+                <div class="job-meta">{esc(row.get("source"), "Source unknown")}</div></div></div></a>""",
             unsafe_allow_html=True,
         )
-        actions = st.columns(4, gap="small")
+        actions = st.columns(3, gap="small")
+        saved = bool(row.get("saved"))
+        skipped = bool(row.get("skipped"))
         with actions[0]:
-            saved = bool(row.get("saved"))
-            if st.button("Unsave" if saved else "Save", key=f"{key_prefix}_save_{job_id}", use_container_width=True):
-                set_job_state(job_id, saved=not saved)
-                st.rerun()
+            st.button("Saved" if saved else "Save", key=f"{key_prefix}_save_{job_id}", use_container_width=True, on_click=_toggle_job_saved, args=(job_id, saved))
         with actions[1]:
-            if st.button("Restore" if row.get("skipped") else "Pass", key=f"{key_prefix}_skip_{job_id}", use_container_width=True):
-                set_job_state(job_id, skipped=not bool(row.get("skipped")))
-                st.rerun()
+            st.button("Restore" if skipped else "Pass", key=f"{key_prefix}_skip_{job_id}", use_container_width=True, on_click=_toggle_job_skipped, args=(job_id, skipped))
         with actions[2]:
-            if st.button("Details", key=f"{key_prefix}_details_{job_id}", use_container_width=True):
-                st.session_state["product_job_detail"] = job_id
-                st.rerun()
-        with actions[3]:
-            if st.button("Prepare", key=f"{key_prefix}_prepare_{job_id}", type="primary", use_container_width=True):
-                # The existing guarded authority enforces targeting, authorization,
-                # dedupe, and worker safety. This view never claims submission.
-                try:
-                    from app.stored_job_n8n_worker import start_stored_job_run
-                    result = start_stored_job_run(job_id, actor="dashboard_product_ui")
-                    if result.get("success"):
-                        st.success(str(result.get("message") or "Preparation request processed."))
-                    else:
-                        st.warning(str(result.get("message") or "Preparation was not started."))
-                except Exception:
-                    st.error("The guarded preparation request could not be started. No submission was claimed.")
+            st.button("Prepare", key=f"{key_prefix}_prepare_{job_id}", type="primary", use_container_width=True, on_click=_prepare_job, args=(job_id,))
+
+def _clear_job_query() -> None:
+    try:
+        if "job" in st.query_params:
+            del st.query_params["job"]
+    except Exception:
+        pass
 
 
-def _job_detail() -> None:
-    job_id = st.session_state.get("product_job_detail")
-    if not job_id:
-        return
-    # Query by ID independently; this preserves details for skipped/filtered jobs.
+@st.dialog("Job details", width="large")
+def _job_detail_dialog(job_id: int) -> None:
     from app.database import get_connection
     connection = get_connection()
     try:
         record = connection.execute("SELECT * FROM jobs WHERE id=?", (int(job_id),)).fetchone()
+        state_record = connection.execute("SELECT saved,skipped FROM product_job_state WHERE job_id=?", (int(job_id),)).fetchone()
     finally:
         connection.close()
     if not record:
-        st.session_state.pop("product_job_detail", None)
+        st.warning("This stored job is no longer available.")
+        st.button("Close", on_click=_clear_job_query)
         return
     row = dict(record)
-    with st.expander(f"Job details · {row.get('title') or 'Untitled role'}", expanded=True):
-        left, right = st.columns((1.3, 1))
-        with left:
-            st.subheader(str(row.get("company_name") or "Company not recorded"))
-            st.caption(f"{str(row.get('location_raw') or 'Location unknown')} · {str(row.get('source') or 'Source unknown')}")
-            st.markdown("#### Role summary")
-            st.write(row.get("description_raw") or "A full job description is not stored for this role.")
-        with right:
-            st.metric("Hunter match", f"{float(row['hunter_score']):.0f}%" if row.get("hunter_score") is not None else "Not available")
-            st.markdown(
-                f'''<div class="evidence-list">
-                    <div class="evidence-item"><b>Work authorization</b>{esc(row.get("work_authorization"))}</div>
-                    <div class="evidence-item"><b>Employment</b>{esc(row.get("employment_type"))}</div>
-                    <div class="evidence-item"><b>Target track</b>{esc(row.get("target_track"))}</div>
-                    <div class="evidence-item"><b>Compensation</b>{esc(row.get("salary_raw"))}</div>
-                </div>''',
-                unsafe_allow_html=True,
-            )
-            if row.get("hard_rejection_reason"):
-                st.warning(f"Eligibility evidence: {row['hard_rejection_reason']}")
-            if safe_link(row.get("apply_url")):
-                st.link_button("Open application page", safe_link(row["apply_url"]), type="primary", use_container_width=True)
-        with st.expander("Advanced decision evidence", expanded=False):
-            st.caption("These are stored evidence fields, not a claim that missing information is known.")
-            st.dataframe([{
-                "Source": row.get("source"), "Remote type": row.get("remote_type"),
-                "Date posted": row.get("date_posted"), "Target track": row.get("target_track"),
-                "Hard rejection reason": row.get("hard_rejection_reason"),
-            }], hide_index=True, use_container_width=True)
-        with st.expander("Raw machine evidence", expanded=False):
-            raw = row.get("detail_extraction_json")
-            if raw:
-                try:
-                    st.json(json.loads(str(raw)))
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    st.code(str(raw), language="text")
-            else:
-                st.caption("No raw extraction evidence is stored for this role.")
-        if st.button("Close details", key="product_close_details"):
-            st.session_state.pop("product_job_detail", None)
-            st.rerun()
+    row["saved"] = int(state_record["saved"]) if state_record else 0
+    row["skipped"] = int(state_record["skipped"]) if state_record else 0
+    st.markdown(f"## {esc(row.get('title'), 'Untitled role')}", unsafe_allow_html=True)
+    st.caption(f"{row.get('company_name') or 'Company not recorded'} · {row.get('location_raw') or 'Location unknown'} · {row.get('source') or 'Source unknown'}")
+    left, right = st.columns((1.55, 1), gap="large")
+    with left:
+        st.markdown("### Role summary")
+        st.write(row.get("description_raw") or "A full job description is not stored for this role.")
+    with right:
+        st.metric("Hunter match", f"{float(row['hunter_score']):.0f}%" if row.get("hunter_score") is not None else "Not available")
+        st.markdown(f"""<div class="evidence-list">
+            <div class="evidence-item"><b>Employment</b>{esc(row.get("employment_type"))}</div>
+            <div class="evidence-item"><b>Workplace</b>{esc(row.get("remote_type"))}</div>
+            <div class="evidence-item"><b>Target track</b>{esc(row.get("target_track"))}</div>
+            <div class="evidence-item"><b>Compensation</b>{esc(row.get("salary_raw"))}</div>
+        </div>""", unsafe_allow_html=True)
+        authorization = str(row.get("work_authorization") or "").strip()
+        if authorization:
+            st.caption("Work-authorization evidence is recorded.")
+            with st.expander("Review work-authorization evidence", expanded=False):
+                st.write(authorization)
+        else:
+            st.caption("Work authorization: not recorded.")
+        if row.get("hard_rejection_reason"):
+            st.warning("Eligibility evidence: " + str(row["hard_rejection_reason"]))
+    action_columns = st.columns((1, 1, 1, 1.2))
+    with action_columns[0]:
+        st.button("Saved" if row["saved"] else "Save", key=f"dialog_save_{job_id}", use_container_width=True, on_click=_toggle_job_saved, args=(job_id, bool(row["saved"])))
+    with action_columns[1]:
+        st.button("Restore" if row["skipped"] else "Pass", key=f"dialog_skip_{job_id}", use_container_width=True, on_click=_toggle_job_skipped, args=(job_id, bool(row["skipped"])))
+    with action_columns[2]:
+        st.button("Prepare", key=f"dialog_prepare_{job_id}", type="primary", use_container_width=True, on_click=_prepare_job, args=(job_id,))
+    with action_columns[3]:
+        if safe_link(row.get("apply_url")):
+            st.link_button("Open application", safe_link(row["apply_url"]), use_container_width=True)
+        else:
+            st.button("No application URL", disabled=True, use_container_width=True)
+    with st.expander("Advanced decision evidence", expanded=False):
+        st.caption("Stored evidence only; missing values are not inferred.")
+        st.dataframe([{"Source": row.get("source"), "Remote type": row.get("remote_type"), "Date posted": row.get("date_posted"), "Target track": row.get("target_track"), "Hard rejection reason": row.get("hard_rejection_reason")}], hide_index=True, use_container_width=True)
+    with st.expander("Raw machine evidence", expanded=False):
+        raw = row.get("detail_extraction_json")
+        if raw:
+            try:
+                st.json(json.loads(str(raw)))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                st.code(str(raw), language="text")
+        else:
+            st.caption("No raw extraction evidence is stored for this role.")
+    st.button("Close", key=f"dialog_close_{job_id}", on_click=_clear_job_query, use_container_width=True)
+
+
+def _job_detail() -> None:
+    try:
+        raw_job = str(st.query_params.get("job") or "").strip()
+    except Exception:
+        raw_job = ""
+    if not raw_job:
+        return
+    try:
+        job_id = int(raw_job)
+    except (TypeError, ValueError):
+        _clear_job_query()
+        return
+    _job_detail_dialog(job_id)
+
+def _filter_defaults() -> dict[str, Any]:
+    return {
+        "query": "", "exclude": "", "location": "", "source": "",
+        "workplace": "", "employment_type": "", "target_track": "",
+        "score_range": (0, 100), "eligibility": "all", "freshness_days": 0,
+        "ats_only": False, "result_set": "all", "search_scope": "all_fields",
+        "sort_by": "match_desc",
+    }
+
+
+def _reset_search_filters(namespace: str) -> None:
+    defaults = _filter_defaults()
+    for key, value in defaults.items():
+        st.session_state[f"{namespace}_filter_{key}"] = value
+    st.session_state[f"{namespace}_filters"] = defaults.copy()
+    if namespace == "jobs":
+        st.session_state["product_jobs_page"] = 1
 
 
 def _search_filters(namespace: str) -> dict[str, Any]:
     values = job_filters()
-    defaults = st.session_state.setdefault(f"{namespace}_filters", {"query": "", "exclude": "", "location": "", "source": "", "workplace": "", "employment_type": "", "minimum_score": 0.0, "saved_only": False, "result_set": "all", "search_scope": "title_description"})
+    defaults = _filter_defaults()
+    stored = st.session_state.setdefault(f"{namespace}_filters", defaults.copy())
+    for key, default in defaults.items():
+        st.session_state.setdefault(f"{namespace}_filter_{key}", stored.get(key, default))
     with st.container(key=f"product_{namespace}_search"):
-        with st.form(f"product_{namespace}_search_form"):
-            search_left, search_right = st.columns((1, 3.8), gap="small")
-            with search_left:
-                scope = st.selectbox("Search scope", ["title_description", "title_company"], index=["title_description", "title_company"].index(defaults.get("search_scope", "title_description")), format_func=lambda value: {"title_description": "Title + description", "title_company": "Title + company"}[value], key=f"{namespace}_scope", label_visibility="collapsed")
-            with search_right:
-                query = st.text_input("Search jobs", value=defaults["query"], placeholder="Search by title, company, or keyword…", label_visibility="collapsed")
-            exclude = st.text_input("Exclude terms", value=defaults["exclude"], placeholder="Exclude jobs mentioning…", key=f"{namespace}_exclude", label_visibility="collapsed")
-            controls = st.columns((1.15, 1, 1, 1.1, .9, .8))
-            with controls[0]: location = st.selectbox("Location", [""] + values["locations"], index=([""] + values["locations"]).index(defaults["location"]) if defaults["location"] in values["locations"] else 0, format_func=lambda x: x or "All locations")
-            with controls[1]: workplace = st.selectbox("Workplace", [""] + values["remote"], index=([""] + values["remote"]).index(defaults["workplace"]) if defaults["workplace"] in values["remote"] else 0, format_func=lambda x: x or "Any workplace")
-            with controls[2]: source = st.selectbox("Source", [""] + values["sources"], index=([""] + values["sources"]).index(defaults["source"]) if defaults["source"] in values["sources"] else 0, format_func=lambda x: x or "All sources")
-            with controls[3]: employment = st.selectbox("Employment", [""] + values["employment"], index=([""] + values["employment"]).index(defaults["employment_type"]) if defaults["employment_type"] in values["employment"] else 0, format_func=lambda x: x or "Any employment")
-            with controls[4]: minimum = st.selectbox("Match score", [0.0, 50.0, 60.0, 70.0, 80.0], index=[0.0, 50.0, 60.0, 70.0, 80.0].index(float(defaults["minimum_score"])) if float(defaults["minimum_score"]) in [0.0, 50.0, 60.0, 70.0, 80.0] else 0, format_func=lambda x: "Any score" if x == 0 else f"{x:.0f}%+")
-            with controls[5]: result_set = st.selectbox("Result set", ["all", "saved", "passed"], index=["all", "saved", "passed"].index(str(defaults.get("result_set") or "all")), format_func=lambda x: {"all": "All jobs", "saved": "Saved", "passed": "Passed"}[x])
-            submitted = st.form_submit_button("Search jobs", type="primary", use_container_width=True)
-    if submitted:
-        defaults.update({"query": query, "exclude": exclude, "location": location, "source": source, "workplace": workplace, "employment_type": employment, "minimum_score": minimum, "saved_only": result_set == "saved", "result_set": result_set, "search_scope": scope})
-        if namespace == "jobs":
-            st.session_state["product_jobs_page"] = 1
-    return defaults
-
+        search_left, search_right = st.columns((1, 3.8), gap="small")
+        with search_left:
+            scope = st.selectbox("Search scope", ["all_fields", "title_description", "title_company"], format_func=lambda value: {"all_fields": "Title + company + JD", "title_description": "Title + description", "title_company": "Title + company"}[value], key=f"{namespace}_filter_search_scope", label_visibility="collapsed")
+        with search_right:
+            query = st.text_input("Search jobs", placeholder="Search title, company, or job-description keyword…", key=f"{namespace}_filter_query", label_visibility="collapsed")
+        exclude = st.text_input("Exclude terms", placeholder="Exclude terms — separate multiple terms with commas…", key=f"{namespace}_filter_exclude", label_visibility="collapsed")
+        controls = st.columns((1.15, 1, 1, 1.1), gap="small")
+        with controls[0]:
+            location = st.selectbox("Location", [""] + values["locations"], format_func=lambda x: x or "All locations", key=f"{namespace}_filter_location")
+        with controls[1]:
+            workplace = st.selectbox("Workplace", [""] + values["remote"], format_func=lambda x: x or "Any workplace", key=f"{namespace}_filter_workplace")
+        with controls[2]:
+            source = st.selectbox("Source", [""] + values["sources"], format_func=lambda x: x or "All sources", key=f"{namespace}_filter_source")
+        with controls[3]:
+            employment = st.selectbox("Employment", [""] + values["employment"], format_func=lambda x: x or "Any employment", key=f"{namespace}_filter_employment_type")
+        with st.expander("Advanced filters", expanded=False):
+            advanced_one = st.columns((1.25, 1, 1), gap="small")
+            with advanced_one[0]:
+                target_track = st.selectbox("Target track", [""] + values["target_tracks"], format_func=lambda x: x or "Any target track", key=f"{namespace}_filter_target_track")
+            with advanced_one[1]:
+                eligibility = st.selectbox("Eligibility evidence", ["all", "unblocked", "blocked"], format_func=lambda x: {"all": "All evidence states", "unblocked": "No explicit blocker", "blocked": "Explicit blocker recorded"}[x], key=f"{namespace}_filter_eligibility")
+            with advanced_one[2]:
+                freshness_days = st.selectbox("First seen", [0, 1, 3, 7, 14, 30, 90], format_func=lambda x: "Any time" if x == 0 else "Past 24 hours" if x == 1 else f"Past {x} days", key=f"{namespace}_filter_freshness_days")
+            advanced_two = st.columns((1.4, 1, 1), gap="small")
+            with advanced_two[0]:
+                score_range = st.slider("Hunter match range", min_value=0, max_value=100, key=f"{namespace}_filter_score_range")
+            with advanced_two[1]:
+                sort_by = st.selectbox("Sort", ["match_desc", "newest", "oldest", "ats_desc", "company"], format_func=lambda x: {"match_desc": "Best match", "newest": "Newest first", "oldest": "Oldest first", "ats_desc": "Highest ATS score", "company": "Company A–Z"}[x], key=f"{namespace}_filter_sort_by")
+            with advanced_two[2]:
+                result_set = st.selectbox("Result set", ["all", "saved", "passed"], format_func=lambda x: {"all": "All jobs", "saved": "Saved", "passed": "Passed"}[x], key=f"{namespace}_filter_result_set")
+            ats_only = st.toggle("Only jobs with an ATS-scored package", key=f"{namespace}_filter_ats_only")
+        reset_area, explanation = st.columns((1, 4), gap="small")
+        with reset_area:
+            st.button("Reset filters", key=f"{namespace}_reset_filters", use_container_width=True, on_click=_reset_search_filters, args=(namespace,))
+        with explanation:
+            st.caption("Filters update live. Every filter uses stored job, score, ATS, and eligibility evidence.")
+    current = {
+        "query": query, "exclude": exclude, "location": location, "source": source,
+        "workplace": workplace, "employment_type": employment, "target_track": target_track,
+        "score_range": tuple(score_range), "minimum_score": float(score_range[0]),
+        "maximum_score": float(score_range[1]), "eligibility": eligibility,
+        "freshness_days": int(freshness_days), "ats_only": bool(ats_only),
+        "saved_only": result_set == "saved", "result_set": result_set,
+        "search_scope": scope, "sort_by": sort_by,
+    }
+    st.session_state[f"{namespace}_filters"] = {key: current.get(key, defaults.get(key)) for key in defaults}
+    query_args = dict(current)
+    query_args.pop("score_range", None)
+    return query_args
 
 def dashboard() -> None:
+    _show_action_feedback()
     page_intro("MUNSHI APPLY", "The right roles. The evidence to act.", "Search current opportunities, inspect why they match, and prepare application packages through the guarded workflow.")
     policy = volume_policy()
     activity = activity_summary()
@@ -185,11 +290,11 @@ def dashboard() -> None:
         summary = st.columns(5, gap="small")
         summary[0].metric("Prepared today", activity["prepared_today"])
         summary[1].metric("Submitted today", activity["submitted_today"], help="Only external submission evidence is counted.")
-        summary[2].metric("Needs you", activity["needs_you"])
+        summary[2].metric("Needs review", activity["needs_you"])
         summary[3].metric("In progress", activity["in_progress"])
         summary[4].metric("Automation", label, help="Canonical safety and provider controls remain authoritative.")
     jobs, count = fetch_jobs(**filters, page_size=4)
-    st.markdown(f'<div class="section-row"><div><h2>Top matches</h2><span class="quiet">{count:,} opportunities · ranked by canonical Hunter score</span></div><a class="product-nav-link" href="?view=jobs">Browse all jobs →</a></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-row"><div><h2>Top matches</h2><span class="quiet">{count:,} opportunities · ranked by canonical Hunter score</span></div><a class="product-nav-link" href="?view=jobs" target="_self">Browse all jobs →</a></div>', unsafe_allow_html=True)
     if jobs:
         with st.container(key="product_dashboard_grid"):
             columns = st.columns(min(4, len(jobs)), gap="medium")
@@ -198,7 +303,7 @@ def dashboard() -> None:
     else:
         st.markdown('<div class="empty-product">No jobs match the current filters. Change a filter or add a job with its complete description.</div>', unsafe_allow_html=True)
     tracker = tracker_rows()
-    st.markdown('<div class="section-row"><div><h2>Application activity</h2><span class="quiet">Packages and dispatch evidence — never assumed submissions</span></div><a class="product-nav-link" href="?view=tracker">Open tracker →</a></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-row"><div><h2>Application activity</h2><span class="quiet">Packages and dispatch evidence — never assumed submissions</span></div><a class="product-nav-link" href="?view=tracker" target="_self">Open tracker →</a></div>', unsafe_allow_html=True)
     if tracker:
         st.dataframe([{ "Company": x["company_name"], "Role": x["title"], "Status": x["display_status"], "ATS score": x["final_ats_score"], "Updated": x.get("completed_at") or x.get("updated_at") } for x in tracker[:8]], hide_index=True, use_container_width=True)
     else:
@@ -207,6 +312,7 @@ def dashboard() -> None:
 
 
 def browse_jobs() -> None:
+    _show_action_feedback()
     page_intro("DISCOVER", "Browse jobs", "Search every stored opportunity without losing the targeting, authorization, source, or score evidence behind the match.")
     filters = _search_filters("jobs")
     page = int(st.session_state.get("product_jobs_page", 1))
@@ -287,7 +393,7 @@ def auto_prepare() -> None:
         counters = st.columns(4, gap="small")
         counters[0].metric("Prepared today", activity["prepared_today"])
         counters[1].metric("Submitted today", activity["submitted_today"], help="Requires recorded external submission evidence.")
-        counters[2].metric("Needs you", activity["needs_you"])
+        counters[2].metric("Needs review", activity["needs_you"])
         counters[3].metric("In progress", activity["in_progress"])
     with st.container(key="product_auto_split"):
         left, right = st.columns((1.6, 1), gap="large")
@@ -371,28 +477,23 @@ def _pipeline_list(records: list[dict[str, Any]]) -> None:
         hunter = f"{float(record['hunter_score']):.0f}% match" if record.get("hunter_score") is not None else "Match not scored"
         ats = f"ATS {float(record['final_ats_score']):.0f}" if record.get("final_ats_score") is not None else "ATS not scored"
         updated = record.get("completed_at") or record.get("updated_at") or record.get("queued_at") or "Date not recorded"
-        rows.append(
-            f'''<div class="pipeline-row">
-                <div><strong>{esc(record.get("company_name"), "Company not recorded")}</strong><span>{esc(record.get("title"), "Untitled role")}</span></div>
-                <div><span class="status-chip">{esc(record["display_status"])}</span><span class="pipeline-meta">{esc(updated)}</span></div>
-                <div><strong>{esc(hunter)}</strong><span class="pipeline-meta">{esc(ats)}</span></div>
-            </div>'''
-        )
+        rows.append(f"""<div class="pipeline-row">
+            <div><strong>{esc(record.get("company_name"), "Company not recorded")}</strong><span>{esc(record.get("title"), "Untitled role")}</span></div>
+            <div><span class="status-chip">{esc(record["display_status"])}</span><span class="pipeline-meta">{esc(updated)}</span><span class="pipeline-evidence">{esc(record.get("status_evidence"), "No lifecycle evidence")}</span></div>
+            <div><strong>{esc(hunter)}</strong><span class="pipeline-meta">{esc(ats)}</span></div>
+        </div>""")
     st.markdown(f'<div class="table-shell">{"".join(rows)}</div>', unsafe_allow_html=True)
 
-
 def tracker() -> None:
-    page_intro("TRACKER", "Your application workspace", "Track prepared packages, proven submissions, items that need you, and synchronized read-only Gmail evidence.")
-    tab = st.radio(
-        "Tracker view", ["Pipeline", "Inbox"], horizontal=True,
-        label_visibility="collapsed", key="product_tracker_tab",
-        on_change=_sync_subroute,
-        args=("tab", "product_tracker_tab", {"Pipeline": "pipeline", "Inbox": "inbox"}),
-    )
+    page_intro("TRACKER", "Your application workspace", "Track prepared packages, review-required items, proven submissions, and synchronized read-only Gmail evidence.")
+    tab = st.radio("Tracker view", ["Pipeline", "Inbox"], horizontal=True, label_visibility="collapsed", key="product_tracker_tab", on_change=_sync_subroute, args=("tab", "product_tracker_tab", {"Pipeline": "pipeline", "Inbox": "inbox"}))
     if tab == "Inbox":
         _inbox(); return
-    records = tracker_rows(limit=75)
-    statuses = ["All", "Prepared", "In progress", "Needs you", "Submitted", "Failed", "Skipped", "Other"]
+    records = tracker_rows(limit=250)
+    preferred = ["Prepared", "In progress", "Needs review", "Blocked", "Submitted", "Failed", "Skipped", "Queue completed", "Status not recorded"]
+    represented = list(dict.fromkeys(str(record.get("display_status") or "Status not recorded") for record in records))
+    statuses = ["All"] + [status for status in preferred if status in represented]
+    statuses += [status for status in represented if status not in statuses]
     with st.container(key="product_tracker_filters"):
         filters, search = st.columns((2.4, 1.6))
     with filters:
@@ -402,7 +503,8 @@ def tracker() -> None:
     needle = query.strip().casefold()
     visible = [record for record in records if (selected == "All" or record["display_status"] == selected) and (not needle or needle in f"{record.get('company_name') or ''} {record.get('title') or ''}".casefold())]
     if not visible:
-        st.markdown('<div class="empty-product"><h3>No pipeline items match this filter.</h3><p>When the guarded workflow creates a package or queue record, it will appear here with its actual state.</p></div>', unsafe_allow_html=True); return
+        st.markdown('<div class="empty-product"><h3>No pipeline items match this filter.</h3><p>Lifecycle labels are generated only from recorded workflow and queue evidence.</p></div>', unsafe_allow_html=True)
+        return
     _pipeline_list(visible)
     choices = {f"{index + 1}. {record.get('company_name') or 'Company not recorded'} — {record.get('title') or 'Untitled role'}": record for index, record in enumerate(visible)}
     chosen = st.selectbox("Inspect pipeline evidence", list(choices), key="product_tracker_evidence")
@@ -412,20 +514,16 @@ def tracker() -> None:
         facts[0].metric("Lifecycle", record["display_status"])
         facts[1].metric("Hunter match", f"{float(record['hunter_score']):.0f}%" if record.get("hunter_score") is not None else "Not available")
         facts[2].metric("ATS score", record.get("final_ats_score") if record.get("final_ats_score") is not None else "Not available")
-        st.caption(f"Queue state: {record.get('queue_status') or 'Not recorded'} · Result state: {record.get('n8n_status') or 'Not recorded'}")
+        st.caption("Recorded lifecycle evidence · " + str(record.get("status_evidence") or "none"))
         artifacts = st.columns(3)
         with artifacts[0]:
-            if safe_link(record.get("resume_pdf_url")):
-                st.link_button("Open resume", safe_link(record["resume_pdf_url"]), use_container_width=True)
+            if safe_link(record.get("resume_pdf_url")): st.link_button("Open resume", safe_link(record["resume_pdf_url"]), use_container_width=True)
         with artifacts[1]:
-            if safe_link(record.get("cover_letter_doc_url")):
-                st.link_button("Open cover letter", safe_link(record["cover_letter_doc_url"]), use_container_width=True)
+            if safe_link(record.get("cover_letter_doc_url")): st.link_button("Open cover letter", safe_link(record["cover_letter_doc_url"]), use_container_width=True)
         with artifacts[2]:
-            if safe_link(record.get("apply_url")):
-                st.link_button("Open application", safe_link(record["apply_url"]), use_container_width=True)
+            if safe_link(record.get("apply_url")): st.link_button("Open application", safe_link(record["apply_url"]), use_container_width=True)
         if not any(safe_link(record.get(field)) for field in ("resume_pdf_url", "cover_letter_doc_url", "apply_url")):
-            st.caption("No external artifact or application link is recorded for this item.")
-
+            st.caption("No external artifact or application link is recorded.")
 
 def _inbox() -> None:
     from app.gmail_integration import begin_authorization, connection_status, disconnect, gmail_configuration_status, stored_messages, sync_messages
@@ -490,13 +588,8 @@ def _inbox() -> None:
 
 
 def profile() -> None:
-    page_intro("PROFILE", "Your candidate workspace", "Keep factual application answers organized and open only the resume and cover-letter artifacts the workflow has actually produced.")
-    tab = st.radio(
-        "Profile section", ["Resume", "Cover letters", "Profile details"], horizontal=True,
-        label_visibility="collapsed", key="product_profile_tab",
-        on_change=_sync_subroute,
-        args=("tab", "product_profile_tab", {"Resume": "resume", "Cover letters": "cover-letter", "Profile details": "details"}),
-    )
+    page_intro("PROFILE", "Your candidate workspace", "Keep one explicitly designated master resume, real tailored artifacts, cover letters, and candidate-provided facts in one place.")
+    tab = st.radio("Profile section", ["Resume", "Cover letters", "Profile details"], horizontal=True, label_visibility="collapsed", key="product_profile_tab", on_change=_sync_subroute, args=("tab", "product_profile_tab", {"Resume": "resume", "Cover letters": "cover-letter", "Profile details": "details"}))
     if tab == "Profile details":
         facts = candidate_facts()
         existing = {str(fact["fact_key"]): fact for fact in facts}
@@ -505,29 +598,49 @@ def profile() -> None:
         selected = existing.get(selected_label)
         selected_value = ""
         if selected:
-            try:
-                selected_value = str(json.loads(str(selected.get("value_json") or '""')))
-            except (TypeError, ValueError, json.JSONDecodeError):
-                selected_value = ""
+            try: selected_value = str(json.loads(str(selected.get("value_json") or '""')))
+            except (TypeError, ValueError, json.JSONDecodeError): selected_value = ""
         with st.form("candidate_fact_form"):
             key = st.text_input("Fact label", value=selected_label if selected else "", placeholder="Preferred roles")
             value = st.text_area("Value", value=selected_value, placeholder="HR operations, people analytics")
             if st.form_submit_button("Save profile fact", type="primary"):
-                try:
-                    save_candidate_fact(key, value)
-                except ValueError as error:
-                    st.error(str(error))
-                else:
-                    st.success("Candidate fact saved with source ‘Candidate’."); st.rerun()
+                try: save_candidate_fact(key, value)
+                except ValueError as error: st.error(str(error))
+                else: st.success("Candidate fact saved with source ‘Candidate’."); st.rerun()
         if facts:
             st.caption("Only add information you intend MUNSHI to use. Sensitive or voluntary facts are never inferred.")
-            st.dataframe([{ "Fact": x["fact_key"], "Value": json.loads(x["value_json"]), "Source": x["source_label"], "Updated": x["updated_at"] } for x in facts], hide_index=True, use_container_width=True)
+            st.dataframe([{"Fact": x["fact_key"], "Value": json.loads(x["value_json"]), "Source": x["source_label"], "Updated": x["updated_at"]} for x in facts], hide_index=True, use_container_width=True)
         else: st.info("No profile facts stored yet.")
         return
-    records = tracker_rows()
+    records = tracker_rows(limit=250)
     field = "cover_letter_doc_url" if tab == "Cover letters" else "resume_pdf_url"
     label = "Cover letter" if tab == "Cover letters" else "Resume"
     artifacts = [x for x in records if safe_link(x.get(field))]
+    if tab == "Resume":
+        designated = master_resume()
+        st.markdown("### Master resume")
+        if designated:
+            with st.container(key="product_master_resume", border=True):
+                st.markdown(f"**{esc(designated.get('label') or 'Master resume')}**", unsafe_allow_html=True)
+                st.caption("Explicitly designated master artifact · " + str(designated.get("designated_at") or "date not recorded"))
+                master_actions = st.columns((1, 1, 2.4))
+                with master_actions[0]:
+                    st.link_button("Open master resume", safe_link(designated["url"]), type="primary", use_container_width=True)
+                with master_actions[1]:
+                    if st.button("Clear designation", key="clear_master_resume", use_container_width=True): clear_master_resume(); st.rerun()
+                with master_actions[2]:
+                    st.caption("This designation does not rewrite the document or silently replace it with a tailored version.")
+                if st.toggle("Preview master resume", key="product_master_resume_preview"):
+                    components.iframe(designated["url"], height=760, scrolling=True)
+        else:
+            st.markdown('<div class="empty-product"><h3>No master resume designated yet</h3><p>MUNSHI will not guess which tailored resume should become your master. Choose one of the real generated artifacts below only if you want to designate it.</p></div>', unsafe_allow_html=True)
+            if artifacts:
+                options = {f"{artifact.get('company_name') or 'Company not recorded'} — {artifact.get('title') or 'Untitled role'} · ATS {artifact.get('final_ats_score') if artifact.get('final_ats_score') is not None else 'N/A'}": artifact for artifact in artifacts}
+                selected_label = st.selectbox("Choose an existing resume artifact", list(options), key="master_resume_candidate")
+                selected = options[selected_label]
+                if st.button("Set selected artifact as master", type="primary", key="set_master_resume"):
+                    save_master_resume(int(selected["job_id"]), selected["resume_pdf_url"], selected_label); st.rerun()
+        st.markdown("### Tailored resume history")
     if artifacts:
         for artifact in artifacts:
             with st.container(key=f"product_profile_artifact_{field}_{artifact['job_id']}", border=True):
@@ -540,72 +653,97 @@ def profile() -> None:
                 with action:
                     st.link_button(f"Open {label}", safe_link(artifact[field]), use_container_width=True)
     else:
-        st.markdown(f'<div class="empty-product"><h3>No {esc(label.lower())} artifacts yet</h3><p>A real generated artifact will appear here after the guarded workflow records its URL. MUNSHI does not create a placeholder preview.</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="empty-product"><h3>No {esc(label.lower())} artifacts yet</h3><p>A real generated artifact will appear here after the guarded workflow records its URL.</p></div>', unsafe_allow_html=True)
+
+def _research_blocker_label(reason: Any) -> str:
+    from app.presentation_analytics import humanize_machine_value
+    raw = str(reason or "").strip()
+    if not raw:
+        return "Not recorded"
+    leaf = raw.rsplit(":", 1)[-1]
+    aliases = {
+        "dashboard_hard_reject_keyword": "Hard requirement or exclusion keyword",
+        "hard_reject_keyword": "Hard requirement or exclusion keyword",
+        "country_unknown_fail_closed": "U.S. location not confirmed",
+        "title_not_in_configured_role_families": "Role outside targeting",
+    }
+    return aliases.get(leaf, humanize_machine_value(leaf))
+
+
+def _authorization_summary(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or text.casefold() in {"not recorded", "unknown"}:
+        return "Not recorded"
+    return "Recorded — review evidence"
 
 
 def research() -> None:
-    page_intro("INTELLIGENCE", "Research", "See why roles match, where explicit blockers appear, and which searches and sources are producing useful evidence.")
+    page_intro("INTELLIGENCE", "Research", "Understand discovery scale, source yield, match quality, blockers, and application-package evidence without mixing telemetry horizons.")
     snapshot = research_snapshot()
     metrics = snapshot["headline"]
-    a, b, c, d = st.columns(4)
-    a.metric("Stored opportunities", int(metrics["jobs"] or 0))
-    b.metric("Average Hunter score", metrics["average_score"] if metrics["average_score"] is not None else "Not available")
-    c.metric("Explicitly blocked", int(metrics["blocked"] or 0))
-    d.metric("ATS-scored packages", snapshot["ats"]["scored_packages"] or 0)
-    st.markdown('<div class="section-row"><div><h2>Match intelligence</h2><span class="quiet">Scores and blockers are shown together; a high score does not override eligibility evidence.</span></div></div>', unsafe_allow_html=True)
+    lifetime = snapshot.get("lifetime") or {}
+    st.markdown("### Lifetime opportunity funnel")
+    funnel = st.columns(4, gap="small")
+    funnel[0].metric("Opportunities scanned", f"{int(lifetime.get('scanned') or 0):,}", help="Provider records measured by source-run telemetry.")
+    funnel[1].metric("Normalized records", f"{int(lifetime.get('normalized') or 0):,}")
+    funnel[2].metric("Eligible telemetry", f"{int(lifetime.get('eligible') or 0):,}", help="Eligible count only for the source-run telemetry horizon.")
+    funnel[3].metric("Stored opportunities", f"{int(metrics.get('jobs') or 0):,}", help="Current canonical job inventory; not the same horizon as scanned records.")
+    funnel_two = st.columns(4, gap="small")
+    funnel_two[0].metric("Targeting decisions", f"{int(lifetime.get('decisions') or 0):,}")
+    funnel_two[1].metric("Telegram-delivered jobs", f"{int(lifetime.get('jobs_delivered') or 0):,}")
+    funnel_two[2].metric("ATS-scored packages", f"{int(snapshot['ats'].get('scored_packages') or 0):,}")
+    funnel_two[3].metric("Explicitly blocked", f"{int(metrics.get('blocked') or 0):,}")
+    st.caption("Evidence horizon note: “Opportunities scanned” is cumulative provider telemetry from source runs. “Stored opportunities” is the current canonical job inventory. They are intentionally not the same number.")
+    telemetry = snapshot.get("source_telemetry") or []
+    if telemetry:
+        st.markdown("### Source discovery performance")
+        frame = pd.DataFrame(telemetry)
+        st.bar_chart(frame[["source", "scanned", "eligible"]].set_index("source").head(12), height=330)
+        st.dataframe(frame.rename(columns={"source": "Source", "runs": "Runs", "scanned": "Scanned", "normalized": "Normalized", "eligible": "Eligible", "new_eligible": "New eligible", "last_run": "Last run"}), hide_index=True, use_container_width=True)
+    else: st.info("No source-run telemetry is available yet.")
+    st.markdown('<div class="section-row"><div><h2>Match intelligence</h2><span class="quiet">Score, target-track, and blocker evidence are shown together. A high match never overrides an explicit blocker.</span></div></div>', unsafe_allow_html=True)
     if snapshot["top_matches"]:
-        labels = {
-            int(item["id"]): f"{item.get('company_name') or 'Company not recorded'} — {item.get('title') or 'Untitled role'}"
-            for item in snapshot["top_matches"]
-        }
+        labels = {int(item["id"]): f"{item.get('company_name') or 'Company not recorded'} — {item.get('title') or 'Untitled role'}" for item in snapshot["top_matches"]}
         selected_id = st.selectbox("Inspect a scored opportunity", list(labels), format_func=labels.get, key="product_research_match")
         match = next(item for item in snapshot["top_matches"] if int(item["id"]) == selected_id)
         tone = pastel_for(match["id"])
-        st.markdown(
-            f'''<div class="intelligence-card" style="background:{tone}">
-                <div class="page-kicker-product">MATCH + ELIGIBILITY EVIDENCE</div>
-                <div class="evidence-list">
-                    <div class="evidence-item"><b>Hunter match</b>{esc(match.get("hunter_score"))}%</div>
-                    <div class="evidence-item"><b>Target track</b>{esc(match.get("target_track"))}</div>
-                    <div class="evidence-item"><b>Source</b>{esc(match.get("source"))}</div>
-                    <div class="evidence-item"><b>Location</b>{esc(match.get("location_raw"))}</div>
-                    <div class="evidence-item"><b>Workplace</b>{esc(match.get("remote_type"))}</div>
-                    <div class="evidence-item"><b>Work authorization</b>{esc(match.get("work_authorization"))}</div>
-                    <div class="evidence-item"><b>Employment</b>{esc(match.get("employment_type"))}</div>
-                    <div class="evidence-item"><b>Eligibility blocker</b>{esc(match.get("hard_rejection_reason"), "None explicitly recorded")}</div>
-                </div>
-            </div>''',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f"""<div class="intelligence-card" style="background:{tone}"><div class="page-kicker-product">MATCH + ELIGIBILITY EVIDENCE</div><div class="evidence-list">
+            <div class="evidence-item"><b>Hunter match</b>{esc(match.get("hunter_score"))}%</div><div class="evidence-item"><b>Target track</b>{esc(match.get("target_track"))}</div>
+            <div class="evidence-item"><b>Source</b>{esc(match.get("source"))}</div><div class="evidence-item"><b>Location</b>{esc(match.get("location_raw"))}</div>
+            <div class="evidence-item"><b>Workplace</b>{esc(match.get("remote_type"))}</div><div class="evidence-item"><b>Work authorization</b>{esc(_authorization_summary(match.get("work_authorization")))}</div>
+            <div class="evidence-item"><b>Employment</b>{esc(match.get("employment_type"))}</div><div class="evidence-item"><b>Eligibility blocker</b>{esc(_research_blocker_label(match.get("hard_rejection_reason")), "None explicitly recorded")}</div>
+        </div></div>""", unsafe_allow_html=True)
+        authorization = str(match.get("work_authorization") or "").strip()
+        if authorization:
+            with st.expander("Full work-authorization evidence", expanded=False): st.write(authorization)
     else:
         st.markdown('<div class="empty-product"><h3>No scored matches yet</h3><p>Match reasoning appears after canonical job records contain a Hunter score.</p></div>', unsafe_allow_html=True)
+    trend = snapshot.get("trends") or []
+    if trend:
+        st.markdown("### Discovery trend")
+        trend_frame = pd.DataFrame(trend)
+        st.line_chart(trend_frame.set_index("date")[["opportunities", "average_match"]], height=280)
     left, right = st.columns(2, gap="large")
     with left:
-        st.markdown("### Source quality")
+        st.markdown("### Stored source quality")
         if snapshot["source_quality"]:
-            st.dataframe([{ "Source": item["source"], "Opportunities": item["opportunities"], "Average match": item["average_match"], "No explicit blocker": item["eligible_records"] } for item in snapshot["source_quality"]], hide_index=True, use_container_width=True)
-        else: st.info("No stored source evidence is available yet.")
-        st.markdown("### Recent discovery trend")
-        if snapshot["trends"]:
-            st.dataframe([{ "Date": item["date"], "Opportunities": item["opportunities"], "Average match": item["average_match"] } for item in snapshot["trends"]], hide_index=True, use_container_width=True)
-        else: st.info("No dated discovery evidence is available yet.")
+            st.dataframe([{"Source": item["source"], "Stored opportunities": item["opportunities"], "Average match": item["average_match"], "No explicit blocker": item["eligible_records"]} for item in snapshot["source_quality"]], hide_index=True, use_container_width=True)
+        else: st.info("No stored source evidence is available.")
     with right:
-        st.markdown("### Eligibility evidence")
+        st.markdown("### Eligibility blockers")
         if snapshot["blockers"]:
-            st.dataframe([{ "Recorded blocker": item["reason"], "Opportunities": item["count"] } for item in snapshot["blockers"]], hide_index=True, use_container_width=True)
+            st.dataframe([{"Blocker": _research_blocker_label(item["reason"]), "Opportunities": item["count"]} for item in snapshot["blockers"]], hide_index=True, use_container_width=True)
+            with st.expander("Raw blocker evidence", expanded=False):
+                st.dataframe([{"Raw blocker": item["reason"], "Opportunities": item["count"]} for item in snapshot["blockers"]], hide_index=True, use_container_width=True)
         else: st.info("No explicit rejection evidence is recorded.")
-        st.markdown("### Work authorization records")
-        if snapshot["authorization"]:
-            st.dataframe([{ "Recorded status": item["status"], "Opportunities": item["count"] } for item in snapshot["authorization"]], hide_index=True, use_container_width=True)
-        else: st.info("No work-authorization records are available.")
     st.markdown("### Query performance")
     if snapshot["query_performance"]:
-        st.dataframe([{ "Query": x["query_name"], "Runs": x["runs"], "Raw records": x["raw_records"], "Eligible records": x["eligible_records"], "Last run": x["last_run"] } for x in snapshot["query_performance"]], hide_index=True, use_container_width=True)
-    else: st.info("No query-run evidence is available yet.")
+        st.dataframe([{"Query": x["query_name"], "Runs": x["runs"], "Raw records": x["raw_records"], "Eligible records": x["eligible_records"], "Last run": x["last_run"]} for x in snapshot["query_performance"]], hide_index=True, use_container_width=True)
+    else: st.info("No query-run evidence is available.")
     st.markdown("### Source and provider health")
-    if snapshot["health"]: st.dataframe([{ "Source": x["source_name"], "Health": x["health_status"], "Last success": x["last_success_at"], "Last run yield": x["jobs_found_last_run"] } for x in snapshot["health"]], hide_index=True, use_container_width=True)
+    if snapshot["health"]:
+        st.dataframe([{"Source": x["source_name"], "Health": x["health_status"], "Last success": x["last_success_at"], "Last run yield": x["jobs_found_last_run"]} for x in snapshot["health"]], hide_index=True, use_container_width=True)
     else: st.info("No source-health records are available.")
-
 
 def settings() -> None:
     page_intro("PREFERENCES", "Settings", "Change personal preferences explicitly. System and provider operations are retained under Advanced, not removed.")
@@ -635,13 +773,13 @@ def settings() -> None:
             policy = volume_policy(); st.markdown("### Automation volume")
             st.metric("Current mode", policy["mode"].replace("_", " ").title())
             st.caption("Use Auto Prepare to change volume, manage lanes, and review current activity. Lanes narrow candidates and never replace canonical targeting.")
-            st.markdown('<a class="product-nav-link" href="?view=auto-prepare">Open Auto Prepare →</a>', unsafe_allow_html=True)
+            st.markdown('<a class="product-nav-link" href="?view=auto-prepare" target="_self">Open Auto Prepare →</a>', unsafe_allow_html=True)
         elif section == "Profile & defaults":
             st.markdown("### Candidate-provided facts")
             facts = candidate_facts()
             st.write("Saved facts are candidate-provided structured fields, not opaque model memory. Manage them in Profile → Profile details.")
             st.dataframe([{ "Fact": x["fact_key"], "Source": x["source_label"], "Updated": x["updated_at"] } for x in facts], hide_index=True, use_container_width=True) if facts else st.info("No facts stored.")
-            st.markdown('<a class="product-nav-link" href="?view=profile&amp;tab=details">Open profile details →</a>', unsafe_allow_html=True)
+            st.markdown('<a class="product-nav-link" href="?view=profile&amp;tab=details" target="_self">Open profile details →</a>', unsafe_allow_html=True)
         elif section == "Integrations":
             st.markdown("### Gmail integration")
             _inbox()
@@ -663,7 +801,33 @@ def settings() -> None:
 
 
 def _advanced() -> None:
-    from app import operations_dashboard as legacy
-    page = st.selectbox("Advanced page", ["System / Diagnostics", "Source Health", "Adapter Coverage", "Targeting", "Query Performance", "Queue / Actions", "Storage", "Backups", "Credentials"])
-    renderers = {"System / Diagnostics": legacy._system_diagnostics, "Source Health": legacy._source_health, "Adapter Coverage": legacy._adapter_coverage, "Targeting": legacy._targeting, "Query Performance": legacy._query_performance, "Queue / Actions": legacy._queue_actions, "Storage": legacy._storage, "Backups": legacy._backups, "Credentials": legacy._credentials}
-    renderers[page]()
+    snapshot = research_snapshot()
+    lifetime = snapshot.get("lifetime") or {}
+    headline = snapshot.get("headline") or {}
+    st.markdown("### System intelligence")
+    st.caption("Clean operational evidence first. Legacy engineering tools remain available below only when you explicitly open them.")
+    primary = st.columns(4, gap="small")
+    primary[0].metric("Opportunities scanned", f"{int(lifetime.get('scanned') or 0):,}")
+    primary[1].metric("Normalized records", f"{int(lifetime.get('normalized') or 0):,}")
+    primary[2].metric("Jobs stored", f"{int(headline.get('jobs') or 0):,}")
+    primary[3].metric("Eligible telemetry", f"{int(lifetime.get('eligible') or 0):,}")
+    secondary = st.columns(4, gap="small")
+    secondary[0].metric("Recorded source runs", f"{int(lifetime.get('runs') or 0):,}")
+    secondary[1].metric("Targeting decisions", f"{int(lifetime.get('decisions') or 0):,}")
+    secondary[2].metric("Telegram-delivered jobs", f"{int(lifetime.get('jobs_delivered') or 0):,}")
+    secondary[3].metric("ATS-scored packages", f"{int(snapshot['ats'].get('scored_packages') or 0):,}")
+    st.caption("The large scanned count is cumulative source-run telemetry. Jobs stored is the canonical inventory. Different horizons are kept separate so the dashboard never inflates one metric with another.")
+    telemetry = snapshot.get("source_telemetry") or []
+    if telemetry:
+        st.markdown("### Source telemetry")
+        st.dataframe([{"Source": row["source"], "Runs": row["runs"], "Scanned": row["scanned"], "Normalized": row["normalized"], "Eligible": row["eligible"], "New eligible": row["new_eligible"], "Last run": row["last_run"]} for row in telemetry], hide_index=True, use_container_width=True)
+    if snapshot.get("health"):
+        st.markdown("### Source health")
+        st.dataframe([{"Source": row["source_name"], "Health": row["health_status"], "Last success": row["last_success_at"], "Last run yield": row["jobs_found_last_run"]} for row in snapshot["health"]], hide_index=True, use_container_width=True)
+    with st.expander("Legacy engineering console", expanded=False):
+        st.caption("Low-level diagnostics are intentionally separated from the product overview. They may include localhost probes and raw engineering labels useful for maintenance, but those should not be mistaken for customer-facing product status.")
+        tool = st.selectbox("Engineering tool", ["None", "System / Diagnostics", "Source Health", "Adapter Coverage", "Targeting", "Query Performance", "Queue / Actions", "Storage", "Backups", "Credentials"], key="product_legacy_engineering_tool")
+        if tool != "None":
+            from app import operations_dashboard as legacy
+            renderers = {"System / Diagnostics": legacy._system_diagnostics, "Source Health": legacy._source_health, "Adapter Coverage": legacy._adapter_coverage, "Targeting": legacy._targeting, "Query Performance": legacy._query_performance, "Queue / Actions": legacy._queue_actions, "Storage": legacy._storage, "Backups": legacy._backups, "Credentials": legacy._credentials}
+            renderers[tool]()
