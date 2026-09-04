@@ -51,9 +51,21 @@ def test_tracker_statuses_are_genuine_not_other() -> None:
 
 def test_master_resume_requires_explicit_designation(hunter_db) -> None:
     assert master_resume() == {}
-    save_master_resume(42, "https://example.com/master.pdf", "Candidate-selected master resume")
+    from app.database import get_connection
+    connection = get_connection()
+    try:
+        job_id = _job(connection, title="Master Resume Analyst")
+        connection.execute(
+            """INSERT INTO n8n_results(job_id,job_fingerprint,send_mode,n8n_status,resume_pdf_url)
+               VALUES (?,?,?,?,?)""",
+            (job_id, "master-resume-result", "manual", "completed", "https://example.com/master.pdf"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    save_master_resume(job_id, "https://example.com/master.pdf", "Candidate-selected master resume")
     record = master_resume()
-    assert record["job_id"] == 42 and record["url"] == "https://example.com/master.pdf"
+    assert record["job_id"] == job_id and record["url"] == "https://example.com/master.pdf"
     clear_master_resume()
     assert master_resume() == {}
 

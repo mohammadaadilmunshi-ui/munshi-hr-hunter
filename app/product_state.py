@@ -14,6 +14,13 @@ from datetime import date, datetime, timezone
 from typing import Any, Iterable
 
 from app.database import get_connection, get_setting, save_setting
+from app.candidate_artifacts import (
+    clear_master_resume as clear_indexed_master_resume,
+    designate_master_resume,
+    master_resume as indexed_master_resume,
+)
+from app.tenant_foundation import DEFAULT_TENANT_ID, DEFAULT_USER_ID, associate_owned_record, current_owner
+from app.tenant_foundation import ensure_schema as ensure_tenant_foundation_schema
 
 
 PRODUCT_SCHEMA = """
@@ -74,6 +81,7 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
     connection = connection or get_connection()
     try:
         connection.executescript(PRODUCT_SCHEMA)
+        ensure_tenant_foundation_schema(connection)
         if owns_connection:
             connection.commit()
     finally:
@@ -479,7 +487,8 @@ def create_lane(name: str, filters: dict[str, Any], min_score: float, mode: str,
     connection = get_connection()
     try:
         ensure_schema(connection)
-        connection.execute("INSERT INTO auto_prepare_lanes(name,enabled,filter_json,min_score,volume_mode,daily_limit) VALUES (?,?,?,?,?,?)", (name.strip()[:120], 0, json.dumps(filters, sort_keys=True), float(min_score), mode, max(1, int(daily_limit or 1)) if mode == "custom_limit" else None))
+        cursor = connection.execute("INSERT INTO auto_prepare_lanes(name,enabled,filter_json,min_score,volume_mode,daily_limit) VALUES (?,?,?,?,?,?)", (name.strip()[:120], 0, json.dumps(filters, sort_keys=True), float(min_score), mode, max(1, int(daily_limit or 1)) if mode == "custom_limit" else None))
+        associate_owned_record(connection, record_domain="auto_prepare_lane", record_key=cursor.lastrowid)
         connection.commit()
     finally:
         connection.close()
@@ -562,33 +571,37 @@ def lane_matches_job(lane: dict[str, Any], job: dict[str, Any]) -> bool:
 
 
 def master_resume() -> dict[str, Any]:
-    """Return only an explicitly user-designated real resume artifact."""
-    record = dict(get_setting("candidate_master_resume_v1", {}) or {})
-    url = str(record.get("url") or "").strip()
-    if not url.startswith(("https://", "http://")):
+    """Return the current tenant's explicit, n8n-evidenced designation only."""
+    record = indexed_master_resume()
+    if record:
+        return record
+    # The former singleton setting was written only by an explicit designation
+    # action.  Preserve it during the transition *only* if its exact URL can be
+    # resolved to stored n8n evidence; otherwise it is deliberately ignored.
+    legacy = dict(get_setting("candidate_master_resume_v1", {}) or {})
+    try:
+        return designate_master_resume(
+            job_id=int(legacy["job_id"]), reference=str(legacy["url"]),
+            label=str(legacy.get("label") or "Master resume"),
+            source_label=str(legacy.get("source") or "Legacy explicit designation"),
+        )
+    except (KeyError, TypeError, ValueError):
         return {}
-    return record
 
 
 def save_master_resume(job_id: int, url: str, label: str, *, source: str = "Existing generated resume artifact") -> None:
-    """Persist an explicit master-resume designation; never infer one."""
-    safe_url = str(url or "").strip()
-    if not safe_url.startswith(("https://", "http://")):
-        raise ValueError("A real HTTP(S) resume artifact is required.")
-    save_setting(
-        "candidate_master_resume_v1",
-        {
-            "job_id": int(job_id), "url": safe_url,
-            "label": str(label or "Master resume").strip()[:240],
-            "source": str(source or "Candidate selection").strip()[:160],
-            "designated_at": datetime.now(timezone.utc).isoformat(),
-        },
-        changed_by="streamlit:product-profile",
-    )
+    """Persist an explicit designation for a URL actually stored by n8n."""
+    designate_master_resume(job_id=int(job_id), reference=url, label=label, source_label=source)
 
 
 def clear_master_resume() -> None:
-    save_setting("candidate_master_resume_v1", {}, changed_by="streamlit:product-profile")
+    clear_indexed_master_resume()
+    # Prevent a cleared legacy singleton setting from being re-adopted on the
+    # next compatibility read. It belongs only to the default singleton, so a
+    # future tenant cannot clear another tenant's retired compatibility value.
+    owner = current_owner()
+    if owner.tenant_id == DEFAULT_TENANT_ID and owner.user_id == DEFAULT_USER_ID:
+        save_setting("candidate_master_resume_v1", {}, changed_by="streamlit:product-profile")
 
 def candidate_facts() -> list[dict[str, Any]]:
     return _rows("SELECT * FROM candidate_profile_facts ORDER BY fact_key")
@@ -600,7 +613,9 @@ def save_candidate_fact(key: str, value: str) -> None:
     connection = get_connection()
     try:
         ensure_schema(connection)
-        connection.execute("INSERT INTO candidate_profile_facts(fact_key,value_json,updated_at) VALUES (?,?,CURRENT_TIMESTAMP) ON CONFLICT(fact_key) DO UPDATE SET value_json=excluded.value_json, updated_at=CURRENT_TIMESTAMP", (key.strip()[:120], json.dumps(value.strip())))
+        fact_key = key.strip()[:120]
+        connection.execute("INSERT INTO candidate_profile_facts(fact_key,value_json,updated_at) VALUES (?,?,CURRENT_TIMESTAMP) ON CONFLICT(fact_key) DO UPDATE SET value_json=excluded.value_json, updated_at=CURRENT_TIMESTAMP", (fact_key, json.dumps(value.strip())))
+        associate_owned_record(connection, record_domain="candidate_profile_fact", record_key=fact_key)
         connection.commit()
     finally:
         connection.close()

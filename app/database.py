@@ -691,13 +691,31 @@ def initialize_database() -> Path:
         from app.gmail_integration import ensure_schema as ensure_gmail_schema
         from app.product_state import ensure_schema as ensure_product_schema
         from app.secure_vault import ensure_schema as ensure_vault_schema
+        from app.candidate_digital_twin import ensure_schema as ensure_candidate_digital_twin_schema
+        from app.candidate_artifacts import ensure_schema as ensure_candidate_artifact_schema
+        from app.native_resume_shadow import ensure_schema as ensure_native_resume_shadow_schema
+        from app.answer_brain import ensure_schema as ensure_answer_brain_schema
+        from app.career_policy import ensure_schema as ensure_career_policy_schema
+        from app.relationship_intelligence import ensure_schema as ensure_relationship_intelligence_schema
+        from app.native_application_preparation import ensure_schema as ensure_native_application_preparation_schema
+        from app.staging_fixtures import ensure_schema as ensure_staging_fixture_schema
+        from app.tenant_foundation import ensure_schema as ensure_tenant_foundation_schema
         from app.universal_n8n_progress import ensure_schema as ensure_n8n_progress_schema
 
         ensure_n8n_dispatch_schema(connection)
         ensure_n8n_progress_schema(connection)
         ensure_product_schema(connection)
+        ensure_candidate_digital_twin_schema(connection)
+        ensure_candidate_artifact_schema(connection)
+        ensure_native_resume_shadow_schema(connection)
+        ensure_answer_brain_schema(connection)
+        ensure_career_policy_schema(connection)
+        ensure_relationship_intelligence_schema(connection)
+        ensure_native_application_preparation_schema(connection)
+        ensure_staging_fixture_schema(connection)
         ensure_vault_schema(connection)
         ensure_gmail_schema(connection)
+        ensure_tenant_foundation_schema(connection)
         seed_defaults(connection)
         connection.commit()
     finally:
