@@ -93,3 +93,4 @@
 - Email intelligence is evidence-only and deduplicated; it never fabricates lifecycle transitions or treats confirmation as Submitted. There is no HTTP, send/reply, n8n, Apply, browser, or submission authority.
 - Sol architecture review completed. `LIVE_GMAIL_OAUTH=BLOCKED_EXTERNAL` because no explicit live OAuth credentials/authorization were supplied. Focused Wave 2 local regression gate: 57 passed; compile/static and diff checks passed. `PHASE_11=DONE` locally.
 - `STAGING_RELEASE_2=READY_FOR_DEPLOYMENT` at `5aee6ac98216545aeb2f0d181ca63d81b7f1c248`; deployment remains intentionally deferred pending an exact-SHA staging preflight.
+- `STAGING_RELEASE_2=DEPLOYED_AND_VERIFIED`: workflow `33907626194` deployed exact SHA `5aee6ac98216545aeb2f0d181ca63d81b7f1c248`; migrations 024–026, runtime contracts, DB quick-check, and HTTPS boundaries passed. Production impact NONE; n8n authority and Prepare != Submitted preserved.
