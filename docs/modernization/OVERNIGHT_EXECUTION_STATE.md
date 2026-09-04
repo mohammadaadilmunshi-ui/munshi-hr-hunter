@@ -69,3 +69,12 @@
 - Product semantics: Phase 0–8/staging suite 69 passed; Product UI suite 61 passed; Prepare != Submitted is verified. No external action authority was exercised; n8n remains authoritative.
 - Limitation: authenticated visual browser interaction could not run because the installed browser-control runtime client is absent. The protected HTTPS boundary, Streamlit/API health, database/API verification, and local/CI UI regression gates passed without bypassing authentication.
 - Next: do not proceed to Phase 9 in this session.
+
+## 2026-09-04 — Phase 9 MUNSHI Apply handoff verified
+
+- Status: DONE (local/isolated integration foundation only; no staging redeploy).
+- Hunter adds additive migration 024 and a disabled-by-default, no-network HMAC preparation handoff ledger. It carries tenant/user ownership, preparation/job/application identity, provider classification, artifact references, answer-resolution state, provenance, idempotency, and immutable digest evidence.
+- The canonical signed transport is only a formatting primitive; it creates no HTTP client or external call. `HANDOFF_ACCEPTED` is an authenticated receipt only and never means Submitted. n8n remains authoritative.
+- The dirty Apply workspace remains untouched. A dedicated clean clone on `feat/career-os-phase9-handoff` implements the matching receipt-only consumer at `100fa7b1053a2a030743791ab4a42e9e283ed7f6`.
+- Verification: Hunter focused Phase 9/8/schema tests — 12 passed; isolated Apply focused tests — 12 passed; compile/static and diff checks passed. Wrong signatures, malformed payloads, stale signed transport, tenant mismatch, replay conflicts, unsupported providers, and unresolved fields all fail closed or remain NEEDS_INPUT.
+- No real ATS/provider, n8n, email, browser, credential, or submission authority was invoked. Next: Phase 10 safe local credential foundation review.

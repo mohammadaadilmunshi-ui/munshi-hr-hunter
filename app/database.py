@@ -698,6 +698,7 @@ def initialize_database() -> Path:
         from app.career_policy import ensure_schema as ensure_career_policy_schema
         from app.relationship_intelligence import ensure_schema as ensure_relationship_intelligence_schema
         from app.native_application_preparation import ensure_schema as ensure_native_application_preparation_schema
+        from app.apply_handoff import ensure_schema as ensure_apply_handoff_schema
         from app.staging_fixtures import ensure_schema as ensure_staging_fixture_schema
         from app.tenant_foundation import ensure_schema as ensure_tenant_foundation_schema
         from app.universal_n8n_progress import ensure_schema as ensure_n8n_progress_schema
@@ -712,6 +713,7 @@ def initialize_database() -> Path:
         ensure_career_policy_schema(connection)
         ensure_relationship_intelligence_schema(connection)
         ensure_native_application_preparation_schema(connection)
+        ensure_apply_handoff_schema(connection)
         ensure_staging_fixture_schema(connection)
         ensure_vault_schema(connection)
         ensure_gmail_schema(connection)
