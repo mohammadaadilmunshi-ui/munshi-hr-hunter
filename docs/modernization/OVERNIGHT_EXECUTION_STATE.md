@@ -85,3 +85,10 @@
 - AES-GCM AAD binds tenant, user, account, provider, secret kind, and versions. Metadata is write-only with respect to secrets; all provider action flags remain false.
 - Private integrity verification is runtime-owner and purpose bound, AVAILABLE-only, and fail-closed for tampering, wrong keys, versions, or identity metadata. CAS-backed legal transitions use non-sensitive reason codes; BLOCKED atomically purges slots.
 - Final Sol review: CLEAR, no HIGH/CRITICAL issue. Focused Phase 10/9/tenant/preparation/schema/staging-fixture gate: 44 passed; compile/static, diff, and migration-number checks passed. `PHASE_10=DONE`; no live credential, login, or external action was used.
+
+## 2026-09-04 — Phase 11 Gmail OAuth foundation DONE (local)
+
+- Migration 026 adds a tenant-safe Gmail OAuth/email-intelligence boundary without changing singleton legacy Gmail or vault behavior.
+- OAuth is readonly-only and local: encrypted owner-bound token slots, hashed/one-use encrypted-PKCE authorization intents, strict state/CAS/revocation controls, and no public token path.
+- Email intelligence is evidence-only and deduplicated; it never fabricates lifecycle transitions or treats confirmation as Submitted. There is no HTTP, send/reply, n8n, Apply, browser, or submission authority.
+- Sol architecture review completed. `LIVE_GMAIL_OAUTH=BLOCKED_EXTERNAL` because no explicit live OAuth credentials/authorization were supplied. Focused Wave 2 local regression gate: 57 passed; compile/static and diff checks passed. `PHASE_11=DONE` locally.

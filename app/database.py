@@ -700,6 +700,7 @@ def initialize_database() -> Path:
         from app.native_application_preparation import ensure_schema as ensure_native_application_preparation_schema
         from app.apply_handoff import ensure_schema as ensure_apply_handoff_schema
         from app.ats_credentials import ensure_schema as ensure_ats_credential_schema
+        from app.gmail_oauth_tenant import ensure_schema as ensure_gmail_oauth_tenant_schema
         from app.staging_fixtures import ensure_schema as ensure_staging_fixture_schema
         from app.tenant_foundation import ensure_schema as ensure_tenant_foundation_schema
         from app.universal_n8n_progress import ensure_schema as ensure_n8n_progress_schema
@@ -716,6 +717,7 @@ def initialize_database() -> Path:
         ensure_native_application_preparation_schema(connection)
         ensure_apply_handoff_schema(connection)
         ensure_ats_credential_schema(connection)
+        ensure_gmail_oauth_tenant_schema(connection)
         ensure_staging_fixture_schema(connection)
         ensure_vault_schema(connection)
         ensure_gmail_schema(connection)
