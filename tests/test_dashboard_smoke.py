@@ -116,6 +116,8 @@ def test_product_shell_and_routes_are_present() -> None:
     assert "prefers-reduced-motion" in css_source
     assert "<nav class=\"product-nav\"" in shell_source
     assert "mobile-nav" in shell_source
+    assert 'target="_self"' in shell_source
+    assert 'href="?view=dashboard" target="_self"' in shell_source
     assert "min-width:680px" not in css_source
     assert "AADIL HR HUNTER" not in dashboard_source
     assert valid_view("tracker") == "tracker"

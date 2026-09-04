@@ -61,8 +61,8 @@ def _nav_link(
     aria = ' aria-current="page"' if active else ""
     active_class = " active" if active else ""
     return (
-        f'<a class="{css_class}{active_class}" href="?view={route}"'
-        f'{aria}>{esc(label)}</a>'
+        f'<a class="{css_class}{active_class}" href="?view={route}" '
+        f'target="_self"{aria}>{esc(label)}</a>'
     )
 
 
@@ -133,7 +133,7 @@ def render() -> None:
     with st.container(key="product_top_bar"):
         st.markdown(
             f'''<header class="product-header">
-                <a class="brand" href="?view=dashboard" aria-label="MUNSHI dashboard">
+                <a class="brand" href="?view=dashboard" target="_self" aria-label="MUNSHI dashboard">
                     <span class="brand-mark" aria-hidden="true">M</span>
                     <span>MUNSHI</span>
                 </a>
