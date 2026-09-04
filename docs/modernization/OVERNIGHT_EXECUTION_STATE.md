@@ -92,3 +92,4 @@
 - OAuth is readonly-only and local: encrypted owner-bound token slots, hashed/one-use encrypted-PKCE authorization intents, strict state/CAS/revocation controls, and no public token path.
 - Email intelligence is evidence-only and deduplicated; it never fabricates lifecycle transitions or treats confirmation as Submitted. There is no HTTP, send/reply, n8n, Apply, browser, or submission authority.
 - Sol architecture review completed. `LIVE_GMAIL_OAUTH=BLOCKED_EXTERNAL` because no explicit live OAuth credentials/authorization were supplied. Focused Wave 2 local regression gate: 57 passed; compile/static and diff checks passed. `PHASE_11=DONE` locally.
+- `STAGING_RELEASE_2=READY_FOR_DEPLOYMENT` at `5aee6ac98216545aeb2f0d181ca63d81b7f1c248`; deployment remains intentionally deferred pending an exact-SHA staging preflight.
