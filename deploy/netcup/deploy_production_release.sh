@@ -172,11 +172,17 @@ db_backup="$backup_dir/hunter-predeploy-$stamp.db"
 backup_name="$(basename "$db_backup")"
 host_uid="$(id -u)"
 host_gid="$(id -g)"
+hunter_data_volume="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/hunter/data"}}{{.Name}}{{end}}{{end}}' "$H")"
+[[ -n "$hunter_data_volume" ]] || {
+  echo "production Hunter data volume unresolved" >&2
+  exit 28
+}
+echo "PRODUCTION_HUNTER_DATA_VOLUME=$hunter_data_volume"
 
 timeout 1200s docker run --rm -i \
   --network none \
   --user 0:0 \
-  --volumes-from "$H":ro \
+  --mount "type=volume,src=$hunter_data_volume,dst=/app/hunter/data" \
   --mount "type=bind,src=$backup_dir,dst=/backup" \
   --entrypoint python \
   "$old_hunter_image_id" \
@@ -197,6 +203,8 @@ if dst.exists():
     raise SystemExit(f"production backup destination already exists: {dst}")
 
 source = sqlite3.connect(f"file:{src}?mode=ro", uri=True, timeout=30)
+source.execute("PRAGMA query_only=ON")
+source.execute("PRAGMA busy_timeout=30000")
 dest = sqlite3.connect(dst)
 try:
     source.backup(dest)
