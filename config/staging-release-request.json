@@ -2,5 +2,6 @@
   "commit_sha": "e720251aa89edb24e9645b60e321d557f8b72a5f",
   "source_branch": "feat/native-resume-studio-v1",
   "requested_by": "remote-staging-relay-v1",
-  "purpose": "Deploy Native Resume Studio V1 with explicit n8n/native resume-engine choice and PDF/DOCX outputs to isolated staging only."
+  "request_revision": 2,
+  "purpose": "Re-verify the already deployed Native Resume Studio V1 exact SHA through the corrected restricted-gateway staging relay, preserving n8n and PDF/DOCX outputs."
 }
