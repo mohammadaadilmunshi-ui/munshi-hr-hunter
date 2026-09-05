@@ -1,0 +1,58 @@
+name: Netcup Direct Staging Recovery
+
+on:
+  push:
+    branches:
+      - feat/autonomous-career-os-foundation
+    paths:
+      - '.github/workflows/netcup-direct-staging-recovery.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-direct-staging-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 20
+    steps:
+      - name: Configure approved restricted SSH
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_SSH_PRIVATE_KEY"
+          test -n "$NETCUP_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_deploy"
+          chmod 600 "$HOME/.ssh/netcup_deploy"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Invoke already-installed exact staging recovery helper
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_HOST"
+          test -n "$NETCUP_USER"
+          LOG="$RUNNER_TEMP/direct-staging-recovery.log"
+          ssh -i "$HOME/.ssh/netcup_deploy" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "$NETCUP_USER@$NETCUP_HOST" \
+            '/opt/munshi/bin/recover-staging-auth-bootstrap --from-sha 2fd6814c6685bb21adb1d0d7fd60249680da1c1c --to-sha 1785c022a6a9d3205fcfc36b2aed120494044158 --to-branch fix/dashboard-device-auth-staging-v1' | tee "$LOG"
+          grep -F 'RECOVERED_TO_SHA=1785c022a6a9d3205fcfc36b2aed120494044158' "$LOG"
+          grep -F 'STAGING_HUNTER_RECOVERED_HEALTHY=PASS' "$LOG"
+          grep -F 'STAGING_N8N_RECREATED=NO' "$LOG"
+          grep -F 'STAGING_OLLAMA_RECREATED=NO' "$LOG"
+          grep -F 'STAGING_EDGE_RECREATED=NO' "$LOG"
+          grep -F 'POST_RECOVERY_RUNTIME_CONTRACTS=PASS' "$LOG"
+          grep -F 'RESULT=STAGING_AUTH_BOOTSTRAP_RECOVERY_PASS' "$LOG"
