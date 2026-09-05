@@ -27,7 +27,7 @@ jobs:
       - name: Verify packages
         run: python -m pip check
 
-      - name: Compile native Resume Studio, permanent Profile workspace, and product shell
+      - name: Compile native Resume Studio, permanent Profile workspace, cross-repo contract, and product shell
         run: |
           python -m py_compile \
             app/native_resume_studio.py \
@@ -44,6 +44,7 @@ jobs:
             app/profile_workspace_v1.py \
             app/profile_workspace_v2.py \
             app/profile_workspace_v3.py \
+            app/cross_repo_contract.py \
             app/product_shell.py \
             migrations/027_native_resume_studio.py \
             migrations/028_native_resume_studio_v2.py \
@@ -58,9 +59,10 @@ jobs:
             tests/test_profile_brand_resolver.py \
             tests/test_profile_workspace_v1.py \
             tests/test_profile_workspace_v2.py \
-            tests/test_profile_truth_editor_v1.py
+            tests/test_profile_truth_editor_v1.py \
+            tests/test_cross_repo_contract.py
 
-      - name: Run native Resume Studio and permanent Profile regression tests
+      - name: Run native Resume Studio, permanent Profile, and cross-repo contract regression tests
         run: |
           python -m pytest -q \
             tests/test_native_resume_studio.py \
@@ -73,6 +75,7 @@ jobs:
             tests/test_profile_workspace_v1.py \
             tests/test_profile_workspace_v2.py \
             tests/test_profile_truth_editor_v1.py \
+            tests/test_cross_repo_contract.py \
             tests/test_secure_vault.py \
             tests/test_candidate_artifacts.py \
             tests/test_tenant_foundation.py \
