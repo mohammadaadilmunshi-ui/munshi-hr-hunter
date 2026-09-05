@@ -19,17 +19,20 @@ WORKDIR /app/hunter
 COPY requirements.lock.txt ./requirements.lock.txt
 RUN python -m pip install --no-cache-dir -r requirements.lock.txt
 
-# Canonical JobSpy subprocess runner required by app/sources/jobspy.py.
 COPY tools/runners/jobspy_runner.py ./tools/runners/jobspy_runner.py
-
-# Copy source only. Runtime state, secrets, local launchers, and browser data
-# are excluded by .dockerignore and are supplied by Compose volumes/env.
 COPY app ./app
 COPY config ./config
 COPY integrations ./integrations
 COPY migrations ./migrations
 COPY scripts/render_n8n_deployment_workflow.py ./scripts/render_n8n_deployment_workflow.py
 COPY scripts/validate_container_environment_contract.py ./scripts/validate_container_environment_contract.py
+
+# One-time, staging-only remote administration bootstrap payload. The staging
+# bootstrap release copies only these two allowlisted executables to the host,
+# then a cleanup release removes the privileged mount and root override.
+COPY deploy/netcup/github_deploy_gateway.sh ./bootstrap/github_deploy_gateway.sh
+COPY deploy/netcup/apply_dashboard_device_auth_edge.sh ./bootstrap/apply_dashboard_device_auth_edge.sh
+RUN chmod 0555 ./bootstrap/github_deploy_gateway.sh ./bootstrap/apply_dashboard_device_auth_edge.sh
 
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin hunter \
     && mkdir -p /app/hunter/data /app/hunter/.runtime /app/hunter/logs \
