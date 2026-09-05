@@ -101,6 +101,10 @@ jobs:
   deploy-production-auth-only:
     needs: [resolve-and-gate, deployment-ci]
     runs-on: ubuntu-latest
+    # Bootstrap lane: staging environment supplies the already-proven shared
+    # Netcup restricted SSH credentials only. The payload remains the exact
+    # production auth candidate and the server executes the production wrapper.
+    environment: staging
     timeout-minutes: 30
     steps:
       - name: Checkout exact production auth SHA
@@ -121,7 +125,7 @@ jobs:
           git bundle create "$RUNNER_TEMP/munshi-production-auth.bundle" "refs/remotes/origin/$DEPLOY_BRANCH"
           git bundle verify "$RUNNER_TEMP/munshi-production-auth.bundle"
 
-      - name: Configure restricted SSH
+      - name: Configure restricted SSH from bootstrap credential envelope
         shell: bash
         env:
           NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
@@ -154,6 +158,7 @@ jobs:
               "$NETCUP_USER@$NETCUP_HOST" \
               "/opt/munshi/bin/deploy-production-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH" | tee "$LOG"
           grep -F "DEPLOYED_SHA=$DEPLOY_SHA" "$LOG"
+          grep -F "DEPLOYED_BRANCH=$DEPLOY_BRANCH" "$LOG"
           grep -F "N8N_RECREATED=NO" "$LOG"
           grep -F "OLLAMA_RECREATED=NO" "$LOG"
           grep -F "RESULT=PRODUCTION_DEPLOYMENT_PASS" "$LOG"
@@ -167,6 +172,8 @@ jobs:
             echo "### Production auth backend deployed remotely"
             echo "- exact SHA: \`$DEPLOY_SHA\`"
             echo "- auth-only five-file allowlist enforced"
+            echo "- staging environment used only as shared restricted-SSH secret envelope"
+            echo "- server-side production wrapper remained authoritative"
             echo "- WAL-safe backup + rollback image enforced"
             echo "- n8n/Ollama unchanged"
             echo "- local terminal not required"
