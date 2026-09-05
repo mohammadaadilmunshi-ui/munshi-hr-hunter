@@ -330,10 +330,17 @@ def test_phase6_refuses_persistence_if_binding_inputs_change_mid_evaluation(
 
     connection = database.get_connection()
     try:
-        count = connection.execute(
-            "SELECT COUNT(*) FROM opportunity_intelligence_evaluations WHERE job_id=?",
-            (job_id,),
-        ).fetchone()[0]
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='opportunity_intelligence_evaluations'"
+        ).fetchone()
+        count = (
+            connection.execute(
+                "SELECT COUNT(*) FROM opportunity_intelligence_evaluations WHERE job_id=?",
+                (job_id,),
+            ).fetchone()[0]
+            if table is not None
+            else 0
+        )
     finally:
         connection.close()
     assert count == 0
