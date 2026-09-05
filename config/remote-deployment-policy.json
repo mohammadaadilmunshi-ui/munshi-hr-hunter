@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "policy": "remote_first",
+  "control_branch": "feat/autonomous-career-os-foundation",
+  "local_terminal_required": false,
+  "production_requires_explicit_chat_authorization": true,
+  "staging_may_be_deployed_by_exact_sha_remote_request": true,
+  "production_may_be_deployed_by_exact_sha_remote_request_after_explicit_authorization": true,
+  "edge_or_host_admin_changes_require_narrow_server_side_gateway_capability": true,
+  "never_enable_arbitrary_remote_shell_for_deployment_key": true,
+  "required_controls": [
+    "exact_sha",
+    "source_branch_containment",
+    "expected_current_production_sha",
+    "scoped_path_allowlist_for_hotfixes",
+    "ci_before_runtime_mutation",
+    "wal_safe_database_backup",
+    "rollback_image_or_equivalent",
+    "postdeploy_runtime_contract",
+    "n8n_identity_preservation_unless_explicitly_in_scope",
+    "ollama_identity_preservation_unless_explicitly_in_scope",
+    "no_plaintext_secrets_in_git",
+    "no_staging_product_feature_promotion_during_scoped_production_hotfix",
+    "caddy_reload_preferred_over_recreate_for_edge_only_change"
+  ],
+  "current_bootstrap_note": "Application/Hunter production and staging releases are remote-capable through the restricted GitHub-to-Netcup deployment transport. Host-edge administration is being narrowed into apply-dashboard-device-auth-edge and must be added to the installed forced-command gateway before edge changes can be remotely invoked."
+}
