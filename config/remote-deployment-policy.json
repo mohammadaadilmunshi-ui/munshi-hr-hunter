@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "policy": "remote_first",
+  "local_terminal_required": false,
+  "production_changes_require_explicit_chat_authorization": true,
+  "staging_changes_may_use_remote_exact_sha_relay": true,
+  "production_changes_may_use_remote_exact_sha_relay_after_explicit_authorization": true,
+  "required_safety_controls": [
+    "exact_sha",
+    "source_branch_proof",
+    "scope_allowlist_when_hotfix",
+    "ci_before_deploy",
+    "wal_safe_database_backup",
+    "rollback_image_or_equivalent",
+    "postdeploy_runtime_verification",
+    "n8n_identity_preservation_unless_explicitly_in_scope",
+    "ollama_identity_preservation_unless_explicitly_in_scope",
+    "no_secret_material_in_git"
+  ],
+  "notes": "This file records the preferred deployment operating model: GitHub-driven remote releases from chat, without requiring the user's local terminal. It does not itself authorize an individual production release; each production release still requires explicit user authorization in chat and an exact committed release request."
+}
