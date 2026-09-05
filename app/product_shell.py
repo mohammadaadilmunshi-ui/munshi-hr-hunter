@@ -163,7 +163,7 @@ def render() -> None:
             unsafe_allow_html=True,
         )
 
-    from app import product_pages, resume_studio_page
+    from app import product_pages, profile_workspace_v1, resume_studio_page
     from app.resume_engine_selector import (
         install_resume_engine_selector,
         render_resume_engine_selector,
@@ -177,7 +177,7 @@ def render() -> None:
         "jobs": product_pages.browse_jobs,
         "auto-prepare": product_pages.auto_prepare,
         "tracker": product_pages.tracker,
-        "profile": product_pages.profile,
+        "profile": profile_workspace_v1.render,
         RESUME_STUDIO_VIEW: resume_studio_page.render,
         "research": product_pages.research,
         "settings": product_pages.settings,
