@@ -1,6 +1,8 @@
 {
   "commit_sha": "380896964d12199936ee7c676e39352a1a68cec8",
   "source_branch": "fix/dashboard-device-auth-prod-v1",
-  "requested_by": "remote-production-auth-relay-v1",
-  "purpose": "Deploy only the trusted-device password authentication hotfix to the production dashboard. No Resume Studio, Career OS, n8n workflow, ATS, Gmail, Apply, submission, or other product feature changes are authorized in this release."
+  "scope": "dashboard_trusted_device_auth_only",
+  "remote_authorization": "AUTHORIZED_REMOTE_PRODUCTION_AUTH_HOTFIX",
+  "requested_by": "chat_remote_release",
+  "purpose": "Deploy only the trusted-device password authentication hotfix to the production dashboard using the remote GitHub relay. No Resume Studio, Career OS, n8n workflow, ATS, Gmail, Apply, submission, or other product feature changes are authorized in this release."
 }
