@@ -10,12 +10,15 @@ from app.product_ui import esc, inject_css
 from app.product_v22 import brand_logo_data_uri, inject_v22_css, install_product_v22
 
 
+RESUME_STUDIO_VIEW = "resume-studio"
+
 NAVIGATION = (
     ("dashboard", "Dashboard"),
     ("jobs", "Browse jobs"),
     ("auto-prepare", "Auto Prepare"),
     ("tracker", "Tracker"),
     ("profile", "Profile"),
+    (RESUME_STUDIO_VIEW, "Resume Studio"),
     ("research", "Research"),
 )
 
@@ -47,7 +50,10 @@ def _query_view() -> str:
         )
     except Exception:
         raw = st.session_state.get("product_view", "dashboard")
-    return valid_view(raw)
+    normalized = str(raw or "").strip().casefold()
+    if normalized == RESUME_STUDIO_VIEW:
+        return RESUME_STUDIO_VIEW
+    return valid_view(normalized)
 
 
 def _nav_link(
@@ -74,6 +80,8 @@ def _resolved_subroute_state(
     section: str = "",
 ) -> tuple[str, str] | None:
     '''Resolve a validated deep-link value into Streamlit session state.'''
+    if view == RESUME_STUDIO_VIEW:
+        return None
     view = valid_view(view)
     tab = str(tab or "").strip().casefold()
     section = str(section or "").strip().casefold()
@@ -155,9 +163,14 @@ def render() -> None:
             unsafe_allow_html=True,
         )
 
-    from app import product_pages
+    from app import product_pages, resume_studio_page
+    from app.resume_engine_selector import (
+        install_resume_engine_selector,
+        render_resume_engine_selector,
+    )
 
     install_product_v22(product_pages)
+    install_resume_engine_selector(product_pages)
 
     pages: dict[str, Callable[[], None]] = {
         "dashboard": product_pages.dashboard,
@@ -165,7 +178,9 @@ def render() -> None:
         "auto-prepare": product_pages.auto_prepare,
         "tracker": product_pages.tracker,
         "profile": product_pages.profile,
+        RESUME_STUDIO_VIEW: resume_studio_page.render,
         "research": product_pages.research,
         "settings": product_pages.settings,
     }
     pages[view]()
+    render_resume_engine_selector()
