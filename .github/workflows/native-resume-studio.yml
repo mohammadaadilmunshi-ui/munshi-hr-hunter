@@ -34,6 +34,7 @@ jobs:
             app/native_resume_service.py \
             app/native_resume_service_v2.py \
             app/native_resume_service_v3.py \
+            app/resume_profile_details_v31.py \
             app/resume_studio_page.py \
             app/resume_studio_page_v2.py \
             app/resume_studio_page_v3.py \
@@ -46,6 +47,7 @@ jobs:
             tests/test_native_resume_service.py \
             tests/test_native_resume_service_v2.py \
             tests/test_native_resume_service_v3.py \
+            tests/test_resume_profile_details_v31.py \
             tests/test_resume_engine_selector.py
 
       - name: Run native Resume Studio safety and regression tests
@@ -55,6 +57,7 @@ jobs:
             tests/test_native_resume_service.py \
             tests/test_native_resume_service_v2.py \
             tests/test_native_resume_service_v3.py \
+            tests/test_resume_profile_details_v31.py \
             tests/test_resume_engine_selector.py \
             tests/test_secure_vault.py \
             tests/test_candidate_artifacts.py \
