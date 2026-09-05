@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib
 import io
 import json
@@ -12,7 +13,6 @@ from app.native_resume_service import (
     active_source,
     analyze_document,
     build_evidence_bundle,
-    ensure_schema,
     extract_uploaded_source,
     generate_resume,
     get_version,
@@ -212,14 +212,20 @@ def test_generation_persists_immutable_versions_without_native_authority(hunter_
     save_confirmed_source(content_text=SOURCE_TEXT)
     bundle = build_evidence_bundle()
     job_id = _job()
-    payload = _document(bundle)
+    initial = _document(bundle)
+    revised = copy.deepcopy(initial)
+    revised["summary"]["text"] = (
+        "Human Resource Analytics master's candidate with people analytics, Excel, Power BI, Tableau, Python, "
+        "and recruiting operations experience."
+    )
 
     import app.native_resume_service as service
     calls = []
 
     def fake_call(*, prompt_payload):
         calls.append(prompt_payload)
-        return payload, f"resp-{len(calls)}", "gpt-test"
+        payload = initial if len(calls) == 1 else revised
+        return copy.deepcopy(payload), f"resp-{len(calls)}", "gpt-test"
 
     monkeypatch.setattr(service, "_call_openai", fake_call)
     first = generate_resume(job_id=job_id, instruction="Prioritize analytics")
@@ -239,8 +245,11 @@ def test_generation_persists_immutable_versions_without_native_authority(hunter_
     assert second["parent_version_id"] == first["version_id"]
     assert get_version(first["version_id"])["document"] == first["document"]
     assert len(list_versions(job_id=job_id)) == 2
-    assert "v1" in version_diff(second["version_id"])
-    assert "v2" in version_diff(second["version_id"])
+    diff = version_diff(second["version_id"])
+    assert "--- v1" in diff
+    assert "+++ v2" in diff
+    assert first["document"]["education"] == second["document"]["education"]
+    assert first["document"]["contact"] == second["document"]["contact"]
 
 
 def test_model_status_never_exposes_api_key(hunter_db, monkeypatch) -> None:
