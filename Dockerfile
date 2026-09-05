@@ -19,17 +19,21 @@ WORKDIR /app/hunter
 COPY requirements.lock.txt ./requirements.lock.txt
 RUN python -m pip install --no-cache-dir -r requirements.lock.txt
 
-# Canonical JobSpy subprocess runner required by app/sources/jobspy.py.
 COPY tools/runners/jobspy_runner.py ./tools/runners/jobspy_runner.py
-
-# Copy source only. Runtime state, secrets, local launchers, and browser data
-# are excluded by .dockerignore and are supplied by Compose volumes/env.
 COPY app ./app
 COPY config ./config
 COPY integrations ./integrations
 COPY migrations ./migrations
 COPY scripts/render_n8n_deployment_workflow.py ./scripts/render_n8n_deployment_workflow.py
 COPY scripts/validate_container_environment_contract.py ./scripts/validate_container_environment_contract.py
+
+# One-time production-side bootstrap used only to install the narrow staging
+# recovery command into the already restricted GitHub SSH gateway. The
+# production runtime is restored to the exact auth-only release immediately
+# after recovery succeeds.
+COPY deploy/netcup/github_deploy_gateway.sh ./bootstrap/github_deploy_gateway.sh
+COPY deploy/netcup/recover_staging_auth_bootstrap.sh ./bootstrap/recover_staging_auth_bootstrap.sh
+RUN chmod 0555 ./bootstrap/github_deploy_gateway.sh ./bootstrap/recover_staging_auth_bootstrap.sh
 
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin hunter \
     && mkdir -p /app/hunter/data /app/hunter/.runtime /app/hunter/logs \
