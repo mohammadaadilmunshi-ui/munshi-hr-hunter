@@ -1,0 +1,13 @@
+{
+  "bootstrap_sha": "e55ca0a82d8ede6a5053c0a5705e5bb0e1979a90",
+  "bootstrap_branch": "ops/production-staging-recovery-bootstrap-v1",
+  "from_staging_sha": "2fd6814c6685bb21adb1d0d7fd60249680da1c1c",
+  "target_staging_sha": "1785c022a6a9d3205fcfc36b2aed120494044158",
+  "target_staging_branch": "fix/dashboard-device-auth-staging-v1",
+  "production_sha": "380896964d12199936ee7c676e39352a1a68cec8",
+  "production_branch": "fix/dashboard-device-auth-prod-v1",
+  "scope": "recover_failed_staging_edge_bootstrap_only",
+  "remote_authorization": "AUTHORIZED_REMOTE_STAGING_RECOVERY",
+  "requested_at_utc": "2026-09-05T02:20:00Z",
+  "requested_by": "ChatGPT on explicit user authorization"
+}
