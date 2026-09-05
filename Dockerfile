@@ -30,6 +30,7 @@ COPY integrations ./integrations
 COPY migrations ./migrations
 COPY scripts/render_n8n_deployment_workflow.py ./scripts/render_n8n_deployment_workflow.py
 COPY scripts/validate_container_environment_contract.py ./scripts/validate_container_environment_contract.py
+COPY scripts/phase17_staging_migrate.py ./scripts/phase17_staging_migrate.py
 
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin hunter \
     && mkdir -p /app/hunter/data /app/hunter/.runtime /app/hunter/logs \
