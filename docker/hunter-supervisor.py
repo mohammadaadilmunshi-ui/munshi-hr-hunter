@@ -102,7 +102,7 @@ def main() -> int:
     global children
     python = sys.executable
     children = [
-        Lane("fastapi", [python, "-m", "uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]),
+        Lane("fastapi", [python, "-m", "uvicorn", "app.api_device_auth:app", "--host", "0.0.0.0", "--port", "8000"]),
         Lane("streamlit", [python, "-m", "streamlit", "run", "app/dashboard.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.headless", "true"]),
     ]
     if enabled("HUNTER_ENABLE_TELEGRAM"):

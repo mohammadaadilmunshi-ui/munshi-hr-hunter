@@ -1,0 +1,39 @@
+# MUNSHI staging dashboard HTTPS + trusted-device authentication template
+#
+# Staging mirrors the production trusted-device flow but keeps a host-scoped
+# cookie and the isolated staging Hunter endpoints. The password is checked
+# only on /_munshi-auth/login; normal Streamlit reconnects use the signed
+# device cookie through forward_auth.
+#
+# Replace STAGING_DASHBOARD_USERNAME and STAGING_DASHBOARD_PASSWORD_HASH.
+# Never place a plaintext password here.
+
+staging-dashboard.munshi.systems {
+    encode zstd gzip
+
+    @device_login path /_munshi-auth/login
+    handle @device_login {
+        basic_auth {
+            STAGING_DASHBOARD_USERNAME STAGING_DASHBOARD_PASSWORD_HASH
+        }
+
+        reverse_proxy 127.0.0.1:18000 {
+            header_up X-Munshi-Auth-User {http.auth.user.id}
+        }
+    }
+
+    @device_auth_api path /_munshi-auth/*
+    handle @device_auth_api {
+        reverse_proxy 127.0.0.1:18000
+    }
+
+    handle {
+        forward_auth 127.0.0.1:18000 {
+            uri /_munshi-auth/verify
+            header_up X-Munshi-Original-URI {uri}
+            copy_headers X-Munshi-Auth-User
+        }
+
+        reverse_proxy 127.0.0.1:18501
+    }
+}
