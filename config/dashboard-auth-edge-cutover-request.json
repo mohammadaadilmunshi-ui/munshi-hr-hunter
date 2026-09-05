@@ -1,8 +1,8 @@
 {
   "production_sha": "380896964d12199936ee7c676e39352a1a68cec8",
-  "staging_sha": "1785c022a6a9d3205fcfc36b2aed120494044158",
+  "staging_sha": "2fd6814c6685bb21adb1d0d7fd60249680da1c1c",
   "scope": "dashboard_trusted_device_edge_only",
   "remote_authorization": "AUTHORIZED_REMOTE_DASHBOARD_AUTH_EDGE_CUTOVER",
-  "requested_at_utc": "2026-09-05T00:00:00Z",
-  "requested_by": "ChatGPT on explicit user authorization"
+  "requested_at_utc": "2026-09-05T02:16:30Z",
+  "requested_by": "ChatGPT on explicit user authorization; bootstrap gateway acceptance probe"
 }
