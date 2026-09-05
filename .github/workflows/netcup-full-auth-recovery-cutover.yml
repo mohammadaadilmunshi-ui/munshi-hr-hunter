@@ -17,7 +17,7 @@ concurrency:
 jobs:
   recover-and-cutover:
     runs-on: ubuntu-latest
-    environment: staging
+    environment: production
     timeout-minutes: 10
     steps:
       - name: Configure protected production SSH transport
