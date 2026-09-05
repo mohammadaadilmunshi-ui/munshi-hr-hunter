@@ -1,0 +1,80 @@
+name: Netcup Production Runtime Readonly Probe
+
+on:
+  push:
+    branches:
+      - incident/runtime-readonly-probe-20260905
+    paths:
+      - '.github/workflows/netcup-production-runtime-readonly-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Inspect production runtime state without mutation
+        shell: bash
+        env:
+          KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+          HOST: ${{ secrets.NETCUP_HOST }}
+          USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          [[ -n "$KEY" && -n "$HOSTS" && -n "$HOST" && -n "$USER" ]] || {
+            echo 'PROBE_TRANSPORT=UNAVAILABLE'
+            exit 41
+          }
+
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$KEY" > "$HOME/.ssh/netcup_key"
+          chmod 600 "$HOME/.ssh/netcup_key"
+          printf '%s\n' "$HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          ssh \
+            -i "$HOME/.ssh/netcup_key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=10 \
+            "$USER@$HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          echo "REMOTE_UID=$(id -u)"
+          echo "REMOTE_DOCKER_GROUP=$(id -Gn | tr " " "\n" | grep -Fx docker >/dev/null && echo YES || echo NO)"
+
+          if ! docker ps >/dev/null 2>&1; then
+            echo 'DOCKER_ACCESS=UNAVAILABLE'
+            exit 42
+          fi
+          echo 'DOCKER_ACCESS=AVAILABLE'
+
+          echo 'RUNTIME_CONTAINERS_BEGIN'
+          docker ps -a --format '{{.Names}}|{{.Status}}' \
+            | grep -E '(hunter|n8n|ollama|caddy)' \
+            || true
+          echo 'RUNTIME_CONTAINERS_END'
+
+          found=0
+          while IFS= read -r name; do
+            [[ -n "$name" ]] || continue
+            project="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' "$name" 2>/dev/null || true)"
+            case "$project" in
+              *staging*) continue ;;
+            esac
+            found=1
+            echo "PRODUCTION_HUNTER_NAME=$name"
+            echo "PRODUCTION_HUNTER_PROJECT=$project"
+            docker inspect --format 'PRODUCTION_HUNTER_STATE=status={{.State.Status}};exit_code={{.State.ExitCode}};started_at={{.State.StartedAt}};finished_at={{.State.FinishedAt}};restart_count={{.RestartCount}};oom_killed={{.State.OOMKilled}}' "$name"
+          done < <(docker ps -a --format '{{.Names}}' | grep -E 'hunter' || true)
+
+          if [[ "$found" -eq 0 ]]; then
+            echo 'PRODUCTION_HUNTER=NOT_FOUND'
+          fi
+
+          echo 'PROBE_MUTATION=NONE'
+          REMOTE
