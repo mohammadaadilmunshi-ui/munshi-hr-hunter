@@ -1,14 +1,14 @@
 """Tenant-safe native Resume Studio service.
 
-This service is additive and staging-safe. It stores candidate-confirmed resume
-source text, builds an evidence bundle, asks an explicitly configured OpenAI
-Responses API model for a structured ResumeDocument, validates every evidence
-reference, rejects unsupported numeric claims, computes explainable ATS/JD
-diagnostics, and persists immutable resume versions.
+The service is additive and preparation-only. It stores candidate-confirmed
+resume source text, builds an owner-bound evidence bundle, optionally invokes a
+configured OpenAI Responses API model for structured resume writing, validates
+evidence and numeric claims, computes explainable ATS/JD diagnostics, and
+persists immutable native resume versions.
 
-It does not submit applications, change n8n authority, or overwrite the Master
-Resume designation. Native resume authority remains disabled until a later
-explicit parity gate.
+It never submits applications, changes n8n authority, or silently replaces the
+Master Resume designation. Native resume authority remains disabled until a
+later explicit parity gate.
 """
 from __future__ import annotations
 
@@ -42,7 +42,6 @@ from app.native_resume_studio import (
 )
 from app.tenant_foundation import current_owner, ensure_schema as ensure_tenant_schema
 
-
 MODEL_ENV = "MUNSHI_RESUME_MODEL"
 API_KEY_ENV = "OPENAI_API_KEY"
 DEFAULT_MODEL = "gpt-5.6-terra"
@@ -65,7 +64,10 @@ _STOP_TERMS = frozenset({
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9+/#.-]{2,}")
 _NUMBER_RE = re.compile(r"(?<![A-Za-z])\d+(?:[.,]\d+)*(?:%|\+)?")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9+/#.-]+")
-
+_LOCKABLE = frozenset({
+    "contact", "education", "skills", "experience", "projects",
+    "certifications", "summary",
+})
 
 SCHEMA_STATEMENTS = (
     """CREATE TABLE IF NOT EXISTS native_resume_sources(
@@ -110,7 +112,8 @@ SCHEMA_STATEMENTS = (
             REFERENCES tenant_memberships(tenant_id,user_id) ON DELETE RESTRICT,
         FOREIGN KEY(tenant_id,user_id,source_id)
             REFERENCES native_resume_sources(tenant_id,user_id,source_id) ON DELETE RESTRICT,
-        FOREIGN KEY(parent_version_id) REFERENCES native_resume_versions(version_id) ON DELETE RESTRICT,
+        FOREIGN KEY(parent_version_id)
+            REFERENCES native_resume_versions(version_id) ON DELETE RESTRICT,
         FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE RESTRICT
     );""",
     """CREATE INDEX IF NOT EXISTS idx_native_resume_versions_owner_job
@@ -133,11 +136,12 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
 
 
 def native_resume_authority_enabled() -> bool:
-    """The native writer is not application authority in this pre-Phase-12 slice."""
+    """Pre-Phase-12 native writing never becomes application authority."""
     return False
 
 
 def model_status() -> dict[str, Any]:
+    """Return non-secret configuration state only."""
     return {
         "configured": bool(str(os.getenv(API_KEY_ENV) or "").strip()),
         "model": str(os.getenv(MODEL_ENV) or DEFAULT_MODEL).strip() or DEFAULT_MODEL,
@@ -159,6 +163,17 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _commit_schema_before_write(connection: sqlite3.Connection) -> None:
+    """End additive schema work before this service starts an IMMEDIATE write.
+
+    Several repository schema helpers intentionally participate in a caller's
+    transaction. This service owns its connection, so it can safely commit that
+    additive setup before taking an IMMEDIATE lock for an atomic mutation.
+    """
+    if connection.in_transaction:
+        connection.commit()
+
+
 def save_confirmed_source(
     *,
     content_text: str,
@@ -175,6 +190,7 @@ def save_confirmed_source(
     try:
         ensure_schema(connection)
         owner = current_owner(connection)
+        _commit_schema_before_write(connection)
         connection.execute("BEGIN IMMEDIATE")
         connection.execute(
             "UPDATE native_resume_sources SET active=0,updated_at=CURRENT_TIMESTAMP "
@@ -211,7 +227,7 @@ def save_confirmed_source(
 
 
 def active_source(*, connection: sqlite3.Connection | None = None) -> dict[str, Any]:
-    owns = connection is None
+    owns_connection = connection is None
     connection = connection or get_connection()
     try:
         ensure_schema(connection)
@@ -225,7 +241,7 @@ def active_source(*, connection: sqlite3.Connection | None = None) -> dict[str, 
         ).fetchone()
         return dict(row) if row else {}
     finally:
-        if owns:
+        if owns_connection:
             connection.close()
 
 
@@ -237,24 +253,23 @@ def extract_docx_text(data: bytes) -> str:
             raw = archive.read("word/document.xml")
     except (zipfile.BadZipFile, KeyError) as error:
         raise ValueError("The uploaded file is not a readable DOCX document.") from error
-    root = ElementTree.fromstring(raw)
+    try:
+        root = ElementTree.fromstring(raw)
+    except ElementTree.ParseError as error:
+        raise ValueError("The uploaded DOCX contains unreadable document XML.") from error
     namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     paragraphs: list[str] = []
     for paragraph in root.iter(namespace + "p"):
         text = "".join(node.text or "" for node in paragraph.iter(namespace + "t")).strip()
         if text:
             paragraphs.append(text)
-    result = "\n".join(paragraphs).strip()
-    return _clean_text(result, maximum=_MAX_SOURCE_CHARS, label="DOCX resume text")
+    return _clean_text("\n".join(paragraphs), maximum=_MAX_SOURCE_CHARS, label="DOCX resume text")
 
 
 def extract_uploaded_source(filename: str, data: bytes) -> tuple[str, str]:
     suffix = Path(str(filename or "")).suffix.casefold()
     if suffix in {".txt", ".md"}:
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            text = data.decode("utf-8", errors="replace")
+        text = data.decode("utf-8", errors="replace")
         return _clean_text(text, maximum=_MAX_SOURCE_CHARS, label="Uploaded resume text"), "text_upload"
     if suffix == ".docx":
         return extract_docx_text(data), "docx_upload"
@@ -276,13 +291,13 @@ def _segment_source(source_id: str, text: str) -> list[dict[str, str]]:
         words = paragraph.split()
         chunks: list[str] = []
         current: list[str] = []
-        current_chars = 0
+        chars = 0
         for word in words:
-            if current and current_chars + len(word) + 1 > _MAX_EVIDENCE_TEXT:
+            if current and chars + len(word) + 1 > _MAX_EVIDENCE_TEXT:
                 chunks.append(" ".join(current))
-                current, current_chars = [], 0
+                current, chars = [], 0
             current.append(word)
-            current_chars += len(word) + 1
+            chars += len(word) + 1
         if current:
             chunks.append(" ".join(current))
         for chunk in chunks:
@@ -354,12 +369,12 @@ def _digital_twin_evidence(connection: sqlite3.Connection) -> list[dict[str, str
         if _contains_sensitive_token(key):
             continue
         excerpt = " ".join(str(row["excerpt"] or "").split())
-        raw_value = str(row["value_json"] or "")
+        raw = str(row["value_json"] or "")
         try:
-            value = json.loads(raw_value)
+            value = json.loads(raw)
             value_text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
         except json.JSONDecodeError:
-            value_text = raw_value
+            value_text = raw
         text = " | ".join(part for part in (str(value_text).strip(), excerpt) if part)
         if not text or _contains_sensitive_token(text):
             continue
@@ -426,8 +441,9 @@ _JOB_COLUMNS = (
 def job_context(job_id: int) -> dict[str, Any]:
     connection = get_connection()
     try:
-        columns = ",".join(_JOB_COLUMNS)
-        row = connection.execute(f"SELECT {columns} FROM jobs WHERE id=?", (int(job_id),)).fetchone()
+        row = connection.execute(
+            f"SELECT {','.join(_JOB_COLUMNS)} FROM jobs WHERE id=?", (int(job_id),)
+        ).fetchone()
         if row is None:
             raise LookupError("Stored job not found.")
         return dict(row)
@@ -452,37 +468,34 @@ def resume_job_options(limit: int = 250) -> list[dict[str, Any]]:
 
 
 def _job_text(context: dict[str, Any]) -> str:
-    parts = []
+    values = []
     for key in (
         "title", "description_raw", "responsibilities", "qualifications",
         "preferred_qualifications", "preferred_skills", "skills_keywords",
     ):
         value = str(context.get(key) or "").strip()
         if value:
-            parts.append(value)
-    return "\n".join(parts)
+            values.append(value)
+    return "\n".join(values)
 
 
 def _jd_terms(context: dict[str, Any]) -> list[str]:
-    text = _job_text(context)
     counts: Counter[str] = Counter()
     display: dict[str, str] = {}
-    for match in _WORD_RE.finditer(text):
+    for match in _WORD_RE.finditer(_job_text(context)):
         raw = match.group(0).strip(".")
         key = raw.casefold()
         if key in _STOP_TERMS or len(key) < 3 or key.isdigit():
             continue
         counts[key] += 1
         display.setdefault(key, raw)
-    explicit = str(context.get("skills_keywords") or "")
-    for match in _WORD_RE.finditer(explicit):
+    for match in _WORD_RE.finditer(str(context.get("skills_keywords") or "")):
         raw = match.group(0).strip(".")
         key = raw.casefold()
         if key not in _STOP_TERMS and len(key) >= 3:
             counts[key] += 3
             display.setdefault(key, raw)
-    ordered = sorted(counts, key=lambda key: (-counts[key], key))
-    return [display[key] for key in ordered[:120]]
+    return [display[key] for key in sorted(counts, key=lambda key: (-counts[key], key))[:120]]
 
 
 def resume_plain_text(document: ResumeDocument) -> str:
@@ -493,17 +506,21 @@ def resume_plain_text(document: ResumeDocument) -> str:
         values.extend([group.label, *group.skills])
     for item in document.experience:
         values.extend([item.organization, item.title, item.dates, item.location])
-        values.extend(b.text for b in item.bullets)
+        values.extend(bullet.text for bullet in item.bullets)
     for item in document.projects:
         values.extend([item.name, item.subtitle])
-        values.extend(b.text for b in item.bullets)
+        values.extend(bullet.text for bullet in item.bullets)
     for item in document.certifications:
         values.extend([item.name, item.issuer])
     return "\n".join(str(value) for value in values if str(value or "").strip())
 
 
 def _normalized_tokens(value: str) -> set[str]:
-    return {token.casefold().strip(".") for token in _TOKEN_RE.findall(str(value or "")) if len(token) >= 2}
+    return {
+        token.casefold().strip(".")
+        for token in _TOKEN_RE.findall(str(value or ""))
+        if len(token) >= 2
+    }
 
 
 def _numbers(value: str) -> set[str]:
@@ -518,17 +535,27 @@ def _support_text(ids: list[str], evidence: dict[str, dict[str, str]]) -> str:
     return "\n".join(evidence[item]["text"] for item in ids if item in evidence)
 
 
-def _assert_numbers_supported(text: str, ids: list[str], evidence: dict[str, dict[str, str]], label: str) -> None:
-    claim_numbers = _numbers(text)
-    if not claim_numbers:
+def _assert_numbers_supported(
+    text: str,
+    ids: list[str],
+    evidence: dict[str, dict[str, str]],
+    label: str,
+) -> None:
+    claimed = _numbers(text)
+    if not claimed:
         return
-    source_numbers = _numbers(_support_text(ids, evidence))
-    unsupported = sorted(claim_numbers - source_numbers)
+    supported = _numbers(_support_text(ids, evidence))
+    unsupported = sorted(claimed - supported)
     if unsupported:
         raise ValueError(f"{label} contains unsupported numeric claim(s): {', '.join(unsupported)}")
 
 
-def _assert_global_field_supported(text: str, evidence_text: str, label: str, minimum_overlap: float = 0.55) -> None:
+def _assert_global_field_supported(
+    text: str,
+    evidence_text: str,
+    label: str,
+    minimum_overlap: float = 0.55,
+) -> None:
     clean = " ".join(str(text or "").split())
     if not clean:
         return
@@ -554,8 +581,10 @@ def validate_document_evidence(document: ResumeDocument, bundle: dict[str, Any])
 
     _assert_numbers_supported(document.summary.text, document.summary.evidence_ids, evidence, "Summary")
     for index, item in enumerate(document.education):
-        combined = " ".join([item.institution, item.degree, item.dates, item.location, item.gpa])
-        _assert_numbers_supported(combined, item.evidence_ids, evidence, f"Education {index + 1}")
+        _assert_numbers_supported(
+            " ".join([item.institution, item.degree, item.dates, item.location, item.gpa]),
+            item.evidence_ids, evidence, f"Education {index + 1}",
+        )
     for index, group in enumerate(document.skills):
         _assert_numbers_supported(" ".join(group.skills), group.evidence_ids, evidence, f"Skill group {index + 1}")
     for item_index, item in enumerate(document.experience):
@@ -575,19 +604,23 @@ def validate_document_evidence(document: ResumeDocument, bundle: dict[str, Any])
     _assert_global_field_supported(document.candidate_name, global_evidence, "Candidate name", 0.75)
     for key, value in document.contact.model_dump().items():
         if value:
-            _assert_global_field_supported(value, global_evidence, f"Contact {key}", 0.45)
+            _assert_global_field_supported(value, global_evidence, f"Contact {key}", 0.35)
     for index, item in enumerate(document.education):
-        _assert_global_field_supported(item.institution, _support_text(item.evidence_ids, evidence), f"Education {index + 1} institution", 0.6)
-        _assert_global_field_supported(item.degree, _support_text(item.evidence_ids, evidence), f"Education {index + 1} degree", 0.45)
+        support = _support_text(item.evidence_ids, evidence)
+        _assert_global_field_supported(item.institution, support, f"Education {index + 1} institution", 0.6)
+        _assert_global_field_supported(item.degree, support, f"Education {index + 1} degree", 0.4)
     for index, item in enumerate(document.experience):
         _assert_global_field_supported(item.organization, global_evidence, f"Experience {index + 1} organization", 0.6)
-        _assert_global_field_supported(item.title, global_evidence, f"Experience {index + 1} title", 0.45)
+        _assert_global_field_supported(item.title, global_evidence, f"Experience {index + 1} title", 0.4)
         if item.dates:
-            _assert_global_field_supported(item.dates, global_evidence, f"Experience {index + 1} dates", 0.35)
+            _assert_global_field_supported(item.dates, global_evidence, f"Experience {index + 1} dates", 0.3)
     for index, item in enumerate(document.projects):
         _assert_global_field_supported(item.name, global_evidence, f"Project {index + 1} name", 0.4)
     for index, item in enumerate(document.certifications):
-        _assert_global_field_supported(item.name, _support_text(item.evidence_ids, evidence), f"Certification {index + 1}", 0.4)
+        _assert_global_field_supported(
+            item.name, _support_text(item.evidence_ids, evidence),
+            f"Certification {index + 1}", 0.4,
+        )
 
     return {
         "status": "PASS",
@@ -599,14 +632,18 @@ def validate_document_evidence(document: ResumeDocument, bundle: dict[str, Any])
     }
 
 
-def analyze_document(document: ResumeDocument, context: dict[str, Any], bundle: dict[str, Any]) -> dict[str, Any]:
+def analyze_document(
+    document: ResumeDocument,
+    context: dict[str, Any],
+    bundle: dict[str, Any],
+) -> dict[str, Any]:
     issues = ats_readiness_issues(document)
     terms = _jd_terms(context)
     resume_tokens = _normalized_tokens(resume_plain_text(document))
     matched = [term for term in terms if term.casefold() in resume_tokens]
     missing = [term for term in terms if term.casefold() not in resume_tokens]
-    coverage = round((len(matched) / len(terms) * 100), 1) if terms else 0.0
-    evidence_audit = validate_document_evidence(document, bundle)
+    coverage = round(len(matched) / len(terms) * 100, 1) if terms else 0.0
+    truth = validate_document_evidence(document, bundle)
 
     structure = 0
     structure += 5 if document.summary.text else 0
@@ -614,10 +651,7 @@ def analyze_document(document: ResumeDocument, context: dict[str, Any], bundle: 
     structure += 10 if document.experience else 0
     structure += 5 if document.education else 0
     structure += 5 if (document.projects or document.certifications) else 0
-    jd_component = round(30 * coverage / 100)
-    evidence_component = 25
-    format_component = 15 if not issues else 8 if len(issues) == 1 else 0
-    score = max(0, min(100, structure + jd_component + evidence_component + format_component))
+    score = max(0, min(100, structure + round(30 * coverage / 100) + 25 + (15 if not issues else 8 if len(issues) == 1 else 0)))
     return {
         "schema_version": "native-resume-diagnostics-v1",
         "ats_readiness_estimate": score,
@@ -625,7 +659,7 @@ def analyze_document(document: ResumeDocument, context: dict[str, Any], bundle: 
         "word_count": document_word_count(document),
         "content_budget_issues": issues,
         "format_audit": "PASS" if not issues else "REVIEW",
-        "truth_audit": evidence_audit,
+        "truth_audit": truth,
         "jd_term_coverage_percent": coverage,
         "matched_jd_terms": matched[:60],
         "missing_jd_terms": missing[:40],
@@ -638,23 +672,23 @@ def analyze_document(document: ResumeDocument, context: dict[str, Any], bundle: 
 
 def _system_prompt() -> str:
     return """You are the controlled writing engine inside MUNSHI Resume Studio.
-Return only a resume document that matches the supplied JSON schema.
+Return only a resume document matching the supplied JSON schema.
 
 Hard rules:
 1. Use only facts supported by supplied evidence records.
-2. Every summary, bullet, education item, skill group, and certification must cite one or more supplied evidence_id values.
-3. Never invent employers, titles, dates, degrees, skills, metrics, numbers, locations, certifications, tools, or outcomes.
-4. Preserve numeric values exactly from evidence. Do not calculate or infer new percentages or quantities.
-5. Do not use sensitive self-identification data. It has already been excluded and must not be inferred.
+2. Every summary, education item, skill group, bullet, and certification must cite supplied evidence_id values.
+3. Never invent employers, titles, dates, degrees, skills, tools, metrics, numbers, locations, certifications, or outcomes.
+4. Preserve numeric values exactly from evidence; never infer or calculate new numbers.
+5. Never infer sensitive self-identification information.
 6. Do not use em dashes.
 7. Keep the resume ATS-safe, single-column, concise, and designed for one Letter page.
-8. Summary <= 70 words. Bullets should usually be 18-32 words and never exceed 42.
+8. Summary should normally be <=70 words; bullets should normally be 18-32 words and must stay <=42.
 9. Optimize wording and ordering for the job description without adding unsupported claims.
 10. Copy candidate identity, organizations, education, dates, and contact details faithfully from evidence.
 11. Skills may be included only when supported by evidence.
-12. Do not include evidence IDs in visible text; put them only in evidence_ids fields.
-13. Do not mention ATS, GPT, MUNSHI, evidence, or scoring in the visible resume.
-14. If the job asks for a skill absent from evidence, omit it rather than fabricating it.
+12. Evidence IDs belong only in evidence_ids fields, never visible resume text.
+13. Never mention ATS, GPT, MUNSHI, evidence, or scoring in the visible resume.
+14. If a job requirement is absent from evidence, omit it rather than fabricate it.
 """
 
 
@@ -668,9 +702,9 @@ def _response_text(payload: dict[str, Any]) -> str:
             continue
         for content in item.get("content") or []:
             if isinstance(content, dict) and content.get("type") == "output_text":
-                text = content.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
+                value = content.get("text")
+                if isinstance(value, str):
+                    parts.append(value)
     text = "\n".join(parts).strip()
     if not text:
         raise RuntimeError("OpenAI returned no resume document text.")
@@ -702,11 +736,10 @@ def _call_openai(*, prompt_payload: dict[str, Any]) -> tuple[dict[str, Any], str
     if not key:
         raise RuntimeError("OpenAI is not configured for Resume Studio on this server.")
     model = str(os.getenv(MODEL_ENV) or DEFAULT_MODEL).strip() or DEFAULT_MODEL
-    schema = ResumeDocument.model_json_schema()
     body = {
         "model": model,
         "reasoning": {"effort": "medium"},
-        "max_output_tokens": 10000,
+        "max_output_tokens": 10_000,
         "input": [
             {"role": "system", "content": [{"type": "input_text", "text": _system_prompt()}]},
             {"role": "user", "content": [{"type": "input_text", "text": json.dumps(prompt_payload, ensure_ascii=False)}]},
@@ -715,8 +748,8 @@ def _call_openai(*, prompt_payload: dict[str, Any]) -> tuple[dict[str, Any], str
             "format": {
                 "type": "json_schema",
                 "name": "munshi_native_resume_v1",
-                "strict": True,
-                "schema": schema,
+                "strict": False,
+                "schema": ResumeDocument.model_json_schema(),
             }
         },
     }
@@ -727,16 +760,10 @@ def _call_openai(*, prompt_payload: dict[str, Any]) -> tuple[dict[str, Any], str
             response.raise_for_status()
             data = response.json()
     except httpx.HTTPStatusError as error:
-        status = error.response.status_code
-        raise RuntimeError(f"OpenAI resume generation failed with HTTP {status}.") from error
+        raise RuntimeError(f"OpenAI resume generation failed with HTTP {error.response.status_code}.") from error
     except (httpx.HTTPError, ValueError) as error:
         raise RuntimeError("OpenAI resume generation could not be completed.") from error
-    document_payload = _json_from_model_text(_response_text(data))
-    response_id = str(data.get("id") or "")[:200]
-    return document_payload, response_id, model
-
-
-_LOCKABLE = frozenset({"contact", "education", "skills", "experience", "projects", "certifications", "summary"})
+    return _json_from_model_text(_response_text(data)), str(data.get("id") or "")[:200], model
 
 
 def _apply_locks(
@@ -784,8 +811,8 @@ def list_versions(*, job_id: int | None = None, limit: int = 100) -> list[dict[s
     try:
         ensure_schema(connection)
         owner = current_owner(connection)
-        params: list[Any] = [owner.tenant_id, owner.user_id]
         where = "tenant_id=? AND user_id=?"
+        params: list[Any] = [owner.tenant_id, owner.user_id]
         if job_id is not None:
             where += " AND job_id=?"
             params.append(int(job_id))
@@ -794,10 +821,10 @@ def list_versions(*, job_id: int | None = None, limit: int = 100) -> list[dict[s
             f"""SELECT version_id,job_id,source_id,parent_version_id,version_number,instruction,
                        model_name,model_response_id,diagnostics_json,status,created_at
                 FROM native_resume_versions WHERE {where}
-                ORDER BY created_at DESC LIMIT ?""",
+                ORDER BY created_at DESC,version_number DESC LIMIT ?""",
             tuple(params),
         ).fetchall()
-        result = []
+        result: list[dict[str, Any]] = []
         for row in rows:
             item = dict(row)
             item["diagnostics"] = json.loads(item.pop("diagnostics_json"))
@@ -807,7 +834,12 @@ def list_versions(*, job_id: int | None = None, limit: int = 100) -> list[dict[s
         connection.close()
 
 
-def _next_version_number(connection: sqlite3.Connection, tenant_id: str, user_id: str, job_id: int) -> int:
+def _next_version_number(
+    connection: sqlite3.Connection,
+    tenant_id: str,
+    user_id: str,
+    job_id: int,
+) -> int:
     row = connection.execute(
         "SELECT COALESCE(MAX(version_number),0)+1 FROM native_resume_versions "
         "WHERE tenant_id=? AND user_id=? AND job_id=?",
@@ -829,17 +861,15 @@ def generate_resume(
     if len(instruction_text) > _MAX_INSTRUCTION_CHARS:
         raise ValueError(f"Revision instruction must be at most {_MAX_INSTRUCTION_CHARS:,} characters.")
     locks = sorted({str(value).strip().casefold() for value in (locked_sections or []) if str(value).strip()})
-    invalid_locks = [value for value in locks if value not in _LOCKABLE]
-    if invalid_locks:
+    if any(value not in _LOCKABLE for value in locks):
         raise ValueError("Unsupported locked resume section.")
 
-    parent_record: dict[str, Any] | None = None
     parent_document: ResumeDocument | None = None
     if parent_version_id:
-        parent_record = get_version(parent_version_id)
-        if int(parent_record["job_id"]) != int(job_id):
+        parent = get_version(parent_version_id)
+        if int(parent["job_id"]) != int(job_id):
             raise ValueError("A revision must remain attached to the same job.")
-        parent_document = ResumeDocument.model_validate(parent_record["document"])
+        parent_document = ResumeDocument.model_validate(parent["document"])
 
     prompt_payload: dict[str, Any] = {
         "task": "revise_resume" if parent_document else "generate_resume",
@@ -859,8 +889,7 @@ def generate_resume(
     }
 
     candidate_payload, response_id, model = _call_openai(prompt_payload=prompt_payload)
-    proposed = ResumeDocument.model_validate(candidate_payload)
-    proposed = _apply_locks(proposed, parent_document, locks)
+    proposed = _apply_locks(ResumeDocument.model_validate(candidate_payload), parent_document, locks)
     diagnostics = analyze_document(proposed, context, bundle)
 
     if diagnostics["content_budget_issues"]:
@@ -868,23 +897,22 @@ def generate_resume(
         repair_payload["task"] = "repair_resume_content_budget"
         repair_payload["current_resume"] = proposed.model_dump()
         repair_payload["instruction"] = (
-            "Repair only the listed content-budget issues while preserving all facts and evidence references. "
-            "Do not add new facts. Issues: " + ", ".join(diagnostics["content_budget_issues"])
+            "Repair only these content-budget issues while preserving facts and evidence references. "
+            "Do not add new facts: " + ", ".join(diagnostics["content_budget_issues"])
         )
         candidate_payload, repair_response_id, model = _call_openai(prompt_payload=repair_payload)
-        proposed = ResumeDocument.model_validate(candidate_payload)
-        proposed = _apply_locks(proposed, parent_document, locks)
+        proposed = _apply_locks(ResumeDocument.model_validate(candidate_payload), parent_document, locks)
         diagnostics = analyze_document(proposed, context, bundle)
         if diagnostics["content_budget_issues"]:
-            raise ValueError("Generated resume still exceeds the ATS one-page content budget after one repair pass.")
+            raise ValueError("Generated resume still exceeds the ATS content budget after one repair pass.")
         response_id = repair_response_id or response_id
 
     html = render_ats_html(proposed)
-    html_digest = _sha256_text(html)
     connection = get_connection()
     try:
         ensure_schema(connection)
         owner = current_owner(connection)
+        _commit_schema_before_write(connection)
         connection.execute("BEGIN IMMEDIATE")
         version_number = _next_version_number(connection, owner.tenant_id, owner.user_id, int(job_id))
         version_id = f"native-resume-{uuid4()}"
@@ -900,7 +928,7 @@ def generate_resume(
                 model, response_id or None, bundle["evidence_digest"],
                 json.dumps(proposed.model_dump(), ensure_ascii=False, sort_keys=True),
                 json.dumps(diagnostics, ensure_ascii=False, sort_keys=True),
-                html_digest,
+                _sha256_text(html),
             ),
         )
         connection.commit()
@@ -938,25 +966,26 @@ def _pdf_page_count(data: bytes) -> int:
 
 
 def render_pdf_bytes(document: ResumeDocument) -> tuple[bytes, int]:
-    chromium = next(
-        (path for name in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable")
-         if (path := shutil.which(name))),
-        None,
-    )
+    chromium = next((path for name in (
+        "chromium", "chromium-browser", "google-chrome", "google-chrome-stable"
+    ) if (path := shutil.which(name))), None)
     if not chromium:
         raise RuntimeError("Chromium PDF renderer is not installed on this runtime.")
-    html = render_ats_html(document)
     with tempfile.TemporaryDirectory(prefix="munshi-resume-") as directory:
         root = Path(directory)
-        html_path = root / "resume.html"
-        pdf_path = root / "resume.pdf"
-        html_path.write_text(html, encoding="utf-8")
-        command = [
-            chromium, "--headless", "--no-sandbox", "--disable-gpu",
-            "--no-pdf-header-footer", f"--print-to-pdf={pdf_path}",
-            html_path.resolve().as_uri(),
-        ]
-        completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45, check=False)
+        html_path, pdf_path = root / "resume.html", root / "resume.pdf"
+        html_path.write_text(render_ats_html(document), encoding="utf-8")
+        completed = subprocess.run(
+            [
+                chromium, "--headless", "--no-sandbox", "--disable-gpu",
+                "--no-pdf-header-footer", f"--print-to-pdf={pdf_path}",
+                html_path.resolve().as_uri(),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=45,
+            check=False,
+        )
         if completed.returncode != 0 or not pdf_path.exists():
             raise RuntimeError("Chromium could not render the resume PDF.")
         data = pdf_path.read_bytes()
@@ -993,8 +1022,7 @@ def render_docx_bytes(document: ResumeDocument) -> bytes:
     if document.education:
         body.append(_docx_paragraph("EDUCATION", bold=True, style="Heading"))
         for item in document.education:
-            line = " | ".join(value for value in (item.institution, item.dates) if value)
-            body.append(_docx_paragraph(line, bold=True, style="Body"))
+            body.append(_docx_paragraph(" | ".join(value for value in (item.institution, item.dates) if value), bold=True, style="Body"))
             body.append(_docx_paragraph(" | ".join(value for value in (item.degree, item.location, item.gpa) if value), style="Body"))
     if document.skills:
         body.append(_docx_paragraph("SKILLS", bold=True, style="Heading"))
@@ -1018,8 +1046,7 @@ def render_docx_bytes(document: ResumeDocument) -> bytes:
             body.append(_docx_bullet(" - ".join(value for value in (item.name, item.issuer) if value)))
 
     document_xml = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-<w:body>{''.join(body)}
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{''.join(body)}
 <w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="648" w:right="792" w:bottom="648" w:left="792"/></w:sectPr>
 </w:body></w:document>'''
     styles_xml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
