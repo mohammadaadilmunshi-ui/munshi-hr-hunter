@@ -1,7 +1,7 @@
 {
-  "commit_sha": "f69bc0c0aa5a344a0b9029d38265aaaf224b66cf",
+  "commit_sha": "6fc475f30234e3c55b27ecc824f13d4bf828216a",
   "source_branch": "feat/native-resume-studio-v1",
   "requested_by": "remote-staging-relay-v1",
-  "request_revision": 10,
-  "purpose": "Deploy and verify the unified Phase 1-7 preparation stack on isolated Netcup staging only: Candidate Truth/Profile, Resume Studio, Answer Brain, Opportunity Intelligence, Relationship Intelligence, cross-phase readiness, guarded additive migrations, and the Prepare Application workspace. Preserve n8n/Ollama/edge, Gmail, browser/ATS submission authority, recruiter outreach, and all production containers unchanged."
+  "request_revision": 11,
+  "purpose": "Redeploy the unified Phase 1-7 preparation stack after diagnosing the failed staging startup. The exact fix adds scripts/phase17_staging_migrate.py to the Hunter image and a regression test proving the migration runner is packaged. Preserve n8n/Ollama/edge, Gmail, browser/ATS submission authority, recruiter outreach, and all production containers unchanged."
 }
