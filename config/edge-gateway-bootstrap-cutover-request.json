@@ -1,0 +1,11 @@
+{
+  "bootstrap_sha": "2fd6814c6685bb21adb1d0d7fd60249680da1c1c",
+  "bootstrap_branch": "ops/remote-edge-gateway-bootstrap-v1",
+  "production_sha": "380896964d12199936ee7c676e39352a1a68cec8",
+  "final_staging_sha": "1785c022a6a9d3205fcfc36b2aed120494044158",
+  "final_staging_branch": "fix/dashboard-device-auth-staging-v1",
+  "scope": "remote_edge_gateway_bootstrap_and_trusted_device_cutover",
+  "remote_authorization": "AUTHORIZED_REMOTE_EDGE_BOOTSTRAP_AND_CUTOVER",
+  "requested_at_utc": "2026-09-05T02:08:00Z",
+  "requested_by": "ChatGPT on explicit user authorization"
+}
