@@ -164,8 +164,13 @@ def render() -> None:
         )
 
     from app import product_pages, resume_studio_page
+    from app.resume_engine_selector import (
+        install_resume_engine_selector,
+        render_resume_engine_selector,
+    )
 
     install_product_v22(product_pages)
+    install_resume_engine_selector(product_pages)
 
     pages: dict[str, Callable[[], None]] = {
         "dashboard": product_pages.dashboard,
@@ -178,3 +183,4 @@ def render() -> None:
         "settings": product_pages.settings,
     }
     pages[view]()
+    render_resume_engine_selector()
