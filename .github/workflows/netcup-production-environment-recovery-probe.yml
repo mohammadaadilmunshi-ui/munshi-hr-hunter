@@ -1,0 +1,43 @@
+name: Netcup Production Environment Recovery Probe
+
+on:
+  push:
+    branches:
+      - feat/autonomous-career-os-foundation
+    paths:
+      - '.github/workflows/netcup-production-environment-recovery-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Probe production-environment transport without mutation
+        shell: bash
+        env:
+          KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+          HOST: ${{ secrets.NETCUP_HOST }}
+          USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          [[ -n "$KEY" ]] && echo 'PROD_ENV_KEY=AVAILABLE' || echo 'PROD_ENV_KEY=UNAVAILABLE'
+          [[ -n "$HOSTS" ]] && echo 'PROD_ENV_KNOWN_HOSTS=AVAILABLE' || echo 'PROD_ENV_KNOWN_HOSTS=UNAVAILABLE'
+          [[ -n "$HOST" ]] && echo 'PROD_ENV_HOST=AVAILABLE' || echo 'PROD_ENV_HOST=UNAVAILABLE'
+          [[ -n "$USER" ]] && echo 'PROD_ENV_USER=AVAILABLE' || echo 'PROD_ENV_USER=UNAVAILABLE'
+          [[ -n "$KEY" && -n "$HOSTS" && -n "$HOST" ]] || exit 41
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$KEY" > "$HOME/.ssh/netcup_key"
+          chmod 600 "$HOME/.ssh/netcup_key"
+          printf '%s\n' "$HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          out="$(ssh -i "$HOME/.ssh/netcup_key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 root@"$HOST" 'id -u' 2>&1 || true)"
+          if [[ "$out" == '0' ]]; then
+            echo 'PROD_ENV_DIRECT_ROOT=AVAILABLE'
+          else
+            echo 'PROD_ENV_DIRECT_ROOT=UNAVAILABLE'
+          fi
