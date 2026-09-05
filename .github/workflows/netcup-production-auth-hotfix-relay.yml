@@ -32,7 +32,7 @@ jobs:
           ref: feat/cloud-migration-foundation
           fetch-depth: 0
 
-      - name: Resolve and strictly scope auth-only request
+      - name: Resolve and strictly scope remote auth-only request
         id: resolve
         shell: bash
         run: |
@@ -41,25 +41,17 @@ jobs:
           test -f "$REQUEST_FILE"
           SHA="$(python -c 'import json; print(json.load(open("config/production-auth-hotfix-request.json"))["commit_sha"])')"
           BRANCH="$(python -c 'import json; print(json.load(open("config/production-auth-hotfix-request.json"))["source_branch"])')"
+          SCOPE="$(python -c 'import json; print(json.load(open("config/production-auth-hotfix-request.json"))["scope"])')"
+          AUTH="$(python -c 'import json; print(json.load(open("config/production-auth-hotfix-request.json"))["remote_authorization"])')"
 
-          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "commit_sha must be a full lowercase 40-character SHA" >&2
-            exit 2
-          }
-          test "$BRANCH" = "$AUTH_HOTFIX_BRANCH" || {
-            echo "production auth relay accepts only $AUTH_HOTFIX_BRANCH" >&2
-            exit 3
-          }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "commit_sha must be a full lowercase 40-character SHA" >&2; exit 2; }
+          test "$BRANCH" = "$AUTH_HOTFIX_BRANCH" || { echo "production auth relay accepts only $AUTH_HOTFIX_BRANCH" >&2; exit 3; }
+          test "$SCOPE" = "dashboard_trusted_device_auth_only" || { echo "invalid production auth scope" >&2; exit 4; }
+          test "$AUTH" = "AUTHORIZED_REMOTE_PRODUCTION_AUTH_HOTFIX" || { echo "explicit remote authorization marker missing" >&2; exit 5; }
 
           git fetch --no-tags origin "$BRANCH:refs/remotes/origin/$BRANCH"
-          git merge-base --is-ancestor "$PRODUCTION_BASE_SHA" "$SHA" || {
-            echo "candidate is not descended from the exact deployed production baseline" >&2
-            exit 4
-          }
-          git merge-base --is-ancestor "$SHA" "refs/remotes/origin/$BRANCH" || {
-            echo "candidate is not contained in the approved auth-hotfix branch" >&2
-            exit 5
-          }
+          git merge-base --is-ancestor "$PRODUCTION_BASE_SHA" "$SHA" || { echo "candidate is not descended from exact deployed production baseline" >&2; exit 6; }
+          git merge-base --is-ancestor "$SHA" "refs/remotes/origin/$BRANCH" || { echo "candidate is not contained in approved auth-hotfix branch" >&2; exit 7; }
 
           mapfile -t changed < <(git diff --name-only "$PRODUCTION_BASE_SHA" "$SHA")
           printf 'Auth hotfix changed files:\n'
@@ -67,37 +59,31 @@ jobs:
           test "${#changed[@]}" -gt 0
           for path in "${changed[@]}"; do
             case "$path" in
-              app/device_auth.py|app/api_device_auth.py|docker/hunter-supervisor.py|deploy/caddy/Caddyfile.dashboard.template|tests/test_device_auth.py)
-                ;;
-              *)
-                echo "AUTH_SCOPE_VIOLATION=$path" >&2
-                exit 6
-                ;;
+              app/device_auth.py|app/api_device_auth.py|docker/hunter-supervisor.py|deploy/caddy/Caddyfile.dashboard.template|tests/test_device_auth.py) ;;
+              *) echo "AUTH_SCOPE_VIOLATION=$path" >&2; exit 8 ;;
             esac
           done
 
-          # The edge template, auth implementation and supervisor integration are mandatory.
           for required in \
             app/device_auth.py \
             app/api_device_auth.py \
             docker/hunter-supervisor.py \
             deploy/caddy/Caddyfile.dashboard.template \
             tests/test_device_auth.py; do
-            printf '%s\n' "${changed[@]}" | grep -Fx "$required" >/dev/null || {
-              echo "missing required auth-hotfix file: $required" >&2
-              exit 7
-            }
+            printf '%s\n' "${changed[@]}" | grep -Fx "$required" >/dev/null || { echo "missing required auth-hotfix file: $required" >&2; exit 9; }
           done
 
           echo "commit_sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "source_branch=$BRANCH" >> "$GITHUB_OUTPUT"
           {
-            echo "### Production auth-only release request"
+            echo "### Remote production auth-only release request"
             echo "- exact current-production baseline: \`$PRODUCTION_BASE_SHA\`"
             echo "- exact auth candidate: \`$SHA\`"
             echo "- source branch: \`$BRANCH\`"
             echo "- scope: dashboard trusted-device authentication only"
-            echo "- Resume Studio / Career OS / n8n workflow changes: rejected by allowlist"
+            echo "- local terminal: not required"
+            echo "- manual production environment approval: not required for this scoped relay"
+            echo "- Resume Studio / Career OS / n8n / ATS / Gmail / Apply changes: rejected by allowlist"
           } >> "$GITHUB_STEP_SUMMARY"
 
   deployment-ci:
@@ -190,7 +176,6 @@ jobs:
   deploy-production-auth-only:
     needs: [resolve-request, deployment-ci, auth-hotfix-gate]
     runs-on: ubuntu-latest
-    environment: production
     timeout-minutes: 30
     steps:
       - name: Checkout exact production auth SHA
@@ -253,18 +238,17 @@ jobs:
           grep -F "OLLAMA_RECREATED=NO" "$LOG"
           grep -F "RESULT=PRODUCTION_DEPLOYMENT_PASS" "$LOG"
 
-      - name: Record backend receipt and explicit edge boundary
+      - name: Record remote backend receipt and edge boundary
         shell: bash
         env:
           DEPLOY_SHA: ${{ needs.resolve-request.outputs.commit_sha }}
         run: |
           {
-            echo "### Production dashboard-auth backend deployed"
+            echo "### Production dashboard-auth backend deployed remotely"
             echo "- exact SHA: \`$DEPLOY_SHA\`"
             echo "- scope allowlist: auth-only"
             echo "- WAL-safe DB backup + rollback image: enforced by production wrapper"
             echo "- n8n/Ollama: not recreated"
-            echo "- dashboard trusted-device API: deployed with Hunter"
-            echo "- edge Caddy cutover: NOT performed by this restricted workflow"
-            echo "- status: \`EDGE_CUTOVER_PENDING=YES\` until privileged Caddy reload is separately verified"
+            echo "- local terminal/manual environment approval: not required"
+            echo "- edge Caddy activation remains separately privileged until the server deployment gateway is expanded"
           } >> "$GITHUB_STEP_SUMMARY"
