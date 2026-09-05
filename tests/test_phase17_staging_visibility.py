@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import os
 import sqlite3
+from pathlib import Path
 
 from app import application_workspace_page, product_shell, staging_feature_policy
 from scripts import phase17_staging_migrate
@@ -67,6 +68,14 @@ def test_application_workspace_is_preparation_only_surface() -> None:
     assert "selenium" not in source.casefold()
     assert "send_email" not in source
     assert "submit_application" not in source
+
+
+def test_hunter_image_contains_phase17_migration_runner() -> None:
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    assert (
+        "COPY scripts/phase17_staging_migrate.py ./scripts/phase17_staging_migrate.py"
+        in dockerfile
+    )
 
 
 def test_phase17_staging_migration_is_additive_and_verified(hunter_db, monkeypatch) -> None:
