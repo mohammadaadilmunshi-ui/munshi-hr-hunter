@@ -8,6 +8,7 @@ import pytest
 from app.cross_repo_contract import (
     EXECUTION_RECEIPT_VERSION,
     PROFILE_SNAPSHOT_VERSION,
+    composite_profile_revision,
     crm_projection_for_receipt,
     event_can_assert_submission,
     validate_execution_receipt,
@@ -26,7 +27,7 @@ def _profile_snapshot() -> dict[str, object]:
         "tenant_id": "owner",
         "user_id": "owner-user",
         "profile_id": "profile-1",
-        "profile_revision": 7,
+        "profile_revision": composite_profile_revision(3, 2),
         "override_revision": 3,
         "candidate_details_revision": 2,
         "source_extraction_id": "extract-3",
@@ -81,6 +82,7 @@ def test_profile_projection_is_hunter_owned_read_only_and_evidence_bound() -> No
     assert validated["authority"] == "munshi-hr-hunter"
     assert validated["projection_mode"] == "READ_ONLY"
     assert validated["revision_scope"] == "SOURCE_EXTRACTION"
+    assert validated["profile_revision"] == 18
     assert validated["source_profile_sha256"] == "a" * 64
     assert validated["source_resume_sha256"] == "b" * 64
     assert len(validated["profile_digest"]) == 64
@@ -101,6 +103,11 @@ def test_profile_projection_is_hunter_owned_read_only_and_evidence_bound() -> No
     wrong_scope["revision_scope"] = "GLOBAL"
     with pytest.raises(ValueError, match="SOURCE_EXTRACTION"):
         validate_profile_snapshot(wrong_scope)
+
+    wrong_revision = _profile_snapshot()
+    wrong_revision["profile_revision"] = 19
+    with pytest.raises(ValueError, match="revision components"):
+        validate_profile_snapshot(wrong_revision)
 
 
 def test_profile_digest_is_stable_across_export_time_and_fact_input_order() -> None:
@@ -171,7 +178,7 @@ def test_resume_artifact_requires_exact_profile_and_sha_binding() -> None:
             "size_bytes": 12345,
             "source_preparation_id": "prep-1",
             "source_extraction_id": "extract-3",
-            "profile_revision": 7,
+            "profile_revision": 18,
             "profile_digest": "b" * 64,
             "job_id": "42",
         }
