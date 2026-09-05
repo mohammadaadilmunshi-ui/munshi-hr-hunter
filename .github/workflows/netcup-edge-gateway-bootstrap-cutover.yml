@@ -1,0 +1,240 @@
+name: Netcup Remote Edge Gateway Bootstrap + Cutover
+
+on:
+  push:
+    branches:
+      - feat/autonomous-career-os-foundation
+    paths:
+      - "config/edge-gateway-bootstrap-cutover-request.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-edge-gateway-bootstrap-cutover
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      bootstrap_sha: ${{ steps.gate.outputs.bootstrap_sha }}
+      bootstrap_branch: ${{ steps.gate.outputs.bootstrap_branch }}
+      production_sha: ${{ steps.gate.outputs.production_sha }}
+      final_staging_sha: ${{ steps.gate.outputs.final_staging_sha }}
+      final_staging_branch: ${{ steps.gate.outputs.final_staging_branch }}
+    steps:
+      - name: Checkout trusted remote-control branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/autonomous-career-os-foundation
+          fetch-depth: 0
+
+      - name: Validate one-time bootstrap and exact release scope
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE=config/edge-gateway-bootstrap-cutover-request.json
+          test -f "$FILE"
+          BOOT_SHA="$(python -c 'import json; print(json.load(open("config/edge-gateway-bootstrap-cutover-request.json"))["bootstrap_sha"])')"
+          BOOT_BRANCH="$(python -c 'import json; print(json.load(open("config/edge-gateway-bootstrap-cutover-request.json"))["bootstrap_branch"])')"
+          PROD_SHA="$(python -c 'import json; print(json.load(open("config/edge-gateway-bootstrap-cutover-request.json"))["production_sha"])')"
+          FINAL_STG_SHA="$(python -c 'import json; print(json.load(open("config/edge-gateway-bootstrap-cutover-request.json"))["final_staging_sha"])')"
+          FINAL_STG_BRANCH="$(python -c 'import json; print(json.load(open("config/edge-gateway-bootstrap-cutover-request.json"))["final_staging_branch"])')"
+          SCOPE="$(python -c 'import json; print(json.load(open("config/edge-gateway-bootstrap-cutover-request.json"))["scope"])')"
+          AUTH="$(python -c 'import json; print(json.load(open("config/edge-gateway-bootstrap-cutover-request.json"))["remote_authorization"])')"
+
+          test "$BOOT_BRANCH" = "ops/remote-edge-gateway-bootstrap-v1"
+          test "$FINAL_STG_BRANCH" = "fix/dashboard-device-auth-staging-v1"
+          test "$PROD_SHA" = "380896964d12199936ee7c676e39352a1a68cec8"
+          test "$FINAL_STG_SHA" = "1785c022a6a9d3205fcfc36b2aed120494044158"
+          test "$SCOPE" = "remote_edge_gateway_bootstrap_and_trusted_device_cutover"
+          test "$AUTH" = "AUTHORIZED_REMOTE_EDGE_BOOTSTRAP_AND_CUTOVER"
+          [[ "$BOOT_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          git fetch --no-tags origin \
+            "$BOOT_BRANCH:refs/remotes/origin/$BOOT_BRANCH" \
+            "$FINAL_STG_BRANCH:refs/remotes/origin/$FINAL_STG_BRANCH" \
+            "fix/dashboard-device-auth-prod-v1:refs/remotes/origin/fix/dashboard-device-auth-prod-v1"
+          test "$(git rev-parse refs/remotes/origin/$FINAL_STG_BRANCH)" = "$FINAL_STG_SHA"
+          test "$(git rev-parse refs/remotes/origin/fix/dashboard-device-auth-prod-v1)" = "$PROD_SHA"
+          git merge-base --is-ancestor "$FINAL_STG_SHA" "$BOOT_SHA"
+          git merge-base --is-ancestor "$BOOT_SHA" "refs/remotes/origin/$BOOT_BRANCH"
+
+          mapfile -t changed < <(git diff --name-only "$FINAL_STG_SHA" "$BOOT_SHA")
+          test "${#changed[@]}" -eq 6
+          for path in "${changed[@]}"; do
+            case "$path" in
+              Dockerfile|compose.yaml|docker/hunter-entrypoint.sh|deploy/netcup/github_deploy_gateway.sh|deploy/netcup/apply_dashboard_device_auth_edge.sh|deploy/netcup/verify_staging_runtime_contract.sh) ;;
+              *) echo "BOOTSTRAP_SCOPE_VIOLATION=$path" >&2; exit 30 ;;
+            esac
+          done
+
+          git show "$BOOT_SHA:compose.yaml" | grep -Fq 'user: "0:0"'
+          git show "$BOOT_SHA:compose.yaml" | grep -Fq '/opt/munshi/bin:/host-bin'
+          git show "$BOOT_SHA:compose.yaml" | grep -Fq 'MUNSHI_REMOTE_EDGE_GATEWAY_BOOTSTRAP: "1"'
+          git show "$BOOT_SHA:docker/hunter-entrypoint.sh" | grep -Fq 'REMOTE_EDGE_GATEWAY_BOOTSTRAP=PASS'
+          git show "$BOOT_SHA:docker/hunter-entrypoint.sh" | grep -Fq 'os.setuid(user.pw_uid)'
+          git show "$BOOT_SHA:deploy/netcup/github_deploy_gateway.sh" | grep -Fq '/opt/munshi/bin/apply-dashboard-device-auth-edge'
+          git show "$BOOT_SHA:deploy/netcup/apply_dashboard_device_auth_edge.sh" | grep -Fq 'RESULT=DASHBOARD_DEVICE_AUTH_EDGE_PASS'
+          git show "$BOOT_SHA:deploy/netcup/verify_staging_runtime_contract.sh" | grep -Fq 'STAGING_HTTPS_AUTH_MODE=TRUSTED_DEVICE_SESSION'
+
+          git show "$BOOT_SHA:docker/hunter-entrypoint.sh" > "$RUNNER_TEMP/bootstrap-entrypoint.sh"
+          git show "$BOOT_SHA:deploy/netcup/github_deploy_gateway.sh" > "$RUNNER_TEMP/bootstrap-gateway.sh"
+          git show "$BOOT_SHA:deploy/netcup/apply_dashboard_device_auth_edge.sh" > "$RUNNER_TEMP/bootstrap-edge.sh"
+          git show "$BOOT_SHA:deploy/netcup/verify_staging_runtime_contract.sh" > "$RUNNER_TEMP/bootstrap-staging-verify.sh"
+          sh -n "$RUNNER_TEMP/bootstrap-entrypoint.sh"
+          bash -n "$RUNNER_TEMP/bootstrap-gateway.sh"
+          bash -n "$RUNNER_TEMP/bootstrap-edge.sh"
+          bash -n "$RUNNER_TEMP/bootstrap-staging-verify.sh"
+
+          echo "bootstrap_sha=$BOOT_SHA" >> "$GITHUB_OUTPUT"
+          echo "bootstrap_branch=$BOOT_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "production_sha=$PROD_SHA" >> "$GITHUB_OUTPUT"
+          echo "final_staging_sha=$FINAL_STG_SHA" >> "$GITHUB_OUTPUT"
+          echo "final_staging_branch=$FINAL_STG_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "REMOTE_EDGE_BOOTSTRAP_SCOPE=PASS"
+
+  ci:
+    needs: validate
+    uses: ./.github/workflows/deployment-ci-reusable.yml
+    with:
+      commit_sha: ${{ needs.validate.outputs.bootstrap_sha }}
+
+  bootstrap-cutover-cleanup:
+    needs: [validate, ci]
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 45
+    steps:
+      - name: Checkout bootstrap candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.bootstrap_sha }}
+          fetch-depth: 0
+
+      - name: Build exact bootstrap and cleanup bundles
+        shell: bash
+        env:
+          BOOT_SHA: ${{ needs.validate.outputs.bootstrap_sha }}
+          BOOT_BRANCH: ${{ needs.validate.outputs.bootstrap_branch }}
+          FINAL_STG_SHA: ${{ needs.validate.outputs.final_staging_sha }}
+          FINAL_STG_BRANCH: ${{ needs.validate.outputs.final_staging_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "$BOOT_BRANCH:refs/remotes/origin/$BOOT_BRANCH" \
+            "$FINAL_STG_BRANCH:refs/remotes/origin/$FINAL_STG_BRANCH"
+          test "$(git rev-parse refs/remotes/origin/$BOOT_BRANCH)" = "$BOOT_SHA"
+          test "$(git rev-parse refs/remotes/origin/$FINAL_STG_BRANCH)" = "$FINAL_STG_SHA"
+          git bundle create "$RUNNER_TEMP/bootstrap.bundle" "refs/remotes/origin/$BOOT_BRANCH"
+          git bundle create "$RUNNER_TEMP/cleanup.bundle" "refs/remotes/origin/$FINAL_STG_BRANCH"
+          git bundle verify "$RUNNER_TEMP/bootstrap.bundle"
+          git bundle verify "$RUNNER_TEMP/cleanup.bundle"
+
+      - name: Configure restricted SSH transport
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_SSH_PRIVATE_KEY"
+          test -n "$NETCUP_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_deploy"
+          chmod 600 "$HOME/.ssh/netcup_deploy"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy one-time staging bootstrap through existing gateway
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          BOOT_SHA: ${{ needs.validate.outputs.bootstrap_sha }}
+          BOOT_BRANCH: ${{ needs.validate.outputs.bootstrap_branch }}
+        run: |
+          set -euo pipefail
+          LOG="$RUNNER_TEMP/bootstrap-deploy.log"
+          cat "$RUNNER_TEMP/bootstrap.bundle" | \
+            ssh -i "$HOME/.ssh/netcup_deploy" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              "$NETCUP_USER@$NETCUP_HOST" \
+              "/opt/munshi/bin/deploy-staging-release --commit $BOOT_SHA --branch $BOOT_BRANCH" | tee "$LOG"
+          grep -F "DEPLOYED_SHA=$BOOT_SHA" "$LOG"
+          grep -F 'STAGING_N8N_RECREATED=NO' "$LOG"
+          grep -F 'STAGING_OLLAMA_RECREATED=NO' "$LOG"
+          grep -F 'PRODUCTION_CONTAINERS_CHANGED=NO' "$LOG"
+          grep -F 'RESULT=STAGING_DEPLOYMENT_PASS' "$LOG"
+
+      - name: Apply trusted-device Caddy cutover through newly bootstrapped gateway
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          PROD_SHA: ${{ needs.validate.outputs.production_sha }}
+          BOOT_SHA: ${{ needs.validate.outputs.bootstrap_sha }}
+        run: |
+          set -euo pipefail
+          LOG="$RUNNER_TEMP/edge-cutover.log"
+          ssh -i "$HOME/.ssh/netcup_deploy" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "$NETCUP_USER@$NETCUP_HOST" \
+            "/opt/munshi/bin/apply-dashboard-device-auth-edge --production-sha $PROD_SHA --staging-sha $BOOT_SHA" | tee "$LOG"
+          grep -F "PRODUCTION_SHA=$PROD_SHA" "$LOG"
+          grep -F "STAGING_SHA=$BOOT_SHA" "$LOG"
+          grep -F 'AUTH_BACKENDS_READY=PASS' "$LOG"
+          grep -F 'CADDY_CANDIDATE_VALIDATE=PASS' "$LOG"
+          grep -F 'EDGE_RECREATED=NO' "$LOG"
+          grep -F 'N8N_OLLAMA_IDENTITIES_UNCHANGED=PASS' "$LOG"
+          grep -F 'POST_CUTOVER_RUNTIME_CONTRACTS=PASS' "$LOG"
+          grep -F 'RESULT=DASHBOARD_DEVICE_AUTH_EDGE_PASS' "$LOG"
+
+      - name: Remove temporary privileged staging bootstrap by restoring exact staging release
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          FINAL_STG_SHA: ${{ needs.validate.outputs.final_staging_sha }}
+          FINAL_STG_BRANCH: ${{ needs.validate.outputs.final_staging_branch }}
+        run: |
+          set -euo pipefail
+          LOG="$RUNNER_TEMP/cleanup-deploy.log"
+          cat "$RUNNER_TEMP/cleanup.bundle" | \
+            ssh -i "$HOME/.ssh/netcup_deploy" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              "$NETCUP_USER@$NETCUP_HOST" \
+              "/opt/munshi/bin/deploy-staging-release --commit $FINAL_STG_SHA --branch $FINAL_STG_BRANCH" | tee "$LOG"
+          grep -F "DEPLOYED_SHA=$FINAL_STG_SHA" "$LOG"
+          grep -F 'STAGING_N8N_RECREATED=NO' "$LOG"
+          grep -F 'STAGING_OLLAMA_RECREATED=NO' "$LOG"
+          grep -F 'STAGING_EDGE_RECREATED=NO' "$LOG"
+          grep -F 'PRODUCTION_CONTAINERS_CHANGED=NO' "$LOG"
+          grep -F 'RESULT=STAGING_DEPLOYMENT_PASS' "$LOG"
+
+      - name: Verify both public trusted-device edges from GitHub runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          for host in dashboard.munshi.systems staging-dashboard.munshi.systems; do
+            ROOT="$(curl -ksS --max-time 15 -o /dev/null -w '%{http_code}' "https://$host/")"
+            LOGIN="$(curl -ksS --max-time 15 -o /dev/null -w '%{http_code}' "https://$host/_munshi-auth/login?next=%2F")"
+            test "$ROOT" = "303"
+            test "$LOGIN" = "401"
+            echo "$host ROOT_UNAUTH=$ROOT LOGIN_UNAUTH=$LOGIN TRUSTED_DEVICE_EDGE=PASS"
+          done
+
+      - name: Record remote completion receipt
+        shell: bash
+        env:
+          PROD_SHA: ${{ needs.validate.outputs.production_sha }}
+          FINAL_STG_SHA: ${{ needs.validate.outputs.final_staging_sha }}
+        run: |
+          {
+            echo "### Trusted-device auth edge deployed remotely"
+            echo "- production backend: \`$PROD_SHA\`"
+            echo "- staging restored to: \`$FINAL_STG_SHA\`"
+            echo "- Caddy: reload only, no recreation"
+            echo "- n8n/Ollama: unchanged"
+            echo "- temporary privileged staging bootstrap: removed"
+            echo "- local terminal: not required"
+          } >> "$GITHUB_STEP_SUMMARY"
