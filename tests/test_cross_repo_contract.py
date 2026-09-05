@@ -12,6 +12,7 @@ from app.cross_repo_contract import (
     event_can_assert_submission,
     validate_execution_receipt,
     validate_profile_snapshot,
+    validate_receipt_correlation,
     validate_resume_artifact,
 )
 
@@ -21,11 +22,16 @@ def _profile_snapshot() -> dict[str, object]:
         "contract_version": PROFILE_SNAPSHOT_VERSION,
         "authority": "munshi-hr-hunter",
         "projection_mode": "READ_ONLY",
+        "revision_scope": "SOURCE_EXTRACTION",
         "tenant_id": "owner",
         "user_id": "owner-user",
         "profile_id": "profile-1",
         "profile_revision": 7,
+        "override_revision": 3,
+        "candidate_details_revision": 2,
         "source_extraction_id": "extract-3",
+        "source_profile_sha256": "a" * 64,
+        "source_resume_sha256": "b" * 64,
         "generated_at": "2026-09-05T20:30:00+00:00",
         "facts": [
             {
@@ -55,10 +61,11 @@ def _receipt(event_type: str, **payload: object) -> dict[str, object]:
         "contract_version": EXECUTION_RECEIPT_VERSION,
         "source": "munshi-apply",
         "event_id": f"event-{event_type.lower()}",
-        "correlation_id": "handoff-1",
+        "correlation_id": "correlation-1",
         "tenant_id": "owner",
         "user_id": "owner-user",
         "handoff_id": "handoff-1",
+        "handoff_body_sha256": "c" * 64,
         "preparation_id": "prep-1",
         "application_id": "application-1",
         "runtime_application_id": "apply-runtime-1",
@@ -69,10 +76,13 @@ def _receipt(event_type: str, **payload: object) -> dict[str, object]:
     }
 
 
-def test_profile_projection_is_hunter_owned_read_only_and_digest_bound() -> None:
+def test_profile_projection_is_hunter_owned_read_only_and_evidence_bound() -> None:
     validated = validate_profile_snapshot(_profile_snapshot())
     assert validated["authority"] == "munshi-hr-hunter"
     assert validated["projection_mode"] == "READ_ONLY"
+    assert validated["revision_scope"] == "SOURCE_EXTRACTION"
+    assert validated["source_profile_sha256"] == "a" * 64
+    assert validated["source_resume_sha256"] == "b" * 64
     assert len(validated["profile_digest"]) == 64
     assert "value" not in validated["facts"][1]
     assert validated["facts"][1]["value_reference"].startswith("vault://")
@@ -87,8 +97,43 @@ def test_profile_projection_is_hunter_owned_read_only_and_digest_bound() -> None
     with pytest.raises(ValueError, match="READ_ONLY"):
         validate_profile_snapshot(writable)
 
+    wrong_scope = _profile_snapshot()
+    wrong_scope["revision_scope"] = "GLOBAL"
+    with pytest.raises(ValueError, match="SOURCE_EXTRACTION"):
+        validate_profile_snapshot(wrong_scope)
 
-def test_protected_fact_plaintext_and_duplicate_facts_fail_closed() -> None:
+
+def test_profile_digest_is_stable_across_export_time_and_fact_input_order() -> None:
+    first = validate_profile_snapshot(_profile_snapshot())
+
+    repeated = _profile_snapshot()
+    repeated["generated_at"] = "2026-09-05T21:30:00+00:00"
+    facts = repeated["facts"]
+    assert isinstance(facts, list)
+    repeated["facts"] = list(reversed(facts))
+    second = validate_profile_snapshot(repeated)
+
+    assert first["profile_digest"] == second["profile_digest"]
+    assert first["facts"] == second["facts"]
+
+
+def test_profile_digest_changes_when_truth_or_evidence_binding_changes() -> None:
+    first = validate_profile_snapshot(_profile_snapshot())
+
+    changed_truth = _profile_snapshot()
+    facts = changed_truth["facts"]
+    assert isinstance(facts, list)
+    facts[0] = {**facts[0], "value": "Different Candidate"}
+    second = validate_profile_snapshot(changed_truth)
+    assert first["profile_digest"] != second["profile_digest"]
+
+    changed_source = _profile_snapshot()
+    changed_source["source_resume_sha256"] = "d" * 64
+    third = validate_profile_snapshot(changed_source)
+    assert first["profile_digest"] != third["profile_digest"]
+
+
+def test_protected_plaintext_duplicate_ids_and_duplicate_keys_fail_closed() -> None:
     snapshot = _profile_snapshot()
     facts = snapshot["facts"]
     assert isinstance(facts, list)
@@ -98,15 +143,25 @@ def test_protected_fact_plaintext_and_duplicate_facts_fail_closed() -> None:
     with pytest.raises(ValueError, match="must not embed plaintext"):
         validate_profile_snapshot(snapshot)
 
-    duplicate = _profile_snapshot()
-    duplicate_facts = duplicate["facts"]
+    duplicate_id = _profile_snapshot()
+    duplicate_facts = duplicate_id["facts"]
     assert isinstance(duplicate_facts, list)
-    duplicate["facts"] = [duplicate_facts[0], dict(duplicate_facts[0])]
+    duplicate_id["facts"] = [duplicate_facts[0], dict(duplicate_facts[0])]
     with pytest.raises(ValueError, match="duplicate fact_id"):
-        validate_profile_snapshot(duplicate)
+        validate_profile_snapshot(duplicate_id)
+
+    duplicate_key = _profile_snapshot()
+    key_facts = duplicate_key["facts"]
+    assert isinstance(key_facts, list)
+    duplicate_key["facts"] = [
+        key_facts[0],
+        {**key_facts[1], "key": key_facts[0]["key"]},
+    ]
+    with pytest.raises(ValueError, match="duplicate profile fact key"):
+        validate_profile_snapshot(duplicate_key)
 
 
-def test_resume_artifact_requires_exact_sha_binding() -> None:
+def test_resume_artifact_requires_exact_profile_and_sha_binding() -> None:
     artifact = validate_resume_artifact(
         {
             "artifact_id": "resume-1",
@@ -115,13 +170,18 @@ def test_resume_artifact_requires_exact_sha_binding() -> None:
             "mime_type": "application/pdf",
             "size_bytes": 12345,
             "source_preparation_id": "prep-1",
+            "source_extraction_id": "extract-3",
             "profile_revision": 7,
+            "profile_digest": "b" * 64,
             "job_id": "42",
         }
     )
     assert artifact["sha256"] == "a" * 64
+    assert artifact["profile_digest"] == "b" * 64
     with pytest.raises(ValueError, match="SHA-256"):
         validate_resume_artifact({**artifact, "sha256": "not-a-digest"})
+    with pytest.raises(ValueError, match="profile_digest"):
+        validate_resume_artifact({**artifact, "profile_digest": "bad"})
 
 
 def test_handoff_or_email_cannot_assert_submission() -> None:
@@ -133,6 +193,13 @@ def test_handoff_or_email_cannot_assert_submission() -> None:
     ready = _receipt("APPLICATION_READY")
     assert crm_projection_for_receipt(ready) == "READY_FOR_REVIEW"
     assert event_can_assert_submission(ready) is False
+
+
+def test_non_submission_event_cannot_smuggle_submission_or_confirmation_claims() -> None:
+    with pytest.raises(ValueError, match="non-submission"):
+        validate_execution_receipt(_receipt("APPLICATION_READY", submit_succeeded=True))
+    with pytest.raises(ValueError, match="non-confirmation"):
+        validate_execution_receipt(_receipt("APPLICATION_READY", confirmation_observed=True))
 
 
 def test_submission_requires_verified_successful_apply_evidence() -> None:
@@ -156,6 +223,41 @@ def test_confirmation_requires_confirmation_evidence() -> None:
     confirmed = _receipt("APPLICATION_CONFIRMED", confirmation_observed=True)
     assert crm_projection_for_receipt(confirmed) == "SUBMITTED_CONFIRMED"
     assert event_can_assert_submission(confirmed) is True
+
+
+def test_receipt_must_correlate_to_exact_hunter_handoff_context() -> None:
+    ready = _receipt("APPLICATION_READY")
+    validated = validate_receipt_correlation(
+        ready,
+        tenant_id="owner",
+        user_id="owner-user",
+        handoff_id="handoff-1",
+        handoff_body_sha256="c" * 64,
+        preparation_id="prep-1",
+        application_id="application-1",
+    )
+    assert validated["handoff_id"] == "handoff-1"
+
+    with pytest.raises(ValueError, match="handoff_body_sha256"):
+        validate_receipt_correlation(
+            ready,
+            tenant_id="owner",
+            user_id="owner-user",
+            handoff_id="handoff-1",
+            handoff_body_sha256="d" * 64,
+            preparation_id="prep-1",
+            application_id="application-1",
+        )
+    with pytest.raises(ValueError, match="application_id"):
+        validate_receipt_correlation(
+            ready,
+            tenant_id="owner",
+            user_id="owner-user",
+            handoff_id="handoff-1",
+            handoff_body_sha256="c" * 64,
+            preparation_id="prep-1",
+            application_id="application-OTHER",
+        )
 
 
 def test_checkpoint_and_failure_stay_non_submitted() -> None:
