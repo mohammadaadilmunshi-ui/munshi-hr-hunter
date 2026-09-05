@@ -1,7 +1,7 @@
 {
-  "commit_sha": "10e66c2f7c3eb52b12fb409704d5471b524e9a58",
+  "commit_sha": "93a105a0cd1b1d51945f499e09e55eb3adccb170",
   "source_branch": "feat/native-resume-studio-v1",
   "requested_by": "remote-staging-relay-v1",
-  "request_revision": 7,
-  "purpose": "Deploy and verify the Resume Studio Master Resume save-state hotfix on isolated Netcup staging only. The fix preserves existing Master Resume persistence/evidence authority and defers widget-bound source/confirmation state synchronization until the next Streamlit render pass, preventing StreamlitAPIException after Save master source. Preserve Profile Workspace V1, n8n/Ollama/edge, and all production containers unchanged."
+  "request_revision": 8,
+  "purpose": "Deploy and verify Profile Workspace preview-to-permanent handoff on isolated Netcup staging only. A saved Master Resume may build a structured profile directly from Profile; DRAFT profile extractions render immediately through the existing V1 two-column logo-resolved Profile Details layout; explicit confirmation promotes the reviewed snapshot to permanent authority. Preserve Resume Studio truth/edit authority, n8n/Ollama/edge, browser submission authority, and all production containers unchanged."
 }
