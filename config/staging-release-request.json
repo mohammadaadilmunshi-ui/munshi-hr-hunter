@@ -1,7 +1,7 @@
 {
-  "commit_sha": "b07875b81fe169289e239677e85a1487dbc1cbe9",
+  "commit_sha": "cb64d7b54af61d23b01da293dd4059161dc6928d",
   "source_branch": "feat/native-resume-studio-v1",
   "requested_by": "remote-staging-relay-v1",
-  "request_revision": 5,
-  "purpose": "Deploy and verify MUNSHI Resume Studio V3.1 on isolated Netcup staging only: repair fragmented PDF extraction with coordinate-aware layout reconstruction and reflow, add complete candidate profile-details UI, and store candidate-entered application/self-ID details only in the AES-GCM vault with no plaintext fallback. Preserve n8n/Ollama/edge and all production containers unchanged."
+  "request_revision": 6,
+  "purpose": "Deploy and verify MUNSHI Profile Workspace V1 on isolated Netcup staging only: promote the latest CONFIRMED Native Resume profile into the top-level Profile route, add the MUNSHI-branded reference two-column Profile Details layout, and enable cached public employer/university/certification logo resolution through Wikidata/Wikimedia with initials fallback. Preserve Resume Studio as profile source authority, preserve n8n/Ollama/edge, and keep all production containers unchanged."
 }
