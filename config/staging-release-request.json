@@ -1,7 +1,7 @@
 {
-  "commit_sha": "91746363d71ec41a935a54127c2e9dea403b722f",
+  "commit_sha": "86bc37d3e00bbb1f111a829413daef070712a8da",
   "source_branch": "feat/native-resume-studio-v1",
   "requested_by": "remote-staging-relay-v1",
-  "request_revision": 3,
-  "purpose": "Deploy and verify MUNSHI Native Resume Studio V2 personal JD writer controls on isolated Netcup staging only: Master Resume upload/review, Slight/Medium/Aggressive rewriting, encrypted candidate OpenAI key support, writer constraints, and existing truth/ATS/versioning guards. Preserve n8n/Ollama/edge and production containers unchanged."
+  "request_revision": 4,
+  "purpose": "Deploy and verify MUNSHI Native Resume Studio V3 on isolated Netcup staging only: PDF/DOCX/TXT/Markdown Master Resume intake, local PDF text extraction, structured candidate-profile extraction and review, encrypted profile snapshots when the server vault is available, plus existing V2 JD rewrite controls. Preserve n8n/Ollama/edge and production containers unchanged."
 }
