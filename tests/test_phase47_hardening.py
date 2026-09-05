@@ -19,7 +19,11 @@ from app import phase47_integrity
 from app import profile_truth_overrides_v1 as overrides
 from app import relationship_intelligence_v3 as relationship_v3
 from app import resume_profile_details_v31 as profile_details
-from app.tenant_foundation import associate_owned_record
+from app.tenant_foundation import (
+    DEFAULT_TENANT_ID,
+    DEFAULT_USER_ID,
+    associate_owned_record,
+)
 
 
 def _vault_key() -> str:
@@ -300,8 +304,8 @@ def test_phase6_refuses_persistence_if_binding_inputs_change_mid_evaluation(
     career_policy.save_preferences({"target_roles": ["People Analytics Analyst"]})
     career_policy.save_autopilot_policy({})
     first = {
-        "tenant_id": "local-singleton",
-        "user_id": "local-user",
+        "tenant_id": DEFAULT_TENANT_ID,
+        "user_id": DEFAULT_USER_ID,
         "source_extraction_id": "phase6-snapshot",
         "profile_revision": 1,
         "profile_digest": "a" * 64,
