@@ -6,6 +6,8 @@ on:
       - feat/native-resume-studio-v1
     paths:
       - "app/**"
+      - "docker/**"
+      - "scripts/**"
       - "migrations/**"
       - "tests/**"
       - "requirements*.txt"
@@ -151,30 +153,75 @@ jobs:
       - name: Install locked dependencies
         run: python -m pip install -r requirements.lock.txt
 
-      - name: Verify native, n8n-selector, tenant and Product regressions
+      - name: Verify complete Phase 1-7 staging candidate
         run: |
+          set -euo pipefail
           python -m pip check
           python -m py_compile \
             app/native_resume_studio.py \
             app/native_resume_service.py \
+            app/native_resume_service_v2.py \
+            app/native_resume_service_v3.py \
+            app/native_resume_service_v4.py \
+            app/phase4_job_binding.py \
+            app/answer_brain.py \
+            app/answer_brain_v2.py \
+            app/phase45_truth_binding.py \
+            app/phase67_common.py \
+            app/opportunity_intelligence_v2.py \
+            app/opportunity_intelligence_v3.py \
+            app/relationship_intelligence.py \
+            app/relationship_intelligence_v2.py \
+            app/relationship_intelligence_v3.py \
+            app/phase47_integrity.py \
+            app/profile_workspace_v1.py \
+            app/profile_workspace_v2.py \
+            app/profile_workspace_v3.py \
             app/resume_studio_page.py \
             app/resume_engine_selector.py \
+            app/application_workspace_page.py \
+            app/staging_feature_policy.py \
             app/product_shell.py \
-            migrations/027_native_resume_studio.py
+            docker/hunter-supervisor.py \
+            scripts/phase17_staging_migrate.py \
+            migrations/027_native_resume_studio.py \
+            migrations/028_native_resume_studio_v2.py \
+            migrations/029_native_resume_studio_v3.py \
+            migrations/030_profile_workspace_v1.py \
+            migrations/031_phase45_truth_bindings.py \
+            migrations/032_phase67_intelligence_snapshots.py \
+            migrations/033_phase47_integrity_bindings.py
           python -m pytest -q \
             tests/test_native_resume_studio.py \
             tests/test_native_resume_service.py \
+            tests/test_native_resume_service_v2.py \
+            tests/test_native_resume_service_v3.py \
+            tests/test_answer_brain.py \
+            tests/test_phase45_truth_binding.py \
+            tests/test_phase67_intelligence.py \
+            tests/test_phase47_hardening.py \
+            tests/test_phase17_staging_visibility.py \
             tests/test_resume_engine_selector.py \
             tests/test_candidate_artifacts.py \
             tests/test_tenant_foundation.py \
+            tests/test_profile_workspace_v1.py \
+            tests/test_profile_workspace_v2.py \
+            tests/test_profile_truth_editor_v1.py \
+            tests/test_profile_truth_revision.py \
             tests/test_product_schema.py \
             tests/test_product_ui_v22.py
           python - <<'PY'
           from app.native_resume_service import native_resume_authority_enabled
+          from app.native_resume_service_v2 import native_resume_authority_enabled as v2_authority
+          from app.native_resume_service_v3 import native_resume_authority_enabled as v3_authority
+          from app.native_resume_service_v4 import native_resume_authority_enabled as v4_authority
           from app.native_resume_shadow import native_resume_authority_enabled as shadow_authority
           assert native_resume_authority_enabled() is False
+          assert v2_authority() is False
+          assert v3_authority() is False
+          assert v4_authority() is False
           assert shadow_authority() is False
-          print('native resume authority remains disabled; n8n path remains preserved')
+          print('Phase 1-7 preparation candidate verified; submission authority remains disabled')
           PY
           ! git ls-files | grep -E '(^|/)(\.env|.*\.(db|sqlite|sqlite3|wal|shm|pem|p12|pfx|key))$'
           git diff --check
@@ -301,6 +348,7 @@ jobs:
             echo "### Staging deployment verified"
             echo "- exact SHA: \`$DEPLOY_SHA\`"
             echo "- hardened staging wrapper"
+            echo "- Phase 1-7 migration occurs before Streamlit startup; successful staging health proves migration did not fail"
             echo "- production mutation: none"
           } >> "$GITHUB_STEP_SUMMARY"
 
