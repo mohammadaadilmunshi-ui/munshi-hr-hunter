@@ -1,0 +1,221 @@
+name: Netcup Remote Staging Recovery Bootstrap
+
+on:
+  push:
+    branches:
+      - feat/autonomous-career-os-foundation
+    paths:
+      - "config/staging-recovery-bootstrap-request.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-staging-recovery-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      bootstrap_sha: ${{ steps.gate.outputs.bootstrap_sha }}
+      bootstrap_branch: ${{ steps.gate.outputs.bootstrap_branch }}
+      from_staging_sha: ${{ steps.gate.outputs.from_staging_sha }}
+      target_staging_sha: ${{ steps.gate.outputs.target_staging_sha }}
+      target_staging_branch: ${{ steps.gate.outputs.target_staging_branch }}
+      production_sha: ${{ steps.gate.outputs.production_sha }}
+      production_branch: ${{ steps.gate.outputs.production_branch }}
+    steps:
+      - name: Checkout trusted control branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/autonomous-career-os-foundation
+          fetch-depth: 0
+
+      - name: Validate exact recovery bootstrap scope
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE=config/staging-recovery-bootstrap-request.json
+          test -f "$FILE"
+          B_SHA="$(python -c 'import json; print(json.load(open("config/staging-recovery-bootstrap-request.json"))["bootstrap_sha"])')"
+          B_BRANCH="$(python -c 'import json; print(json.load(open("config/staging-recovery-bootstrap-request.json"))["bootstrap_branch"])')"
+          FROM="$(python -c 'import json; print(json.load(open("config/staging-recovery-bootstrap-request.json"))["from_staging_sha"])')"
+          TARGET="$(python -c 'import json; print(json.load(open("config/staging-recovery-bootstrap-request.json"))["target_staging_sha"])')"
+          TARGET_BRANCH="$(python -c 'import json; print(json.load(open("config/staging-recovery-bootstrap-request.json"))["target_staging_branch"])')"
+          PROD="$(python -c 'import json; print(json.load(open("config/staging-recovery-bootstrap-request.json"))["production_sha"])')"
+          PROD_BRANCH="$(python -c 'import json; print(json.load(open("config/staging-recovery-bootstrap-request.json"))["production_branch"])')"
+          SCOPE="$(python -c 'import json; print(json.load(open("config/staging-recovery-bootstrap-request.json"))["scope"])')"
+          AUTH="$(python -c 'import json; print(json.load(open("config/staging-recovery-bootstrap-request.json"))["remote_authorization"])')"
+
+          test "$B_BRANCH" = "ops/production-staging-recovery-bootstrap-v1"
+          test "$FROM" = "2fd6814c6685bb21adb1d0d7fd60249680da1c1c"
+          test "$TARGET" = "1785c022a6a9d3205fcfc36b2aed120494044158"
+          test "$TARGET_BRANCH" = "fix/dashboard-device-auth-staging-v1"
+          test "$PROD" = "380896964d12199936ee7c676e39352a1a68cec8"
+          test "$PROD_BRANCH" = "fix/dashboard-device-auth-prod-v1"
+          test "$SCOPE" = "recover_failed_staging_edge_bootstrap_only"
+          test "$AUTH" = "AUTHORIZED_REMOTE_STAGING_RECOVERY"
+          [[ "$B_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          git fetch --no-tags origin \
+            "$B_BRANCH:refs/remotes/origin/$B_BRANCH" \
+            "$PROD_BRANCH:refs/remotes/origin/$PROD_BRANCH" \
+            "$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH"
+          test "$(git rev-parse refs/remotes/origin/$B_BRANCH)" = "$B_SHA"
+          test "$(git rev-parse refs/remotes/origin/$PROD_BRANCH)" = "$PROD"
+          test "$(git rev-parse refs/remotes/origin/$TARGET_BRANCH)" = "$TARGET"
+          git merge-base --is-ancestor "$PROD" "$B_SHA"
+
+          mapfile -t changed < <(git diff --name-only "$PROD" "$B_SHA")
+          test "${#changed[@]}" -eq 5
+          for path in "${changed[@]}"; do
+            case "$path" in
+              Dockerfile|compose.yaml|docker/hunter-entrypoint.sh|deploy/netcup/github_deploy_gateway.sh|deploy/netcup/recover_staging_auth_bootstrap.sh) ;;
+              *) echo "RECOVERY_BOOTSTRAP_SCOPE_VIOLATION=$path" >&2; exit 30 ;;
+            esac
+          done
+
+          git show "$B_SHA:compose.yaml" | grep -Fq 'user: "0:0"'
+          git show "$B_SHA:compose.yaml" | grep -Fq '/opt/munshi/bin:/host-bin'
+          git show "$B_SHA:docker/hunter-entrypoint.sh" | grep -Fq 'os.setgid(user.pw_gid)'
+          git show "$B_SHA:docker/hunter-entrypoint.sh" | grep -Fq 'os.setuid(user.pw_uid)'
+          git show "$B_SHA:deploy/netcup/recover_staging_auth_bootstrap.sh" | grep -Fq 'RESULT=STAGING_AUTH_BOOTSTRAP_RECOVERY_PASS'
+          git show "$B_SHA:deploy/netcup/github_deploy_gateway.sh" | grep -Fq '/opt/munshi/bin/recover-staging-auth-bootstrap'
+
+          echo "bootstrap_sha=$B_SHA" >> "$GITHUB_OUTPUT"
+          echo "bootstrap_branch=$B_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "from_staging_sha=$FROM" >> "$GITHUB_OUTPUT"
+          echo "target_staging_sha=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "target_staging_branch=$TARGET_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "production_sha=$PROD" >> "$GITHUB_OUTPUT"
+          echo "production_branch=$PROD_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "STAGING_RECOVERY_BOOTSTRAP_SCOPE=PASS"
+
+  ci:
+    needs: validate
+    uses: ./.github/workflows/deployment-ci-reusable.yml
+    with:
+      commit_sha: ${{ needs.validate.outputs.bootstrap_sha }}
+
+  deploy-recover-restore:
+    needs: [validate, ci]
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 60
+    steps:
+      - name: Checkout production-side recovery bootstrap
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.bootstrap_sha }}
+          fetch-depth: 0
+
+      - name: Build bootstrap and production-restore bundles
+        shell: bash
+        env:
+          BOOT_SHA: ${{ needs.validate.outputs.bootstrap_sha }}
+          BOOT_BRANCH: ${{ needs.validate.outputs.bootstrap_branch }}
+          PROD_SHA: ${{ needs.validate.outputs.production_sha }}
+          PROD_BRANCH: ${{ needs.validate.outputs.production_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "$BOOT_BRANCH:refs/remotes/origin/$BOOT_BRANCH" \
+            "$PROD_BRANCH:refs/remotes/origin/$PROD_BRANCH"
+          test "$(git rev-parse refs/remotes/origin/$BOOT_BRANCH)" = "$BOOT_SHA"
+          test "$(git rev-parse refs/remotes/origin/$PROD_BRANCH)" = "$PROD_SHA"
+          git bundle create "$RUNNER_TEMP/recovery-bootstrap.bundle" "refs/remotes/origin/$BOOT_BRANCH"
+          git bundle create "$RUNNER_TEMP/production-restore.bundle" "refs/remotes/origin/$PROD_BRANCH"
+          git bundle verify "$RUNNER_TEMP/recovery-bootstrap.bundle"
+          git bundle verify "$RUNNER_TEMP/production-restore.bundle"
+
+      - name: Configure restricted SSH
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_SSH_PRIVATE_KEY"
+          test -n "$NETCUP_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_deploy"
+          chmod 600 "$HOME/.ssh/netcup_deploy"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Install narrow recovery gateway through temporary production bootstrap
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          BOOT_SHA: ${{ needs.validate.outputs.bootstrap_sha }}
+          BOOT_BRANCH: ${{ needs.validate.outputs.bootstrap_branch }}
+          PROD_SHA: ${{ needs.validate.outputs.production_sha }}
+        run: |
+          set -euo pipefail
+          LOG="$RUNNER_TEMP/production-recovery-bootstrap.log"
+          cat "$RUNNER_TEMP/recovery-bootstrap.bundle" | \
+            ssh -i "$HOME/.ssh/netcup_deploy" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              "$NETCUP_USER@$NETCUP_HOST" \
+              "/opt/munshi/bin/deploy-production-release --commit $BOOT_SHA --branch $BOOT_BRANCH" | tee "$LOG"
+          grep -F "PREVIOUS_SHA=$PROD_SHA" "$LOG"
+          grep -F "DEPLOYED_SHA=$BOOT_SHA" "$LOG"
+          grep -F 'N8N_RECREATED=NO' "$LOG"
+          grep -F 'OLLAMA_RECREATED=NO' "$LOG"
+          grep -F 'RESULT=PRODUCTION_DEPLOYMENT_PASS' "$LOG"
+
+      - name: Recover exact stable staging runtime
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          FROM_STG: ${{ needs.validate.outputs.from_staging_sha }}
+          TARGET_STG: ${{ needs.validate.outputs.target_staging_sha }}
+          TARGET_BRANCH: ${{ needs.validate.outputs.target_staging_branch }}
+        run: |
+          set -euo pipefail
+          LOG="$RUNNER_TEMP/staging-recovery.log"
+          ssh -i "$HOME/.ssh/netcup_deploy" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "$NETCUP_USER@$NETCUP_HOST" \
+            "/opt/munshi/bin/recover-staging-auth-bootstrap --from-sha $FROM_STG --to-sha $TARGET_STG --to-branch $TARGET_BRANCH" | tee "$LOG"
+          grep -F "RECOVERED_FROM_SHA=$FROM_STG" "$LOG"
+          grep -F "RECOVERED_TO_SHA=$TARGET_STG" "$LOG"
+          grep -F 'STAGING_HUNTER_RECOVERED_HEALTHY=PASS' "$LOG"
+          grep -F 'STAGING_N8N_RECREATED=NO' "$LOG"
+          grep -F 'STAGING_OLLAMA_RECREATED=NO' "$LOG"
+          grep -F 'STAGING_EDGE_RECREATED=NO' "$LOG"
+          grep -F 'POST_RECOVERY_RUNTIME_CONTRACTS=PASS' "$LOG"
+          grep -F 'RESULT=STAGING_AUTH_BOOTSTRAP_RECOVERY_PASS' "$LOG"
+
+      - name: Restore exact production auth-only runtime
+        if: always()
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          PROD_SHA: ${{ needs.validate.outputs.production_sha }}
+          PROD_BRANCH: ${{ needs.validate.outputs.production_branch }}
+        run: |
+          set -euo pipefail
+          LOG="$RUNNER_TEMP/production-restore.log"
+          cat "$RUNNER_TEMP/production-restore.bundle" | \
+            ssh -i "$HOME/.ssh/netcup_deploy" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              "$NETCUP_USER@$NETCUP_HOST" \
+              "/opt/munshi/bin/deploy-production-release --commit $PROD_SHA --branch $PROD_BRANCH" | tee "$LOG"
+          grep -F "DEPLOYED_SHA=$PROD_SHA" "$LOG"
+          grep -F 'N8N_RECREATED=NO' "$LOG"
+          grep -F 'OLLAMA_RECREATED=NO' "$LOG"
+          grep -F 'RESULT=PRODUCTION_DEPLOYMENT_PASS' "$LOG"
+
+      - name: Verify legacy edge remains protected before final cutover
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for host in dashboard.munshi.systems staging-dashboard.munshi.systems; do
+            CODE="$(curl -ksS --max-time 15 -o /dev/null -w '%{http_code}' "https://$host/")"
+            test "$CODE" = "401"
+            echo "$host PRE_CUTOVER_BASIC_AUTH=PASS"
+          done
