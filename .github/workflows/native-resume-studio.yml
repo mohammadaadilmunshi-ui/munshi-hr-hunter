@@ -27,22 +27,25 @@ jobs:
       - name: Verify packages
         run: python -m pip check
 
-      - name: Compile native Resume Studio and product shell
+      - name: Compile native Resume Studio, engine selector, and product shell
         run: |
           python -m py_compile \
             app/native_resume_studio.py \
             app/native_resume_service.py \
             app/resume_studio_page.py \
+            app/resume_engine_selector.py \
             app/product_shell.py \
             migrations/027_native_resume_studio.py \
             tests/test_native_resume_studio.py \
-            tests/test_native_resume_service.py
+            tests/test_native_resume_service.py \
+            tests/test_resume_engine_selector.py
 
       - name: Run native Resume Studio safety and regression tests
         run: |
           python -m pytest -q \
             tests/test_native_resume_studio.py \
             tests/test_native_resume_service.py \
+            tests/test_resume_engine_selector.py \
             tests/test_candidate_artifacts.py \
             tests/test_tenant_foundation.py \
             tests/test_product_schema.py \
