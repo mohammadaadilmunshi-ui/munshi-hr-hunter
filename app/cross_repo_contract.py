@@ -111,6 +111,19 @@ def _nonnegative_int(value: Any, field: str) -> int:
     return value
 
 
+def composite_profile_revision(override_revision: int, candidate_details_revision: int) -> int:
+    """Cantor-pair the two encrypted Section 1 revision counters.
+
+    The resulting positive integer is scoped to one immutable source extraction.
+    Both Hunter and Apply enforce the same formula so a snapshot cannot claim a
+    revision that disagrees with its underlying encrypted truth components.
+    """
+    left = _nonnegative_int(override_revision, "override_revision")
+    right = _nonnegative_int(candidate_details_revision, "candidate_details_revision")
+    total = left + right
+    return (total * (total + 1) // 2) + right + 1
+
+
 def profile_digest_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Return the stable profile state used for cross-repository digesting.
 
@@ -168,6 +181,11 @@ def validate_profile_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
     if normalized["profile_revision"] < 1:
         raise ValueError("profile_revision must be >= 1")
+    expected_revision = composite_profile_revision(
+        normalized["override_revision"], normalized["candidate_details_revision"]
+    )
+    if normalized["profile_revision"] != expected_revision:
+        raise ValueError("profile_revision does not match its encrypted revision components")
 
     raw_facts = snapshot.get("facts")
     if not isinstance(raw_facts, list):
