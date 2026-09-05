@@ -1,9 +1,16 @@
-# MUNSHI dashboard HTTPS template
+# MUNSHI dashboard HTTPS + trusted-device authentication template
+#
+# The password is checked only on /_munshi-auth/login. After a successful
+# password check FastAPI issues a signed host-only Secure/HttpOnly device
+# cookie (30 days by default). Normal dashboard and Streamlit websocket
+# reconnects use forward_auth against that cookie, avoiding repeated Basic
+# Auth prompts.
 #
 # Activate only after:
 # 1. dashboard.munshi.systems A/AAAA DNS points to the Netcup host.
 # 2. TCP 80/443 are allowed.
 # 3. Replace DASHBOARD_USERNAME and DASHBOARD_PASSWORD_HASH.
+# 4. Hunter FastAPI on 127.0.0.1:8000 exposes /_munshi-auth/*.
 #
 # Generate the password hash on the Netcup host:
 #   caddy hash-password
@@ -13,9 +20,29 @@
 dashboard.munshi.systems {
     encode zstd gzip
 
-    basic_auth {
-        DASHBOARD_USERNAME DASHBOARD_PASSWORD_HASH
+    @device_login path /_munshi-auth/login
+    handle @device_login {
+        basic_auth {
+            DASHBOARD_USERNAME DASHBOARD_PASSWORD_HASH
+        }
+
+        reverse_proxy 127.0.0.1:8000 {
+            header_up X-Munshi-Auth-User {http.auth.user.id}
+        }
     }
 
-    reverse_proxy 127.0.0.1:8501
+    @device_auth_api path /_munshi-auth/*
+    handle @device_auth_api {
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    handle {
+        forward_auth 127.0.0.1:8000 {
+            uri /_munshi-auth/verify
+            header_up X-Munshi-Original-URI {uri}
+            copy_headers X-Munshi-Auth-User
+        }
+
+        reverse_proxy 127.0.0.1:8501
+    }
 }
