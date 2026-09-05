@@ -11,10 +11,13 @@ from app.product_v22 import brand_logo_data_uri, inject_v22_css, install_product
 
 
 RESUME_STUDIO_VIEW = "resume-studio"
+PREPARE_APPLICATION_VIEW = "prepare-application"
+_SPECIAL_VIEWS = {RESUME_STUDIO_VIEW, PREPARE_APPLICATION_VIEW}
 
 NAVIGATION = (
     ("dashboard", "Dashboard"),
     ("jobs", "Browse jobs"),
+    (PREPARE_APPLICATION_VIEW, "Prepare Application"),
     ("auto-prepare", "Auto Prepare"),
     ("tracker", "Tracker"),
     ("profile", "Profile"),
@@ -51,8 +54,8 @@ def _query_view() -> str:
     except Exception:
         raw = st.session_state.get("product_view", "dashboard")
     normalized = str(raw or "").strip().casefold()
-    if normalized == RESUME_STUDIO_VIEW:
-        return RESUME_STUDIO_VIEW
+    if normalized in _SPECIAL_VIEWS:
+        return normalized
     return valid_view(normalized)
 
 
@@ -80,7 +83,7 @@ def _resolved_subroute_state(
     section: str = "",
 ) -> tuple[str, str] | None:
     '''Resolve a validated deep-link value into Streamlit session state.'''
-    if view == RESUME_STUDIO_VIEW:
+    if view in _SPECIAL_VIEWS:
         return None
     view = valid_view(view)
     tab = str(tab or "").strip().casefold()
@@ -163,7 +166,7 @@ def render() -> None:
             unsafe_allow_html=True,
         )
 
-    from app import product_pages, profile_workspace_v1, resume_studio_page
+    from app import application_workspace_page, product_pages, profile_workspace_v1, resume_studio_page
     from app import profile_workspace_v2, profile_workspace_v3
     from app.resume_engine_selector import (
         install_resume_engine_selector,
@@ -181,6 +184,7 @@ def render() -> None:
     pages: dict[str, Callable[[], None]] = {
         "dashboard": product_pages.dashboard,
         "jobs": product_pages.browse_jobs,
+        PREPARE_APPLICATION_VIEW: application_workspace_page.render,
         "auto-prepare": product_pages.auto_prepare,
         "tracker": product_pages.tracker,
         "profile": profile_workspace_v1.render,
