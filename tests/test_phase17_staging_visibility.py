@@ -78,6 +78,15 @@ def test_hunter_image_contains_phase17_migration_runner() -> None:
     )
 
 
+def test_staging_deploy_explicit_failures_route_through_rollback() -> None:
+    source = Path("deploy/netcup/deploy_staging_release.sh").read_text(encoding="utf-8")
+    assert 'rc="${1:-$?}"' in source
+    protected = source.split("trap rollback ERR", 1)[1].rsplit("trap - ERR", 1)[0]
+    for code in (20, 21, 22, 23, 30, 31):
+        assert f"rollback {code}" in protected
+        assert f"exit {code}" not in protected
+
+
 def test_phase17_staging_migration_is_additive_and_verified(hunter_db, monkeypatch) -> None:
     _staging_env(monkeypatch)
     result = phase17_staging_migrate.apply()
