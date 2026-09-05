@@ -27,21 +27,25 @@ jobs:
       - name: Verify packages
         run: python -m pip check
 
-      - name: Compile native Resume Studio, personal writer, engine selector, and product shell
+      - name: Compile native Resume Studio, profile extractor, writer, engine selector, and product shell
         run: |
           python -m py_compile \
             app/native_resume_studio.py \
             app/native_resume_service.py \
             app/native_resume_service_v2.py \
+            app/native_resume_service_v3.py \
             app/resume_studio_page.py \
             app/resume_studio_page_v2.py \
+            app/resume_studio_page_v3.py \
             app/resume_engine_selector.py \
             app/product_shell.py \
             migrations/027_native_resume_studio.py \
             migrations/028_native_resume_studio_v2.py \
+            migrations/029_native_resume_studio_v3.py \
             tests/test_native_resume_studio.py \
             tests/test_native_resume_service.py \
             tests/test_native_resume_service_v2.py \
+            tests/test_native_resume_service_v3.py \
             tests/test_resume_engine_selector.py
 
       - name: Run native Resume Studio safety and regression tests
@@ -50,6 +54,7 @@ jobs:
             tests/test_native_resume_studio.py \
             tests/test_native_resume_service.py \
             tests/test_native_resume_service_v2.py \
+            tests/test_native_resume_service_v3.py \
             tests/test_resume_engine_selector.py \
             tests/test_secure_vault.py \
             tests/test_candidate_artifacts.py \
@@ -62,9 +67,11 @@ jobs:
           python - <<'PY'
           from app.native_resume_service import native_resume_authority_enabled
           from app.native_resume_service_v2 import native_resume_authority_enabled as v2_authority
+          from app.native_resume_service_v3 import native_resume_authority_enabled as v3_authority
           from app.native_resume_shadow import native_resume_authority_enabled as shadow_authority
           assert native_resume_authority_enabled() is False
           assert v2_authority() is False
+          assert v3_authority() is False
           assert shadow_authority() is False
           print("native resume authority remains disabled")
           PY
