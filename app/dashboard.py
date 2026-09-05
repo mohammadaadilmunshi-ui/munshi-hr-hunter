@@ -11,6 +11,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from app.database import initialize_database  # noqa: E402
+from app.native_resume_service import ensure_schema as ensure_native_resume_studio_schema  # noqa: E402
 from app.product_shell import render  # noqa: E402
 
 
@@ -25,4 +26,5 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 initialize_database()
+ensure_native_resume_studio_schema()
 render()
