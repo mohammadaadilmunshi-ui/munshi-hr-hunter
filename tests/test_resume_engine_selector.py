@@ -42,15 +42,18 @@ def test_product_shell_installs_engine_selector_after_v22() -> None:
 def test_native_resume_studio_exposes_pdf_and_docx_outputs() -> None:
     root = Path(__file__).resolve().parents[1]
     compatibility_page = (root / "app" / "resume_studio_page.py").read_text(encoding="utf-8")
-    page = (root / "app" / "resume_studio_page_v2.py").read_text(encoding="utf-8")
+    v2_page = (root / "app" / "resume_studio_page_v2.py").read_text(encoding="utf-8")
+    v3_page = (root / "app" / "resume_studio_page_v3.py").read_text(encoding="utf-8")
     service = (root / "app" / "native_resume_service.py").read_text(encoding="utf-8")
 
-    # V2 owns the current UI while the original module remains a stable entry point.
-    assert "from app.resume_studio_page_v2 import render" in compatibility_page
-    assert '"Download DOCX"' in page
-    assert '"Build PDF"' in page
-    assert '"Download PDF"' in page
-    assert "version_docx(" in page
-    assert "version_pdf(" in page
+    # V3 owns the current UI while V2 continues to provide the proven immutable
+    # resume preview/download workspace behind the stable entry point.
+    assert "from app.resume_studio_page_v3 import render" in compatibility_page
+    assert "v2page._version_workspace" in v3_page
+    assert '"Download DOCX"' in v2_page
+    assert '"Build PDF"' in v2_page
+    assert '"Download PDF"' in v2_page
+    assert "version_docx(" in v2_page
+    assert "version_pdf(" in v2_page
     assert "def render_docx_bytes" in service
     assert "def render_pdf_bytes" in service

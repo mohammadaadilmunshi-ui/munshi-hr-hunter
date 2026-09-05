@@ -6,6 +6,7 @@ pandas
 playwright
 pycountry
 pydantic
+pypdf
 pytest
 python-dotenv
 python-telegram-bot==22.8
