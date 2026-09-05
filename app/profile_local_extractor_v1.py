@@ -28,9 +28,14 @@ _DATE_RANGE_RE = re.compile(
     r"Dec(?:ember)?)\s+)?\d{4}))",
     re.I,
 )
+# Degree recognition is deliberately anchored at the beginning of a line. Plain
+# abbreviations such as MA/BA are common US state or prose tokens, so an
+# unanchored regex can turn an institution/location line into a fake degree.
 _DEGREE_RE = re.compile(
-    r"\b(?:associate|bachelor|master|mba|m\.?s\.?|b\.?s\.?|b\.?a\.?|m\.?a\.?|ph\.?d\.?|doctor)"
-    r"(?:'s)?\b",
+    r"^(?:degree\s*:\s*)?(?:"
+    r"associate(?:'s)?|bachelor(?:'s)?|master(?:'s)?|mba|doctorate|doctoral|"
+    r"M\.?S\.?|B\.?S\.?|B\.?A\.?|M\.?A\.?|Ph\.?D\.?)"
+    r"(?:\b|(?=\s|$))",
     re.I,
 )
 _GPA_RE = re.compile(r"\bC?GPA\b\s*:?\s*[^|]+", re.I)
@@ -255,6 +260,9 @@ def _education(lines: list[str]) -> list[dict[str, Any]]:
                 "details": [],
             }
             entries.append(current)
+            # A degree consumes the pending institution line. Clearing this is a
+            # second guard against a later malformed line reusing the old school.
+            current_candidate = ""
             continue
         if line.casefold().startswith(
             ("coursework:", "relevant coursework:", "honors:", "activities:")
