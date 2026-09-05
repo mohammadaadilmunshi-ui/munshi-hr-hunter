@@ -31,8 +31,23 @@ def test_product_shell_installs_engine_selector_after_v22() -> None:
     assert "_resume_engine_original_n8n_prepare = pages_module._prepare_job" in selector
     assert "pages_module._prepare_job = _request_engine_choice" in selector
     assert "_run_n8n(job_id)" in selector
+    assert "n8n workflow · proven current pipeline" in selector
 
     # Native execution is explicit and still preparation-only.
     assert "generate_resume(" in selector
-    assert "Native Resume Studio" in selector
-    assert "does not mark the application Submitted" in selector
+    assert "Native Resume Studio · built into MUNSHI" in selector
+    assert "Neither choice marks an application Submitted" in selector
+
+
+def test_native_resume_studio_exposes_pdf_and_docx_outputs() -> None:
+    root = Path(__file__).resolve().parents[1]
+    page = (root / "app" / "resume_studio_page.py").read_text(encoding="utf-8")
+    service = (root / "app" / "native_resume_service.py").read_text(encoding="utf-8")
+
+    assert '"Download DOCX"' in page
+    assert '"Build PDF"' in page
+    assert '"Download PDF"' in page
+    assert "version_docx(" in page
+    assert "version_pdf(" in page
+    assert "def render_docx_bytes" in service
+    assert "def render_pdf_bytes" in service
