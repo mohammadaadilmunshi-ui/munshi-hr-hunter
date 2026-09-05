@@ -1,0 +1,245 @@
+name: Netcup Remote Staging Auto Deploy
+
+on:
+  push:
+    branches:
+      - feat/native-resume-studio-v1
+    paths:
+      - "app/**"
+      - "migrations/**"
+      - "tests/**"
+      - "requirements*.txt"
+      - "Dockerfile*"
+      - "compose*.yaml"
+      - ".github/workflows/native-resume-studio.yml"
+      - ".github/workflows/deployment-ci-reusable.yml"
+      - ".github/workflows/netcup-remote-staging-auto-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Exact 40-character Git SHA from feat/native-resume-studio-v1"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-staging
+  cancel-in-progress: false
+
+env:
+  STAGING_BRANCH: feat/native-resume-studio-v1
+
+jobs:
+  resolve-release:
+    runs-on: ubuntu-latest
+    outputs:
+      commit_sha: ${{ steps.resolve.outputs.commit_sha }}
+      source_branch: ${{ steps.resolve.outputs.source_branch }}
+    steps:
+      - name: Resolve exact staging SHA
+        id: resolve
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_SHA: ${{ github.sha }}
+          MANUAL_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            SHA="$PUSH_SHA"
+          else
+            SHA="$MANUAL_SHA"
+          fi
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Exact lowercase 40-character Git SHA required" >&2
+            exit 2
+          }
+          echo "commit_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "source_branch=$STAGING_BRANCH" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Remote staging candidate"
+            echo "- exact SHA: \`$SHA\`"
+            echo "- branch: \`$STAGING_BRANCH\`"
+            echo "- environment: staging only"
+            echo "- production deployment: forbidden by this workflow"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deployment-ci:
+    needs: resolve-release
+    uses: ./.github/workflows/deployment-ci-reusable.yml
+    with:
+      commit_sha: ${{ needs.resolve-release.outputs.commit_sha }}
+
+  native-resume-gate:
+    needs: resolve-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Prove candidate belongs to staging feature branch
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$STAGING_BRANCH:refs/remotes/origin/$STAGING_BRANCH"
+          git merge-base --is-ancestor "$RELEASE_SHA" "refs/remotes/origin/$STAGING_BRANCH"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install locked dependencies
+        run: python -m pip install -r requirements.lock.txt
+
+      - name: Verify packages
+        run: python -m pip check
+
+      - name: Compile native and selector boundaries
+        run: |
+          python -m py_compile \
+            app/native_resume_studio.py \
+            app/native_resume_service.py \
+            app/resume_studio_page.py \
+            app/resume_engine_selector.py \
+            app/product_shell.py \
+            migrations/027_native_resume_studio.py \
+            tests/test_native_resume_studio.py \
+            tests/test_native_resume_service.py \
+            tests/test_resume_engine_selector.py
+
+      - name: Run native, n8n-selector, tenant and Product regressions
+        run: |
+          python -m pytest -q \
+            tests/test_native_resume_studio.py \
+            tests/test_native_resume_service.py \
+            tests/test_resume_engine_selector.py \
+            tests/test_candidate_artifacts.py \
+            tests/test_tenant_foundation.py \
+            tests/test_product_schema.py \
+            tests/test_product_ui_v22.py
+
+      - name: Verify authority stays preparation-only
+        run: |
+          python - <<'PY'
+          from app.native_resume_service import native_resume_authority_enabled
+          from app.native_resume_shadow import native_resume_authority_enabled as shadow_authority
+          assert native_resume_authority_enabled() is False
+          assert shadow_authority() is False
+          print("native resume authority remains disabled; n8n path remains preserved")
+          PY
+
+      - name: Repository safety guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! git ls-files | grep -E '(^|/)(\.env|.*\.(db|sqlite|sqlite3|wal|shm|pem|p12|pfx|key))$'
+          git diff --check
+
+  deploy-staging:
+    needs: [resolve-release, deployment-ci, native-resume-gate]
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact staging SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Build authenticated staging bundle
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ needs.resolve-release.outputs.commit_sha }}
+          DEPLOY_BRANCH: ${{ needs.resolve-release.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
+          git merge-base --is-ancestor "$DEPLOY_SHA" "refs/remotes/origin/$DEPLOY_BRANCH"
+          git bundle create \
+            "$RUNNER_TEMP/munshi-staging-deploy.bundle" \
+            "refs/remotes/origin/$DEPLOY_BRANCH"
+          git bundle verify "$RUNNER_TEMP/munshi-staging-deploy.bundle"
+          printf '%s\n' "$DEPLOY_SHA" > "$RUNNER_TEMP/exact-staging-sha.txt"
+
+      - name: Configure restricted SSH
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_deploy"
+          chmod 600 "$HOME/.ssh/netcup_deploy"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy exact SHA through hardened staging wrapper
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          DEPLOY_SHA: ${{ needs.resolve-release.outputs.commit_sha }}
+          DEPLOY_BRANCH: ${{ needs.resolve-release.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          DEPLOY_COMMAND="/opt/munshi/bin/deploy-staging-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH"
+          cat "$RUNNER_TEMP/munshi-staging-deploy.bundle" | \
+            ssh \
+              -i "$HOME/.ssh/netcup_deploy" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              "$NETCUP_USER@$NETCUP_HOST" \
+              "$DEPLOY_COMMAND"
+
+      - name: Verify exact staging repository identity
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          DEPLOY_SHA: ${{ needs.resolve-release.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          REMOTE_SHA="$(ssh \
+            -i "$HOME/.ssh/netcup_deploy" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$NETCUP_USER@$NETCUP_HOST" \
+            "git -C /home/munshi/munshi-staging-v1/repo rev-parse HEAD")"
+          test "$REMOTE_SHA" = "$DEPLOY_SHA"
+          echo "STAGING_EXACT_SHA=$REMOTE_SHA"
+
+      - name: Verify authenticated HTTPS boundary remains closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' https://staging-dashboard.munshi.systems/)"
+          test "$CODE" = "401"
+          echo "STAGING_UNAUTHENTICATED_HTTP=$CODE"
+
+      - name: Record deployment receipt
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ needs.resolve-release.outputs.commit_sha }}
+        run: |
+          {
+            echo "### Staging deployment verified"
+            echo "- exact SHA: \`$DEPLOY_SHA\`"
+            echo "- route: \`https://staging-dashboard.munshi.systems/\`"
+            echo "- unauthenticated edge: \`401\` as expected"
+            echo "- deployment path: hardened staging wrapper"
+            echo "- production mutation: none requested by this workflow"
+            echo "- rollback/DB backup: retained in the existing staging wrapper"
+          } >> "$GITHUB_STEP_SUMMARY"
