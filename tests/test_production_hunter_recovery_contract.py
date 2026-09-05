@@ -7,14 +7,20 @@ ROOT = Path(__file__).resolve().parents[1]
 RECOVERY = ROOT / "deploy" / "netcup" / "recover_production_hunter.sh"
 INSTALLER = ROOT / "deploy" / "netcup" / "install_production_hunter_recovery_gateway.sh"
 GATEWAY = ROOT / "deploy" / "netcup" / "github_deploy_gateway.sh"
-EXPECTED_SHA = "380896964d12199936ee7c676e39352a1a68cec8"
+EXPECTED_CURRENT_SHA = "380896964d12199936ee7c676e39352a1a68cec8"
+RECOVERY_SHA = "4c0f39fa503dabb55ef3212a23d2301ad04ec18a"
+ROLLBACK_IMAGE = "munshi-netcup-shadow-hunter:rollback-deploy-20260905T015437Z"
 
 
 def test_recovery_is_exact_sha_and_hunter_only() -> None:
     text = RECOVERY.read_text()
-    assert f'EXPECTED_SHA="{EXPECTED_SHA}"' in text
+    assert f'EXPECTED_CURRENT_SHA="{EXPECTED_CURRENT_SHA}"' in text
+    assert f'RECOVERY_SHA="{RECOVERY_SHA}"' in text
+    assert f'ROLLBACK_IMAGE="{ROLLBACK_IMAGE}"' in text
+    assert 'RECOVERY_BRANCH="fix/production-sqlite-wal-backup-v1"' in text
     assert 'up -d --no-deps --force-recreate hunter' in text
     assert 'PRODUCTION_HUNTER_RECOVERY_HEALTH=PASS' in text
+    assert 'AUTH_UPGRADE_ROLLED_BACK_FOR_STABILITY=YES' in text
     assert 'DATABASE_RESTORED_OR_REPLACED=NO' in text
     assert 'N8N_RECREATED=NO' in text
     assert 'OLLAMA_RECREATED=NO' in text
@@ -43,7 +49,7 @@ def test_recovery_is_exact_sha_and_hunter_only() -> None:
 
 def test_gateway_exposes_only_exact_recovery_shape() -> None:
     text = GATEWAY.read_text()
-    exact = f"/opt/munshi/bin/recover-production-hunter --expected-sha {EXPECTED_SHA}"
+    exact = f"/opt/munshi/bin/recover-production-hunter --expected-sha {EXPECTED_CURRENT_SHA}"
     assert exact in text
     assert 'PRODUCTION_HUNTER_RECOVERY="/opt/munshi/bin/recover-production-hunter"' in text
     assert "request rejected by MUNSHI GitHub deployment gateway" in text
