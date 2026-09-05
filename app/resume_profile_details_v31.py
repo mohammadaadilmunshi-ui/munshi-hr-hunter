@@ -10,7 +10,8 @@ from __future__ import annotations
 import io
 import json
 import re
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +19,7 @@ from app import native_resume_service_v3 as v3
 from app.secure_vault import read_secret, store_secret, vault_available
 
 PROFILE_DETAILS_SECRET_TYPE = "candidate_profile_details_v31"
+PROFILE_DETAILS_ENVELOPE_SCHEMA = "candidate-profile-details-envelope-v1"
 
 _SECTION_HEADINGS = {
     "summary",
@@ -75,6 +77,19 @@ class CandidateProvidedProfileDetails(BaseModel):
     ethnicity: str = ""
     veteran: bool | None = None
     disability: bool | None = None
+
+
+class CandidateProfileDetailsEnvelope(BaseModel):
+    """Backward-compatible encrypted revision envelope for candidate-entered truth."""
+
+    schema_version: Literal[PROFILE_DETAILS_ENVELOPE_SCHEMA] = PROFILE_DETAILS_ENVELOPE_SCHEMA
+    revision: int = Field(default=0, ge=0)
+    updated_at: str = ""
+    values: CandidateProvidedProfileDetails = Field(default_factory=CandidateProvidedProfileDetails)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _clean_line(value: str) -> str:
@@ -253,16 +268,29 @@ def candidate_profile_details_encryption_available() -> bool:
     return vault_available()
 
 
-def load_candidate_profile_details() -> dict[str, Any]:
+def load_candidate_profile_details_envelope() -> CandidateProfileDetailsEnvelope:
+    """Load versioned candidate-entered truth, accepting legacy V3.1 payloads.
+
+    Legacy secrets stored the values object directly. They are interpreted as
+    revision 0 and are upgraded to the encrypted envelope on the next save.
+    """
     if not vault_available():
-        return CandidateProvidedProfileDetails().model_dump()
+        return CandidateProfileDetailsEnvelope()
     payload = read_secret(PROFILE_DETAILS_SECRET_TYPE, account_label=_owner_label())
     if not payload:
-        return CandidateProvidedProfileDetails().model_dump()
+        return CandidateProfileDetailsEnvelope()
     try:
-        return CandidateProvidedProfileDetails.model_validate_json(payload).model_dump()
+        raw = json.loads(payload)
+        if isinstance(raw, dict) and raw.get("schema_version") == PROFILE_DETAILS_ENVELOPE_SCHEMA:
+            return CandidateProfileDetailsEnvelope.model_validate(raw)
+        legacy = CandidateProvidedProfileDetails.model_validate(raw)
+        return CandidateProfileDetailsEnvelope(values=legacy)
     except Exception as error:
         raise RuntimeError("Encrypted candidate profile details could not be decoded.") from error
+
+
+def load_candidate_profile_details() -> dict[str, Any]:
+    return load_candidate_profile_details_envelope().values.model_dump()
 
 
 def save_candidate_profile_details(values: dict[str, Any]) -> dict[str, Any]:
@@ -272,6 +300,12 @@ def save_candidate_profile_details(values: dict[str, Any]) -> dict[str, Any]:
             "Sensitive self-ID fields are never saved to plaintext fallback storage."
         )
     model = CandidateProvidedProfileDetails.model_validate(values)
-    payload = json.dumps(model.model_dump(), ensure_ascii=False, sort_keys=True)
+    previous = load_candidate_profile_details_envelope()
+    envelope = CandidateProfileDetailsEnvelope(
+        revision=previous.revision + 1,
+        updated_at=_now(),
+        values=model,
+    )
+    payload = json.dumps(envelope.model_dump(), ensure_ascii=False, sort_keys=True)
     store_secret(PROFILE_DETAILS_SECRET_TYPE, payload, account_label=_owner_label())
     return model.model_dump()

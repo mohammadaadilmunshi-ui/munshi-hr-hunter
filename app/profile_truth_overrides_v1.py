@@ -10,12 +10,12 @@ from __future__ import annotations
 import copy
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from app import native_resume_service_v3 as v3
-from app.secure_vault import delete_secret, read_secret, store_secret, vault_available
+from app.secure_vault import read_secret, store_secret, vault_available
 
 PROFILE_OVERRIDE_SECRET_TYPE = "candidate_profile_overrides_v1"
 PROFILE_OVERRIDE_SCHEMA = "candidate-profile-overrides-v1"
@@ -33,16 +33,16 @@ EDITABLE_SECTIONS = (
 
 
 class OverrideHistoryItem(BaseModel):
-    revision: int
+    revision: int = Field(ge=1)
     section: str
     changed_at: str
     previous_value: Any = None
 
 
 class ProfileOverrideEnvelope(BaseModel):
-    schema_version: str = PROFILE_OVERRIDE_SCHEMA
+    schema_version: Literal[PROFILE_OVERRIDE_SCHEMA] = PROFILE_OVERRIDE_SCHEMA
     extraction_id: str
-    revision: int = 0
+    revision: int = Field(default=0, ge=0)
     updated_at: str = ""
     sections: dict[str, Any] = Field(default_factory=dict)
     history: list[OverrideHistoryItem] = Field(default_factory=list)
@@ -68,6 +68,20 @@ def override_encryption_available() -> bool:
 
 def _empty(extraction_id: str) -> ProfileOverrideEnvelope:
     return ProfileOverrideEnvelope(extraction_id=str(extraction_id))
+
+
+def _persist_envelope(envelope: ProfileOverrideEnvelope) -> None:
+    """Persist revision metadata even when all overrides were reset.
+
+    Deleting the last ciphertext used to make the next load appear as revision 0.
+    Keeping an empty encrypted envelope preserves monotonic revision/provenance while
+    the immutable Master Resume evidence remains untouched.
+    """
+    store_secret(
+        PROFILE_OVERRIDE_SECRET_TYPE,
+        json.dumps(envelope.model_dump(), ensure_ascii=False, sort_keys=True),
+        account_label=_owner_label(envelope.extraction_id),
+    )
 
 
 def load_profile_overrides(extraction_id: str) -> ProfileOverrideEnvelope:
@@ -140,11 +154,7 @@ def save_profile_override(
     envelope.sections[section] = value
     envelope.revision = next_revision
     envelope.updated_at = _now()
-    store_secret(
-        PROFILE_OVERRIDE_SECRET_TYPE,
-        json.dumps(envelope.model_dump(), ensure_ascii=False, sort_keys=True),
-        account_label=_owner_label(extraction_id),
-    )
+    _persist_envelope(envelope)
     return envelope
 
 
@@ -157,7 +167,6 @@ def reset_profile_section(extracted: dict[str, Any], section: str) -> ProfileOve
     envelope = load_profile_overrides(extraction_id)
     if section not in envelope.sections:
         return envelope
-    base_profile = v3.CandidateProfileExtract.model_validate(extracted.get("profile") or {}).model_dump()
     next_revision = envelope.revision + 1
     envelope.history.append(
         OverrideHistoryItem(
@@ -171,14 +180,7 @@ def reset_profile_section(extracted: dict[str, Any], section: str) -> ProfileOve
     envelope.sections.pop(section, None)
     envelope.revision = next_revision
     envelope.updated_at = _now()
-    if envelope.sections:
-        store_secret(
-            PROFILE_OVERRIDE_SECRET_TYPE,
-            json.dumps(envelope.model_dump(), ensure_ascii=False, sort_keys=True),
-            account_label=_owner_label(extraction_id),
-        )
-    else:
-        delete_secret(PROFILE_OVERRIDE_SECRET_TYPE, account_label=_owner_label(extraction_id))
+    _persist_envelope(envelope)
     return envelope
 
 
@@ -188,4 +190,24 @@ def reset_all_profile_overrides(extracted: dict[str, Any]) -> bool:
     extraction_id = str(extracted.get("extraction_id") or "").strip()
     if not extraction_id:
         return False
-    return delete_secret(PROFILE_OVERRIDE_SECRET_TYPE, account_label=_owner_label(extraction_id))
+    envelope = load_profile_overrides(extraction_id)
+    if not envelope.sections:
+        return False
+
+    next_revision = envelope.revision + 1
+    changed_at = _now()
+    for section in sorted(envelope.sections):
+        envelope.history.append(
+            OverrideHistoryItem(
+                revision=next_revision,
+                section=section,
+                changed_at=changed_at,
+                previous_value=copy.deepcopy(envelope.sections[section]),
+            )
+        )
+    envelope.history = envelope.history[-MAX_HISTORY:]
+    envelope.sections.clear()
+    envelope.revision = next_revision
+    envelope.updated_at = changed_at
+    _persist_envelope(envelope)
+    return True
