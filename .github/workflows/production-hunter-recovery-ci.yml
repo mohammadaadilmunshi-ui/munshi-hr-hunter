@@ -1,0 +1,37 @@
+name: Production Hunter Recovery Safety
+
+on:
+  push:
+    branches:
+      - incident/production-hunter-recovery-v1
+    paths:
+      - 'deploy/netcup/recover_production_hunter.sh'
+      - 'deploy/netcup/install_production_hunter_recovery_gateway.sh'
+      - 'deploy/netcup/github_deploy_gateway.sh'
+      - 'tests/test_production_hunter_recovery_contract.py'
+      - '.github/workflows/production-hunter-recovery-ci.yml'
+  pull_request:
+    paths:
+      - 'deploy/netcup/recover_production_hunter.sh'
+      - 'deploy/netcup/install_production_hunter_recovery_gateway.sh'
+      - 'deploy/netcup/github_deploy_gateway.sh'
+      - 'tests/test_production_hunter_recovery_contract.py'
+      - '.github/workflows/production-hunter-recovery-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate recovery shell syntax
+        run: |
+          set -euo pipefail
+          bash -n deploy/netcup/recover_production_hunter.sh
+          bash -n deploy/netcup/install_production_hunter_recovery_gateway.sh
+          bash -n deploy/netcup/github_deploy_gateway.sh
+      - name: Run recovery safety contract tests
+        run: python -m pytest -q tests/test_production_hunter_recovery_contract.py
