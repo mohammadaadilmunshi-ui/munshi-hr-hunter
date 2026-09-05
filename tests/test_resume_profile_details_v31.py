@@ -10,6 +10,7 @@ import pytest
 from app import database
 from app import native_resume_service_v3 as v3
 from app import resume_profile_details_v31 as v31
+from app import resume_studio_source_workspace_v32 as v32
 
 
 def _vault_key() -> str:
@@ -119,3 +120,43 @@ def test_candidate_profile_details_round_trip_only_through_aes_gcm_vault(hunter_
         assert b"F-1" not in ciphertext
     finally:
         connection.close()
+
+
+def test_master_source_save_defers_widget_bound_state_changes_until_next_render() -> None:
+    state = {
+        "native_resume_v31_source_draft": "candidate-reviewed draft",
+        "native_resume_v31_source_label": "Before save.pdf",
+        "native_resume_v31_source_kind": "text_upload",
+        "native_resume_v31_truth_confirm": True,
+    }
+
+    v32.mark_source_widget_refresh_pending(state)
+
+    # The save-success path must not mutate keys already owned by instantiated
+    # widgets during the current render pass.
+    assert state["native_resume_v31_source_draft"] == "candidate-reviewed draft"
+    assert state["native_resume_v31_source_label"] == "Before save.pdf"
+    assert state["native_resume_v31_truth_confirm"] is True
+
+    saved_source = {
+        "content_text": "persisted canonical source",
+        "label": "Saved master.pdf",
+        "source_kind": "text_upload",
+    }
+    assert v32.apply_pending_source_widget_state(state, saved_source) is True
+
+    # On the next pass, before widgets exist, the saved source becomes the
+    # canonical widget state and the truth-confirmation box is safely cleared.
+    assert state["native_resume_v31_source_draft"] == "persisted canonical source"
+    assert state["native_resume_v31_source_label"] == "Saved master.pdf"
+    assert state["native_resume_v31_source_kind"] == "text_upload"
+    assert state["native_resume_v31_truth_confirm"] is False
+
+
+def test_master_source_pending_refresh_is_consumed_only_once() -> None:
+    state = {}
+    v32.mark_source_widget_refresh_pending(state)
+    assert v32.apply_pending_source_widget_state(state, {"content_text": "one"}) is True
+    state["native_resume_v31_source_draft"] = "manual next edit"
+    assert v32.apply_pending_source_widget_state(state, {"content_text": "two"}) is False
+    assert state["native_resume_v31_source_draft"] == "manual next edit"
