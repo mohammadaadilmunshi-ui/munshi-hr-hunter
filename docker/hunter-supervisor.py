@@ -15,6 +15,34 @@ def enabled(name: str) -> bool:
     return os.getenv(name, "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def isolated_staging() -> bool:
+    """Mirror the existing staging runtime contract without weakening production."""
+    return (
+        enabled("CLOUD_SHADOW_MODE")
+        and not enabled("PRODUCTION_STATE_IMPORTED")
+        and not enabled("PRODUCTION_CALLBACKS_ENABLED")
+        and not enabled("HUNTER_ENABLE_TELEGRAM")
+        and not enabled("HUNTER_ENABLE_DISCOVERY_SCHEDULER")
+        and not enabled("HUNTER_ENABLE_COORDINATOR")
+    )
+
+
+def run_phase17_staging_migration(python: str) -> None:
+    """Apply additive Phase 1–7 schemas before Streamlit starts in isolated staging."""
+    if not isolated_staging():
+        return
+    completed = subprocess.run(
+        [python, "scripts/phase17_staging_migrate.py"],
+        cwd="/app/hunter",
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"Phase 1-7 staging migration failed with exit code {completed.returncode}."
+        )
+    print("Hunter isolated staging Phase 1-7 migration: PASS", flush=True)
+
+
 def coordinator_command(python: str) -> list[str]:
     mode = os.getenv("HUNTER_COORDINATOR_MODE", "production").strip().lower()
     if mode not in {"test", "production"}:
@@ -118,9 +146,15 @@ def main() -> int:
     signal.signal(signal.SIGINT, terminate_children)
     for lane in children:
         start(lane)
-        if lane.name == "fastapi" and not wait_for_fastapi(lane):
-            print("FastAPI did not become ready before writer lanes.", file=sys.stderr, flush=True)
-            return 1
+        if lane.name == "fastapi":
+            if not wait_for_fastapi(lane):
+                print("FastAPI did not become ready before writer lanes.", file=sys.stderr, flush=True)
+                return 1
+            try:
+                run_phase17_staging_migration(python)
+            except Exception as error:
+                print(str(error), file=sys.stderr, flush=True)
+                return 1
 
     try:
         while not stopping:

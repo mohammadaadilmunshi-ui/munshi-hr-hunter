@@ -8,13 +8,17 @@ import streamlit as st
 from app.product_state import valid_view, volume_policy
 from app.product_ui import esc, inject_css
 from app.product_v22 import brand_logo_data_uri, inject_v22_css, install_product_v22
+from app.staging_feature_policy import activate_isolated_staging_preparation_features
 
 
 RESUME_STUDIO_VIEW = "resume-studio"
+PREPARE_APPLICATION_VIEW = "prepare-application"
+_SPECIAL_VIEWS = {RESUME_STUDIO_VIEW, PREPARE_APPLICATION_VIEW}
 
 NAVIGATION = (
     ("dashboard", "Dashboard"),
     ("jobs", "Browse jobs"),
+    (PREPARE_APPLICATION_VIEW, "Prepare Application"),
     ("auto-prepare", "Auto Prepare"),
     ("tracker", "Tracker"),
     ("profile", "Profile"),
@@ -51,8 +55,8 @@ def _query_view() -> str:
     except Exception:
         raw = st.session_state.get("product_view", "dashboard")
     normalized = str(raw or "").strip().casefold()
-    if normalized == RESUME_STUDIO_VIEW:
-        return RESUME_STUDIO_VIEW
+    if normalized in _SPECIAL_VIEWS:
+        return normalized
     return valid_view(normalized)
 
 
@@ -80,7 +84,7 @@ def _resolved_subroute_state(
     section: str = "",
 ) -> tuple[str, str] | None:
     '''Resolve a validated deep-link value into Streamlit session state.'''
-    if view == RESUME_STUDIO_VIEW:
+    if view in _SPECIAL_VIEWS:
         return None
     view = valid_view(view)
     tab = str(tab or "").strip().casefold()
@@ -115,6 +119,11 @@ def _apply_deep_link_state(view: str) -> None:
 
 
 def render() -> None:
+    # The staging runtime already proves cloud-shadow isolation before serving the
+    # dashboard. Promote only preparation-only Phase 5–7 gates there; production
+    # continues to require its existing explicit environment contract.
+    activate_isolated_staging_preparation_features()
+
     inject_css()
     inject_v22_css()
 
@@ -163,7 +172,10 @@ def render() -> None:
             unsafe_allow_html=True,
         )
 
+    # Preserve this established import line verbatim: profile route contract tests
+    # and downstream integrations use it as a compatibility marker.
     from app import product_pages, profile_workspace_v1, resume_studio_page
+    from app import application_workspace_page
     from app import profile_workspace_v2, profile_workspace_v3
     from app.resume_engine_selector import (
         install_resume_engine_selector,
@@ -181,6 +193,7 @@ def render() -> None:
     pages: dict[str, Callable[[], None]] = {
         "dashboard": product_pages.dashboard,
         "jobs": product_pages.browse_jobs,
+        PREPARE_APPLICATION_VIEW: application_workspace_page.render,
         "auto-prepare": product_pages.auto_prepare,
         "tracker": product_pages.tracker,
         "profile": profile_workspace_v1.render,
