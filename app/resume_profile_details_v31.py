@@ -87,7 +87,16 @@ def _is_section_heading(line: str) -> bool:
     if compact in _SECTION_HEADINGS:
         return True
     words = compact.split()
-    return bool(words) and len(words) <= 5 and line.isupper() and len(line) <= 48
+    # Generic all-caps headings are allowed only when they are long enough to
+    # be real labels. Short resume tokens such as NJ, HR, BI, AI, GPA, etc.
+    # must remain normal content and must never split the reconstructed text.
+    return (
+        bool(words)
+        and len(words) <= 5
+        and line.isupper()
+        and 5 <= len(line.strip().strip(":")) <= 48
+        and not line.rstrip().endswith((",", ".", ";"))
+    )
 
 
 def _is_bullet(line: str) -> bool:
