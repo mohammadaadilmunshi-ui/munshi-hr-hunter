@@ -45,6 +45,26 @@ class Lane:
     next_start_at: float | None = None
 
 
+def telegram_lane(python: str) -> Lane:
+    """Return an isolated, restartable Telegram lane.
+
+    Telegram availability must not be allowed to terminate the Hunter control
+    process. Fatal polling/startup errors are retried with bounded backoff while
+    FastAPI, Streamlit, discovery, and coordinator lanes remain alive.
+    """
+    try:
+        interval = int(os.getenv("HUNTER_TELEGRAM_RESTART_INTERVAL_SECONDS", "30"))
+    except ValueError:
+        interval = 30
+    return Lane(
+        "telegram",
+        [python, "-m", "app.telegram_listener"],
+        required=False,
+        repeat=True,
+        interval=max(5, interval),
+    )
+
+
 children: list[Lane] = []
 stopping = False
 
@@ -106,7 +126,7 @@ def main() -> int:
         Lane("streamlit", [python, "-m", "streamlit", "run", "app/dashboard.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.headless", "true"]),
     ]
     if enabled("HUNTER_ENABLE_TELEGRAM"):
-        children.append(Lane("telegram", [python, "-m", "app.telegram_listener"]))
+        children.append(telegram_lane(python))
     discovery = enabled("HUNTER_ENABLE_DISCOVERY_SCHEDULER")
     coordinator = enabled("HUNTER_ENABLE_COORDINATOR")
     if discovery:
