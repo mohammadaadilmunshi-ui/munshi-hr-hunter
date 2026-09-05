@@ -8,7 +8,10 @@ submission authority.
 from __future__ import annotations
 
 import copy
+import json
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from app import answer_brain as v1
 from app import phase45_truth_binding as truth_binding
@@ -113,6 +116,74 @@ def _fact_confidence(fact: dict[str, Any]) -> float:
     }.get(trust, 0.0)
 
 
+def _save_profile_answer_atomic(
+    *,
+    family: str,
+    answer: str,
+    confidence: float,
+    autofill_allowed: bool,
+    scoped_conditions: dict[str, Any],
+    question_key: str,
+    profile_fact_key: str,
+    snapshot: dict[str, Any],
+) -> str:
+    """Persist the plaintext memory and truth sidecar in one SQLite transaction."""
+    connection = v1.get_connection()
+    try:
+        ensure_schema(connection)
+        owner = v1._owner(connection)
+        if connection.in_transaction:
+            connection.commit()
+        condition_json = v1._conditions(scoped_conditions)
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """SELECT answer_id FROM application_answer_vault
+               WHERE tenant_id=? AND user_id=? AND question_family=? AND conditions_json=?""",
+            (owner.tenant_id, owner.user_id, family, condition_json),
+        ).fetchone()
+        answer_id = str(row["answer_id"]) if row else str(uuid4())
+        confirmed_at = datetime.now(timezone.utc).isoformat()
+        connection.execute(
+            """INSERT INTO application_answer_vault(
+                   answer_id,tenant_id,user_id,question_family,canonical_answer,source,
+                   user_confirmed,confidence,autofill_allowed,conditions_json,last_confirmed_at
+               ) VALUES (?,?,?,?,?,'profile_evidence',1,?,?,?,?)
+               ON CONFLICT(tenant_id,user_id,question_family,conditions_json) DO UPDATE SET
+                   canonical_answer=excluded.canonical_answer,
+                   source=excluded.source,
+                   user_confirmed=excluded.user_confirmed,
+                   confidence=excluded.confidence,
+                   autofill_allowed=excluded.autofill_allowed,
+                   last_confirmed_at=excluded.last_confirmed_at,
+                   updated_at=CURRENT_TIMESTAMP""",
+            (
+                answer_id,
+                owner.tenant_id,
+                owner.user_id,
+                family,
+                answer,
+                float(confidence),
+                int(bool(autofill_allowed)),
+                condition_json,
+                confirmed_at,
+            ),
+        )
+        truth_binding.save_answer_truth_binding(
+            answer_id=answer_id,
+            question_key=question_key,
+            profile_fact_key=profile_fact_key,
+            snapshot=snapshot,
+            connection=connection,
+        )
+        connection.commit()
+        return answer_id
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def save_profile_answer(
     *,
     question_family: str,
@@ -140,22 +211,16 @@ def save_profile_answer(
     if not answer:
         raise ValueError("Candidate Truth Profile fact has no usable answer value.")
     scoped, _ = _scoped_conditions(conditions, key)
-    answer_id = v1.save_answer(
-        question_family=family,
-        canonical_answer=answer,
-        source="profile_evidence",
-        user_confirmed=True,
+    return _save_profile_answer_atomic(
+        family=family,
+        answer=answer,
         confidence=_fact_confidence(fact),
         autofill_allowed=bool(autofill_allowed),
-        conditions=scoped,
-    )
-    truth_binding.save_answer_truth_binding(
-        answer_id=answer_id,
+        scoped_conditions=scoped,
         question_key=key,
         profile_fact_key=str(profile_fact_key),
         snapshot=snapshot,
     )
-    return answer_id
 
 
 def _resolved_stored_answer(
@@ -203,8 +268,6 @@ def resolve_answer(
     if family in NON_PLAINTEXT_FAMILIES:
         return {"status": "NEEDS_INPUT", "reason": "non_plaintext_answer_requires_separate_policy"}
 
-    # Compatibility path for historical family-level callers. It preserves V1
-    # behavior but is intentionally not advertised as semantic-key-safe.
     if question_key is None:
         return v1.resolve_answer(
             question_family=family,
@@ -274,15 +337,40 @@ def normal_answer_projection() -> list[dict[str, Any]]:
 
 
 def planning_input() -> dict[str, Any]:
+    """Return planner-safe normal answers without stale profile-derived content.
+
+    Stale or unbound profile memories are represented only by non-content metadata,
+    so an internal planner cannot accidentally reuse an obsolete canonical answer.
+    """
     snapshot = _current_snapshot_or_none()
+    answers: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    for answer in normal_answer_projection():
+        if str(answer.get("source") or "") == "profile_evidence" and answer.get("truth_binding_current") is not True:
+            excluded.append(
+                {
+                    "answer_id": str(answer["answer_id"]),
+                    "question_key": answer.get("question_key"),
+                    "question_family": answer.get("question_family"),
+                    "reason": "stale_or_unbound_profile_answer",
+                }
+            )
+            continue
+        clean = copy.deepcopy(answer)
+        clean["planning_use"] = (
+            "autofill_ready"
+            if bool(clean.get("user_confirmed")) and bool(clean.get("autofill_allowed"))
+            else "context_only"
+        )
+        answers.append(clean)
     return {
         "version": ANSWER_VERSION,
         "candidate_truth_binding": truth_binding.public_binding_state(snapshot) if snapshot else None,
-        "answers": normal_answer_projection(),
+        "answers": answers,
+        "excluded_answers": excluded,
     }
 
 
-# Preserve the proven separate encrypted self-identification policy surface.
 read_sensitive_self_identification = v1.read_sensitive_self_identification
 resolve_sensitive_self_identification = v1.resolve_sensitive_self_identification
 store_sensitive_self_identification = v1.store_sensitive_self_identification
