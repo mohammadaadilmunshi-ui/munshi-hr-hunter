@@ -1,0 +1,180 @@
+name: Netcup Remote Production Auto Deploy
+
+on:
+  push:
+    branches:
+      - feat/cloud-migration-foundation
+    paths:
+      - "config/production-remote-release-request.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-production-remote-release
+  cancel-in-progress: false
+
+jobs:
+  resolve-release:
+    runs-on: ubuntu-latest
+    outputs:
+      commit_sha: ${{ steps.resolve.outputs.commit_sha }}
+      source_branch: ${{ steps.resolve.outputs.source_branch }}
+      expected_previous_sha: ${{ steps.resolve.outputs.expected_previous_sha }}
+    steps:
+      - name: Checkout production control branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/cloud-migration-foundation
+          fetch-depth: 0
+
+      - name: Resolve explicit remote release request
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE=config/production-remote-release-request.json
+          test -f "$FILE"
+          python - <<'PY'
+          import json
+          p=json.load(open('config/production-remote-release-request.json'))
+          required=['commit_sha','source_branch','expected_current_production_sha','release_kind','remote_authorization']
+          missing=[k for k in required if not str(p.get(k,'')).strip()]
+          if missing:
+              raise SystemExit('missing production release fields: '+','.join(missing))
+          if p['remote_authorization'] != 'AUTHORIZED_REMOTE_PRODUCTION_RELEASE':
+              raise SystemExit('explicit remote production authorization marker missing')
+          if p['release_kind'] not in {'scoped_hotfix','staging_proven_release'}:
+              raise SystemExit('unsupported production release kind')
+          PY
+          SHA="$(python -c 'import json; print(json.load(open("config/production-remote-release-request.json"))["commit_sha"])')"
+          BRANCH="$(python -c 'import json; print(json.load(open("config/production-remote-release-request.json"))["source_branch"])')"
+          PREV="$(python -c 'import json; print(json.load(open("config/production-remote-release-request.json"))["expected_current_production_sha"])')"
+          KIND="$(python -c 'import json; print(json.load(open("config/production-remote-release-request.json"))["release_kind"])')"
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PREV" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]]
+          git check-ref-format --branch "$BRANCH" >/dev/null
+          git fetch --no-tags origin "$BRANCH:refs/remotes/origin/$BRANCH"
+          git merge-base --is-ancestor "$SHA" "refs/remotes/origin/$BRANCH"
+          git merge-base --is-ancestor "$PREV" "$SHA" || {
+            echo "candidate is not descended from expected current production SHA" >&2
+            exit 20
+          }
+          if [[ "$KIND" == "scoped_hotfix" ]]; then
+            python - <<'PY'
+          import fnmatch, json, subprocess
+          p=json.load(open('config/production-remote-release-request.json'))
+          allowed=p.get('allowed_paths') or []
+          if not allowed:
+              raise SystemExit('scoped_hotfix requires allowed_paths')
+          prev=p['expected_current_production_sha']; sha=p['commit_sha']
+          changed=subprocess.check_output(['git','diff','--name-only',prev,sha], text=True).splitlines()
+          if not changed:
+              raise SystemExit('scoped hotfix has no changed files')
+          bad=[path for path in changed if not any(fnmatch.fnmatch(path,pat) for pat in allowed)]
+          if bad:
+              raise SystemExit('scoped hotfix path violation: '+','.join(bad))
+          print('SCOPED_HOTFIX_CHANGED_FILES=' + ','.join(changed))
+          PY
+          fi
+          echo "commit_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "source_branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "expected_previous_sha=$PREV" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Remote production release request"
+            echo "- candidate: \`$SHA\`"
+            echo "- branch: \`$BRANCH\`"
+            echo "- expected current production: \`$PREV\`"
+            echo "- release kind: \`$KIND\`"
+            echo "- local terminal: not required"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deployment-ci:
+    needs: resolve-release
+    uses: ./.github/workflows/deployment-ci-reusable.yml
+    with:
+      commit_sha: ${{ needs.resolve-release.outputs.commit_sha }}
+
+  deploy-production:
+    needs: [resolve-release, deployment-ci]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact release SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Repository safety guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! git ls-files | grep -E '(^|/)(\.env|.*\.(db|sqlite|sqlite3|wal|shm|pem|p12|pfx|key))$'
+          git diff --check
+
+      - name: Build authenticated exact-SHA bundle
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ needs.resolve-release.outputs.commit_sha }}
+          DEPLOY_BRANCH: ${{ needs.resolve-release.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
+          git merge-base --is-ancestor "$DEPLOY_SHA" "refs/remotes/origin/$DEPLOY_BRANCH"
+          git bundle create "$RUNNER_TEMP/munshi-production-release.bundle" "refs/remotes/origin/$DEPLOY_BRANCH"
+          git bundle verify "$RUNNER_TEMP/munshi-production-release.bundle"
+
+      - name: Configure restricted SSH
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_SSH_PRIVATE_KEY"
+          test -n "$NETCUP_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_deploy"
+          chmod 600 "$HOME/.ssh/netcup_deploy"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy through hardened production wrapper
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          DEPLOY_SHA: ${{ needs.resolve-release.outputs.commit_sha }}
+          DEPLOY_BRANCH: ${{ needs.resolve-release.outputs.source_branch }}
+          EXPECTED_PREVIOUS_SHA: ${{ needs.resolve-release.outputs.expected_previous_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_HOST"
+          test -n "$NETCUP_USER"
+          LOG="$RUNNER_TEMP/production-release.log"
+          cat "$RUNNER_TEMP/munshi-production-release.bundle" | \
+            ssh -i "$HOME/.ssh/netcup_deploy" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              "$NETCUP_USER@$NETCUP_HOST" \
+              "/opt/munshi/bin/deploy-production-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH" | tee "$LOG"
+          grep -F "PREVIOUS_SHA=$EXPECTED_PREVIOUS_SHA" "$LOG"
+          grep -F "DEPLOYED_SHA=$DEPLOY_SHA" "$LOG"
+          grep -F "N8N_RECREATED=NO" "$LOG"
+          grep -F "OLLAMA_RECREATED=NO" "$LOG"
+          grep -F "RESULT=PRODUCTION_DEPLOYMENT_PASS" "$LOG"
+
+      - name: Record release receipt
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ needs.resolve-release.outputs.commit_sha }}
+        run: |
+          {
+            echo "### Remote production deployment verified"
+            echo "- exact SHA: \`$DEPLOY_SHA\`"
+            echo "- WAL-safe backup and rollback image enforced by hardened wrapper"
+            echo "- n8n/Ollama preserved unless a future separately authorized workflow changes that contract"
+            echo "- no local terminal required"
+          } >> "$GITHUB_STEP_SUMMARY"
