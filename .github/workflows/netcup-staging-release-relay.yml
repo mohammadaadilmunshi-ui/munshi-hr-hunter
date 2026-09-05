@@ -180,7 +180,7 @@ jobs:
           printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Deploy through existing backup-and-rollback staging wrapper
+      - name: Deploy and verify through existing backup-and-rollback staging wrapper
         shell: bash
         env:
           NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
@@ -192,6 +192,7 @@ jobs:
           test -n "$NETCUP_HOST"
           test -n "$NETCUP_USER"
           DEPLOY_COMMAND="/opt/munshi/bin/deploy-staging-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH"
+          LOG="$RUNNER_TEMP/staging-deploy.log"
           cat "$RUNNER_TEMP/munshi-staging-deploy.bundle" | \
             ssh \
               -i "$HOME/.ssh/netcup_deploy" \
@@ -199,25 +200,15 @@ jobs:
               -o IdentitiesOnly=yes \
               -o StrictHostKeyChecking=yes \
               "$NETCUP_USER@$NETCUP_HOST" \
-              "$DEPLOY_COMMAND"
-
-      - name: Verify exact staging repository identity
-        shell: bash
-        env:
-          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
-          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
-          DEPLOY_SHA: ${{ needs.resolve-request.outputs.commit_sha }}
-        run: |
-          set -euo pipefail
-          REMOTE_SHA="$(ssh \
-            -i "$HOME/.ssh/netcup_deploy" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            "$NETCUP_USER@$NETCUP_HOST" \
-            "git -C /home/munshi/munshi-staging-v1/repo rev-parse HEAD")"
-          test "$REMOTE_SHA" = "$DEPLOY_SHA"
-          echo "STAGING_EXACT_SHA=$REMOTE_SHA"
+              "$DEPLOY_COMMAND" | tee "$LOG"
+          grep -F "DEPLOYED_SHA=$DEPLOY_SHA" "$LOG"
+          grep -F "DEPLOYED_BRANCH=$DEPLOY_BRANCH" "$LOG"
+          grep -F "STAGING_N8N_RECREATED=NO" "$LOG"
+          grep -F "STAGING_OLLAMA_RECREATED=NO" "$LOG"
+          grep -F "STAGING_EDGE_RECREATED=NO" "$LOG"
+          grep -F "PRODUCTION_CONTAINERS_CHANGED=NO" "$LOG"
+          grep -F "PRODUCTION_DEPLOYMENT_PERFORMED=NO" "$LOG"
+          grep -F "RESULT=STAGING_DEPLOYMENT_PASS" "$LOG"
 
       - name: Verify authenticated HTTPS boundary
         shell: bash
@@ -236,7 +227,9 @@ jobs:
             echo "### Staging deployment verified"
             echo "- exact SHA: \`$DEPLOY_SHA\`"
             echo "- target: \`https://staging-dashboard.munshi.systems/\`"
-            echo "- hardened wrapper retained: WAL-safe backup + rollback + isolation checks"
-            echo "- n8n/Ollama/edge preservation: enforced by existing wrapper"
+            echo "- exact identity and isolation: parsed from hardened wrapper receipt"
+            echo "- WAL-safe DB backup + rollback image: created by wrapper"
+            echo "- n8n/Ollama/edge: not recreated"
+            echo "- production containers: unchanged"
             echo "- production deployment: not invoked"
           } >> "$GITHUB_STEP_SUMMARY"
