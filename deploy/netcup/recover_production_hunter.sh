@@ -2,10 +2,15 @@
 set -Eeuo pipefail
 umask 077
 
-EXPECTED_SHA="380896964d12199936ee7c676e39352a1a68cec8"
+# Incident entrypoint is accepted only when production is on the known auth
+# candidate (or the one-time bootstrap SHA), but recovery deliberately returns
+# Hunter to the exact last-known-good pre-auth code/image pair. The live DB is
+# backed up and preserved; it is never restored/replaced by this helper.
+EXPECTED_CURRENT_SHA="380896964d12199936ee7c676e39352a1a68cec8"
 TEMP_SHA="e55ca0a82d8ede6a5053c0a5705e5bb0e1979a90"
-TARGET_BRANCH="fix/dashboard-device-auth-prod-v1"
-ROLLBACK_IMAGE="munshi-netcup-shadow-hunter:rollback-deploy-20260905T022334Z"
+RECOVERY_SHA="4c0f39fa503dabb55ef3212a23d2301ad04ec18a"
+RECOVERY_BRANCH="fix/production-sqlite-wal-backup-v1"
+ROLLBACK_IMAGE="munshi-netcup-shadow-hunter:rollback-deploy-20260905T015437Z"
 
 ROOT="${MUNSHI_ROOT:-/opt/munshi}"
 REPO="$ROOT/repo"
@@ -19,12 +24,12 @@ expected=""
 while (($#)); do
   case "$1" in
     --expected-sha) expected="${2:-}"; shift 2 ;;
-    -h|--help) echo "Usage: $0 --expected-sha $EXPECTED_SHA"; exit 0 ;;
+    -h|--help) echo "Usage: $0 --expected-sha $EXPECTED_CURRENT_SHA"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
-[[ "$expected" == "$EXPECTED_SHA" ]] || { echo "unexpected recovery target" >&2; exit 3; }
+[[ "$expected" == "$EXPECTED_CURRENT_SHA" ]] || { echo "unexpected incident source SHA" >&2; exit 3; }
 
 for tool in docker git python3 curl sha256sum timeout; do
   command -v "$tool" >/dev/null || { echo "missing tool: $tool" >&2; exit 10; }
@@ -38,12 +43,14 @@ docker info >/dev/null 2>&1 || { echo "DOCKER_ACCESS=FAIL" >&2; exit 11; }
 head="$(git -C "$REPO" rev-parse HEAD)"
 echo "PRODUCTION_HEAD_BEFORE=$head"
 case "$head" in
-  "$EXPECTED_SHA"|"$TEMP_SHA") ;;
+  "$EXPECTED_CURRENT_SHA"|"$TEMP_SHA") ;;
   *) echo "unexpected production head: $head" >&2; exit 15 ;;
 esac
 
-git -C "$REPO" cat-file -e "$EXPECTED_SHA^{commit}"
-docker image inspect "$ROLLBACK_IMAGE" >/dev/null 2>&1 || { echo "missing known rollback image" >&2; exit 16; }
+git -C "$REPO" cat-file -e "$RECOVERY_SHA^{commit}"
+docker image inspect "$ROLLBACK_IMAGE" >/dev/null 2>&1 || { echo "missing exact last-known-good rollback image" >&2; exit 16; }
+echo "RECOVERY_TARGET_SHA=$RECOVERY_SHA"
+echo "RECOVERY_ROLLBACK_IMAGE=$ROLLBACK_IMAGE"
 
 for c in "$H" "$N" "$O"; do
   docker inspect "$c" >/dev/null 2>&1 || { echo "missing runtime object: $c" >&2; exit 17; }
@@ -77,7 +84,7 @@ from pathlib import Path
 import re, sys
 text = Path(sys.argv[1]).read_text(errors="replace")
 checks = {
-    "DIAG_TELEGRAM_CONFLICT_409": bool(re.search(r"(?:409|Conflict).*(?:getUpdates|terminated by other getUpdates|telegram)|telegram.*(?:409|Conflict)", text, re.I|re.S)),
+    "DIAG_TELEGRAM_CONFLICT_409": bool(re.search(r"(?:409|Conflict).*(?:getUpdates|terminated by other getUpdates|telegram)|telegram.*(?:409|Conflict)", text, re.I | re.S)),
     "DIAG_REQUIRED_TELEGRAM_EXIT": "Required Hunter lane exited: telegram" in text,
     "DIAG_REQUIRED_FASTAPI_EXIT": "Required Hunter lane exited: fastapi" in text,
     "DIAG_REQUIRED_STREAMLIT_EXIT": "Required Hunter lane exited: streamlit" in text,
@@ -150,9 +157,9 @@ do
   [[ -f "$f" ]] || { echo "missing runtime override: $f" >&2; exit 24; }
 done
 
-echo "=== RESTORE EXACT AUTH-ONLY HUNTER ==="
-git -C "$REPO" checkout -q -B "$TARGET_BRANCH" "$EXPECTED_SHA"
-[[ "$(git -C "$REPO" rev-parse HEAD)" == "$EXPECTED_SHA" ]]
+echo "=== RESTORE EXACT LAST-KNOWN-GOOD HUNTER ==="
+git -C "$REPO" checkout -q -B "$RECOVERY_BRANCH" "$RECOVERY_SHA"
+[[ "$(git -C "$REPO" rev-parse HEAD)" == "$RECOVERY_SHA" ]]
 [[ -z "$(git -C "$REPO" status --porcelain)" ]]
 docker tag "$ROLLBACK_IMAGE" "$hunter_image_name"
 "${compose[@]}" config -q
@@ -172,17 +179,18 @@ if [[ "$healthy" != "1" ]]; then
   python3 - "$post_log" <<'PY'
 from pathlib import Path
 import re, sys
-text=Path(sys.argv[1]).read_text(errors="replace")
-checks={
- "POST_DIAG_TELEGRAM_CONFLICT_409": bool(re.search(r"(?:409|Conflict).*(?:getUpdates|terminated by other getUpdates|telegram)|telegram.*(?:409|Conflict)", text, re.I|re.S)),
- "POST_DIAG_REQUIRED_TELEGRAM_EXIT": "Required Hunter lane exited: telegram" in text,
- "POST_DIAG_REQUIRED_FASTAPI_EXIT": "Required Hunter lane exited: fastapi" in text,
- "POST_DIAG_REQUIRED_STREAMLIT_EXIT": "Required Hunter lane exited: streamlit" in text,
- "POST_DIAG_FASTAPI_NOT_READY": "FastAPI did not become ready before writer lanes" in text,
- "POST_DIAG_DEVICE_AUTH_KEY_ERROR": bool(re.search(r"device-auth signing key|dashboard device-auth signing key", text, re.I)),
- "POST_DIAG_PERMISSION_ERROR": bool(re.search(r"PermissionError|Permission denied", text)),
+text = Path(sys.argv[1]).read_text(errors="replace")
+checks = {
+    "POST_DIAG_TELEGRAM_CONFLICT_409": bool(re.search(r"(?:409|Conflict).*(?:getUpdates|terminated by other getUpdates|telegram)|telegram.*(?:409|Conflict)", text, re.I | re.S)),
+    "POST_DIAG_REQUIRED_TELEGRAM_EXIT": "Required Hunter lane exited: telegram" in text,
+    "POST_DIAG_REQUIRED_FASTAPI_EXIT": "Required Hunter lane exited: fastapi" in text,
+    "POST_DIAG_REQUIRED_STREAMLIT_EXIT": "Required Hunter lane exited: streamlit" in text,
+    "POST_DIAG_FASTAPI_NOT_READY": "FastAPI did not become ready before writer lanes" in text,
+    "POST_DIAG_DEVICE_AUTH_KEY_ERROR": bool(re.search(r"device-auth signing key|dashboard device-auth signing key", text, re.I)),
+    "POST_DIAG_PERMISSION_ERROR": bool(re.search(r"PermissionError|Permission denied", text)),
 }
-for k,v in checks.items(): print(f"{k}={'YES' if v else 'NO'}")
+for key, value in checks.items():
+    print(f"{key}={'YES' if value else 'NO'}")
 PY
   exit 25
 fi
@@ -201,7 +209,7 @@ curl -fsS --max-time 10 http://127.0.0.1:5678/healthz >/dev/null
 
 docker exec -i "$H" python - <<'PY'
 from app.database import get_connection
-c=get_connection()
+c = get_connection()
 try:
     assert c.execute("PRAGMA quick_check").fetchone()[0] == "ok"
 finally:
@@ -209,8 +217,9 @@ finally:
 print("PRODUCTION_DB_LIVE_QUICK_CHECK=PASS")
 PY
 
-[[ "$(git -C "$REPO" rev-parse HEAD)" == "$EXPECTED_SHA" ]]
-echo "PRODUCTION_HEAD_AFTER=$EXPECTED_SHA"
+[[ "$(git -C "$REPO" rev-parse HEAD)" == "$RECOVERY_SHA" ]]
+echo "PRODUCTION_HEAD_AFTER=$RECOVERY_SHA"
+echo "AUTH_UPGRADE_ROLLED_BACK_FOR_STABILITY=YES"
 echo "N8N_RECREATED=NO"
 echo "OLLAMA_RECREATED=NO"
 echo "CADDY_RECREATED=NO"
