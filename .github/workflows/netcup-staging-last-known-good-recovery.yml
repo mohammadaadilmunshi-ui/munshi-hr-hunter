@@ -1,0 +1,83 @@
+name: Netcup Staging Last-Known-Good Recovery
+
+on:
+  push:
+    branches:
+      - feat/autonomous-career-os-foundation
+    paths:
+      - '.github/workflows/netcup-staging-last-known-good-recovery.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-staging-last-known-good-recovery
+  cancel-in-progress: false
+
+env:
+  RECOVERY_SHA: 5aee6ac98216545aeb2f0d181ca63d81b7f1c248
+  RECOVERY_BRANCH: feat/autonomous-career-os-foundation
+
+jobs:
+  recover-staging-hunter:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 35
+    steps:
+      - name: Checkout trusted control branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/autonomous-career-os-foundation
+          fetch-depth: 0
+
+      - name: Prove exact last-known-good ancestry and build authenticated bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$RECOVERY_BRANCH:refs/remotes/origin/$RECOVERY_BRANCH"
+          git cat-file -e "$RECOVERY_SHA^{commit}"
+          git merge-base --is-ancestor "$RECOVERY_SHA" "refs/remotes/origin/$RECOVERY_BRANCH"
+          git bundle create "$RUNNER_TEMP/munshi-staging-lkg.bundle" "refs/remotes/origin/$RECOVERY_BRANCH"
+          git bundle verify "$RUNNER_TEMP/munshi-staging-lkg.bundle"
+          echo "RECOVERY_SHA_PROVEN=$RECOVERY_SHA"
+
+      - name: Configure approved restricted SSH
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_SSH_PRIVATE_KEY"
+          test -n "$NETCUP_KNOWN_HOSTS"
+          test -n "$NETCUP_HOST"
+          test -n "$NETCUP_USER"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_deploy"
+          chmod 600 "$HOME/.ssh/netcup_deploy"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          echo "NETCUP_HOST=$NETCUP_HOST" >> "$GITHUB_ENV"
+          echo "NETCUP_USER=$NETCUP_USER" >> "$GITHUB_ENV"
+
+      - name: Recover staging Hunter through hardened wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOG="$RUNNER_TEMP/staging-lkg-recovery.log"
+          cat "$RUNNER_TEMP/munshi-staging-lkg.bundle" | \
+            ssh -i "$HOME/.ssh/netcup_deploy" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
+              "$NETCUP_USER@$NETCUP_HOST" \
+              "/opt/munshi/bin/deploy-staging-release --commit $RECOVERY_SHA --branch $RECOVERY_BRANCH" | tee "$LOG"
+
+          grep -F "DEPLOYED_SHA=$RECOVERY_SHA" "$LOG"
+          grep -F "DEPLOYED_BRANCH=$RECOVERY_BRANCH" "$LOG"
+          grep -F 'STAGING_N8N_RECREATED=NO' "$LOG"
+          grep -F 'STAGING_OLLAMA_RECREATED=NO' "$LOG"
+          grep -F 'STAGING_EDGE_RECREATED=NO' "$LOG"
+          grep -F 'PRODUCTION_CONTAINERS_CHANGED=NO' "$LOG"
+          grep -F 'PRODUCTION_DEPLOYMENT_PERFORMED=NO' "$LOG"
+          grep -F 'RESULT=STAGING_DEPLOYMENT_PASS' "$LOG"
