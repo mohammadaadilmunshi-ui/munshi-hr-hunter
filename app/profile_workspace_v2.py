@@ -4,6 +4,10 @@ V1 owns the approved MUNSHI/Tsenta-inspired visual renderer and public-logo reso
 V2 changes only the handoff state machine so an extracted profile is visible before
 confirmation. Confirmation promotes the reviewed snapshot to permanent authority;
 it is no longer a prerequisite for seeing the extracted output.
+
+Profile assembly is deterministic and evidence-only by default. A candidate can
+build the reusable profile from the confirmed Master Resume without configuring
+an OpenAI credential; missing facts remain missing.
 """
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ import streamlit as st
 
 from app import native_resume_service_v3 as v3
 from app import profile_workspace_v1 as v1
+from app.profile_extraction_bridge_v1 import extract_profile_from_source
 from app.resume_profile_details_v31 import load_candidate_profile_details
 
 
@@ -23,26 +28,41 @@ def _latest_profile_for_active_source() -> dict[str, Any]:
     return v3.latest_profile_for_source(str(source["source_id"])) or {}
 
 
-def _details() -> dict[str, Any]:
+def _details(profile: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Merge resume-explicit defaults with candidate-confirmed encrypted values.
+
+    Candidate-entered values always win. Resume extraction only supplies a value
+    when that value was explicit in the Master Resume and the encrypted profile
+    has not already answered it.
+    """
+    extracted = dict((profile or {}).get("application_defaults") or {})
     try:
-        return load_candidate_profile_details()
+        candidate = load_candidate_profile_details()
     except Exception as error:
         st.warning(f"Candidate application defaults could not be loaded: {error}")
-        return {}
+        candidate = {}
+
+    effective = dict(extracted)
+    for key, value in dict(candidate or {}).items():
+        if value not in (None, "", [], {}):
+            effective[key] = value
+        elif key not in effective:
+            effective[key] = value
+    return effective
 
 
 def _build_profile(source: dict[str, Any]) -> dict[str, Any]:
     with st.spinner(
-        "Building your structured MUNSHI profile from the confirmed Master Resume without inventing missing facts…"
+        "Building your structured MUNSHI profile locally from the confirmed Master Resume without inventing missing facts…"
     ):
-        return v3.extract_profile_from_source(source)
+        return extract_profile_from_source(source)
 
 
 def _render_uninitialized(source: dict[str, Any]) -> None:
     if not source:
         st.markdown(
             '<div class="profile-empty"><h3>Your MUNSHI profile has no Master Resume yet</h3>'
-            '<p>Upload and confirm a Master Resume in Resume Studio. MUNSHI will then be able to build the reusable structured profile shown here.</p>'
+            '<p>Upload and confirm a Master Resume in Resume Studio. MUNSHI will then build the reusable structured profile shown here.</p>'
             '<a class="profile-edit-link" href="?view=resume-studio" target="_self">Upload Master Resume in Resume Studio →</a></div>',
             unsafe_allow_html=True,
         )
@@ -66,26 +86,40 @@ def _render_uninitialized(source: dict[str, Any]) -> None:
             except Exception as error:
                 st.error(str(error))
                 st.markdown(
-                    '<a class="profile-edit-link" href="?view=resume-studio" target="_self">Open Resume Studio / AI settings →</a>',
+                    '<a class="profile-edit-link" href="?view=resume-studio" target="_self">Review extracted Master Resume text →</a>',
                     unsafe_allow_html=True,
                 )
             else:
-                st.success("Structured profile created. Review the full preview below, then confirm it as your permanent MUNSHI profile.")
+                st.success(
+                    "Structured profile created locally from the Master Resume. Review the full preview below, then confirm it as your permanent MUNSHI profile."
+                )
                 st.rerun()
     with right:
         st.caption(
-            "This uses the confirmed Master Resume as the truth boundary. Missing facts remain missing; confirmation is still required before the snapshot becomes permanent profile authority."
+            "No AI key is required for profile building. MUNSHI restructures the confirmed Master Resume locally, preserves explicit wording and metrics, keeps unknowns unknown, and requires review before permanent profile authority."
         )
 
 
 def _render_preview_controls(extracted: dict[str, Any]) -> None:
     status = str(extracted.get("status") or "").upper()
+    profile = extracted.get("profile") or {}
+    model_name = str(extracted.get("model_name") or "")
+    local_build = model_name == "munshi-local-evidence-profile-v1"
+
+    if local_build:
+        st.caption(
+            "Profile source: confirmed Master Resume · extraction: local evidence parser · AI credential: not required"
+        )
+    for warning in profile.get("extraction_warnings") or []:
+        if warning:
+            st.caption(str(warning))
+
     if status == "CONFIRMED":
         st.success("Permanent MUNSHI profile confirmed. This reviewed snapshot is now the reusable profile authority.")
         return
 
     st.info(
-        "Profile preview — this is the full structured output from your Master Resume. Review it before making it permanent. "
+        "Profile preview — this is the structured output from your Master Resume. Review it before making it permanent. "
         "Nothing here becomes permanent profile authority until you confirm it."
     )
     left, middle, right = st.columns((1.25, 1.15, 2.2), gap="small")
@@ -105,7 +139,7 @@ def _render_preview_controls(extracted: dict[str, Any]) -> None:
                 st.rerun()
     with middle:
         st.markdown(
-            '<a class="profile-tab-link" href="?view=resume-studio" target="_self">Edit / re-extract in Resume Studio</a>',
+            '<a class="profile-tab-link" href="?view=resume-studio" target="_self">Review Master Resume source</a>',
             unsafe_allow_html=True,
         )
     with right:
@@ -156,4 +190,4 @@ def render() -> None:
 
     _render_preview_controls(extracted)
     profile = extracted.get("profile") or {}
-    v1._render_profile_details(profile, _details())
+    v1._render_profile_details(profile, _details(profile))
