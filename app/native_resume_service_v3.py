@@ -19,7 +19,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app import native_resume_service_v2 as v2
-from app.secure_vault import read_secret, store_secret, vault_available
+from app.secure_vault import delete_secret, read_secret, store_secret, vault_available
 
 SCHEMA_VERSION = "native-resume-studio-service-v3"
 PROFILE_SECRET_TYPE = "native_resume_profile_snapshot_v3"
@@ -231,35 +231,50 @@ def _persist_profile(*, source: dict[str, Any], profile: CandidateProfileExtract
     vault_label: str | None = None
     storage_mode = "sqlite_plaintext"
     profile_json: str | None = payload
+    existing_id: str | None = None
     try:
         ensure_schema(connection)
         owner = v2.v1.current_owner(connection)
-        if vault_available():
-            vault_label = _profile_secret_label(owner, extraction_id)
-            store_secret(PROFILE_SECRET_TYPE, payload, account_label=vault_label)
-            profile_json = None
-            storage_mode = "aes_gcm_vault"
         if connection.in_transaction:
             connection.commit()
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute(
-            """INSERT INTO native_resume_profile_extracts(
-                extraction_id,tenant_id,user_id,source_id,source_sha256,profile_sha256,
-                profile_json,vault_label,storage_mode,model_name,model_response_id,status
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,'DRAFT')""",
-            (
-                extraction_id, owner.tenant_id, owner.user_id, str(source["source_id"]),
-                str(source["content_sha256"]), payload_sha, profile_json, vault_label,
-                storage_mode, model, response_id or None,
-            ),
-        )
-        connection.commit()
+        existing = connection.execute(
+            """SELECT extraction_id FROM native_resume_profile_extracts
+               WHERE tenant_id=? AND user_id=? AND source_id=? AND profile_sha256=?
+               ORDER BY created_at DESC LIMIT 1""",
+            (owner.tenant_id, owner.user_id, str(source["source_id"]), payload_sha),
+        ).fetchone()
+        if existing:
+            existing_id = str(existing["extraction_id"])
+        else:
+            if vault_available():
+                vault_label = _profile_secret_label(owner, extraction_id)
+                store_secret(PROFILE_SECRET_TYPE, payload, account_label=vault_label)
+                profile_json = None
+                storage_mode = "aes_gcm_vault"
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """INSERT INTO native_resume_profile_extracts(
+                    extraction_id,tenant_id,user_id,source_id,source_sha256,profile_sha256,
+                    profile_json,vault_label,storage_mode,model_name,model_response_id,status
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,'DRAFT')""",
+                (
+                    extraction_id, owner.tenant_id, owner.user_id, str(source["source_id"]),
+                    str(source["content_sha256"]), payload_sha, profile_json, vault_label,
+                    storage_mode, model, response_id or None,
+                ),
+            )
+            connection.commit()
     except Exception:
         connection.rollback()
+        if vault_label:
+            try:
+                delete_secret(PROFILE_SECRET_TYPE, account_label=vault_label)
+            except Exception:
+                pass
         raise
     finally:
         connection.close()
-    return get_profile_extract(extraction_id)
+    return get_profile_extract(existing_id or extraction_id)
 
 
 def extract_profile_from_source(source: dict[str, Any] | None = None) -> dict[str, Any]:
