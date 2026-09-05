@@ -15,10 +15,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  probe-installed-staging-recovery:
+  bounded-safe-recovery:
     runs-on: ubuntu-latest
     environment: staging
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - name: Configure approved restricted SSH
         shell: bash
@@ -41,30 +41,46 @@ jobs:
           echo "NETCUP_HOST=$NETCUP_HOST" >> "$GITHUB_ENV"
           echo "NETCUP_USER=$NETCUP_USER" >> "$GITHUB_ENV"
 
-      - name: Probe exact installed staging-recovery gateway
+      - name: Bounded retry of exact installed staging recovery
         shell: bash
         run: |
           set -uo pipefail
-          LOG="$RUNNER_TEMP/staging-recovery-gateway-probe.log"
-          set +e
-          ssh -i "$HOME/.ssh/netcup_deploy" \
-            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
-            "$NETCUP_USER@$NETCUP_HOST" \
-            "/opt/munshi/bin/recover-staging-auth-bootstrap --from-sha 2fd6814c6685bb21adb1d0d7fd60249680da1c1c --to-sha 1785c022a6a9d3205fcfc36b2aed120494044158 --to-branch fix/dashboard-device-auth-staging-v1" \
-            2>&1 | tee "$LOG"
-          rc=${PIPESTATUS[0]}
-          set -e
-          echo "RECOVERY_GATEWAY_RC=$rc"
-          if grep -Fq 'request rejected by MUNSHI GitHub deployment gateway' "$LOG"; then
-            echo 'RECOVERY_GATEWAY_ACCEPTED=NO'
-            exit 41
-          fi
-          echo 'RECOVERY_GATEWAY_ACCEPTED=YES'
-          if grep -Fq 'RESULT=STAGING_AUTH_BOOTSTRAP_RECOVERY_PASS' "$LOG"; then
-            echo 'STAGING_RECOVERY_COMPLETED=YES'
-          else
-            echo 'STAGING_RECOVERY_COMPLETED=NO'
-          fi
-          # The helper verifies production before any staging mutation. A non-zero
-          # return after gateway acceptance is therefore safe incident evidence.
-          exit 0
+          CMD="/opt/munshi/bin/recover-staging-auth-bootstrap --from-sha 2fd6814c6685bb21adb1d0d7fd60249680da1c1c --to-sha 1785c022a6a9d3205fcfc36b2aed120494044158 --to-branch fix/dashboard-device-auth-staging-v1"
+          SSH=(ssh -i "$HOME/.ssh/netcup_deploy" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10)
+
+          for attempt in $(seq 1 24); do
+            LOG="$RUNNER_TEMP/staging-recovery-attempt-$attempt.log"
+            echo "RECOVERY_ATTEMPT=$attempt"
+            set +e
+            "${SSH[@]}" "$NETCUP_USER@$NETCUP_HOST" "$CMD" 2>&1 | tee "$LOG"
+            rc=${PIPESTATUS[0]}
+            set -e
+            echo "RECOVERY_ATTEMPT_RC=$rc"
+
+            if grep -Fq 'request rejected by MUNSHI GitHub deployment gateway' "$LOG"; then
+              echo 'RECOVERY_GATEWAY_ACCEPTED=NO'
+              exit 41
+            fi
+            echo 'RECOVERY_GATEWAY_ACCEPTED=YES'
+
+            if [[ "$rc" -eq 0 ]] && grep -Fq 'RESULT=STAGING_AUTH_BOOTSTRAP_RECOVERY_PASS' "$LOG"; then
+              echo 'STAGING_RECOVERY_COMPLETED=YES'
+              exit 0
+            fi
+
+            # If production ever passed its precheck, the helper may have entered
+            # its backup/recovery transaction. Never blindly retry after that.
+            if grep -Fq 'PRODUCTION_RUNTIME_CONTRACT=PASS' "$LOG"; then
+              echo 'RECOVERY_ENTERED_TRANSACTION=YES'
+              echo 'Stopping retries for manual log inspection; helper owns rollback.'
+              exit "$rc"
+            fi
+
+            # Before PRODUCTION_RUNTIME_CONTRACT=PASS, helper source guarantees
+            # there has been no staging mutation. Retrying is therefore safe.
+            if [[ "$attempt" -lt 24 ]]; then sleep 15; fi
+          done
+
+          echo 'STAGING_RECOVERY_COMPLETED=NO'
+          echo 'PRODUCTION_HEALTH_WINDOW_NOT_OBSERVED=YES'
+          exit 42
