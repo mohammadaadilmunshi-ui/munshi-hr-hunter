@@ -1,0 +1,117 @@
+name: Netcup Dashboard Auth Edge Cutover
+
+on:
+  push:
+    branches:
+      - feat/autonomous-career-os-foundation
+    paths:
+      - "config/dashboard-auth-edge-cutover-request.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-dashboard-auth-edge
+  cancel-in-progress: false
+
+jobs:
+  validate-request:
+    runs-on: ubuntu-latest
+    outputs:
+      production_sha: ${{ steps.validate.outputs.production_sha }}
+      staging_sha: ${{ steps.validate.outputs.staging_sha }}
+    steps:
+      - name: Checkout trusted control branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/autonomous-career-os-foundation
+          fetch-depth: 0
+
+      - name: Validate exact auth edge request
+        id: validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE=config/dashboard-auth-edge-cutover-request.json
+          test -f "$FILE"
+          PROD="$(python -c 'import json; print(json.load(open("config/dashboard-auth-edge-cutover-request.json"))["production_sha"])')"
+          STG="$(python -c 'import json; print(json.load(open("config/dashboard-auth-edge-cutover-request.json"))["staging_sha"])')"
+          SCOPE="$(python -c 'import json; print(json.load(open("config/dashboard-auth-edge-cutover-request.json"))["scope"])')"
+          AUTH="$(python -c 'import json; print(json.load(open("config/dashboard-auth-edge-cutover-request.json"))["remote_authorization"])')"
+          [[ "$PROD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$STG" =~ ^[0-9a-f]{40}$ ]]
+          test "$SCOPE" = "dashboard_trusted_device_edge_only"
+          test "$AUTH" = "AUTHORIZED_REMOTE_DASHBOARD_AUTH_EDGE_CUTOVER"
+          git cat-file -e "$PROD^{commit}"
+          git cat-file -e "$STG^{commit}"
+          grep -Fq '__Host-munshi_device_session' <(git show "$PROD:app/device_auth.py")
+          grep -Fq '__Host-munshi_device_session' <(git show "$STG:app/device_auth.py")
+          echo "production_sha=$PROD" >> "$GITHUB_OUTPUT"
+          echo "staging_sha=$STG" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Dashboard trusted-device edge cutover request"
+            echo "- production SHA: \`$PROD\`"
+            echo "- staging SHA: \`$STG\`"
+            echo "- Caddy reload only; no Caddy recreate"
+            echo "- n8n/Ollama mutation: forbidden by server helper"
+            echo "- local terminal: not required after gateway bootstrap"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply-edge:
+    needs: validate-request
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - name: Configure approved restricted SSH
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_SSH_PRIVATE_KEY"
+          test -n "$NETCUP_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_deploy"
+          chmod 600 "$HOME/.ssh/netcup_deploy"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Apply rollback-safe trusted-device Caddy edge cutover
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          PRODUCTION_SHA: ${{ needs.validate-request.outputs.production_sha }}
+          STAGING_SHA: ${{ needs.validate-request.outputs.staging_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_HOST"
+          test -n "$NETCUP_USER"
+          LOG="$RUNNER_TEMP/dashboard-auth-edge.log"
+          ssh -i "$HOME/.ssh/netcup_deploy" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "$NETCUP_USER@$NETCUP_HOST" \
+            "/opt/munshi/bin/apply-dashboard-device-auth-edge --production-sha $PRODUCTION_SHA --staging-sha $STAGING_SHA" | tee "$LOG"
+          grep -F "PRODUCTION_SHA=$PRODUCTION_SHA" "$LOG"
+          grep -F "STAGING_SHA=$STAGING_SHA" "$LOG"
+          grep -F 'AUTH_BACKENDS_READY=PASS' "$LOG"
+          grep -F 'CADDY_CANDIDATE_VALIDATE=PASS' "$LOG"
+          grep -F 'EDGE_RECREATED=NO' "$LOG"
+          grep -F 'N8N_OLLAMA_IDENTITIES_UNCHANGED=PASS' "$LOG"
+          grep -F 'POST_CUTOVER_RUNTIME_CONTRACTS=PASS' "$LOG"
+          grep -F 'RESULT=DASHBOARD_DEVICE_AUTH_EDGE_PASS' "$LOG"
+
+      - name: Verify public unauthenticated behavior from GitHub runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          for host in dashboard.munshi.systems staging-dashboard.munshi.systems; do
+            ROOT="$(curl -ksS --max-time 15 -o /dev/null -w '%{http_code}' "https://$host/")"
+            LOGIN="$(curl -ksS --max-time 15 -o /dev/null -w '%{http_code}' "https://$host/_munshi-auth/login?next=%2F")"
+            test "$ROOT" = "303"
+            test "$LOGIN" = "401"
+            echo "$host public trusted-device edge contract=PASS"
+          done
