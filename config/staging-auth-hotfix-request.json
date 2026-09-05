@@ -1,0 +1,6 @@
+{
+  "commit_sha": "1785c022a6a9d3205fcfc36b2aed120494044158",
+  "source_branch": "fix/dashboard-device-auth-staging-v1",
+  "requested_by": "remote-staging-auth-relay-v1",
+  "purpose": "Deploy the persistent trusted-device password authentication hotfix on top of the current Native Resume Studio staging release while preserving staging n8n, Ollama, edge, isolation, and all production containers."
+}
