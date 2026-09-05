@@ -1,8 +1,8 @@
 """Pure cross-repository contract primitives for MUNSHI Career OS.
 
-This module is deliberately inert.  It performs validation, canonicalization,
-digesting, and CRM projection only.  It has no database, HTTP, browser,
-provider, credential, Gmail, or n8n execution authority.
+This module is deliberately inert. It performs validation, canonicalization,
+digesting, correlation checks, and CRM projection only. It has no database,
+HTTP, browser, provider, credential, Gmail, or n8n execution authority.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ PROFILE_SNAPSHOT_VERSION: Final = "munshi-candidate-profile-snapshot-v1"
 EXECUTION_RECEIPT_VERSION: Final = "munshi-apply-execution-receipt-v1"
 PROFILE_AUTHORITY: Final = "munshi-hr-hunter"
 APPLY_EVENT_SOURCE: Final = "munshi-apply"
+PROFILE_REVISION_SCOPE: Final = "SOURCE_EXTRACTION"
 
 TRUST_LEVELS: Final = frozenset(
     {
@@ -104,11 +105,30 @@ def _iso_datetime(value: Any, field: str) -> str:
     return cleaned
 
 
+def _nonnegative_int(value: Any, field: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{field} must be a non-negative integer")
+    return value
+
+
+def profile_digest_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return the stable profile state used for cross-repository digesting.
+
+    `generated_at` is observational metadata, not candidate truth. Excluding it
+    keeps identical truth snapshots content-addressable across repeated exports.
+    """
+    return {
+        key: value
+        for key, value in snapshot.items()
+        if key not in {"generated_at", "profile_digest"}
+    }
+
+
 def validate_profile_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Validate an immutable Hunter-owned profile projection for Apply.
 
     Protected facts must travel by reference rather than embedding plaintext in
-    this generic bridge contract.  This prevents the contract from becoming a
+    this generic bridge contract. This prevents the contract from becoming a
     second credential/sensitive-data store.
     """
     if not isinstance(snapshot, dict):
@@ -119,17 +139,30 @@ def validate_profile_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("profile authority must remain munshi-hr-hunter")
     if snapshot.get("projection_mode") != "READ_ONLY":
         raise ValueError("profile projection must be READ_ONLY")
+    if snapshot.get("revision_scope") != PROFILE_REVISION_SCOPE:
+        raise ValueError("profile revision scope must remain SOURCE_EXTRACTION")
 
     normalized: dict[str, Any] = {
         "contract_version": PROFILE_SNAPSHOT_VERSION,
         "authority": PROFILE_AUTHORITY,
         "projection_mode": "READ_ONLY",
+        "revision_scope": PROFILE_REVISION_SCOPE,
         "tenant_id": _text(snapshot.get("tenant_id"), "tenant_id", max_length=128),
         "user_id": _text(snapshot.get("user_id"), "user_id", max_length=128),
         "profile_id": _text(snapshot.get("profile_id"), "profile_id", max_length=128),
-        "profile_revision": int(snapshot.get("profile_revision", 0)),
+        "profile_revision": _nonnegative_int(snapshot.get("profile_revision"), "profile_revision"),
+        "override_revision": _nonnegative_int(snapshot.get("override_revision"), "override_revision"),
+        "candidate_details_revision": _nonnegative_int(
+            snapshot.get("candidate_details_revision"), "candidate_details_revision"
+        ),
         "source_extraction_id": _text(
             snapshot.get("source_extraction_id"), "source_extraction_id", max_length=128
+        ),
+        "source_profile_sha256": _sha256(
+            snapshot.get("source_profile_sha256"), "source_profile_sha256"
+        ),
+        "source_resume_sha256": _sha256(
+            snapshot.get("source_resume_sha256"), "source_resume_sha256"
         ),
         "generated_at": _iso_datetime(snapshot.get("generated_at"), "generated_at"),
     }
@@ -139,15 +172,20 @@ def validate_profile_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     raw_facts = snapshot.get("facts")
     if not isinstance(raw_facts, list):
         raise ValueError("facts must be a list")
-    seen: set[str] = set()
+    seen_ids: set[str] = set()
+    seen_keys: set[str] = set()
     facts: list[dict[str, Any]] = []
     for raw in raw_facts:
         if not isinstance(raw, dict):
             raise ValueError("each profile fact must be an object")
         fact_id = _text(raw.get("fact_id"), "fact_id", max_length=128)
-        if fact_id in seen:
+        key = _text(raw.get("key"), "key", max_length=256)
+        if fact_id in seen_ids:
             raise ValueError("duplicate fact_id")
-        seen.add(fact_id)
+        if key in seen_keys:
+            raise ValueError("duplicate profile fact key")
+        seen_ids.add(fact_id)
+        seen_keys.add(key)
         category = _text(raw.get("category"), "category", max_length=64)
         trust = _text(raw.get("trust_level"), "trust_level", max_length=64)
         if category not in FACT_CATEGORIES:
@@ -159,7 +197,7 @@ def validate_profile_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("protected must be boolean")
         fact: dict[str, Any] = {
             "fact_id": fact_id,
-            "key": _text(raw.get("key"), "key", max_length=256),
+            "key": key,
             "category": category,
             "trust_level": trust,
             "protected": protected,
@@ -182,8 +220,8 @@ def validate_profile_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             fact["value"] = value
         facts.append(fact)
 
-    normalized["facts"] = facts
-    computed = sha256_json(normalized)
+    normalized["facts"] = sorted(facts, key=lambda item: (item["key"], item["fact_id"]))
+    computed = sha256_json(profile_digest_payload(normalized))
     supplied = snapshot.get("profile_digest")
     if supplied is not None and _sha256(supplied, "profile_digest") != computed:
         raise ValueError("profile_digest does not match canonical snapshot")
@@ -203,7 +241,11 @@ def validate_resume_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         "source_preparation_id": _text(
             artifact.get("source_preparation_id"), "source_preparation_id", max_length=128
         ),
-        "profile_revision": int(artifact.get("profile_revision", 0)),
+        "source_extraction_id": _text(
+            artifact.get("source_extraction_id"), "source_extraction_id", max_length=128
+        ),
+        "profile_revision": _nonnegative_int(artifact.get("profile_revision"), "profile_revision"),
+        "profile_digest": _sha256(artifact.get("profile_digest"), "profile_digest"),
         "job_id": _text(artifact.get("job_id"), "job_id", max_length=128),
     }
     if normalized["profile_revision"] < 1:
@@ -237,6 +279,9 @@ def validate_execution_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
         "tenant_id": _text(receipt.get("tenant_id"), "tenant_id", max_length=128),
         "user_id": _text(receipt.get("user_id"), "user_id", max_length=128),
         "handoff_id": _text(receipt.get("handoff_id"), "handoff_id", max_length=128),
+        "handoff_body_sha256": _sha256(
+            receipt.get("handoff_body_sha256"), "handoff_body_sha256"
+        ),
         "preparation_id": _text(receipt.get("preparation_id"), "preparation_id", max_length=128),
         "application_id": _text(receipt.get("application_id"), "application_id", max_length=128),
         "runtime_application_id": _text(
@@ -254,18 +299,49 @@ def validate_execution_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
     if event_type == "APPLICATION_SUBMITTED":
         if payload.get("submit_attempted") is not True or payload.get("submit_succeeded") is not True:
             raise ValueError("APPLICATION_SUBMITTED requires verified successful submit evidence")
+    elif payload.get("submit_succeeded") is True:
+        raise ValueError("non-submission events cannot assert successful submission")
+
     if event_type in {"APPLICATION_CONFIRMED", "APPLICATION_COMPLETED"}:
         if payload.get("confirmation_observed") is not True:
             raise ValueError(f"{event_type} requires confirmation evidence")
+    elif payload.get("confirmation_observed") is True:
+        raise ValueError("non-confirmation events cannot assert confirmation evidence")
 
     normalized["receipt_digest"] = sha256_json(normalized)
     return normalized
 
 
+def validate_receipt_correlation(
+    receipt: dict[str, Any],
+    *,
+    tenant_id: str,
+    user_id: str,
+    handoff_id: str,
+    handoff_body_sha256: str,
+    preparation_id: str,
+    application_id: str,
+) -> dict[str, Any]:
+    """Validate a receipt and bind it to the exact Hunter handoff context."""
+    validated = validate_execution_receipt(receipt)
+    expected = {
+        "tenant_id": _text(tenant_id, "tenant_id", max_length=128),
+        "user_id": _text(user_id, "user_id", max_length=128),
+        "handoff_id": _text(handoff_id, "handoff_id", max_length=128),
+        "handoff_body_sha256": _sha256(handoff_body_sha256, "handoff_body_sha256"),
+        "preparation_id": _text(preparation_id, "preparation_id", max_length=128),
+        "application_id": _text(application_id, "application_id", max_length=128),
+    }
+    for field, value in expected.items():
+        if validated[field] != value:
+            raise ValueError(f"execution receipt {field} does not match the Hunter handoff")
+    return validated
+
+
 def crm_projection_for_receipt(receipt: dict[str, Any]) -> str:
     """Return the highest CRM projection a validated Apply event can justify.
 
-    This function intentionally has no transition side effect.  The caller may
+    This function intentionally has no transition side effect. The caller may
     persist the returned projection only after tenant/correlation checks.
     """
     validated = validate_execution_receipt(receipt)
