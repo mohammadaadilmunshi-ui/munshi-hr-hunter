@@ -164,10 +164,16 @@ def render() -> None:
         )
 
     from app import product_pages, profile_workspace_v1, resume_studio_page
+    from app import profile_workspace_v2
     from app.resume_engine_selector import (
         install_resume_engine_selector,
         render_resume_engine_selector,
     )
+
+    # Keep the V1 import/route contract stable for existing integrations while
+    # installing the V2 preview-to-permanent state machine over the proven V1
+    # visual renderer and public-logo resolver.
+    profile_workspace_v1.render = profile_workspace_v2.render
 
     install_product_v22(product_pages)
     install_resume_engine_selector(product_pages)
