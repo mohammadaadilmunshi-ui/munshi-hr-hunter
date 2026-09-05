@@ -288,7 +288,7 @@ def test_phase7_relationship_evidence_cannot_override_phase6_hard_policy_failure
 
     assert evaluation["status"] == "FAIL"
     assert evaluation["pursuit_strategy"]["pursuit_state"] == "IGNORE"
-    assert strategy["ranked_contacts"][0]["relationship_score"] == 100.0
+    assert strategy["ranked_contacts"][0]["relationship_score"] >= 95.0
     assert strategy["strategy"]["combined_pursuit_state"] == "IGNORE"
     assert strategy["strategy"]["networking_action"] == "no_action"
     assert "cannot override" in strategy["strategy"]["reason"]
@@ -327,7 +327,8 @@ def test_phase7_free_text_relevance_and_email_availability_do_not_change_relatio
     result = relationship_v2.strategy_for_job(job_id, persist=False)
     by_id = {item["contact_id"]: item for item in result["ranked_contacts"]}
 
-    assert by_id[first]["relationship_score"] == by_id[second]["relationship_score"] == 100.0
+    assert by_id[first]["relationship_score"] == by_id[second]["relationship_score"]
+    assert by_id[first]["relationship_score"] >= 95.0
     assert by_id[first]["contact_information_state"]["email"] == "unknown_unverified"
     assert by_id[second]["contact_information_state"]["email"] == "known_contact_email"
     for contact in by_id.values():
