@@ -57,7 +57,6 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
     owns = connection is None
     connection = connection or get_connection()
     try:
-        # Phase 4 and 5 base tables must exist before the sidecars.
         from app import native_resume_service_v2
         from app import answer_brain
 
@@ -89,19 +88,11 @@ def _digest(value: Any, label: str) -> str:
 
 
 def current_candidate_profile_snapshot() -> dict[str, Any]:
-    """Return the snapshot for the active Master Resume's latest confirmed profile.
-
-    A newer active Master Resume without a confirmed profile blocks the strengthened
-    engines instead of silently reusing truth from an older source. The ledger
-    connection is always closed before encrypted profile data is decoded because
-    the vault keeps its own audit timestamp on a separate SQLite connection.
-    """
+    """Return the snapshot for the active Master Resume's latest confirmed profile."""
     connection = v3.v2.v1.get_connection()
     row_payload: dict[str, Any] | None = None
     try:
         v3.ensure_schema(connection)
-        # Schema helpers can perform additive writes. Finish those writes before
-        # the vault opens its separate connection for decrypt + last-used audit.
         if connection.in_transaction:
             connection.commit()
         owner = v3.v2.v1.current_owner(connection)
@@ -242,8 +233,10 @@ def save_answer_truth_binding(
     question_key: str,
     profile_fact_key: str,
     snapshot: dict[str, Any],
+    connection: sqlite3.Connection | None = None,
 ) -> None:
-    connection = get_connection()
+    owns = connection is None
+    connection = connection or get_connection()
     try:
         ensure_schema(connection)
         owner = current_owner(connection)
@@ -268,9 +261,11 @@ def save_answer_truth_binding(
                 _digest(snapshot["profile_digest"], "Profile digest"),
             ),
         )
-        connection.commit()
+        if owns:
+            connection.commit()
     finally:
-        connection.close()
+        if owns:
+            connection.close()
 
 
 def answer_truth_binding(answer_id: str) -> dict[str, Any]:
