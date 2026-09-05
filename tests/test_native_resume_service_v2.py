@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -97,3 +98,20 @@ def test_rewrite_strengths_are_explicit_and_never_relax_truth_boundary(hunter_db
     assert "never permits invention" in aggressive.casefold()
     with pytest.raises(ValueError, match="Slight, Medium, or Aggressive"):
         rewrite_policy("maximum")
+
+
+def test_container_wires_writer_secrets_only_from_runtime_environment() -> None:
+    root = Path(__file__).resolve().parents[1]
+    compose = (root / "compose.yaml").read_text(encoding="utf-8")
+    example = (root / ".env.example").read_text(encoding="utf-8")
+    shadow_example = (root / ".env.netcup.shadow.example").read_text(encoding="utf-8")
+
+    assert "MUNSHI_VAULT_KEY: ${MUNSHI_VAULT_KEY:-}" in compose
+    assert "OPENAI_API_KEY: ${OPENAI_API_KEY:-}" in compose
+    assert "MUNSHI_RESUME_MODEL: ${MUNSHI_RESUME_MODEL:-gpt-5.6-terra}" in compose
+    assert "MUNSHI_VAULT_KEY=\n" in example
+    assert "OPENAI_API_KEY=\n" in example
+    assert "MUNSHI_VAULT_KEY=\n" in shadow_example
+    assert "OPENAI_API_KEY=\n" in shadow_example
+    assert "sk-" not in example
+    assert "sk-" not in shadow_example
