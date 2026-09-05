@@ -1,41 +1,117 @@
-# MUNSHI Cross-Repository Authority + Phase 12 Pre-Build Contract
+# MUNSHI Sections 1–3 Foundation Contract
 
-**Status:** PRE-BUILD / NON-RUNTIME
-**Hunter base SHA:** `4f11506c8ae028e88e7de034da1a20760fa2c475`
-**Hunter branch:** `feat/cross-repo-authority-phase12-v1`
+**Status:** STRENGTHENED PRE-BUILD / NON-RUNTIME
+**Hunter Section 1 staging baseline:** `4f11506c8ae028e88e7de034da1a20760fa2c475`
+**Hunter working branch:** `feat/cross-repo-authority-phase12-v1`
 **Apply Phase 9 reference SHA:** `100fa7b1053a2a030743791ab4a42e9e283ed7f6`
-**Scope:** MUNSHI HR Hunter ↔ MUNSHI Apply authority reconciliation and inert Phase 12 contract design.
+**Scope:** Section 1 Candidate Truth Profile integrity + Section 2 authority reconciliation + Section 3 inert Phase 12 cross-repository contracts.
 
-## 1. Purpose
+## 1. Why Sections 1–3 are one foundation block
 
-Sections 2 and 3 establish a single-writer architecture before any additional cross-repository runtime behavior is introduced.
+Section 1 established the permanent Hunter-owned Candidate Truth Profile. Sections 2 and 3 must consume that exact truth rather than create another editable copy of it.
 
-The two repositories already contain overlapping concepts for profile facts, evidence, resume artifacts, application answers, application identity, ATS/account metadata, and application state. The safe design is therefore not to create a new third truth store. It is to assign one authoritative writer for each class of state and exchange immutable, tenant-bound contract messages between systems.
+The strengthened architecture therefore has one continuous chain:
 
-This document does **not** authorize network transport, browser execution, provider login, application submission, email sending, credential use, production deployment, or production mutation.
+`confirmed Master Resume evidence -> encrypted candidate edits/details -> deterministic Hunter profile snapshot -> signed preparation handoff -> Apply execution boundary -> correlated Apply receipt -> Hunter CRM projection`
+
+No later section may bypass this chain by inventing a parallel profile, application state, submission flag, credential store, or uncorrelated event path.
+
+This document does **not** authorize HTTP delivery, browser execution, ATS/provider login, application submission, credential use, Gmail sending, n8n runtime changes, staging promotion, production deployment, or production mutation.
 
 ## 2. Non-negotiable invariants
 
-1. `PREPARED != SUBMITTED`.
-2. `READY_TO_APPLY != SUBMITTED`.
-3. `HANDOFF_ACCEPTED != SUBMITTED`.
-4. A Gmail confirmation or recruiter email is evidence, not browser submission authority.
-5. Only a verified MUNSHI Apply execution/submission receipt may assert that browser/provider submission occurred.
-6. Hunter remains the canonical career/candidate truth system.
-7. MUNSHI Apply remains the canonical browser/application-execution system.
-8. n8n may orchestrate work but is not a competing truth store.
-9. Secret plaintext never crosses repository contracts.
-10. Master Resume evidence remains immutable; explicit candidate edits remain separately attributable.
-11. Cross-repository messages are tenant/user bound, versioned, digestible, replay-safe, and fail closed.
-12. Unsupported ATS/provider situations remain `NEEDS_INPUT` or another explicit non-submitted state.
+1. Hunter is the canonical career/candidate truth system.
+2. MUNSHI Apply is the canonical browser/application-execution system.
+3. n8n may orchestrate work but is not a competing truth store.
+4. Master Resume evidence is immutable after confirmation.
+5. Candidate edits are separately attributable and encrypted.
+6. Candidate-entered work authorization/preferences/self-ID are encrypted and separately revisioned.
+7. `PREPARED != SUBMITTED`.
+8. `READY_TO_APPLY != SUBMITTED`.
+9. `HANDOFF_ACCEPTED != SUBMITTED`.
+10. Gmail/recruiter messages are evidence, not browser submission authority.
+11. Only verified Apply execution evidence may assert browser/provider submission.
+12. Protected fact plaintext never crosses the generic repository bridge.
+13. Unsupported ATS/provider/security situations remain explicit non-submitted states.
+14. Cross-repository messages are tenant/user bound, versioned, digestible, replay-safe, and fail closed.
+15. A reverse receipt must correlate to the exact accepted Hunter handoff, not merely a similar application.
 
-## 3. Existing Phase 9 seam that must be preserved
+## 3. Section 1 — Candidate Truth Profile integrity
 
-Hunter already creates the signed inert envelope version:
+### 3.1 Immutable evidence
+
+The confirmed Master Resume extraction remains the immutable evidence baseline. Its stable bindings are:
+
+- `extraction_id`
+- `profile_sha256`
+- `source_sha256`
+- tenant/user ownership
+- confirmed status
+
+The Phase 12 projection recomputes the profile hash before export and fails closed if the supplied confirmed evidence no longer matches its stored hash.
+
+### 3.2 Encrypted candidate overrides
+
+Candidate-confirmed edits are stored as AES-GCM encrypted override data, never by mutating the confirmed extraction.
+
+The override envelope carries a monotonic `revision`. Strengthening added an important invariant: resetting the last override or resetting all overrides no longer deletes the encrypted revision envelope. Returning to the original evidence is itself a newer state and must not appear to revert to revision zero.
+
+### 3.3 Encrypted candidate-entered application details
+
+Work authorization, sponsorship, work preferences, availability, accommodations and voluntary self-ID remain encrypted-only candidate-entered truth.
+
+The V3.1 details store is now wrapped in a backward-compatible encrypted revision envelope:
+
+- `schema_version = candidate-profile-details-envelope-v1`
+- `revision`
+- `updated_at`
+- `values`
+
+Legacy encrypted V3.1 payloads are read as revision `0` and upgraded on the next confirmed save. No plaintext migration is introduced.
+
+### 3.4 Composite profile revision
+
+The cross-repository profile revision is scoped to one immutable source extraction:
+
+`revision_scope = SOURCE_EXTRACTION`
+
+It is derived from the two encrypted Section 1 counters using the same Cantor-pairing rule in Hunter and Apply:
+
+`profile_revision = ((override_revision + candidate_details_revision) * (override_revision + candidate_details_revision + 1) / 2) + candidate_details_revision + 1`
+
+Both repositories reject a snapshot whose declared `profile_revision` does not match those two revision components.
+
+A new immutable Master Resume extraction begins a new `source_extraction_id` scope, so revision ordering is never incorrectly compared across different evidence baselines.
+
+## 4. Section 2 — single-writer authority matrix
+
+| Concept | Canonical writer | Secondary role | Required rule |
+|---|---|---|---|
+| Candidate/Profile truth | **Hunter** | Apply consumes read-only projection/cache | Apply must not independently overwrite career truth |
+| Master Resume evidence | **Hunter** | Apply consumes hashes/references | Original confirmed extraction remains immutable |
+| JD-specific resume artifact | **Hunter** | Apply selects/uploads exact artifact | Exact artifact hash must be recorded |
+| Candidate recurring answer defaults | **Hunter** | Apply maps truth to observed controls | Sensitive/protected values remain reviewable and provenance-aware |
+| Page-specific question/control semantics | **Apply** | Hunter may receive unresolved requirements | Browser-observed wording/control identity remains Apply-owned |
+| Generated free-text review | **Apply** | Hunter supplies truth/evidence | Generated content cannot invent unsupported facts |
+| Job/preparation identity | **Hunter** | Apply stores immutable linkage | `preparation_id` remains stable correlation input |
+| Browser application identity | **Apply** | Hunter stores returned projection | Runtime session/application correlation is Apply-owned |
+| ATS family/page identity | **Apply** | Hunter may coarse-classify preparation URL | Browser-observed ATS identity wins |
+| ATS credential operation | **Apply/native companion** | Hunter legacy/foundation metadata may migrate later | Secret plaintext never crosses bridge |
+| Eligibility/work-preference policy | **Hunter** | Apply consumes resolved inputs | Browser runtime cannot re-author career truth |
+| AutoPilot/runtime policy | **Apply** | Hunter may request preparation only | Final submit/security policy remains Apply-owned |
+| Browser session/checkpoint state | **Apply** | Hunter receives summarized status | CAPTCHA/MFA/OTP/manual checkpoints cannot be inferred away |
+| Submission/execution receipt | **Apply** | Hunter validates and projects | Ready/attempted/submitted/confirmed/failed remain distinct |
+| Career CRM state | **Hunter** | Apply emits verified events | Hunter advances from evidence, never handoff acceptance alone |
+| Gmail/recruiter evidence | **Hunter** | Apply may later consume normalized evidence | Email cannot fabricate browser execution truth |
+| Orchestration | **n8n, current architecture** | Hunter/Apply expose bounded capabilities | n8n coordinates; it is not canonical profile/application truth |
+
+## 5. Existing Phase 9 seam preserved
+
+Hunter already creates the signed inert envelope:
 
 `munshi-apply-preparation-handoff-v1`
 
-Canonical Hunter fields are:
+Canonical fields remain:
 
 - `version`
 - `handoff_id`
@@ -50,227 +126,195 @@ Canonical Hunter fields are:
 - `answers`
 - `provenance`
 
-Hunter signs a canonical body with freshness-bound HMAC headers. It has no HTTP/provider/browser/credential execution authority in this module.
+Hunter signs the canonical body with freshness-bound HMAC headers. Apply verifies signature/freshness/body digest, normalizes the package into its local handoff ledger, enforces idempotency, and explicitly treats acceptance as **not** a provider action or submission.
 
-Apply already validates the exact Hunter envelope, verifies HMAC/freshness/body digest, normalizes it into its local handoff ledger, enforces idempotency, and explicitly treats acceptance as **not** a provider action or submission.
+Phase 12 extends this seam; it does not replace or rename it.
 
-Phase 12 extends this seam. It does not replace it.
+## 6. Section 3 — actual Section 1 → Apply projection
 
-## 4. Single-writer authority matrix
+### 6.1 Candidate Profile Snapshot — Hunter → Apply
 
-| Concept | Canonical writer | Secondary role | Classification | Required rule |
-|---|---|---|---|---|
-| Candidate/Profile truth | **Hunter** | Apply consumes a versioned projection/cache for application filling | Hunter: KEEP / Apply: NEEDS ADAPTER | Apply must not independently overwrite career truth without an explicit user-confirmed return contract |
-| Master Resume evidence | **Hunter** | Apply consumes references/hashes only | KEEP IN HUNTER / SHARE THROUGH CONTRACT | Original extracted evidence remains immutable |
-| JD-specific resume artifact | **Hunter** | Apply selects/uploads exact artifact and records the exact hash used | SHARE THROUGH CONTRACT | Apply never silently substitutes a different file |
-| Candidate recurring answer defaults | **Hunter** | Apply maps defaults to page controls | SHARE THROUGH CONTRACT | Sensitive/protected answers remain provenance-aware and reviewable |
-| Page-specific question semantics | **Apply** | Hunter may receive normalized unresolved requirements | KEEP IN APPLY / SHARE THROUGH CONTRACT | Browser-observed wording/control identity remains Apply-owned |
-| Generated free-text answer review | **Apply** | Hunter supplies truth/evidence references | KEEP IN APPLY | Generated text cannot invent unsupported facts |
-| Job/preparation identity | **Hunter** | Apply stores immutable linkage | KEEP IN HUNTER / SHARE THROUGH CONTRACT | `preparation_id` remains stable correlation input |
-| Browser application identity | **Apply** | Hunter stores returned projection | KEEP IN APPLY / SHARE THROUGH CONTRACT | Apply owns runtime application/session correlation |
-| ATS family/page identity | **Apply** | Hunter may perform coarse provider classification for preparation | KEEP IN APPLY / NEEDS ADAPTER | Browser-observed ATS identity wins over coarse URL classification |
-| ATS account/credential operation | **Apply/native companion** | Hunter Phase 10 metadata slots are migration/foundation data only | Apply: KEEP / Hunter: DEPRECATE LATER | Secret plaintext never crosses the bridge |
-| Candidate eligibility/work preference policy | **Hunter** | Apply consumes resolved policy inputs | KEEP IN HUNTER / SHARE THROUGH CONTRACT | Career targeting truth is not re-authored by browser runtime |
-| AutoPilot runtime policy | **Apply** | Hunter may request preparation, never execution authority | KEEP IN APPLY | Final submit/security checkpoint policy remains Apply-owned |
-| Browser session/checkpoint state | **Apply** | Hunter receives summarized status only | KEEP IN APPLY | CAPTCHA/MFA/OTP/manual checkpoint cannot be inferred away |
-| Submission/execution receipt | **Apply** | Hunter consumes immutable receipt projection | SHARE THROUGH CONTRACT | Receipt must distinguish ready, attempted, submitted, confirmed, failed |
-| Career CRM state | **Hunter** | Apply emits verified execution events | KEEP IN HUNTER / SHARE THROUGH CONTRACT | Hunter transitions from evidence, never from handoff acceptance alone |
-| Gmail/recruiter evidence | **Hunter** | Apply may consume a normalized read-only projection later | KEEP IN HUNTER | Email observation cannot mutate browser execution truth |
-| Orchestration | **n8n for current architecture** | Hunter/Apply provide bounded capabilities | KEEP CURRENTLY | n8n coordinates; it does not become canonical profile/application truth |
+`app/profile_snapshot_projection.py` now constructs the snapshot from the real Section 1 stores rather than accepting an arbitrary caller-authored profile.
 
-## 5. Phase 12 contracts
+Export requires:
 
-### 5.1 Candidate Profile Snapshot Contract — Hunter → Apply
+- encrypted Candidate Truth Profile storage available;
+- a `CONFIRMED` Master Resume extraction;
+- active tenant/user matching the extraction owner;
+- valid immutable profile hash;
+- valid source resume/profile SHA-256 bindings.
 
-Purpose: provide Apply an immutable point-in-time view of resolved candidate truth suitable for application filling without giving Apply independent profile authorship.
-
-Required identity/provenance:
+Snapshot identity includes:
 
 - `contract_version`
+- `authority = munshi-hr-hunter`
+- `projection_mode = READ_ONLY`
+- `revision_scope = SOURCE_EXTRACTION`
 - `tenant_id`
 - `user_id`
 - `profile_id`
 - `profile_revision`
-- `source_extraction_id` or equivalent stable evidence revision
+- `override_revision`
+- `candidate_details_revision`
+- `source_extraction_id`
+- `source_profile_sha256`
+- `source_resume_sha256`
 - `generated_at`
+- `facts`
 - `profile_digest`
-- fact records with stable `fact_id`, category, value/reference, trust level, protected flag, and provenance
 
-Apply should map these records into its existing `MasterProfile`/`ProfileFact` vocabulary where possible rather than introducing parallel fact categories.
+Untouched resume facts are marked `DOCUMENT_CONFIRMED`; candidate-overridden sections are marked `USER_CONFIRMED` with override revision provenance.
 
-Protected or sensitive facts must remain explicitly marked. Absence of a fact is not permission to infer it.
+Protected work-authorization/self-ID values are represented only through opaque Hunter vault references. Their plaintext values are not placed in the generic bridge payload.
 
-### 5.2 Resume Artifact Contract — Hunter → Apply
+### 6.2 Deterministic profile digest
 
-Purpose: bind an exact prepared resume artifact to an application.
+The content digest intentionally excludes observational `generated_at` and the digest field itself.
 
-Minimum fields:
+Facts are canonicalized into deterministic key/id order. Therefore:
+
+- repeated exports of unchanged truth produce the same `profile_digest`;
+- a truth change changes the digest;
+- a source evidence hash change changes the digest;
+- changing only export time does not change the digest.
+
+Duplicate fact IDs and duplicate semantic fact keys fail closed.
+
+### 6.3 Resume Artifact Contract — Hunter → Apply
+
+A prepared resume is bound to both the application preparation and the exact Candidate Truth Profile state.
+
+Minimum binding:
 
 - `artifact_id`
 - `kind`
 - `sha256`
 - `mime_type`
-- `size_bytes` when known
+- optional `size_bytes`
 - `source_preparation_id`
+- `source_extraction_id`
 - `profile_revision`
+- `profile_digest`
 - `job_id`
-- immutable locator/reference appropriate to the runtime boundary
 
-Apply must verify the selected/uploaded file hash and record the exact hash in execution evidence.
+Apply must never silently substitute an artifact with a different hash/profile binding.
 
-### 5.3 Candidate Answer Defaults / Truth Policy Contract — Hunter → Apply
+### 6.4 Application Execution Receipt — Apply → Hunter
 
-Purpose: provide recurring candidate truth and policy defaults while leaving real employer control mapping to Apply.
-
-Each item should identify:
-
-- stable answer/fact key
-- semantic category/type
-- value or protected value reference
-- trust/provenance
-- sensitivity/protected flag
-- review requirement
-- whether candidate confirmation is required before use
-
-Apply remains responsible for matching the actual observed question/control, detecting ambiguity, and escalating unresolved or sensitive cases.
-
-### 5.4 Application Execution Receipt Contract — Apply → Hunter
-
-Purpose: allow Hunter CRM to advance only from verified Apply execution evidence.
-
-Minimum identity:
+The reverse receipt carries:
 
 - `contract_version`
+- `source = munshi-apply`
 - `event_id`
 - `correlation_id`
 - `tenant_id`
 - `user_id`
 - `handoff_id`
+- `handoff_body_sha256`
 - `preparation_id`
 - `application_id`
 - Apply runtime application identity
-- ATS family/provider
+- provider
+- event type
 - `occurred_at`
-- event type/state
+- evidence payload
 
-Required evidence fields as applicable:
+Before CRM projection Hunter verifies the receipt against the exact expected:
 
-- page/application fingerprint
-- exact resume artifact hash used
-- unresolved count
-- security/manual checkpoint status
-- submit-control observation
-- submit attempt result
-- confirmation evidence reference
-- failure/recovery reason
+- tenant
+- user
+- handoff ID
+- accepted handoff body SHA-256
+- preparation ID
+- application ID
 
-Only explicit Apply events equivalent to `APPLICATION_SUBMITTED`, followed when available by `APPLICATION_CONFIRMED` / `APPLICATION_COMPLETED`, may assert browser submission progress. A handoff receipt alone cannot do so.
+No fuzzy matching is permitted.
 
-### 5.5 CRM and Gmail evidence projection — Apply/Hunter reconciliation
+### 6.5 Submission semantics
+
+Only explicit Apply events equivalent to:
+
+- `APPLICATION_SUBMITTED`
+- `APPLICATION_CONFIRMED`
+- `APPLICATION_COMPLETED`
+
+may assert submission progress, and each must carry the required evidence.
+
+`APPLICATION_SUBMITTED` requires both `submit_attempted = true` and `submit_succeeded = true`.
+
+Confirmed/completed events require `confirmation_observed = true`.
+
+Conversely, non-submission events are rejected if they try to smuggle `submit_succeeded = true`, and non-confirmation events are rejected if they try to smuggle `confirmation_observed = true`.
+
+## 7. CRM/Gmail projection rules
 
 Hunter owns the outward career CRM projection.
 
-Recommended interpretation:
+- Hunter prepared package -> `PREPARED` / `READY_TO_APPLY` / `NEEDS_INPUT`
+- Apply accepted package -> `HANDOFF_ACCEPTED` only
+- Apply reaches review boundary -> `READY_FOR_REVIEW` or equivalent non-submitted state
+- verified Apply `APPLICATION_SUBMITTED` -> Hunter may project `SUBMITTED`
+- verified Apply confirmation/completion -> Hunter may strengthen to confirmed-submitted state
+- Gmail/recruiter confirmation without matching Apply submission receipt -> attach evidence and reconcile; never fabricate browser submission
+- recruiter interview/assessment/rejection/offer -> update downstream CRM outcome evidence without rewriting the original browser execution receipt
 
-- Hunter prepared package → `PREPARED` / `READY_TO_APPLY` / `NEEDS_INPUT`
-- Apply accepted package → `HANDOFF_ACCEPTED` only
-- Apply reaches review boundary → `READY_FOR_REVIEW` or equivalent non-submitted CRM state
-- Apply emits verified `APPLICATION_SUBMITTED` → Hunter may transition to submitted
-- Apply emits `APPLICATION_CONFIRMED`/`APPLICATION_COMPLETED` → Hunter may attach confirmation evidence and strengthen submitted confidence
-- Gmail/recruiter confirmation without Apply submission receipt → attach evidence and flag reconciliation; do not fabricate a browser submit event
-- Gmail rejection/interview/assessment/offer → update downstream CRM outcome evidence without rewriting the original execution receipt
-
-## 6. Canonical identifiers and correlation
-
-The existing Phase 9 IDs remain foundational:
-
-- `handoff_id`: immutable bridge/replay identity
-- `preparation_id`: Hunter preparation identity
-- `application_id`: Hunter-side application linkage carried into Apply
-- Apply local handoff record ID: Apply persistence identity, not a replacement for `handoff_id`
-
-Phase 12 should add stable profile/artifact revisions but must not rename or shadow the existing Phase 9 identifiers.
-
-Every reverse Apply → Hunter event must carry enough correlation to resolve the original `handoff_id`, `preparation_id`, and `application_id` without fuzzy matching.
-
-## 7. State transition contract
-
-Forbidden transitions:
-
-- `HANDOFF_ACCEPTED -> SUBMITTED` without Apply execution receipt
-- Gmail evidence -> synthetic `APPLICATION_SUBMITTED`
-- unsupported provider -> automatic submitted/complete
-- `NEEDS_INPUT -> SUBMITTED` while unresolved required input remains
-- security checkpoint -> bypassed/complete without explicit Apply evidence
-
-Allowed high-level path:
-
-`PREPARED -> READY_TO_APPLY | NEEDS_INPUT -> HANDOFF_ACCEPTED -> APPLY_RUNTIME_ACTIVE -> READY_FOR_REVIEW -> APPLICATION_SUBMITTED -> APPLICATION_CONFIRMED | APPLICATION_COMPLETED`
-
-The exact runtime state machine remains Apply-owned. Hunter stores only the CRM projection necessary for career tracking.
-
-## 8. Adapter and deprecation plan
+## 8. Adapter/deprecation plan
 
 ### Keep and extend
 
-- Hunter `app.apply_handoff` Phase 9 signed envelope
+- Hunter immutable Master Resume evidence
+- Hunter encrypted Candidate Truth Profile
+- Hunter signed Phase 9 handoff
 - Apply `CareerOSHandoffConsumer`
-- Apply contract package semantic/application event vocabulary
-- Hunter encrypted Candidate Truth Profile and immutable Master Resume evidence
 - Apply browser/session/checkpoint execution machinery
-- Current n8n authority until an explicit later migration
+- Apply event vocabulary
+- current n8n orchestration authority until an explicit later migration
 
-### Needs adapter
+### Needs adapter/runtime wiring later
 
-- Hunter Candidate Truth Profile → Apply `MasterProfile`/`ProfileFact` projection
-- Hunter resume artifact records → Apply artifact/file verification model
-- Hunter answer defaults → Apply semantic question resolver
-- Apply event envelopes → Hunter CRM transition projector
-- Apply ATS family/runtime identity → Hunter provider/application projection
+- inert Hunter profile snapshot -> Apply local read-only profile cache
+- exact resume artifact contract -> Apply upload verification
+- Hunter answer defaults -> Apply semantic question resolver
+- Apply execution receipt -> Hunter CRM transition persistence
+- Apply ATS runtime identity -> Hunter application projection
 
-### Deprecate later, after migration proof
+### Deprecate only after migration proof
 
-- Any duplicate independently editable Apply profile truth that conflicts with Hunter canonical Candidate Truth Profile
-- Hunter operational ATS credential ownership once Apply/native credential boundary is proven end-to-end
-- Any duplicate application-state fields that can advance independently in both repositories
+- independently editable Apply profile truth that conflicts with Hunter canonical truth
+- Hunter operational ATS credential ownership once Apply/native credential boundary is proven
+- duplicate application-state fields capable of advancing independently
 
-Deprecation requires migration tests and compatibility readers; no destructive removal belongs in Phase 12 pre-build.
+No destructive migration belongs in Sections 1–3.
 
-## 9. Phase 12 implementation boundary
+## 9. Integrated regression contract
 
-The first implementation tranche is deliberately inert:
+The strengthened Hunter gate compiles and tests Sections 1–3 together, including:
 
-1. pure contract dataclasses/schemas and validators;
-2. canonical serialization/digest helpers;
-3. profile snapshot projection helpers;
-4. execution receipt validation/projector logic that cannot perform browser/network/provider actions;
-5. compatibility tests against the existing Phase 9 field names and Apply event vocabulary;
-6. CI gate proving no submission/network/browser/credential authority was introduced.
+- immutable evidence and Profile workspace regressions;
+- encrypted override revision monotonicity after resets;
+- candidate-details legacy compatibility and revision advancement;
+- real Section 1 -> Phase 12 projection;
+- protected-value non-disclosure;
+- stable content digest behavior;
+- duplicate fact rejection;
+- profile revision equation enforcement;
+- artifact SHA/profile binding;
+- reverse receipt correlation;
+- submission-event evidence requirements;
+- no native submission authority;
+- repository secret/state guards.
 
-Explicitly out of scope:
+Apply validates the same profile revision formula and wire vocabulary and runs repository safety, lint, typecheck/tests/build, native-host tests, migration tests, security, browser tests and owner-workspace validation.
 
-- HTTP delivery
-- provider API calls
-- browser navigation/fill/submit
-- ATS login
-- credential retrieval/use
-- Gmail send/reply
-- n8n execution changes
-- production deployment
-- production state mutation
+## 10. Gate before Section 4
 
-## 10. Acceptance criteria for Sections 2 + 3
+Sections 1–3 may be treated as the locked foundation only when:
 
-Sections 2 and 3 are complete when:
+1. Hunter combined Sections 1–3 CI is green.
+2. Apply combined contract/native/browser/security/migration CI is green.
+3. Both PRs remain reviewable and no temporary diagnostic workflow remains.
+4. No staging or production deploy occurs from the pre-build branches.
+5. No real browser application, provider login, credential retrieval, email sending or n8n runtime mutation has occurred.
+6. Section 4 consumes these contracts rather than creating a parallel truth or state path.
 
-- one canonical writer is documented for each overlapping concept;
-- Phase 9 handoff remains backward compatible;
-- Candidate Truth Profile can be represented as an immutable versioned projection without moving profile authorship into Apply;
-- resume artifacts are hash-bound;
-- candidate answer truth and browser question mapping have separate authority;
-- Apply execution events can be validated without granting Hunter browser authority;
-- no event other than verified Apply execution evidence can claim submission;
-- no secret plaintext crosses repositories;
-- the implementation primitives are pure/inert and covered by regression tests;
-- CI passes on the isolated branch;
-- no staging or production deployment occurs as part of this pre-build branch.
+Until all six conditions hold, work does not advance to Section 4.
