@@ -12,43 +12,97 @@ on:
         required: true
         default: "feat/github-netcup-deployment-v1"
         type: string
+  push:
+    branches:
+      - feat/autonomous-career-os-foundation
+    paths:
+      - "config/production-auth-bootstrap-request.json"
 
 permissions:
   contents: read
 
 concurrency:
-  group: munshi-netcup-staging
+  group: munshi-netcup-staging-control
   cancel-in-progress: false
+
+env:
+  PRODUCTION_AUTH_BASE_SHA: 4c0f39fa503dabb55ef3212a23d2301ad04ec18a
+  PRODUCTION_AUTH_BRANCH: fix/dashboard-device-auth-prod-v1
 
 jobs:
   validate-request:
     runs-on: ubuntu-latest
     outputs:
+      mode: ${{ steps.validate.outputs.mode }}
       commit_sha: ${{ steps.validate.outputs.commit_sha }}
       source_branch: ${{ steps.validate.outputs.source_branch }}
     steps:
-      - name: Validate staging deployment request
+      - name: Checkout trusted control branch for push requests
+        if: github.event_name == 'push'
+        uses: actions/checkout@v4
+        with:
+          ref: feat/autonomous-career-os-foundation
+          fetch-depth: 0
+
+      - name: Validate staging or production-auth bootstrap request
         id: validate
         shell: bash
         env:
+          EVENT_NAME: ${{ github.event_name }}
           REQUESTED_SHA: ${{ inputs.commit_sha }}
           REQUESTED_BRANCH: ${{ inputs.source_branch }}
         run: |
           set -euo pipefail
-          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "commit_sha must be a full lowercase 40-character Git SHA" >&2
-            exit 2
-          }
-          [[ "$REQUESTED_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || {
-            echo "source_branch contains unsupported characters" >&2
-            exit 3
-          }
-          git check-ref-format --branch "$REQUESTED_BRANCH" >/dev/null || {
-            echo "source_branch is not a valid Git branch name" >&2
-            exit 4
-          }
-          echo "commit_sha=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
-          echo "source_branch=$REQUESTED_BRANCH" >> "$GITHUB_OUTPUT"
+
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            FILE="config/production-auth-bootstrap-request.json"
+            test -f "$FILE"
+            MODE="production_auth_bootstrap"
+            SHA="$(python -c 'import json; print(json.load(open("config/production-auth-bootstrap-request.json"))["commit_sha"])')"
+            BRANCH="$(python -c 'import json; print(json.load(open("config/production-auth-bootstrap-request.json"))["source_branch"])')"
+            SCOPE="$(python -c 'import json; print(json.load(open("config/production-auth-bootstrap-request.json"))["scope"])')"
+            AUTH="$(python -c 'import json; print(json.load(open("config/production-auth-bootstrap-request.json"))["remote_authorization"])')"
+            test "$BRANCH" = "$PRODUCTION_AUTH_BRANCH" || { echo "bootstrap source branch mismatch" >&2; exit 20; }
+            test "$SCOPE" = "dashboard_trusted_device_auth_only" || { echo "bootstrap scope mismatch" >&2; exit 21; }
+            test "$AUTH" = "AUTHORIZED_REMOTE_PRODUCTION_AUTH_HOTFIX" || { echo "remote production authorization missing" >&2; exit 22; }
+          else
+            MODE="staging"
+            SHA="$REQUESTED_SHA"
+            BRANCH="$REQUESTED_BRANCH"
+          fi
+
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "commit_sha must be a full lowercase 40-character Git SHA" >&2; exit 2; }
+          [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "source_branch contains unsupported characters" >&2; exit 3; }
+          git check-ref-format --branch "$BRANCH" >/dev/null || { echo "source_branch is not a valid Git branch name" >&2; exit 4; }
+
+          if [[ "$MODE" == "production_auth_bootstrap" ]]; then
+            git fetch --no-tags origin "$BRANCH:refs/remotes/origin/$BRANCH"
+            git merge-base --is-ancestor "$PRODUCTION_AUTH_BASE_SHA" "$SHA" || { echo "auth candidate is not descended from exact production baseline" >&2; exit 23; }
+            git merge-base --is-ancestor "$SHA" "refs/remotes/origin/$BRANCH" || { echo "auth candidate is not contained in approved branch" >&2; exit 24; }
+            mapfile -t changed < <(git diff --name-only "$PRODUCTION_AUTH_BASE_SHA" "$SHA")
+            test "${#changed[@]}" -eq 5 || { printf 'unexpected auth file count: %s\n' "${#changed[@]}" >&2; exit 25; }
+            for path in "${changed[@]}"; do
+              case "$path" in
+                app/device_auth.py|app/api_device_auth.py|docker/hunter-supervisor.py|deploy/caddy/Caddyfile.dashboard.template|tests/test_device_auth.py) ;;
+                *) echo "PRODUCTION_AUTH_SCOPE_VIOLATION=$path" >&2; exit 26 ;;
+              esac
+            done
+          fi
+
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "source_branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Deployment request"
+            echo "- mode: \`$MODE\`"
+            echo "- exact SHA: \`$SHA\`"
+            echo "- source branch: \`$BRANCH\`"
+            if [[ "$MODE" == "production_auth_bootstrap" ]]; then
+              echo "- production scope: trusted-device auth five-file hotfix only"
+              echo "- staging product code promoted: NO"
+              echo "- local terminal: not required"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   ci:
     needs: validate-request
@@ -56,7 +110,49 @@ jobs:
     with:
       commit_sha: ${{ needs.validate-request.outputs.commit_sha }}
 
-  deploy:
+  production-auth-gate:
+    if: needs.validate-request.outputs.mode == 'production_auth_bootstrap'
+    needs: validate-request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact production auth candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-request.outputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify exact auth-only implementation
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.validate-request.outputs.commit_sha }}
+          RELEASE_BRANCH: ${{ needs.validate-request.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$RELEASE_BRANCH:refs/remotes/origin/$RELEASE_BRANCH"
+          git merge-base --is-ancestor "$PRODUCTION_AUTH_BASE_SHA" "$RELEASE_SHA"
+          git merge-base --is-ancestor "$RELEASE_SHA" "refs/remotes/origin/$RELEASE_BRANCH"
+          python -m pip install -r requirements.lock.txt
+          python -m pip check
+          python -m py_compile app/device_auth.py app/api_device_auth.py docker/hunter-supervisor.py tests/test_device_auth.py
+          python -m pytest -q tests/test_device_auth.py tests/test_hunter_supervisor.py
+          grep -F '__Host-munshi_device_session' app/device_auth.py
+          grep -F '_DEFAULT_TTL_SECONDS = 30 * 24 * 60 * 60' app/device_auth.py
+          grep -F 'secure=True' app/device_auth.py
+          grep -F 'httponly=True' app/device_auth.py
+          grep -F 'samesite="lax"' app/device_auth.py
+          grep -F '@device_login path /_munshi-auth/login' deploy/caddy/Caddyfile.dashboard.template
+          grep -F 'forward_auth 127.0.0.1:8000' deploy/caddy/Caddyfile.dashboard.template
+          grep -F 'reverse_proxy 127.0.0.1:8501' deploy/caddy/Caddyfile.dashboard.template
+          ! git ls-files | grep -E '(^|/)(\.env|.*\.(db|sqlite|sqlite3|wal|shm|pem|p12|pfx|key))$'
+          git diff --check
+
+  deploy-staging:
+    if: needs.validate-request.outputs.mode == 'staging'
     needs: [validate-request, ci]
     runs-on: ubuntu-latest
     environment: staging
@@ -76,13 +172,8 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags origin "$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
-          git merge-base --is-ancestor "$DEPLOY_SHA" "refs/remotes/origin/$DEPLOY_BRANCH" || {
-            echo "requested SHA is not contained in origin/$DEPLOY_BRANCH" >&2
-            exit 10
-          }
-          git bundle create \
-            "$RUNNER_TEMP/munshi-staging-deploy.bundle" \
-            "refs/remotes/origin/$DEPLOY_BRANCH"
+          git merge-base --is-ancestor "$DEPLOY_SHA" "refs/remotes/origin/$DEPLOY_BRANCH" || { echo "requested SHA is not contained in origin/$DEPLOY_BRANCH" >&2; exit 10; }
+          git bundle create "$RUNNER_TEMP/munshi-staging-deploy.bundle" "refs/remotes/origin/$DEPLOY_BRANCH"
           git bundle verify "$RUNNER_TEMP/munshi-staging-deploy.bundle"
 
       - name: Configure restricted SSH
@@ -107,12 +198,89 @@ jobs:
           DEPLOY_BRANCH: ${{ needs.validate-request.outputs.source_branch }}
         run: |
           set -euo pipefail
-          DEPLOY_COMMAND="/opt/munshi/bin/deploy-staging-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH"
           cat "$RUNNER_TEMP/munshi-staging-deploy.bundle" | \
-            ssh \
-              -i "$HOME/.ssh/netcup_deploy" \
-              -o BatchMode=yes \
-              -o IdentitiesOnly=yes \
-              -o StrictHostKeyChecking=yes \
+            ssh -i "$HOME/.ssh/netcup_deploy" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
               "$NETCUP_USER@$NETCUP_HOST" \
-              "$DEPLOY_COMMAND"
+              "/opt/munshi/bin/deploy-staging-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH"
+
+  deploy-production-auth-bootstrap:
+    if: needs.validate-request.outputs.mode == 'production_auth_bootstrap'
+    needs: [validate-request, ci, production-auth-gate]
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact production auth SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-request.outputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Build authenticated production auth bundle
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ needs.validate-request.outputs.commit_sha }}
+          DEPLOY_BRANCH: ${{ needs.validate-request.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
+          git merge-base --is-ancestor "$DEPLOY_SHA" "refs/remotes/origin/$DEPLOY_BRANCH"
+          git bundle create "$RUNNER_TEMP/munshi-production-auth.bundle" "refs/remotes/origin/$DEPLOY_BRANCH"
+          git bundle verify "$RUNNER_TEMP/munshi-production-auth.bundle"
+
+      - name: Configure approved restricted SSH
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_SSH_PRIVATE_KEY"
+          test -n "$NETCUP_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_deploy"
+          chmod 600 "$HOME/.ssh/netcup_deploy"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy exact auth candidate through production wrapper
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          DEPLOY_SHA: ${{ needs.validate-request.outputs.commit_sha }}
+          DEPLOY_BRANCH: ${{ needs.validate-request.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_HOST"
+          test -n "$NETCUP_USER"
+          LOG="$RUNNER_TEMP/production-auth-bootstrap.log"
+          cat "$RUNNER_TEMP/munshi-production-auth.bundle" | \
+            ssh -i "$HOME/.ssh/netcup_deploy" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              "$NETCUP_USER@$NETCUP_HOST" \
+              "/opt/munshi/bin/deploy-production-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH" | tee "$LOG"
+          grep -F "PREVIOUS_SHA=$PRODUCTION_AUTH_BASE_SHA" "$LOG"
+          grep -F "DEPLOYED_SHA=$DEPLOY_SHA" "$LOG"
+          grep -F "DEPLOYED_BRANCH=$DEPLOY_BRANCH" "$LOG"
+          grep -F "N8N_RECREATED=NO" "$LOG"
+          grep -F "OLLAMA_RECREATED=NO" "$LOG"
+          grep -F "RESULT=PRODUCTION_DEPLOYMENT_PASS" "$LOG"
+
+      - name: Record auth-only remote production receipt
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ needs.validate-request.outputs.commit_sha }}
+        run: |
+          {
+            echo "### Production auth backend deployed remotely"
+            echo "- exact production candidate: \`$DEPLOY_SHA\`"
+            echo "- exact five-file allowlist enforced"
+            echo "- source workflow ref: previously proven staging-authorized control branch"
+            echo "- production wrapper: authoritative"
+            echo "- WAL-safe backup + rollback image: enforced"
+            echo "- n8n/Ollama: unchanged"
+            echo "- staging product code promoted: NO"
+            echo "- local terminal: not required"
+          } >> "$GITHUB_STEP_SUMMARY"
