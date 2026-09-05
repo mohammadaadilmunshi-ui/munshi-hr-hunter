@@ -41,9 +41,12 @@ def test_product_shell_installs_engine_selector_after_v22() -> None:
 
 def test_native_resume_studio_exposes_pdf_and_docx_outputs() -> None:
     root = Path(__file__).resolve().parents[1]
-    page = (root / "app" / "resume_studio_page.py").read_text(encoding="utf-8")
+    compatibility_page = (root / "app" / "resume_studio_page.py").read_text(encoding="utf-8")
+    page = (root / "app" / "resume_studio_page_v2.py").read_text(encoding="utf-8")
     service = (root / "app" / "native_resume_service.py").read_text(encoding="utf-8")
 
+    # V2 owns the current UI while the original module remains a stable entry point.
+    assert "from app.resume_studio_page_v2 import render" in compatibility_page
     assert '"Download DOCX"' in page
     assert '"Build PDF"' in page
     assert '"Download PDF"' in page
