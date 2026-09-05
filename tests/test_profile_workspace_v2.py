@@ -17,12 +17,16 @@ def test_profile_v2_can_build_from_saved_master_resume() -> None:
     assert "confirmed Master Resume" in source
 
 
-def test_product_shell_preserves_v1_route_contract_while_installing_v2_handoff() -> None:
+def test_product_shell_preserves_v1_route_contract_while_layering_v2_and_v3() -> None:
     source = Path("app/product_shell.py").read_text(encoding="utf-8")
     assert "from app import product_pages, profile_workspace_v1, resume_studio_page" in source
-    assert "from app import profile_workspace_v2" in source
-    assert "profile_workspace_v1.render = profile_workspace_v2.render" in source
+    assert "profile_workspace_v2, profile_workspace_v3" in source
+    assert "profile_workspace_v1.render = profile_workspace_v3.render" in source
     assert '"profile": profile_workspace_v1.render' in source
+    # V3 must reuse V2's preview/promotion state machine instead of bypassing it.
+    v3 = Path("app/profile_workspace_v3.py").read_text(encoding="utf-8")
+    assert "profile_workspace_v2 as v2" in v3
+    assert "v2._render_preview_controls" in v3
 
 
 def test_v2_reuses_v1_logo_resolved_layout_instead_of_reimplementing_it() -> None:

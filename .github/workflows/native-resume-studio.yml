@@ -40,7 +40,10 @@ jobs:
             app/resume_studio_page_v3.py \
             app/resume_engine_selector.py \
             app/profile_brand_resolver.py \
+            app/profile_truth_overrides_v1.py \
             app/profile_workspace_v1.py \
+            app/profile_workspace_v2.py \
+            app/profile_workspace_v3.py \
             app/product_shell.py \
             migrations/027_native_resume_studio.py \
             migrations/028_native_resume_studio_v2.py \
@@ -53,7 +56,9 @@ jobs:
             tests/test_resume_profile_details_v31.py \
             tests/test_resume_engine_selector.py \
             tests/test_profile_brand_resolver.py \
-            tests/test_profile_workspace_v1.py
+            tests/test_profile_workspace_v1.py \
+            tests/test_profile_workspace_v2.py \
+            tests/test_profile_truth_editor_v1.py
 
       - name: Run native Resume Studio and permanent Profile regression tests
         run: |
@@ -66,6 +71,8 @@ jobs:
             tests/test_resume_engine_selector.py \
             tests/test_profile_brand_resolver.py \
             tests/test_profile_workspace_v1.py \
+            tests/test_profile_workspace_v2.py \
+            tests/test_profile_truth_editor_v1.py \
             tests/test_secure_vault.py \
             tests/test_candidate_artifacts.py \
             tests/test_tenant_foundation.py \
