@@ -3,7 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    user: "0:0"
     environment:
       FASTAPI_HOST: 0.0.0.0
       STREAMLIT_HOST: 0.0.0.0
@@ -24,12 +23,10 @@ services:
       AADIL_HR_HUNTER_PROJECT: /app/hunter
       AADIL_HR_HUNTER_RUNTIME: /app/hunter/.runtime
       AADIL_HR_HUNTER_LOGS: /app/hunter/logs
-      MUNSHI_PRODUCTION_STAGING_RECOVERY_BOOTSTRAP: "1"
     volumes:
       - hunter_data:/app/hunter/data
       - hunter_runtime:/app/hunter/.runtime
       - hunter_logs:/app/hunter/logs
-      - /opt/munshi/bin:/host-bin
     ports:
       - "${HUNTER_FASTAPI_PORT_MAPPING:-127.0.0.1:8000:8000}"
       - "${HUNTER_STREAMLIT_PORT_MAPPING:-127.0.0.1:8501:8501}"
@@ -66,6 +63,7 @@ services:
     volumes:
       - ollama_models:/root/.ollama
     networks: [application]
+    # Model provisioning is an explicit later parity step; no pull command is run here.
 
 networks:
   application:
