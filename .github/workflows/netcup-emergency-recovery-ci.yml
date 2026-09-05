@@ -1,0 +1,30 @@
+name: Netcup Emergency Recovery CI
+
+on:
+  push:
+    branches:
+      - feat/autonomous-career-os-foundation
+    paths:
+      - 'deploy/netcup/emergency_recover_hunters_and_apply_auth_edge.sh'
+      - '.github/workflows/netcup-emergency-recovery-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate emergency recovery contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n deploy/netcup/emergency_recover_hunters_and_apply_auth_edge.sh
+          grep -Fq 'PROD_SHA="380896964d12199936ee7c676e39352a1a68cec8"' deploy/netcup/emergency_recover_hunters_and_apply_auth_edge.sh
+          grep -Fq 'STAGING_SHA="1785c022a6a9d3205fcfc36b2aed120494044158"' deploy/netcup/emergency_recover_hunters_and_apply_auth_edge.sh
+          grep -Fq 'FINAL_N8N_MUTATION=NO' deploy/netcup/emergency_recover_hunters_and_apply_auth_edge.sh
+          grep -Fq 'FINAL_OLLAMA_MUTATION=NO' deploy/netcup/emergency_recover_hunters_and_apply_auth_edge.sh
+          grep -Fq 'RESULT=MUNSHI_AUTH_RECOVERY_AND_EDGE_CUTOVER_PASS' deploy/netcup/emergency_recover_hunters_and_apply_auth_edge.sh
+          ! grep -Eq 'docker (rm|compose .* down).*n8n|docker (rm|compose .* down).*ollama' deploy/netcup/emergency_recover_hunters_and_apply_auth_edge.sh
+          echo 'EMERGENCY_RECOVERY_STATIC_GATE=PASS'
