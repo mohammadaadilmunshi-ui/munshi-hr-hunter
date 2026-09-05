@@ -1,0 +1,152 @@
+name: Netcup Full Auth Recovery + Edge Cutover
+
+on:
+  push:
+    branches:
+      - feat/cloud-migration-foundation
+    paths:
+      - '.github/workflows/netcup-full-auth-recovery-cutover.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-full-auth-recovery
+  cancel-in-progress: false
+
+env:
+  RECOVERY_SOURCE_SHA: 2e30851ad16b315768741a5f919a62936a4e3d57
+  PROD_SHA: 380896964d12199936ee7c676e39352a1a68cec8
+  STAGING_SHA: 1785c022a6a9d3205fcfc36b2aed120494044158
+
+jobs:
+  recover-and-cutover:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact reviewed recovery source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RECOVERY_SOURCE_SHA }}
+          path: recovery-source
+          fetch-depth: 0
+
+      - name: Validate exact emergency recovery contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCRIPT='recovery-source/deploy/netcup/emergency_recover_hunters_and_apply_auth_edge.sh'
+          test -f "$SCRIPT"
+          bash -n "$SCRIPT"
+          grep -Fq 'PROD_SHA="380896964d12199936ee7c676e39352a1a68cec8"' "$SCRIPT"
+          grep -Fq 'STAGING_SHA="1785c022a6a9d3205fcfc36b2aed120494044158"' "$SCRIPT"
+          grep -Fq 'FINAL_N8N_MUTATION=NO' "$SCRIPT"
+          grep -Fq 'FINAL_OLLAMA_MUTATION=NO' "$SCRIPT"
+          grep -Fq 'RESULT=MUNSHI_AUTH_RECOVERY_AND_EDGE_CUTOVER_PASS' "$SCRIPT"
+          ! grep -Eq 'docker (rm|compose .* down).*n8n|docker (rm|compose .* down).*ollama' "$SCRIPT"
+          sha256sum "$SCRIPT"
+          echo 'EXACT_RECOVERY_CONTRACT=PASS'
+
+      - name: Configure protected production SSH transport
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_SSH_PRIVATE_KEY"
+          test -n "$NETCUP_KNOWN_HOSTS"
+          test -n "$NETCUP_HOST"
+          test -n "$NETCUP_USER"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_recovery"
+          chmod 600 "$HOME/.ssh/netcup_recovery"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          echo "NETCUP_USER=$NETCUP_USER" >> "$GITHUB_ENV"
+          echo "NETCUP_HOST=$NETCUP_HOST" >> "$GITHUB_ENV"
+
+      - name: Resolve legitimate emergency administration lane
+        id: lane
+        shell: bash
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i "$HOME/.ssh/netcup_recovery" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10)
+
+          root_out="$("${SSH[@]}" "root@$NETCUP_HOST" 'id -u' 2>&1 || true)"
+          if [[ "$root_out" == '0' ]]; then
+            echo 'mode=root' >> "$GITHUB_OUTPUT"
+            echo 'RECOVERY_ADMIN_LANE=ROOT_SSH'
+            exit 0
+          fi
+
+          user_out="$("${SSH[@]}" "$NETCUP_USER@$NETCUP_HOST" 'id -u' 2>&1 || true)"
+          if [[ "$user_out" =~ ^[0-9]+$ ]]; then
+            if "${SSH[@]}" "$NETCUP_USER@$NETCUP_HOST" 'sudo -n true' >/dev/null 2>&1; then
+              echo 'mode=sudo' >> "$GITHUB_OUTPUT"
+              echo 'RECOVERY_ADMIN_LANE=DEPLOY_USER_PASSWORDLESS_SUDO'
+              exit 0
+            fi
+          fi
+
+          echo 'RECOVERY_ADMIN_LANE=UNAVAILABLE' >&2
+          echo 'Protected production credential does not provide root SSH or an unrestricted passwordless-sudo deploy shell.' >&2
+          exit 43
+
+      - name: Execute exact-state Hunter recovery and trusted-device Caddy cutover
+        shell: bash
+        env:
+          MODE: ${{ steps.lane.outputs.mode }}
+        run: |
+          set -euo pipefail
+          SCRIPT='recovery-source/deploy/netcup/emergency_recover_hunters_and_apply_auth_edge.sh'
+          LOG="$RUNNER_TEMP/full-auth-recovery.log"
+          SSH=(ssh -i "$HOME/.ssh/netcup_recovery" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10)
+
+          if [[ "$MODE" == 'root' ]]; then
+            cat "$SCRIPT" | "${SSH[@]}" "root@$NETCUP_HOST" 'bash -s -- --apply' | tee "$LOG"
+          elif [[ "$MODE" == 'sudo' ]]; then
+            cat "$SCRIPT" | "${SSH[@]}" "$NETCUP_USER@$NETCUP_HOST" 'sudo -n bash -s -- --apply' | tee "$LOG"
+          else
+            echo "unexpected recovery mode: $MODE" >&2
+            exit 44
+          fi
+
+          grep -F 'PRODUCTION_TARGET_SHA=380896964d12199936ee7c676e39352a1a68cec8' "$LOG"
+          grep -F 'STAGING_TARGET_SHA=1785c022a6a9d3205fcfc36b2aed120494044158' "$LOG"
+          grep -F 'PRODUCTION_HUNTER_RECOVERY_HEALTH=PASS' "$LOG"
+          grep -F 'STAGING_HUNTER_RECOVERY_HEALTH=PASS' "$LOG"
+          grep -F 'TEMPORARY_PRIVILEGED_BOOTSTRAP_REMOVED=PASS' "$LOG"
+          grep -F 'RECOVERED_HTTP_HEALTH=PASS' "$LOG"
+          grep -F 'FINAL_N8N_MUTATION=NO' "$LOG"
+          grep -F 'FINAL_OLLAMA_MUTATION=NO' "$LOG"
+          grep -F 'RESULT=MUNSHI_AUTH_RECOVERY_AND_EDGE_CUTOVER_PASS' "$LOG"
+
+      - name: Verify both public trusted-device edges
+        shell: bash
+        run: |
+          set -euo pipefail
+          for host in dashboard.munshi.systems staging-dashboard.munshi.systems; do
+            ROOT="$(curl -ksS --max-time 15 -o /dev/null -w '%{http_code}' "https://$host/")"
+            LOGIN="$(curl -ksS --max-time 15 -o /dev/null -w '%{http_code}' "https://$host/_munshi-auth/login?next=%2F")"
+            echo "$host root=$ROOT login=$LOGIN"
+            test "$ROOT" = '303'
+            test "$LOGIN" = '401'
+          done
+          echo 'PUBLIC_TRUSTED_DEVICE_EDGE=PASS'
+
+      - name: Record completion receipt
+        shell: bash
+        run: |
+          {
+            echo '### MUNSHI trusted-device recovery and cutover'
+            echo '- production exact SHA: `380896964d12199936ee7c676e39352a1a68cec8`'
+            echo '- staging exact SHA: `1785c022a6a9d3205fcfc36b2aed120494044158`'
+            echo '- n8n mutation: none'
+            echo '- Ollama mutation: none'
+            echo '- Caddy: validated/reloaded, not recreated'
+            echo '- local terminal: not used'
+          } >> "$GITHUB_STEP_SUMMARY"
