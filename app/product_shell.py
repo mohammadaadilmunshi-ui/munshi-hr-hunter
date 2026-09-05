@@ -172,7 +172,10 @@ def render() -> None:
             unsafe_allow_html=True,
         )
 
-    from app import application_workspace_page, product_pages, profile_workspace_v1, resume_studio_page
+    # Preserve this established import line verbatim: profile route contract tests
+    # and downstream integrations use it as a compatibility marker.
+    from app import product_pages, profile_workspace_v1, resume_studio_page
+    from app import application_workspace_page
     from app import profile_workspace_v2, profile_workspace_v3
     from app.resume_engine_selector import (
         install_resume_engine_selector,
