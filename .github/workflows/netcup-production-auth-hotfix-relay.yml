@@ -1,0 +1,270 @@
+name: Netcup Production Auth Hotfix Relay
+
+on:
+  push:
+    branches:
+      - feat/cloud-migration-foundation
+    paths:
+      - "config/production-auth-hotfix-request.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-production
+  cancel-in-progress: false
+
+env:
+  PRODUCTION_BASE_SHA: 4c0f39fa503dabb55ef3212a23d2301ad04ec18a
+  AUTH_HOTFIX_BRANCH: fix/dashboard-device-auth-prod-v1
+
+jobs:
+  resolve-request:
+    runs-on: ubuntu-latest
+    outputs:
+      commit_sha: ${{ steps.resolve.outputs.commit_sha }}
+      source_branch: ${{ steps.resolve.outputs.source_branch }}
+    steps:
+      - name: Checkout trusted production-control branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/cloud-migration-foundation
+          fetch-depth: 0
+
+      - name: Resolve and strictly scope auth-only request
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_FILE="config/production-auth-hotfix-request.json"
+          test -f "$REQUEST_FILE"
+          SHA="$(python -c 'import json; print(json.load(open("config/production-auth-hotfix-request.json"))["commit_sha"])')"
+          BRANCH="$(python -c 'import json; print(json.load(open("config/production-auth-hotfix-request.json"))["source_branch"])')"
+
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "commit_sha must be a full lowercase 40-character SHA" >&2
+            exit 2
+          }
+          test "$BRANCH" = "$AUTH_HOTFIX_BRANCH" || {
+            echo "production auth relay accepts only $AUTH_HOTFIX_BRANCH" >&2
+            exit 3
+          }
+
+          git fetch --no-tags origin "$BRANCH:refs/remotes/origin/$BRANCH"
+          git merge-base --is-ancestor "$PRODUCTION_BASE_SHA" "$SHA" || {
+            echo "candidate is not descended from the exact deployed production baseline" >&2
+            exit 4
+          }
+          git merge-base --is-ancestor "$SHA" "refs/remotes/origin/$BRANCH" || {
+            echo "candidate is not contained in the approved auth-hotfix branch" >&2
+            exit 5
+          }
+
+          mapfile -t changed < <(git diff --name-only "$PRODUCTION_BASE_SHA" "$SHA")
+          printf 'Auth hotfix changed files:\n'
+          printf '  %s\n' "${changed[@]}"
+          test "${#changed[@]}" -gt 0
+          for path in "${changed[@]}"; do
+            case "$path" in
+              app/device_auth.py|app/api_device_auth.py|docker/hunter-supervisor.py|deploy/caddy/Caddyfile.dashboard.template|tests/test_device_auth.py)
+                ;;
+              *)
+                echo "AUTH_SCOPE_VIOLATION=$path" >&2
+                exit 6
+                ;;
+            esac
+          done
+
+          # The edge template, auth implementation and supervisor integration are mandatory.
+          for required in \
+            app/device_auth.py \
+            app/api_device_auth.py \
+            docker/hunter-supervisor.py \
+            deploy/caddy/Caddyfile.dashboard.template \
+            tests/test_device_auth.py; do
+            printf '%s\n' "${changed[@]}" | grep -Fx "$required" >/dev/null || {
+              echo "missing required auth-hotfix file: $required" >&2
+              exit 7
+            }
+          done
+
+          echo "commit_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "source_branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Production auth-only release request"
+            echo "- exact current-production baseline: \`$PRODUCTION_BASE_SHA\`"
+            echo "- exact auth candidate: \`$SHA\`"
+            echo "- source branch: \`$BRANCH\`"
+            echo "- scope: dashboard trusted-device authentication only"
+            echo "- Resume Studio / Career OS / n8n workflow changes: rejected by allowlist"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deployment-ci:
+    needs: resolve-request
+    uses: ./.github/workflows/deployment-ci-reusable.yml
+    with:
+      commit_sha: ${{ needs.resolve-request.outputs.commit_sha }}
+
+  auth-hotfix-gate:
+    needs: resolve-request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact auth candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-request.outputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Re-prove exact candidate ancestry and scope
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.resolve-request.outputs.commit_sha }}
+          RELEASE_BRANCH: ${{ needs.resolve-request.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          git fetch --no-tags origin "$RELEASE_BRANCH:refs/remotes/origin/$RELEASE_BRANCH"
+          git merge-base --is-ancestor "$PRODUCTION_BASE_SHA" "$RELEASE_SHA"
+          git merge-base --is-ancestor "$RELEASE_SHA" "refs/remotes/origin/$RELEASE_BRANCH"
+          while IFS= read -r path; do
+            case "$path" in
+              app/device_auth.py|app/api_device_auth.py|docker/hunter-supervisor.py|deploy/caddy/Caddyfile.dashboard.template|tests/test_device_auth.py) ;;
+              *) echo "AUTH_SCOPE_VIOLATION=$path" >&2; exit 20 ;;
+            esac
+          done < <(git diff --name-only "$PRODUCTION_BASE_SHA" "$RELEASE_SHA")
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install locked dependencies
+        run: python -m pip install -r requirements.lock.txt
+
+      - name: Verify packages
+        run: python -m pip check
+
+      - name: Compile auth boundary
+        run: |
+          python -m py_compile \
+            app/device_auth.py \
+            app/api_device_auth.py \
+            docker/hunter-supervisor.py \
+            tests/test_device_auth.py
+
+      - name: Run trusted-device and supervisor regressions
+        run: python -m pytest -q tests/test_device_auth.py tests/test_hunter_supervisor.py
+
+      - name: Verify Caddy auth contract statically
+        shell: bash
+        run: |
+          set -euo pipefail
+          TEMPLATE=deploy/caddy/Caddyfile.dashboard.template
+          test "$(grep -c '^[[:space:]]*basic_auth[[:space:]]*{' "$TEMPLATE")" = "1"
+          grep -F '@device_login path /_munshi-auth/login' "$TEMPLATE"
+          grep -F 'forward_auth 127.0.0.1:8000' "$TEMPLATE"
+          grep -F 'uri /_munshi-auth/verify' "$TEMPLATE"
+          grep -F 'reverse_proxy 127.0.0.1:8501' "$TEMPLATE"
+          grep -F 'X-Munshi-Auth-User' "$TEMPLATE"
+          ! grep -E 'Resume Studio|native_resume|ATS credential|gmail_oauth|submission' "$TEMPLATE"
+
+      - name: Verify persistent-cookie security contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F '__Host-munshi_device_session' app/device_auth.py
+          grep -F 'secure=True' app/device_auth.py
+          grep -F 'httponly=True' app/device_auth.py
+          grep -F 'samesite="lax"' app/device_auth.py
+          grep -F '_DEFAULT_TTL_SECONDS = 30 * 24 * 60 * 60' app/device_auth.py
+          grep -F 'app.api_device_auth:app' docker/hunter-supervisor.py
+
+      - name: Repository safety guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! git ls-files | grep -E '(^|/)(\.env|.*\.(db|sqlite|sqlite3|wal|shm|pem|p12|pfx|key))$'
+          git diff --check
+
+  deploy-production-auth-only:
+    needs: [resolve-request, deployment-ci, auth-hotfix-gate]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact production auth SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-request.outputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Build authenticated exact-SHA production bundle
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ needs.resolve-request.outputs.commit_sha }}
+          DEPLOY_BRANCH: ${{ needs.resolve-request.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
+          git merge-base --is-ancestor "$DEPLOY_SHA" "refs/remotes/origin/$DEPLOY_BRANCH"
+          git bundle create "$RUNNER_TEMP/munshi-production-auth.bundle" "refs/remotes/origin/$DEPLOY_BRANCH"
+          git bundle verify "$RUNNER_TEMP/munshi-production-auth.bundle"
+
+      - name: Configure restricted SSH
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_SSH_PRIVATE_KEY"
+          test -n "$NETCUP_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_deploy"
+          chmod 600 "$HOME/.ssh/netcup_deploy"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy auth backend through hardened production wrapper
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          DEPLOY_SHA: ${{ needs.resolve-request.outputs.commit_sha }}
+          DEPLOY_BRANCH: ${{ needs.resolve-request.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_HOST"
+          test -n "$NETCUP_USER"
+          DEPLOY_COMMAND="/opt/munshi/bin/deploy-production-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH"
+          LOG="$RUNNER_TEMP/production-auth-deploy.log"
+          cat "$RUNNER_TEMP/munshi-production-auth.bundle" | \
+            ssh \
+              -i "$HOME/.ssh/netcup_deploy" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              "$NETCUP_USER@$NETCUP_HOST" \
+              "$DEPLOY_COMMAND" | tee "$LOG"
+          grep -F "DEPLOYED_SHA=$DEPLOY_SHA" "$LOG"
+          grep -F "DEPLOYED_BRANCH=$DEPLOY_BRANCH" "$LOG"
+          grep -F "N8N_RECREATED=NO" "$LOG"
+          grep -F "OLLAMA_RECREATED=NO" "$LOG"
+          grep -F "RESULT=PRODUCTION_DEPLOYMENT_PASS" "$LOG"
+
+      - name: Record backend receipt and explicit edge boundary
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ needs.resolve-request.outputs.commit_sha }}
+        run: |
+          {
+            echo "### Production dashboard-auth backend deployed"
+            echo "- exact SHA: \`$DEPLOY_SHA\`"
+            echo "- scope allowlist: auth-only"
+            echo "- WAL-safe DB backup + rollback image: enforced by production wrapper"
+            echo "- n8n/Ollama: not recreated"
+            echo "- dashboard trusted-device API: deployed with Hunter"
+            echo "- edge Caddy cutover: NOT performed by this restricted workflow"
+            echo "- status: \`EDGE_CUTOVER_PENDING=YES\` until privileged Caddy reload is separately verified"
+          } >> "$GITHUB_STEP_SUMMARY"
