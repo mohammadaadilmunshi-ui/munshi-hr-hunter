@@ -62,4 +62,4 @@ jobs:
         run: |
           set -euo pipefail
           ! git ls-files | grep -E '(^|/)(\.env|.*\.(db|sqlite|sqlite3|wal|shm|pem|p12|pfx|key))$'
-          ! git diff --check
+          git diff --check
