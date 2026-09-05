@@ -6,7 +6,6 @@ changing browser, Apply, n8n, Gmail, provider, or submission authority.
 """
 from __future__ import annotations
 
-import json
 import re
 import sqlite3
 from typing import Any
@@ -93,11 +92,18 @@ def current_candidate_profile_snapshot() -> dict[str, Any]:
     """Return the snapshot for the active Master Resume's latest confirmed profile.
 
     A newer active Master Resume without a confirmed profile blocks the strengthened
-    engines instead of silently reusing truth from an older source.
+    engines instead of silently reusing truth from an older source. The ledger
+    connection is always closed before encrypted profile data is decoded because
+    the vault keeps its own audit timestamp on a separate SQLite connection.
     """
     connection = v3.v2.v1.get_connection()
+    row_payload: dict[str, Any] | None = None
     try:
         v3.ensure_schema(connection)
+        # Schema helpers can perform additive writes. Finish those writes before
+        # the vault opens its separate connection for decrypt + last-used audit.
+        if connection.in_transaction:
+            connection.commit()
         owner = v3.v2.v1.current_owner(connection)
         source = v3.v2.v1.active_source(connection=connection)
         if not source:
@@ -112,9 +118,12 @@ def current_candidate_profile_snapshot() -> dict[str, Any]:
             raise RuntimeError(
                 "Confirm the Candidate Truth Profile for the current Master Resume before using the strengthened engine."
             )
-        extracted = v3._decode_profile_row(dict(row))
+        row_payload = dict(row)
     finally:
         connection.close()
+
+    assert row_payload is not None
+    extracted = v3._decode_profile_row(row_payload)
     return profile_snapshot_projection.build_candidate_profile_snapshot(extracted)
 
 
