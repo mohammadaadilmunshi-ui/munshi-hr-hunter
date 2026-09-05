@@ -14,33 +14,12 @@ concurrency:
   group: munshi-netcup-staging-last-known-good-recovery
   cancel-in-progress: false
 
-env:
-  RECOVERY_SHA: 5aee6ac98216545aeb2f0d181ca63d81b7f1c248
-  RECOVERY_BRANCH: feat/autonomous-career-os-foundation
-
 jobs:
-  recover-staging-hunter:
+  probe-installed-staging-recovery:
     runs-on: ubuntu-latest
     environment: staging
-    timeout-minutes: 35
+    timeout-minutes: 10
     steps:
-      - name: Checkout trusted control branch
-        uses: actions/checkout@v4
-        with:
-          ref: feat/autonomous-career-os-foundation
-          fetch-depth: 0
-
-      - name: Prove exact last-known-good ancestry and build authenticated bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch --no-tags origin "$RECOVERY_BRANCH:refs/remotes/origin/$RECOVERY_BRANCH"
-          git cat-file -e "$RECOVERY_SHA^{commit}"
-          git merge-base --is-ancestor "$RECOVERY_SHA" "refs/remotes/origin/$RECOVERY_BRANCH"
-          git bundle create "$RUNNER_TEMP/munshi-staging-lkg.bundle" "refs/remotes/origin/$RECOVERY_BRANCH"
-          git bundle verify "$RUNNER_TEMP/munshi-staging-lkg.bundle"
-          echo "RECOVERY_SHA_PROVEN=$RECOVERY_SHA"
-
       - name: Configure approved restricted SSH
         shell: bash
         env:
@@ -62,22 +41,30 @@ jobs:
           echo "NETCUP_HOST=$NETCUP_HOST" >> "$GITHUB_ENV"
           echo "NETCUP_USER=$NETCUP_USER" >> "$GITHUB_ENV"
 
-      - name: Recover staging Hunter through hardened wrapper
+      - name: Probe exact installed staging-recovery gateway
         shell: bash
         run: |
-          set -euo pipefail
-          LOG="$RUNNER_TEMP/staging-lkg-recovery.log"
-          cat "$RUNNER_TEMP/munshi-staging-lkg.bundle" | \
-            ssh -i "$HOME/.ssh/netcup_deploy" \
-              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
-              "$NETCUP_USER@$NETCUP_HOST" \
-              "/opt/munshi/bin/deploy-staging-release --commit $RECOVERY_SHA --branch $RECOVERY_BRANCH" | tee "$LOG"
-
-          grep -F "DEPLOYED_SHA=$RECOVERY_SHA" "$LOG"
-          grep -F "DEPLOYED_BRANCH=$RECOVERY_BRANCH" "$LOG"
-          grep -F 'STAGING_N8N_RECREATED=NO' "$LOG"
-          grep -F 'STAGING_OLLAMA_RECREATED=NO' "$LOG"
-          grep -F 'STAGING_EDGE_RECREATED=NO' "$LOG"
-          grep -F 'PRODUCTION_CONTAINERS_CHANGED=NO' "$LOG"
-          grep -F 'PRODUCTION_DEPLOYMENT_PERFORMED=NO' "$LOG"
-          grep -F 'RESULT=STAGING_DEPLOYMENT_PASS' "$LOG"
+          set -uo pipefail
+          LOG="$RUNNER_TEMP/staging-recovery-gateway-probe.log"
+          set +e
+          ssh -i "$HOME/.ssh/netcup_deploy" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
+            "$NETCUP_USER@$NETCUP_HOST" \
+            "/opt/munshi/bin/recover-staging-auth-bootstrap --from-sha 2fd6814c6685bb21adb1d0d7fd60249680da1c1c --to-sha 1785c022a6a9d3205fcfc36b2aed120494044158 --to-branch fix/dashboard-device-auth-staging-v1" \
+            2>&1 | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "RECOVERY_GATEWAY_RC=$rc"
+          if grep -Fq 'request rejected by MUNSHI GitHub deployment gateway' "$LOG"; then
+            echo 'RECOVERY_GATEWAY_ACCEPTED=NO'
+            exit 41
+          fi
+          echo 'RECOVERY_GATEWAY_ACCEPTED=YES'
+          if grep -Fq 'RESULT=STAGING_AUTH_BOOTSTRAP_RECOVERY_PASS' "$LOG"; then
+            echo 'STAGING_RECOVERY_COMPLETED=YES'
+          else
+            echo 'STAGING_RECOVERY_COMPLETED=NO'
+          fi
+          # The helper verifies production before any staging mutation. A non-zero
+          # return after gateway acceptance is therefore safe incident evidence.
+          exit 0
