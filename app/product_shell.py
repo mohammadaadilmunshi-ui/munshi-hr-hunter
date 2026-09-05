@@ -8,6 +8,7 @@ import streamlit as st
 from app.product_state import valid_view, volume_policy
 from app.product_ui import esc, inject_css
 from app.product_v22 import brand_logo_data_uri, inject_v22_css, install_product_v22
+from app.staging_feature_policy import activate_isolated_staging_preparation_features
 
 
 RESUME_STUDIO_VIEW = "resume-studio"
@@ -118,6 +119,11 @@ def _apply_deep_link_state(view: str) -> None:
 
 
 def render() -> None:
+    # The staging runtime already proves cloud-shadow isolation before serving the
+    # dashboard. Promote only preparation-only Phase 5–7 gates there; production
+    # continues to require its existing explicit environment contract.
+    activate_isolated_staging_preparation_features()
+
     inject_css()
     inject_v22_css()
 
