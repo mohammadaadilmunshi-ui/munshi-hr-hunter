@@ -147,7 +147,8 @@ PY
 echo "STAGING_DB_BACKUP=$db_backup"
 
 rollback() {
-  rc=$?
+  trapped_rc=$?
+  rc="${1:-$trapped_rc}"
   trap - ERR
   echo "=== AUTOMATIC STAGING DEPLOYMENT ROLLBACK rc=$rc ===" >&2
 
@@ -184,7 +185,7 @@ git fetch --no-tags "$bundle_file" "+$bundle_ref:$deploy_ref"
 git cat-file -e "$commit^{commit}"
 git merge-base --is-ancestor "$commit" "$deploy_ref" || {
   echo "requested SHA is not contained in bundled source branch" >&2
-  exit 20
+  rollback 20
 }
 echo "GITHUB_STAGING_BUNDLE_IMPORT=PASS"
 
@@ -219,18 +220,18 @@ do
   grep -Fq "$required" "$rendered" || {
     echo "missing staging safety token: $required" >&2
     rm -f "$rendered"
-    exit 21
+    rollback 21
   }
 done
 if grep -Eq '/opt/munshi/(repo|runtime|secrets|backups)' "$rendered"; then
   echo "rendered staging config unexpectedly references production filesystem" >&2
   rm -f "$rendered"
-  exit 22
+  rollback 22
 fi
 if grep -Fq 'munshi-netcup-shadow_' "$rendered"; then
   echo "rendered staging config unexpectedly references production project resources" >&2
   rm -f "$rendered"
-  exit 23
+  rollback 23
 fi
 rm -f "$rendered"
 echo "STAGING_CONFIG_SAFETY=PASS"
@@ -251,7 +252,10 @@ for _ in $(seq 1 48); do
   fi
   sleep 5
 done
-[[ "$healthy" == "1" ]] || { echo "staging Hunter did not return healthy" >&2; exit 30; }
+if [[ "$healthy" != "1" ]]; then
+  echo "staging Hunter did not return healthy" >&2
+  rollback 30
+fi
 
 echo "=== VERIFY STAGING NON-HUNTER CONTAINERS UNCHANGED ==="
 [[ "$(docker inspect -f '{{.Id}}' "$N")" == "$n8n_id_before" ]]
@@ -275,10 +279,10 @@ prod_snapshot_after="$(
     docker inspect -f '{{.Id}}|{{.State.StartedAt}}|{{.RestartCount}}' "$c"
   done
 )"
-[[ "$prod_snapshot_before" == "$prod_snapshot_after" ]] || {
+if [[ "$prod_snapshot_before" != "$prod_snapshot_after" ]]; then
   echo "production container snapshot changed during staging deployment" >&2
-  exit 31
-}
+  rollback 31
+fi
 echo "PRODUCTION_CONTAINERS_UNCHANGED=PASS"
 
 echo "=== POSTDEPLOY STAGING CONTRACT ==="
