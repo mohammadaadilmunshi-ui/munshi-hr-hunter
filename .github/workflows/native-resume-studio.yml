@@ -27,7 +27,7 @@ jobs:
       - name: Verify packages
         run: python -m pip check
 
-      - name: Compile hardened Sections 1-9 Candidate Truth, Resume, Answer, Opportunity, Relationship, integrity, application truth, preflight package, and product shell
+      - name: Compile hardened Sections 1-9 plus Stage B JD Intelligence and product shell
         run: |
           python -m py_compile \
             app/native_resume_studio.py \
@@ -35,11 +35,17 @@ jobs:
             app/native_resume_service_v2.py \
             app/native_resume_service_v3.py \
             app/native_resume_service_v4.py \
+            app/native_resume_service_v5.py \
             app/phase4_job_binding.py \
+            app/stage_b_resume_binding_v1.py \
             app/answer_brain.py \
             app/answer_brain_v2.py \
             app/phase45_truth_binding.py \
             app/phase67_common.py \
+            app/jd_intelligence_v1.py \
+            app/jd_requirement_match_v1.py \
+            app/jd_resume_plan_v1.py \
+            app/jd_claim_trace_v1.py \
             app/opportunity_intelligence_v2.py \
             app/opportunity_intelligence_v3.py \
             app/relationship_intelligence.py \
@@ -74,6 +80,11 @@ jobs:
             migrations/032_phase67_intelligence_snapshots.py \
             migrations/033_phase47_integrity_bindings.py \
             migrations/034_phase9_application_preflight_package.py \
+            migrations/035_stage_b_jd_intelligence_v1.py \
+            migrations/036_stage_b_candidate_job_match_v1.py \
+            migrations/037_stage_b_resume_tailoring_plan_v1.py \
+            migrations/038_stage_b_jd_claim_trace_v1.py \
+            migrations/039_stage_b_native_resume_v5.py \
             tests/test_native_resume_studio.py \
             tests/test_native_resume_service.py \
             tests/test_native_resume_service_v2.py \
@@ -84,6 +95,11 @@ jobs:
             tests/test_phase47_hardening.py \
             tests/test_phase8_application_truth.py \
             tests/test_phase9_application_preflight.py \
+            tests/test_stage_b_jd_intelligence.py \
+            tests/test_stage_b_requirement_match.py \
+            tests/test_stage_b_resume_plan.py \
+            tests/test_stage_b_claim_trace.py \
+            tests/test_stage_b_native_resume_v5.py \
             tests/test_phase17_staging_visibility.py \
             tests/test_resume_profile_details_v31.py \
             tests/test_resume_engine_selector.py \
@@ -95,7 +111,7 @@ jobs:
             tests/test_profile_snapshot_projection.py \
             tests/test_cross_repo_contract.py
 
-      - name: Run hardened Sections 1-9 integrated regression tests
+      - name: Run hardened Sections 1-9 plus Stage B integrated regression tests
         run: |
           python -m pytest -q \
             tests/test_native_resume_studio.py \
@@ -108,6 +124,11 @@ jobs:
             tests/test_phase47_hardening.py \
             tests/test_phase8_application_truth.py \
             tests/test_phase9_application_preflight.py \
+            tests/test_stage_b_jd_intelligence.py \
+            tests/test_stage_b_requirement_match.py \
+            tests/test_stage_b_resume_plan.py \
+            tests/test_stage_b_claim_trace.py \
+            tests/test_stage_b_native_resume_v5.py \
             tests/test_phase17_staging_visibility.py \
             tests/test_resume_profile_details_v31.py \
             tests/test_resume_engine_selector.py \
@@ -131,17 +152,29 @@ jobs:
           from app.native_resume_service_v2 import native_resume_authority_enabled as v2_authority
           from app.native_resume_service_v3 import native_resume_authority_enabled as v3_authority
           from app.native_resume_service_v4 import native_resume_authority_enabled as v4_authority
+          from app.native_resume_service_v5 import native_resume_authority_enabled as v5_authority
           from app.native_resume_shadow import native_resume_authority_enabled as shadow_authority
           from app.phase8_application_truth import APPLICATION_TRUTH_AUTHORITY
           from app.application_preflight_package_v1 import PREFLIGHT_STATUSES
+          from app.jd_intelligence_v1 import SUBMISSION_AUTHORITY as jd_submission_authority
+          from app.jd_requirement_match_v1 import SUBMISSION_AUTHORITY as match_submission_authority
+          from app.jd_resume_plan_v1 import SUBMISSION_AUTHORITY as plan_submission_authority
+          from app.jd_claim_trace_v1 import SUBMISSION_AUTHORITY as trace_submission_authority
+          from app.stage_b_resume_binding_v1 import SUBMISSION_AUTHORITY as binding_submission_authority
           assert native_resume_authority_enabled() is False
           assert v2_authority() is False
           assert v3_authority() is False
           assert v4_authority() is False
+          assert v5_authority() is False
           assert shadow_authority() is False
           assert APPLICATION_TRUTH_AUTHORITY == "munshi-hr-hunter"
           assert "SUBMITTED" not in PREFLIGHT_STATUSES
-          print("Sections 1-9 preparation authority remains non-submitting")
+          assert jd_submission_authority is False
+          assert match_submission_authority is False
+          assert plan_submission_authority is False
+          assert trace_submission_authority is False
+          assert binding_submission_authority is False
+          print("Sections 1-9 plus Stage B preparation authority remains non-submitting")
           PY
 
       - name: Guard repository state
