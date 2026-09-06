@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.deterministic_profile_extractor_v2 import parse_profile, repair_resume_text
+from app.deterministic_profile_extractor_v2_1 import parse_profile, repair_resume_text
 
 
 _MESSY_RESUME = """Mohammad Aadil Vasim Munshi
@@ -52,6 +52,21 @@ HR Operations: Recruiting Coordination, Candidate Tracking, Requisition Support,
 """
 
 
+_STAGING_FLATTENED_PROJECTS = """Mohammad Aadil Vasim Munshi
+Palmyra, NJ | person@example.com
+
+PROJECTS & ANALYTICS
+People Analytics & Benefits Operations Projects Power BI, Tableau, Excel
+● Built 3 Power BI/Tableau dashboards from 500+ HR, benefits, payroll, and recruiting records; reduced weekly reporting prep from about 3 hours to under 2 hours.
+● Used Power Query, Excel validation, duplicate checks, calculated fields, and PivotTables to standardize 20+ data fields and improve audit follow-up speed. AI-Native Data Mining & Predictive Analytics Study Python, Google Colab, Pandas, Scikit-learn
+● Cleaned 2,800+ records and 20+ variables with Python/Pandas by handling missing values, duplicates, outliers, categorical encoding, feature scaling, and train/test splits.
+● Built logistic regression, decision tree, random forest, KNN, and linear regression models; evaluated precision, recall, F1 score, and confusion matrix.
+
+SKILLS
+Data & Analytics: Excel, Power BI, Python
+"""
+
+
 def test_v2_repairs_wrapped_lines_without_creating_fake_jobs() -> None:
     profile = parse_profile(_MESSY_RESUME)
     assert len(profile["education"]) == 2
@@ -80,17 +95,34 @@ def test_v2_recognizes_section_heading_variants() -> None:
     assert profile["projects"][0]["name"] == "People Analytics & Benefits Operations Projects"
 
 
+def test_v21_recovers_project_title_appended_to_previous_bullet() -> None:
+    repaired = repair_resume_text(_STAGING_FLATTENED_PROJECTS)
+    assert "improve audit follow-up speed.\n\nAI-Native Data Mining & Predictive Analytics Study\n" in repaired
+
+    profile = parse_profile(_STAGING_FLATTENED_PROJECTS)
+    assert len(profile["projects"]) == 2
+
+    first, second = profile["projects"]
+    assert first["name"] == "People Analytics & Benefits Operations Projects"
+    assert first["description"] == "Power BI, Tableau, Excel"
+    assert len(first["bullets"]) == 2
+
+    assert second["name"] == "AI-Native Data Mining & Predictive Analytics Study"
+    assert second["description"] == "Python, Google Colab, Pandas, Scikit-learn"
+    assert len(second["bullets"]) == 2
+
+
 def test_profile_rebuild_wiring_is_draft_only_and_additive() -> None:
     root = Path(__file__).resolve().parent.parent
     shell = (root / "app" / "product_shell.py").read_text(encoding="utf-8")
     runtime = (root / "app" / "profile_runtime_repair_v2.py").read_text(encoding="utf-8")
-    extractor = (root / "app" / "deterministic_profile_extractor_v2.py").read_text(encoding="utf-8")
+    extractor = (root / "app" / "deterministic_profile_extractor_v2_1.py").read_text(encoding="utf-8")
 
     quality_index = shell.index("install_career_os_quality_patch(product_pages)")
     repair_index = shell.index("install_profile_runtime_repair_v2()")
     assert quality_index < repair_index
     assert "Rebuild preview from current Master Resume" in runtime
     assert "confirm_profile_extract" not in runtime
-    assert 'model="deterministic-local-v2"' in extractor
+    assert 'model="deterministic-local-v2.1"' in extractor
     assert "api.openai.com" not in extractor
     assert "httpx" not in extractor
