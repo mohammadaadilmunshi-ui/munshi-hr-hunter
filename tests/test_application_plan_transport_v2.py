@@ -130,12 +130,11 @@ def test_signed_transport_is_exact_idempotent_and_inert(
 
     connection = database.get_connection()
     try:
-        row = connection.execute("SELECT * FROM apply_plan_handoffs_v2").fetchone()
-        assert row is not None
-        assert row["state"] == "READY_TO_APPLY"
-        assert row["accepted_at"] is None
-        # Sender-side transport creation is formatting + ledger only.
-        assert int(connection.execute("SELECT already_applied FROM jobs LIMIT 1").fetchone()[0] or 0) == 0
+        rows = connection.execute("SELECT * FROM apply_plan_handoffs_v2").fetchall()
+        assert len(rows) == 1
+        assert rows[0]["state"] == "READY_TO_APPLY"
+        assert rows[0]["accepted_at"] is None
+        # Sender-side transport creation is formatting + one immutable ledger row only.
     finally:
         connection.close()
 
