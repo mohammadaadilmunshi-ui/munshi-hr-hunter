@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.resume_engine_selector import _job_label
+from app.resume_engine_selector import _job_label, native_resume_v5_enabled
 
 
 def test_native_job_label_matches_resume_studio_selector_format() -> None:
@@ -13,6 +13,13 @@ def test_native_job_label_matches_resume_studio_selector_format() -> None:
         "hunter_score": 91.4,
     }
     assert _job_label(row) == "#42 · Example Co · People Analytics Analyst · 91% match"
+
+
+def test_native_v5_gate_is_default_off(monkeypatch) -> None:
+    monkeypatch.delenv("MUNSHI_NATIVE_RESUME_V5_ENABLED", raising=False)
+    assert native_resume_v5_enabled() is False
+    monkeypatch.setenv("MUNSHI_NATIVE_RESUME_V5_ENABLED", "true")
+    assert native_resume_v5_enabled() is True
 
 
 def test_product_shell_installs_engine_selector_after_v22() -> None:
@@ -27,16 +34,21 @@ def test_product_shell_installs_engine_selector_after_v22() -> None:
     )
     assert "render_resume_engine_selector()" in shell
 
-    # Existing n8n behavior is preserved behind the wrapper rather than deleted.
+    # Existing n8n behavior is preserved byte-for-byte behind the wrapper rather
+    # than replaced by Native V5.
     assert "_resume_engine_original_n8n_prepare = pages_module._prepare_job" in selector
     assert "pages_module._prepare_job = _request_engine_choice" in selector
     assert "_run_n8n(job_id)" in selector
     assert "n8n workflow · proven current pipeline" in selector
 
-    # Native execution is explicit and still preparation-only.
-    assert "generate_resume(" in selector
-    assert "Native Resume Studio · built into MUNSHI" in selector
-    assert "Neither choice marks an application Submitted" in selector
+    # Native execution explicitly consumes the Stage B-bound V5 service and is
+    # still preparation-only/default-off.
+    assert "from app.native_resume_service_v5 import" in selector
+    assert "native_resume_v5_enabled()" in selector
+    assert '"MUNSHI_NATIVE_RESUME_V5_ENABLED"' in selector
+    assert "record.get(\"stage_b_bound\") is not True" in selector
+    assert "Neither choice marks an" in selector
+    assert "application Submitted" in selector
 
 
 def test_native_resume_studio_exposes_pdf_and_docx_outputs() -> None:
