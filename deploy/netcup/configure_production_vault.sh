@@ -49,6 +49,25 @@ wait_hunter() {
   [[ "$healthy" == "1" ]]
 }
 
+verify_vault_in_container() {
+  docker exec "$H" python - <<'PY'
+import os
+from app.secure_vault import _aesgcm, _key, vault_available
+
+assert vault_available()
+key = _key()
+assert len(key) == 32
+AESGCM = _aesgcm()
+nonce = os.urandom(12)
+aad = b"munshi-vault-runtime-self-test"
+plaintext = b"vault-ready"
+ciphertext = AESGCM(key).encrypt(nonce, plaintext, aad)
+assert AESGCM(key).decrypt(nonce, ciphertext, aad) == plaintext
+print("PRODUCTION_VAULT_AVAILABLE=PASS")
+print("PRODUCTION_VAULT_AES_GCM_SELF_TEST=PASS")
+PY
+}
+
 rollback() {
   rc=$?
   trap - ERR
@@ -129,6 +148,27 @@ PY
 )"
 echo "CONTAINER_VAULT_AVAILABLE_BEFORE=$container_vault"
 
+# Fully idempotent path: if the protected env already owns a valid key and the
+# running Hunter has loaded it, verify and exit without any recreation.
+if [[ "$env_key_state" == "VALID" && "$container_vault" == "YES" ]]; then
+  verify_vault_in_container
+  "$VERIFY"
+  echo "PRODUCTION_N8N_RECREATED=NO"
+  echo "PRODUCTION_OLLAMA_RECREATED=NO"
+  echo "PRODUCTION_ENV_VAULT_KEY_CREATED=NO"
+  echo "RESULT=PRODUCTION_VAULT_ALREADY_CONFIGURED"
+  trap - ERR
+  exit 0
+fi
+
+# If Hunter somehow has a key that does not come from the canonical production
+# env file, refuse to replace that unknown source.  This protects existing
+# ciphertext from accidental key rotation.
+if [[ "$env_key_state" == "MISSING" && "$container_vault" == "YES" ]]; then
+  echo "Hunter has a vault key from a non-canonical source while the production env file is missing one. Refusing to replace it." >&2
+  exit 14
+fi
+
 if [[ "$env_key_state" == "MISSING" ]]; then
   encrypted_records="$(docker exec "$H" python - <<'PY'
 import sqlite3
@@ -179,8 +219,8 @@ else
   echo "PRODUCTION_ENV_VAULT_KEY_CREATED=NO"
 fi
 
-# If the key is already valid in the env file but Hunter has not loaded it yet,
-# this same Hunter-only recreation safely activates it.
+# A valid key in the env file that is not loaded yet, or a newly-created key,
+# requires Hunter only to be recreated so Compose injects the environment.
 echo "=== RECREATE PRODUCTION HUNTER ONLY ==="
 "${compose[@]}" config -q
 "${compose[@]}" up -d --no-deps --force-recreate hunter
@@ -188,22 +228,7 @@ hunter_recreated=1
 wait_hunter
 
 echo "=== VERIFY VAULT ==="
-docker exec "$H" python - <<'PY'
-import os
-from app.secure_vault import _aesgcm, _key, vault_available
-
-assert vault_available()
-key = _key()
-assert len(key) == 32
-AESGCM = _aesgcm()
-nonce = os.urandom(12)
-aad = b"munshi-vault-runtime-self-test"
-plaintext = b"vault-ready"
-ciphertext = AESGCM(key).encrypt(nonce, plaintext, aad)
-assert AESGCM(key).decrypt(nonce, ciphertext, aad) == plaintext
-print("PRODUCTION_VAULT_AVAILABLE=PASS")
-print("PRODUCTION_VAULT_AES_GCM_SELF_TEST=PASS")
-PY
+verify_vault_in_container
 
 [[ "$(docker inspect -f '{{.Id}}' "$N")" == "$n8n_id_before" ]]
 [[ "$(docker inspect -f '{{.State.StartedAt}}' "$N")" == "$n8n_started_before" ]]
@@ -214,6 +239,8 @@ echo "PRODUCTION_OLLAMA_RECREATED=NO"
 
 "$VERIFY"
 
-echo "VAULT_ENV_BACKUP=$env_backup"
+if (( env_changed )); then
+  echo "VAULT_ENV_BACKUP=$env_backup"
+fi
 echo "RESULT=PRODUCTION_VAULT_ACTIVATION_PASS"
 trap - ERR
