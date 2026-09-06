@@ -32,10 +32,30 @@ def _canonical_heading(line: str) -> str | None:
         return direct
 
     folded = cleaned.casefold()
+    explicit_variants = {
+        "projects & analytics": "projects",
+        "projects and analytics": "projects",
+        "analytics projects": "projects",
+        "work history": "experience",
+        "employment history": "experience",
+        "skills & tools": "skills",
+        "skills and tools": "skills",
+        "licenses & certifications": "certifications",
+        "licenses and certifications": "certifications",
+    }
+    if folded in explicit_variants:
+        return explicit_variants[folded]
+
+    # Fuzzy heading recovery is deliberately limited to visually heading-like
+    # ALL-CAPS lines.  This prevents real titles such as "People Analytics &
+    # Benefits Operations Projects" from being swallowed as section headers.
+    if cleaned != cleaned.upper():
+        return None
+
     words = set(re.findall(r"[a-z]+", folded))
     if "education" in words or "academics" in words:
         return "education"
-    if "experience" in words or folded in {"employment history", "work history"}:
+    if "experience" in words:
         return "experience"
     if "project" in words or "projects" in words:
         return "projects"
