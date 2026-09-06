@@ -1,9 +1,9 @@
 """Profile runtime repair V2.
 
-Installs the hardened deterministic V2 parser after the existing Career OS
-quality layer and exposes an explicit rebuild action for the current Master
-Resume.  Rebuild creates a new reviewable draft only; it never confirms or
-replaces permanent profile authority automatically.
+Installs the hardened deterministic parser after the existing Career OS quality
+layer and exposes an explicit rebuild action for the current Master Resume.
+Rebuild creates a new reviewable draft only; it never confirms or replaces
+permanent profile authority automatically.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 
 import streamlit as st
 
-from app.deterministic_profile_extractor_v2 import extract_profile_from_source
+from app.deterministic_profile_extractor_v2_1 import extract_profile_from_source
 
 
 def install_profile_runtime_repair_v2() -> None:
@@ -22,8 +22,9 @@ def install_profile_runtime_repair_v2() -> None:
         return
 
     # Career OS V1 intentionally replaced the model-backed extractor with a
-    # deterministic V1 parser.  V2 keeps that same no-model contract while
-    # adding layout repair for wrapped PDF/DOCX text.
+    # deterministic parser.  V2.1 keeps that same no-model contract while
+    # adding layout repair for wrapped PDF/DOCX text and flattened project
+    # boundaries.
     service.extract_profile_from_source = extract_profile_from_source
 
     original_controls = workspace._profile_controls
