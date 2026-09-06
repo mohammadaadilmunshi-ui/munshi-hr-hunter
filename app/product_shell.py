@@ -182,6 +182,7 @@ def render() -> None:
         render_resume_engine_selector,
     )
     from app.career_os_quality_patch_v1 import install_career_os_quality_patch
+    from app.provider_telemetry_window_v1 import install_provider_telemetry_window
 
     # Keep the V1 import/route contract stable for existing integrations while
     # layering V2 preview/promotion and V3 encrypted candidate editing over the
@@ -190,9 +191,12 @@ def render() -> None:
 
     install_product_v22(product_pages)
     install_resume_engine_selector(product_pages)
-    # Additive only: model-free profile parsing, a read-only extraction counter,
-    # and progressive Browse Jobs loading. Existing n8n/legacy operations stay intact.
+    # Additive only: model-free profile parsing and progressive Browse Jobs loading.
+    # Existing n8n/legacy operations stay intact.
     install_career_os_quality_patch(product_pages)
+    # The active Advanced/System window uses raw provider throughput (the large
+    # fetched/normalized/eligible source-run totals), not deduplicated jobs stored.
+    install_provider_telemetry_window(product_pages)
 
     pages: dict[str, Callable[[], None]] = {
         "dashboard": product_pages.dashboard,
