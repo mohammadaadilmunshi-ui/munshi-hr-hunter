@@ -183,6 +183,10 @@ def render() -> None:
     )
     from app.career_os_quality_patch_v1 import install_career_os_quality_patch
     from app.provider_telemetry_window_v1 import install_provider_telemetry_window
+    from app.profile_runtime_repair_v2 import install_profile_runtime_repair_v2
+    from app.resume_studio_session_state_repair_v1 import (
+        install_resume_studio_session_state_repair_v1,
+    )
 
     # Keep the V1 import/route contract stable for existing integrations while
     # layering V2 preview/promotion and V3 encrypted candidate editing over the
@@ -197,6 +201,13 @@ def render() -> None:
     # The active Advanced/System window uses raw provider throughput (the large
     # fetched/normalized/eligible source-run totals), not deduplicated jobs stored.
     install_provider_telemetry_window(product_pages)
+    # Harden only the profile parser/rebuild path after the established Career OS
+    # layers. Rebuild remains draft-only and never changes permanent authority.
+    install_profile_runtime_repair_v2()
+    # Resume Studio encrypted-key saves previously crashed after a successful save
+    # because Streamlit forbids changing a widget-owned key later in the same run.
+    # Install the narrow rerun-safe repair before the Resume Studio page renders.
+    install_resume_studio_session_state_repair_v1()
 
     pages: dict[str, Callable[[], None]] = {
         "dashboard": product_pages.dashboard,
