@@ -41,6 +41,7 @@ jobs:
             app/phase45_truth_binding.py \
             app/phase67_common.py \
             app/jd_intelligence_v1.py \
+            app/jd_requirement_match_v1.py \
             app/opportunity_intelligence_v2.py \
             app/opportunity_intelligence_v3.py \
             app/relationship_intelligence.py \
@@ -76,6 +77,7 @@ jobs:
             migrations/033_phase47_integrity_bindings.py \
             migrations/034_phase9_application_preflight_package.py \
             migrations/035_stage_b_jd_intelligence_v1.py \
+            migrations/036_stage_b_candidate_job_match_v1.py \
             tests/test_native_resume_studio.py \
             tests/test_native_resume_service.py \
             tests/test_native_resume_service_v2.py \
@@ -87,6 +89,7 @@ jobs:
             tests/test_phase8_application_truth.py \
             tests/test_phase9_application_preflight.py \
             tests/test_stage_b_jd_intelligence.py \
+            tests/test_stage_b_requirement_match.py \
             tests/test_phase17_staging_visibility.py \
             tests/test_resume_profile_details_v31.py \
             tests/test_resume_engine_selector.py \
@@ -112,6 +115,7 @@ jobs:
             tests/test_phase8_application_truth.py \
             tests/test_phase9_application_preflight.py \
             tests/test_stage_b_jd_intelligence.py \
+            tests/test_stage_b_requirement_match.py \
             tests/test_phase17_staging_visibility.py \
             tests/test_resume_profile_details_v31.py \
             tests/test_resume_engine_selector.py \
@@ -139,6 +143,7 @@ jobs:
           from app.phase8_application_truth import APPLICATION_TRUTH_AUTHORITY
           from app.application_preflight_package_v1 import PREFLIGHT_STATUSES
           from app.jd_intelligence_v1 import SUBMISSION_AUTHORITY as jd_submission_authority
+          from app.jd_requirement_match_v1 import SUBMISSION_AUTHORITY as match_submission_authority
           assert native_resume_authority_enabled() is False
           assert v2_authority() is False
           assert v3_authority() is False
@@ -147,6 +152,7 @@ jobs:
           assert APPLICATION_TRUTH_AUTHORITY == "munshi-hr-hunter"
           assert "SUBMITTED" not in PREFLIGHT_STATUSES
           assert jd_submission_authority is False
+          assert match_submission_authority is False
           print("Sections 1-9 plus Stage B preparation authority remains non-submitting")
           PY
 
