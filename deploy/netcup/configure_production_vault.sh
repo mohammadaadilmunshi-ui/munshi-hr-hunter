@@ -50,7 +50,7 @@ wait_hunter() {
 }
 
 verify_vault_in_container() {
-  docker exec "$H" python - <<'PY'
+  docker exec -i "$H" python - <<'PY'
 import os
 from app.secure_vault import _aesgcm, _key, vault_available
 
@@ -141,7 +141,7 @@ if [[ "$env_key_state" == "INVALID" ]]; then
   exit 12
 fi
 
-container_vault="$(docker exec "$H" python - <<'PY'
+container_vault="$(docker exec -i "$H" python - <<'PY'
 from app.secure_vault import vault_available
 print("YES" if vault_available() else "NO")
 PY
@@ -170,7 +170,7 @@ if [[ "$env_key_state" == "MISSING" && "$container_vault" == "YES" ]]; then
 fi
 
 if [[ "$env_key_state" == "MISSING" ]]; then
-  encrypted_records="$(docker exec "$H" python - <<'PY'
+  encrypted_records="$(docker exec -i "$H" python - <<'PY'
 import sqlite3
 from app.database import DB_PATH
 
