@@ -16,6 +16,12 @@ def test_production_vault_activation_is_hunter_only_and_secret_safe() -> None:
     assert "PRODUCTION_VAULT_AES_GCM_SELF_TEST=PASS" in script
     assert "verify-production-runtime-contract" in script
 
+    # Every Python heredoc executed inside Hunter must attach stdin explicitly.
+    # Without `docker exec -i`, `python -` receives EOF and a smoke/self-test can
+    # silently do nothing while still returning exit code 0.
+    assert 'docker exec -i "$H" python - <<\'PY\'' in script
+    assert 'docker exec "$H" python - <<\'PY\'' not in script
+
     lowered = script.lower()
     assert "docker compose down" not in lowered
     assert "down -v" not in lowered
