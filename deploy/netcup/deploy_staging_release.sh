@@ -147,7 +147,8 @@ PY
 echo "STAGING_DB_BACKUP=$db_backup"
 
 rollback() {
-  rc="${1:-$?}"
+  trapped_rc=$?
+  rc="${1:-$trapped_rc}"
   trap - ERR
   echo "=== AUTOMATIC STAGING DEPLOYMENT ROLLBACK rc=$rc ===" >&2
 
@@ -251,10 +252,10 @@ for _ in $(seq 1 48); do
   fi
   sleep 5
 done
-[[ "$healthy" == "1" ]] || {
+if [[ "$healthy" != "1" ]]; then
   echo "staging Hunter did not return healthy" >&2
   rollback 30
-}
+fi
 
 echo "=== VERIFY STAGING NON-HUNTER CONTAINERS UNCHANGED ==="
 [[ "$(docker inspect -f '{{.Id}}' "$N")" == "$n8n_id_before" ]]
@@ -278,10 +279,10 @@ prod_snapshot_after="$(
     docker inspect -f '{{.Id}}|{{.State.StartedAt}}|{{.RestartCount}}' "$c"
   done
 )"
-[[ "$prod_snapshot_before" == "$prod_snapshot_after" ]] || {
+if [[ "$prod_snapshot_before" != "$prod_snapshot_after" ]]; then
   echo "production container snapshot changed during staging deployment" >&2
   rollback 31
-}
+fi
 echo "PRODUCTION_CONTAINERS_UNCHANGED=PASS"
 
 echo "=== POSTDEPLOY STAGING CONTRACT ==="

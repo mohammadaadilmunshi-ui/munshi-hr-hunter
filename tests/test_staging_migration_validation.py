@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import importlib
 import sqlite3
+from pathlib import Path
 
 from app.database import SCHEMA_SQL, ensure_job_detail_columns, ensure_operational_columns
 from app.staging_fixtures import seed
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_disposable_staging_like_database_applies_015_through_023_in_order(tmp_path) -> None:
@@ -29,3 +33,15 @@ def test_disposable_staging_like_database_applies_015_through_023_in_order(tmp_p
         assert connection.execute("SELECT COUNT(*) FROM jobs WHERE source != 'staging_fixture'").fetchone()[0] == 0
     finally:
         connection.close()
+
+
+def test_staging_deployer_explicit_failures_enter_rollback() -> None:
+    script = (ROOT / "deploy/netcup/deploy_staging_release.sh").read_text(encoding="utf-8")
+    assert 'rollback 20' in script
+    assert 'rollback 21' in script
+    assert 'rollback 22' in script
+    assert 'rollback 23' in script
+    assert 'rollback 30' in script
+    assert 'rollback 31' in script
+    assert 'exit 30' not in script
+    assert 'exit 31' not in script
