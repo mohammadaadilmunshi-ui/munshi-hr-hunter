@@ -1,12 +1,14 @@
-"""Explicit user choice between the proven n8n writer and native Resume Studio.
+"""Explicit user choice between the proven n8n writer and Native Resume V5.
 
-This module is deliberately a routing layer, not submission authority.  It keeps
+This module is deliberately a routing layer, not submission authority. It keeps
 n8n available as the default/proven preparation path while allowing a candidate
-to explicitly choose the built-in evidence-backed native writer for a stored
-job.  Neither choice marks an application Submitted.
+to explicitly choose the Stage B-bound Native Resume V5 writer for a stored job.
+Native V5 is default-off and must be enabled explicitly. Neither choice marks an
+application Submitted.
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Callable
 
 import streamlit as st
@@ -14,11 +16,22 @@ import streamlit as st
 
 _PAGES: Any = None
 _DIALOG_JOB_KEY = "resume_engine_choice_job_id"
+_NATIVE_V5_ENV = "MUNSHI_NATIVE_RESUME_V5_ENABLED"
 _DEFAULT_NATIVE_INSTRUCTION = (
     "Create the strongest truthful one-page ATS resume for this job. Prioritize "
     "directly relevant evidence, keep the writing natural and concise, and omit "
     "unsupported requirements rather than inventing them."
 )
+
+
+def native_resume_v5_enabled() -> bool:
+    """Return the explicit default-off Native V5 consumer gate."""
+    return str(os.getenv(_NATIVE_V5_ENV) or "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _request_engine_choice(job_id: int) -> None:
@@ -40,7 +53,7 @@ def _job_label(row: dict[str, Any]) -> str:
 
 def _prime_native_job_selection(job_id: int) -> None:
     """Make Resume Studio open on the exact job the candidate selected."""
-    from app.native_resume_service import resume_job_options
+    from app.native_resume_service_v5 import resume_job_options
 
     for row in resume_job_options(limit=300):
         if int(row["id"]) == int(job_id):
@@ -84,25 +97,37 @@ def _run_n8n(job_id: int) -> None:
 
 
 def _run_native(job_id: int) -> tuple[bool, str]:
-    """Run native generation only when its explicit prerequisites are present."""
-    from app.native_resume_service import active_source, generate_resume, model_status
+    """Run Native V5 only when its explicit gate and prerequisites are present."""
+    if not native_resume_v5_enabled():
+        _route_to_native_studio(job_id)
+        return (
+            False,
+            "Native Resume V5 is installed but disabled. The proven n8n route remains available.",
+        )
+
+    from app.native_resume_service_v5 import active_source, generate_resume, writer_status
 
     source = active_source()
-    status = model_status()
+    status = writer_status()
     if not source:
         _route_to_native_studio(job_id)
-        return False, "Native Resume Studio needs a confirmed resume source first."
+        return False, "Native Resume Studio needs a confirmed Master Resume source first."
     if not status.get("configured"):
         _route_to_native_studio(job_id)
-        return False, "Native Resume Studio is installed, but its OpenAI runtime key is not configured on this server."
+        return (
+            False,
+            "Native Resume Studio is installed, but its writer credential is not configured on this server.",
+        )
 
     record = generate_resume(
         job_id=int(job_id),
         instruction=_DEFAULT_NATIVE_INSTRUCTION,
     )
+    if record.get("stage_b_bound") is not True:
+        raise RuntimeError("Native Resume V5 returned an unbound resume version.")
     st.session_state["native_resume_selected_version"] = record["version_id"]
     _route_to_native_studio(job_id)
-    return True, f"Native ATS resume v{record['version_number']} validated."
+    return True, f"Native Resume V5 ATS resume v{record['version_number']} validated."
 
 
 @st.dialog("Choose resume engine", width="small")
@@ -128,7 +153,7 @@ def _engine_dialog(job_id: int) -> None:
         format_func=lambda value: (
             "n8n workflow · proven current pipeline"
             if value == "n8n"
-            else "Native Resume Studio · built into MUNSHI"
+            else "Native Resume V5 · exact Stage B evidence path"
         ),
         key=f"resume_engine_choice_{job_id}",
     )
@@ -140,28 +165,31 @@ def _engine_dialog(job_id: int) -> None:
         )
     else:
         try:
-            from app.native_resume_service import active_source, model_status
+            from app.native_resume_service_v5 import active_source, writer_status
 
-            status = model_status()
+            status = writer_status()
             source_ready = bool(active_source())
             writer_ready = bool(status.get("configured"))
+            v5_enabled = native_resume_v5_enabled()
         except Exception:
             source_ready = False
             writer_ready = False
+            v5_enabled = False
             status = {"model": "Unavailable"}
 
         st.info(
-            "Runs MUNSHI's evidence-backed native writer for this exact stored job. "
-            "The generated version is immutable, reviewable, and does not mark the "
-            "application Submitted."
+            "Runs MUNSHI's Stage B-bound Native Resume V5 writer for this exact stored job. "
+            "The generated version is immutable, truth/job/plan bound, reviewable, and does "
+            "not mark the application Submitted."
         )
-        readiness = (
-            "Ready to generate now"
-            if source_ready and writer_ready
-            else "Opens Resume Studio to finish native-writer setup"
-        )
+        if not v5_enabled:
+            readiness = "Disabled by the Native V5 feature gate"
+        elif source_ready and writer_ready:
+            readiness = "Ready to generate now"
+        else:
+            readiness = "Opens Resume Studio to finish native-writer setup"
         st.caption(
-            f"Native status: {readiness} · model {status.get('model') or 'not configured'}"
+            f"Native V5 status: {readiness} · model {status.get('model') or 'not configured'}"
         )
 
     action, cancel = st.columns((1.7, 1), gap="small")
@@ -186,7 +214,7 @@ def _engine_dialog(job_id: int) -> None:
 
             try:
                 with st.spinner(
-                    "Building evidence, generating the native resume, and running truth/ATS guards…"
+                    "Building Stage B evidence, generating Native V5, and running truth/ATS guards…"
                 ):
                     generated, message = _run_native(job_id)
             except Exception as error:
