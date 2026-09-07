@@ -8,8 +8,12 @@ unless the rendered file is exactly one page.
 from __future__ import annotations
 
 import hashlib
+import io
 import sqlite3
 from typing import Any
+from zipfile import BadZipFile, ZipFile
+
+from pypdf import PdfReader
 
 from app import native_resume_service_v5 as resume_v5
 from app.database import get_connection
@@ -60,6 +64,28 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
 
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _validate_docx_bytes(data: bytes) -> None:
+    """Require a structurally readable DOCX, not merely a ZIP signature."""
+    try:
+        with ZipFile(io.BytesIO(data)) as document:
+            names = set(document.namelist())
+    except BadZipFile as exc:
+        raise RuntimeError("Native Resume V5 DOCX renderer returned an invalid document.") from exc
+    if {"[Content_Types].xml", "word/document.xml"} - names:
+        raise RuntimeError("Native Resume V5 DOCX renderer returned an invalid document.")
+
+
+def _validated_pdf_page_count(data: bytes) -> int:
+    """Independently parse the rendered PDF and return its actual page count."""
+    try:
+        pages = len(PdfReader(io.BytesIO(data), strict=True).pages)
+    except Exception as exc:
+        raise RuntimeError("Native Resume V5 PDF renderer returned an invalid document.") from exc
+    if pages != 1:
+        raise ValueError(f"Native Resume V5 PDF must be exactly one page; parsed {pages} pages.")
+    return pages
 
 
 def _artifact_id(tenant_id: str, user_id: str, version_id: str, kind: str) -> str:
@@ -136,15 +162,11 @@ def materialize(version_id: str) -> dict[str, Any]:
     record = _current_resume(str(version_id))
     context = resume_v5.v4.v1.job_context(int(record["job_id"]))
     docx = resume_v5.v4.v1.version_docx(str(version_id))
-    pdf, page_count = resume_v5.v4.v1.version_pdf(str(version_id))
-    if int(page_count) != 1:
-        raise ValueError(
-            f"Native Resume V5 PDF must be exactly one page; renderer returned {int(page_count)} pages."
-        )
-    if not docx.startswith(b"PK"):
-        raise RuntimeError("Native Resume V5 DOCX renderer returned an invalid document.")
+    pdf, _renderer_page_count = resume_v5.v4.v1.version_pdf(str(version_id))
+    _validate_docx_bytes(docx)
     if not pdf.startswith(b"%PDF"):
         raise RuntimeError("Native Resume V5 PDF renderer returned an invalid document.")
+    page_count = _validated_pdf_page_count(pdf)
 
     # Rendering may take time. Revalidate truth/job/Stage B before persistence so
     # an artifact cannot become current merely because generation started earlier.

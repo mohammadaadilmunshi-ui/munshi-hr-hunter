@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import io
 
 import pytest
+from pypdf import PdfWriter
 
 from app import database
 from app import native_resume_artifact_v5 as artifacts
@@ -10,16 +12,22 @@ from app import native_resume_service_v5 as resume_v5
 from tests.test_stage_b_native_resume_v5 import _confirmed_profile, _fake_writer, _job
 
 
-def _renderers(monkeypatch: pytest.MonkeyPatch, *, suffix: bytes = b"") -> None:
-    monkeypatch.setattr(
-        resume_v5.v4.v1,
-        "version_docx",
-        lambda _version_id: b"PK\x03\x04synthetic-docx" + suffix,
-    )
+def _pdf(*, pages: int = 1, suffix: bytes = b"") -> bytes:
+    writer = PdfWriter()
+    for _ in range(pages):
+        writer.add_blank_page(width=612, height=792)
+    output = io.BytesIO()
+    writer.write(output)
+    return output.getvalue() + suffix
+
+
+def _renderers(
+    monkeypatch: pytest.MonkeyPatch, *, pages: int = 1, suffix: bytes = b""
+) -> None:
     monkeypatch.setattr(
         resume_v5.v4.v1,
         "version_pdf",
-        lambda _version_id: (b"%PDF-1.7\nsynthetic-one-page" + suffix, 1),
+        lambda _version_id: (_pdf(pages=pages, suffix=suffix), pages),
     )
 
 
@@ -37,17 +45,13 @@ def test_materialize_persists_exact_one_page_pdf_and_docx_idempotently(
 
     assert first["page_verification"] == {"status": "PASS", "pdf_pages": 1}
     assert first["pdf"]["page_count"] == 1
-    assert first["pdf"]["sha256"] == hashlib.sha256(
-        b"%PDF-1.7\nsynthetic-one-page"
-    ).hexdigest()
+    assert first["pdf"]["sha256"] == hashlib.sha256(_pdf()).hexdigest()
     assert first["docx"]["sha256"] == hashlib.sha256(
-        b"PK\x03\x04synthetic-docx"
+        resume_v5.v4.v1.version_docx(resume["version_id"])
     ).hexdigest()
     assert second["pdf"]["artifact_id"] == first["pdf"]["artifact_id"]
     assert second["docx"]["artifact_id"] == first["docx"]["artifact_id"]
-    assert artifacts.artifact_bytes(first["pdf"]["artifact_id"]) == (
-        b"%PDF-1.7\nsynthetic-one-page"
-    )
+    assert artifacts.artifact_bytes(first["pdf"]["artifact_id"]) == _pdf()
 
     connection = database.get_connection()
     try:
@@ -69,16 +73,7 @@ def test_materialize_rejects_non_one_page_pdf_before_persistence(
     _confirmed_profile(hunter_db, monkeypatch)
     _fake_writer(monkeypatch)
     resume = resume_v5.generate_resume(job_id=_job())
-    monkeypatch.setattr(
-        resume_v5.v4.v1,
-        "version_docx",
-        lambda _version_id: b"PK\x03\x04synthetic-docx",
-    )
-    monkeypatch.setattr(
-        resume_v5.v4.v1,
-        "version_pdf",
-        lambda _version_id: (b"%PDF-1.7\nsynthetic-two-page", 2),
-    )
+    _renderers(monkeypatch, pages=2)
 
     with pytest.raises(ValueError, match="exactly one page"):
         artifacts.materialize(resume["version_id"])
@@ -104,6 +99,22 @@ def test_immutable_version_cannot_silently_change_artifact_bytes(
 
     _renderers(monkeypatch, suffix=b"-changed")
     with pytest.raises(RuntimeError, match="Immutable Native Resume V5 artifact content changed"):
+        artifacts.materialize(resume["version_id"])
+
+
+def test_materialize_rejects_a_corrupt_pdf_even_if_renderer_claims_one_page(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _confirmed_profile(hunter_db, monkeypatch)
+    _fake_writer(monkeypatch)
+    resume = resume_v5.generate_resume(job_id=_job())
+    monkeypatch.setattr(
+        resume_v5.v4.v1,
+        "version_pdf",
+        lambda _version_id: (b"%PDF-1.7\nnot a parseable PDF", 1),
+    )
+
+    with pytest.raises(RuntimeError, match="invalid document"):
         artifacts.materialize(resume["version_id"])
 
 
