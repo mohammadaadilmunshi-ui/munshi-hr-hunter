@@ -36,11 +36,17 @@ Continuation verification:
 
 ## Exact next unfinished item
 
-Finish the Phase 3 n8n evidence proof: before persisting an n8n artifact,
-resolve its owner-scoped preflight/application binding and compare its job and
-Candidate Truth bindings to current canonical evidence. Reject absent/stale or
-mismatched bindings; add focused callback persistence tests. Do not change the
-live n8n workflow.
+`443c0c3` closes the unsafe n8n persistence path: an n8n artifact now fails
+closed until an exact preflight-bound callback contract exists. Luna traced the
+existing callback/preflight/truth helpers; Sol rejected inferring the latest
+preflight because it self-locks and cannot establish package/queue provenance.
+Focused tests: `24 passed` for artifact, downstream callback, and Plan V2.
+
+Next: extend the existing dispatch/callback contract with an exact
+owner-scoped `preflight_package_id` bound to queue/request identity, then
+compare callback evidence against that stored preflight and the current
+Candidate Truth/job snapshots in one transaction. Do not modify the live n8n
+workflow or infer a package from `application_id`.
 
 Hunter:
 
