@@ -44,10 +44,10 @@ Branch in both:
 feat/complete-loop-runtime-ux-20260907
 ```
 
-Current committed heads after this continuation:
+Current source head before the docs-only handoff commit:
 
 ```text
-Hunter:
+Hunter source tranche:
 c3726ed3b2d2bf99bb549e8419cac8d9aaed8c26
 fix: bind n8n artifacts to exact preflight callbacks
 
@@ -55,6 +55,8 @@ Apply:
 5f647932fcef6e6f679c5ca709060ad5e4ab0abe
 feat: expose authenticated complete-loop commands
 ```
+
+The handoff update itself is committed as a docs-only child of `c3726ed`. Because a Git commit cannot contain its own final SHA, the exact post-handoff Hunter HEAD is recorded in the external Phase 0 final manifest / takeover response and can always be verified with `git rev-parse HEAD`.
 
 The earlier GitHub WIP lineage remains reference-only:
 
@@ -423,14 +425,16 @@ No further Complete Loop execution logic should be added to n8n.
 
 At the time of this handoff update, the authoritative worktree branch had not yet been pushed to GitHub.
 
-The exact local ancestry that must be preserved is:
+The exact source ancestry that must be preserved includes:
 
 ```text
-Hunter c3726ed3b2d2bf99bb549e8419cac8d9aaed8c26
+Hunter source c3726ed3b2d2bf99bb549e8419cac8d9aaed8c26
   parent 116f03362fb3d85f44c4a5314696b15d5d8cea1a
 
 Apply 5f647932fcef6e6f679c5ca709060ad5e4ab0abe
 ```
+
+The docs-only handoff commit is a direct child of `c3726ed`; use the external final manifest for its exact SHA.
 
 Do not manufacture a replacement branch from the older GitHub WIP lineage. Push these exact local branches/objects.
 
@@ -495,7 +499,7 @@ For arbitrary external employers, browser execution is the primary path.
 ## 14. One-line takeover
 
 ```text
-Migration 044 and exact n8n preflight-bound artifact convergence are now committed and tested at Hunter c3726ed; preserve that lineage, push both authoritative feature branches, then stop expanding n8n and build the first full asynchronous application loop against a controlled local Greenhouse-like browser fixture.
+Migration 044 and exact n8n preflight-bound artifact convergence are committed at Hunter source commit c3726ed and the handoff is committed immediately after it; preserve that lineage, push both authoritative feature branches, then stop expanding n8n and build the first full asynchronous application loop against a controlled local Greenhouse-like browser fixture.
 ```
 
 ## 15. SOURCE_COMPLETE rule
