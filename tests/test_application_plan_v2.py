@@ -332,6 +332,52 @@ def test_provider_and_prepare_permissions_fail_closed(
     }
 
 
+def test_provider_requires_a_real_supported_ats_host_and_policy_is_closed(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _wire_capture_dependencies(hunter_db, monkeypatch)
+    package = _package()
+    package["snapshot"]["job"]["apply_url"] = "https://greenhouse.evil.test/jobs/42"
+    monkeypatch.setattr(plans.preflight_v1, "get_preflight_package", lambda _id: package)
+    result = plans._capture(
+        preflight_package_id="preflight-1", requirements=[], permissions=_permissions(),
+        provider_policy=None, secure_refs={}, resume_format="PDF",
+    )
+    assert result["provider_policy"]["provider"] == "UNSUPPORTED"
+    assert "provider_not_permitted_or_supported" in result["global_blockers"]
+    with pytest.raises(ValueError, match="Unsupported provider policy fields"):
+        plans._normalize_provider_policy({"permitted": True, "host": "evil.test"}, provider="GREENHOUSE")
+
+
+def test_secure_resolver_is_exactly_scoped_to_its_protected_question() -> None:
+    with pytest.raises(ValueError, match="outside its Candidate Truth scope"):
+        plans._normalize_secure_refs(
+            {"work.authorization.current": "hunter-secure://candidate-truth/other/value"}
+        )
+    requirements = plans._normalize_requirements([
+        {"question_key": "candidate.email", "question_family": "candidate_fact"}
+    ])
+    with pytest.raises(ValueError, match="matching protected application question"):
+        plans._scoped_secure_refs(
+            requirements,
+            {"candidate.email": "hunter-secure://candidate-truth/candidate/email"},
+        )
+
+
+def test_capture_rejects_preflight_snapshot_from_another_owner(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _wire_capture_dependencies(hunter_db, monkeypatch)
+    package = _package()
+    package["snapshot"]["application_truth"]["user_id"] = "another-user"
+    monkeypatch.setattr(plans.preflight_v1, "get_preflight_package", lambda _id: package)
+    with pytest.raises(PermissionError, match="owner"):
+        plans._capture(
+            preflight_package_id="preflight-1", requirements=[], permissions=_permissions(),
+            provider_policy=None, secure_refs={}, resume_format="PDF",
+        )
+
+
 def test_plan_digest_excludes_identity_metadata_but_not_execution_content() -> None:
     base = {
         "plan_id": "plan-a",

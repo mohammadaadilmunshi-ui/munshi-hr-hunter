@@ -19,6 +19,7 @@ import re
 import sqlite3
 from collections.abc import Mapping, Sequence
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from app import answer_brain_v2
@@ -40,6 +41,13 @@ SENSITIVITY_CLASSES = frozenset(
     {"NORMAL", "PROTECTED", "SELF_ID", "CREDENTIAL", "POST_OFFER"}
 )
 _RESOLVER_RE = re.compile(r"^hunter-secure://[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]{1,1000}$")
+_PROVIDER_HOSTS = {
+    "GREENHOUSE": ("greenhouse.io",),
+    "LEVER": ("lever.co",),
+    "ASHBY": ("ashbyhq.com",),
+    "SMARTRECRUITERS": ("smartrecruiters.com",),
+    "WORKDAY": ("myworkdayjobs.com", "workdayjobs.com"),
+}
 
 SCHEMA_STATEMENTS = (
     """CREATE TABLE IF NOT EXISTS application_plans_v2 (
@@ -221,24 +229,39 @@ def _normalize_secure_refs(value: Mapping[str, Any] | None) -> dict[str, str]:
         reference = str(raw_reference or "").strip()
         if not _RESOLVER_RE.fullmatch(reference):
             raise ValueError(f"Secure resolver reference for {key} is invalid.")
+        parsed = urlsplit(reference)
+        expected_path = "/" + key.replace(".", "/")
+        if parsed.scheme != "hunter-secure" or parsed.netloc != "candidate-truth" or parsed.path != expected_path:
+            raise ValueError(f"Secure resolver reference for {key} is outside its Candidate Truth scope.")
+        if parsed.query or parsed.fragment or parsed.username or parsed.password or parsed.port:
+            raise ValueError(f"Secure resolver reference for {key} is outside its Candidate Truth scope.")
         result[key] = reference
     return result
 
 
+def _scoped_secure_refs(
+    requirements: Sequence[Mapping[str, Any]], refs: Mapping[str, str]
+) -> dict[str, str]:
+    protected = {
+        str(requirement["question_key"])
+        for requirement in requirements
+        if str(requirement["sensitivity_class"]) in {"PROTECTED", "SELF_ID"}
+    }
+    unexpected = sorted(set(refs) - protected)
+    if unexpected:
+        raise ValueError("Secure resolver references require a matching protected application question.")
+    return dict(refs)
+
+
 def _provider_from_job(job: Mapping[str, Any]) -> str:
-    haystack = " ".join(
-        str(job.get(key) or "") for key in ("apply_url", "job_url", "source")
-    ).casefold()
-    if "greenhouse" in haystack:
-        return "GREENHOUSE"
-    if "lever" in haystack:
-        return "LEVER"
-    if "ashby" in haystack:
-        return "ASHBY"
-    if "smartrecruiters" in haystack:
-        return "SMARTRECRUITERS"
-    if "workday" in haystack or "myworkdayjobs" in haystack:
-        return "WORKDAY"
+    for field in ("apply_url", "job_url"):
+        value = str(job.get(field) or "").strip()
+        if not value:
+            continue
+        host = (urlsplit(value).hostname or "").casefold().rstrip(".")
+        for provider, suffixes in _PROVIDER_HOSTS.items():
+            if any(host == suffix or host.endswith("." + suffix) for suffix in suffixes):
+                return provider
     return "UNSUPPORTED"
 
 
@@ -248,6 +271,9 @@ def _normalize_provider_policy(
     provider: str,
 ) -> dict[str, Any]:
     raw = dict(value or {})
+    unknown = sorted(set(raw) - {"permitted", "authentication_mode", "captcha_policy"})
+    if unknown:
+        raise ValueError("Unsupported provider policy fields: " + ", ".join(unknown))
     permitted = raw.get("permitted", provider in SUPPORTED_PROVIDERS)
     if not isinstance(permitted, bool):
         raise ValueError("Provider policy permitted must be boolean.")
@@ -264,7 +290,22 @@ def _normalize_provider_policy(
         "captcha_policy": "PAUSE",
         "mfa_policy": "PAUSE",
         "credentials_authority": False,
+        "allowed_hosts": list(_PROVIDER_HOSTS.get(provider, ())),
     }
+
+
+def _owner_binding(package_snapshot: Mapping[str, Any]) -> dict[str, str]:
+    connection = get_connection()
+    try:
+        ensure_tenant_schema(connection)
+        owner = current_owner(connection)
+    finally:
+        connection.close()
+    truth = dict(package_snapshot.get("application_truth") or {})
+    if str(truth.get("tenant_id") or "") != owner.tenant_id or str(truth.get("user_id") or "") != owner.user_id:
+        raise PermissionError("Application preflight package owner does not match the current tenant user.")
+    identity = {"tenant_id": owner.tenant_id, "user_id": owner.user_id}
+    return {**identity, "owner_digest": sha256_json(identity)}
 
 
 def _display_value(value: Any) -> str | None:
@@ -455,6 +496,7 @@ def _capture(
         raise ValueError("Application Plan requires a READY_TO_APPLY preflight package.")
 
     package_snapshot = dict(package["snapshot"])
+    owner_binding = _owner_binding(package_snapshot)
     job = dict(package_snapshot.get("job") or {})
     job_id = int(package["job_id"])
     owned_job = safe_owned_job_snapshot(job_id)
@@ -545,6 +587,7 @@ def _capture(
             "job_snapshot_digest": job_digest,
         },
         "candidate_truth_binding": candidate_binding,
+        "owner_binding": owner_binding,
         "resume": {
             "engine": "NATIVE_V5",
             "version_id": resume_version_id,
@@ -600,7 +643,7 @@ def prepare_application_plan(
     key = _text(idempotency_key, "Application Plan idempotency key", 240)
     requirements = _normalize_requirements(answer_requirements)
     normalized_permissions = _normalize_permissions(permissions)
-    secure_refs = _normalize_secure_refs(secure_resolver_refs)
+    secure_refs = _scoped_secure_refs(requirements, _normalize_secure_refs(secure_resolver_refs))
     resume_format = str(resume_format or "PDF").strip().upper()
 
     inputs = {
@@ -638,6 +681,12 @@ def prepare_application_plan(
     connection = get_connection()
     try:
         ensure_schema(connection)
+        # SQLite's unique indexes are the final arbiter, but an immediate
+        # transaction makes idempotency/read-before-insert deterministic under
+        # concurrent local workers.
+        if connection.in_transaction:
+            connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
         owner = current_owner(connection)
         prior = connection.execute(
             """SELECT * FROM application_plans_v2
