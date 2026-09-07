@@ -112,6 +112,19 @@ def _wire_capture_dependencies(hunter_db, monkeypatch: pytest.MonkeyPatch) -> No
     )
     monkeypatch.setattr(plans.resume_v5, "get_version", lambda _id: _resume())
     monkeypatch.setattr(plans.native_resume_artifact_v5, "materialize", lambda _id: _artifacts())
+    monkeypatch.setattr(
+        plans.application_execution_artifact,
+        "native",
+        lambda **_kwargs: {
+            "artifact_id": "artifact-pdf-1",
+            "artifact_reference": "hunter-native-resume://resume-v5-1/pdf",
+            "artifact_sha256": "3" * 64,
+            "filename": "Example_People_Analytics_v4.pdf",
+            "mime_type": "application/pdf",
+            "page_count": 1,
+            "submission_authority": False,
+        },
+    )
 
 
 def _permissions(**changes: bool) -> dict[str, bool]:

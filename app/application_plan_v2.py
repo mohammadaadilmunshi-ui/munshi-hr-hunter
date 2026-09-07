@@ -22,6 +22,7 @@ from typing import Any
 from uuid import uuid4
 
 from app import answer_brain_v2
+from app import application_execution_artifact
 from app import application_preflight_package_v1 as preflight_v1
 from app import native_resume_artifact_v5
 from app import native_resume_service_v5 as resume_v5
@@ -468,11 +469,26 @@ def _capture(
     if str(resume.get("html_sha256") or "") != str(package["resume_sha256"]):
         raise RuntimeError("Preflight and Native V5 rendered resume digests differ.")
 
+    # The Native execution artifact is persisted before a Plan references it.
+    # This is preparation evidence only and never authorizes upload/submission.
+    execution_pdf = application_execution_artifact.native(
+        application_id=str(package["application_id"]), version_id=resume_version_id
+    )
     materialized = native_resume_artifact_v5.materialize(resume_version_id)
     selected_kind = str(resume_format or "PDF").strip().upper()
     if selected_kind not in {"PDF", "DOCX"}:
         raise ValueError("Resume format must be PDF or DOCX.")
     selected = dict(materialized[selected_kind.casefold()])
+    if selected_kind == "PDF":
+        selected = {
+            **selected,
+            "artifact_id": execution_pdf["artifact_id"],
+            "object_reference": execution_pdf["artifact_reference"],
+            "sha256": execution_pdf["artifact_sha256"],
+            "filename": execution_pdf["filename"],
+            "mime_type": execution_pdf["mime_type"],
+            "page_count": execution_pdf["page_count"],
+        }
 
     projection = dict(package_snapshot.get("application_truth") or {})
     candidate_binding = dict(projection.get("candidate_profile_binding") or {})

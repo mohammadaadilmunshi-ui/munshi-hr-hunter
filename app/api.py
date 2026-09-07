@@ -125,6 +125,22 @@ class N8nStatusUpdate(BaseModel):
     unsupported_market_gaps: Any = None
     outreach_drafts: list[Any] | None = None
 
+    # Complete Application Loop artifact evidence.  This remains optional for
+    # legacy callbacks, but if application_id is present all immutable fields
+    # below are required and persisted atomically with the callback receipt.
+    application_id: str | None = Field(default=None, min_length=1, max_length=240)
+    artifact_id: str | None = None
+    version_id: str | None = None
+    version_number: int | None = None
+    filename: str | None = None
+    mime_type: str | None = None
+    artifact_reference: str | None = None
+    artifact_sha256: str | None = None
+    page_count: int | None = None
+    candidate_truth_binding: dict[str, Any] | None = None
+    job_snapshot_binding: dict[str, Any] | None = None
+    artifact_created_at: str | None = None
+
 
 def callback_receipt_key(job_id: int, payload: N8nStatusUpdate, callback_status: str) -> str:
     if payload.request_id:
@@ -547,6 +563,25 @@ def n8n_status_update(
                 normalized_execution_id = progress_row["execution_id"]
         normalized_payload["execution_id"] = normalized_execution_id
 
+        execution_artifact_id: str | None = None
+        if payload.application_id is not None:
+            from app import application_execution_artifact
+
+            artifact = application_execution_artifact.n8n(
+                application_id=payload.application_id,
+                job_id=int(row["id"]),
+                callback={
+                    **payload.model_dump(exclude_none=True),
+                    "engine": "n8n",
+                    "job_id": int(row["id"]),
+                    "created_at": payload.artifact_created_at,
+                },
+            )
+            persisted_artifact = application_execution_artifact.persist(
+                artifact, connection=connection
+            )
+            execution_artifact_id = str(persisted_artifact["execution_artifact_id"])
+
         from app.universal_n8n_progress import persist_extended_result
 
         persist_extended_result(
@@ -712,6 +747,7 @@ def n8n_status_update(
         "n8n_status": callback_status,
         "queue_id": payload.queue_id,
         "execution_id": normalized_execution_id,
+        "execution_artifact_id": execution_artifact_id,
         "message": "n8n status stored successfully.",
         "telegram_sync": telegram_sync_result,
     }
