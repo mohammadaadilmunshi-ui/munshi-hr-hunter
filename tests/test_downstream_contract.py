@@ -100,18 +100,6 @@ def test_duplicate_callback_is_acknowledged_without_replayed_side_effects(
         send_mode="telegram_manual",
         queue_id=int(queue["id"]),
         request_id=str(queue["request_id"]),
-        application_id="application-callback-1",
-        artifact_id="n8n-callback-artifact-1",
-        version_id="n8n-callback-version-1",
-        version_number=1,
-        filename="resume.pdf",
-        mime_type="application/pdf",
-        artifact_reference="hunter-n8n://callback/1",
-        artifact_sha256="a" * 64,
-        page_count=1,
-        candidate_truth_binding={"profile_digest": "b" * 64},
-        job_snapshot_binding={"job_snapshot_sha256": "c" * 64},
-        artifact_created_at="2026-09-07T00:00:00+00:00",
     )
     first = api.n8n_status_update(payload)
     second = api.n8n_status_update(payload)
@@ -122,9 +110,6 @@ def test_duplicate_callback_is_acknowledged_without_replayed_side_effects(
         events = connection.execute(
             "SELECT COUNT(*) FROM events WHERE event_type='n8n_status_callback'"
         ).fetchone()[0]
-        artifacts = connection.execute(
-            "SELECT COUNT(*) FROM application_execution_artifacts WHERE application_id='application-callback-1'"
-        ).fetchone()[0]
     finally:
         connection.close()
     assert first["success"] is True
@@ -132,8 +117,7 @@ def test_duplicate_callback_is_acknowledged_without_replayed_side_effects(
     assert receipts == 1
     assert results == 1
     assert events == 1
-    assert artifacts == 1
-    assert first["execution_artifact_id"]
+    assert first["execution_artifact_id"] is None
 
 
 def test_explicit_callback_disable_blocks_cloud_mutation(hunter_db, monkeypatch) -> None:

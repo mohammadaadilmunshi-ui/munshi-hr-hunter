@@ -177,6 +177,8 @@ def persist(
     engine = str(normalized.get("engine") or "").casefold()
     if engine not in {"native", "n8n"}:
         raise ValueError("Execution artifact has invalid engine provenance.")
+    if engine == "n8n":
+        raise ValueError("n8n artifact persistence requires an exact preflight-bound callback contract.")
     if normalized.get("submission_authority") is not False:
         raise ValueError("Execution artifacts never grant submission authority.")
 

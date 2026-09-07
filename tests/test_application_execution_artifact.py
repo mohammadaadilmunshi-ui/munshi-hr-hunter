@@ -43,6 +43,8 @@ def test_n8n_artifact_keeps_n8n_provenance_and_rejects_wrong_job() -> None:
     assert artifact["engine"] == "n8n"
     with pytest.raises(ValueError, match="another job"):
         execution_artifact.n8n(application_id="application-1", job_id=42, callback=payload)
+    with pytest.raises(ValueError, match="preflight-bound callback"):
+        execution_artifact.persist(artifact)
 
 
 def test_persisted_artifact_is_idempotent_but_cannot_be_rebound(hunter_db) -> None:
@@ -62,17 +64,12 @@ def test_persisted_artifact_is_idempotent_but_cannot_be_rebound(hunter_db) -> No
         connection.commit()
     finally:
         connection.close()
-    artifact = execution_artifact.n8n(
-        application_id="application-persist-1", job_id=int(job["job_id"]), callback={
-            "engine": "n8n", "job_id": int(job["job_id"]), "artifact_id": "n8n-artifact-1",
-            "version_id": "n8n-version-1", "version_number": 4, "filename": "resume.pdf",
-            "mime_type": "application/pdf", "artifact_reference": "hunter-n8n://artifact/1",
-            "artifact_sha256": "a" * 64, "page_count": 1,
-            "candidate_truth_binding": {"profile_digest": "b" * 64},
-            "job_snapshot_binding": {"job_snapshot_sha256": "c" * 64},
-            "created_at": "2026-09-07T00:00:00+00:00",
-        },
-    )
+    artifact = {
+        "application_id": "application-persist-1", "job_id": int(job["job_id"]),
+        "engine": "native", "artifact_id": "native-artifact-1", "version_id": "native-version-1",
+        "artifact_reference": "hunter-native://artifact/1", "artifact_sha256": "a" * 64,
+        "submission_authority": False,
+    }
     first = execution_artifact.persist(artifact)
     assert execution_artifact.persist(artifact)["execution_artifact_id"] == first["execution_artifact_id"]
     with pytest.raises(ValueError, match="different execution artifact"):
@@ -114,5 +111,5 @@ def test_persist_rejects_a_job_owned_by_another_tenant_user(hunter_db, monkeypat
         },
     )
     with owner_context(tenant_id="team-a", user_id="member-a"):
-        with pytest.raises(PermissionError, match="not owned"):
+        with pytest.raises(ValueError, match="preflight-bound callback"):
             execution_artifact.persist(artifact)
