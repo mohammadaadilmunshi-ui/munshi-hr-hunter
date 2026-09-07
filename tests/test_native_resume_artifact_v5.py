@@ -62,6 +62,10 @@ def test_materialize_persists_exact_one_page_pdf_and_docx_idempotently(
 def test_materialize_rejects_non_one_page_pdf_before_persistence(
     hunter_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The rejection happens before materialize opens its persistence connection.
+    # Create the artifact schema explicitly so this test can assert the intended
+    # no-write invariant rather than depending on another test's setup order.
+    artifacts.ensure_schema()
     _confirmed_profile(hunter_db, monkeypatch)
     _fake_writer(monkeypatch)
     resume = resume_v5.generate_resume(job_id=_job())
