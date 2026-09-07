@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from app import native_resume_artifact_v5
 from app import native_resume_service_v5 as resume_v5
@@ -45,6 +47,7 @@ SCHEMA_STATEMENTS = (
     """CREATE INDEX IF NOT EXISTS idx_application_execution_artifacts_owner_job
        ON application_execution_artifacts(tenant_id,user_id,job_id,created_at DESC);""",
 )
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
@@ -117,7 +120,15 @@ def n8n(*, application_id: str, job_id: int, callback: Mapping[str, Any]) -> dic
         "created_at": _required(callback.get("created_at"), "created_at"),
         "submission_authority": False,
     }
-    if len(result["artifact_sha256"]) != 64 or result["page_count"] != 1:
+    reference = str(result["artifact_reference"])
+    parsed_reference = urlsplit(reference)
+    if (
+        not _SHA256_RE.fullmatch(result["artifact_sha256"])
+        or result["mime_type"] != "application/pdf"
+        or parsed_reference.scheme != "hunter-n8n"
+        or not parsed_reference.netloc
+        or result["page_count"] != 1
+    ):
         raise ValueError("n8n execution artifact must provide an exact one-page immutable PDF.")
     if not isinstance(result["candidate_truth_binding"], Mapping) or not isinstance(
         result["job_snapshot_binding"], Mapping
@@ -173,6 +184,10 @@ def persist(
     connection = connection or get_connection()
     try:
         ensure_schema(connection)
+        if owns:
+            if connection.in_transaction:
+                connection.commit()
+            connection.execute("BEGIN IMMEDIATE")
         owner = current_owner(connection)
         _owned_job(connection, job_id=job_id, tenant_id=owner.tenant_id, user_id=owner.user_id)
         payload_json = _canonical_payload(normalized)

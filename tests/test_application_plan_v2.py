@@ -256,21 +256,11 @@ def test_protected_answer_never_serializes_plaintext_and_requires_scoped_resolve
     assert blocked["answers"][0]["execution_value"] is None
     assert blocked["answers"][0]["secure_resolver_ref"] is None
 
-    ready = plans._capture(
-        preflight_package_id="preflight-1",
-        requirements=requirements,
-        permissions=_permissions(protected_fact_execution=True),
-        provider_policy=None,
-        secure_refs={
-            "work.authorization.current": "hunter-secure://candidate-truth/work-authorization/current"
-        },
-        resume_format="PDF",
-    )
-    answer = ready["answers"][0]
-    assert ready["executable"] is True
-    assert answer["execution_value"] is None
-    assert answer["secure_resolver_ref"].startswith("hunter-secure://")
-    assert "authorized" not in str(answer.get("display_value") or "").casefold()
+    with pytest.raises(ValueError, match="owner-scoped resolver"):
+        plans._scoped_secure_refs(
+            requirements,
+            {"work.authorization.current": "hunter-secure://candidate-truth/work-authorization/current"},
+        )
 
 
 def test_credential_requirement_remains_unresolved_even_with_prepare_permissions(
@@ -362,6 +352,35 @@ def test_secure_resolver_is_exactly_scoped_to_its_protected_question() -> None:
             requirements,
             {"candidate.email": "hunter-secure://candidate-truth/candidate/email"},
         )
+
+
+def test_inferred_protected_sensitivity_cannot_be_downgraded_or_leak_plaintext(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _wire_capture_dependencies(hunter_db, monkeypatch)
+    requirement = plans._normalize_requirements(
+        [{
+            "question_key": "candidate.value",
+            "question_family": "candidate_fact",
+            "normalized_question": "What is your Social Security number?",
+            "sensitivity_class": "NORMAL",
+        }]
+    )
+    assert requirement[0]["sensitivity_class"] == "POST_OFFER"
+    result = plans._capture(
+        preflight_package_id="preflight-1", requirements=requirement,
+        permissions=_permissions(), provider_policy=None, secure_refs={}, resume_format="PDF",
+    )
+    assert result["answers"][0]["execution_value"] is None
+
+
+def test_non_normal_question_rejects_plaintext_conditions() -> None:
+    with pytest.raises(ValueError, match="plaintext conditions"):
+        plans._normalize_requirements([{
+            "question_key": "work.authorization.current",
+            "question_family": "work_authorization",
+            "conditions": {"answer": "yes"},
+        }])
 
 
 def test_capture_rejects_preflight_snapshot_from_another_owner(

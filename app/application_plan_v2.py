@@ -137,24 +137,33 @@ def _conditions(value: Any) -> dict[str, Any]:
     return result
 
 
-def _infer_sensitivity(family: str, key: str, explicit: Any) -> str:
-    if explicit is not None:
-        value = str(explicit).strip().upper()
-        if value not in SENSITIVITY_CLASSES:
-            raise ValueError("Unsupported application answer sensitivity class.")
-        return value
+def _infer_sensitivity(family: str, key: str, question: str, explicit: Any) -> str:
+    inferred = "NORMAL"
     if family == "voluntary_self_identification":
-        return "SELF_ID"
-    if family == "credential_requirement":
-        return "CREDENTIAL"
-    if family == "post_offer_sensitive":
-        return "POST_OFFER"
-    if family == "work_authorization":
-        return "PROTECTED"
-    folded = key.casefold()
-    if any(token in folded for token in ("ssn", "social_security", "passport", "date_of_birth")):
-        return "POST_OFFER"
-    return "NORMAL"
+        inferred = "SELF_ID"
+    elif family == "credential_requirement":
+        inferred = "CREDENTIAL"
+    elif family == "post_offer_sensitive":
+        inferred = "POST_OFFER"
+    elif family == "work_authorization":
+        inferred = "PROTECTED"
+    elif any(token in key.casefold() for token in ("ssn", "social_security", "passport", "date_of_birth")):
+        inferred = "POST_OFFER"
+    else:
+        inferred = {
+            "voluntary_self_identification": "SELF_ID",
+            "credential_requirement": "CREDENTIAL",
+            "post_offer_sensitive": "POST_OFFER",
+            "work_authorization": "PROTECTED",
+        }.get(answer_brain_v2.classify_question(question), inferred)
+    if explicit is None:
+        return inferred
+    value = str(explicit).strip().upper()
+    if value not in SENSITIVITY_CLASSES:
+        raise ValueError("Unsupported application answer sensitivity class.")
+    # Callers may add caution, never relax the category inferred from the field.
+    ranks = {"NORMAL": 0, "PROTECTED": 1, "SELF_ID": 2, "CREDENTIAL": 3, "POST_OFFER": 4}
+    return value if ranks[value] >= ranks[inferred] else inferred
 
 
 def _normalize_requirement(raw: Mapping[str, Any]) -> dict[str, Any]:
@@ -171,14 +180,17 @@ def _normalize_requirement(raw: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(required, bool):
         raise ValueError(f"Required flag for {key} must be boolean.")
     profile_fact_key = str(raw.get("profile_fact_key") or "").strip().casefold() or None
-    sensitivity = _infer_sensitivity(family, key, raw.get("sensitivity_class"))
+    sensitivity = _infer_sensitivity(family, key, normalized_question, raw.get("sensitivity_class"))
+    conditions = _conditions(raw.get("conditions"))
+    if sensitivity != "NORMAL" and conditions:
+        raise ValueError("Non-normal application questions cannot carry plaintext conditions.")
     return {
         "question_key": key,
         "question_family": family,
         "normalized_question": normalized_question,
         "required": required,
         "profile_fact_key": profile_fact_key,
-        "conditions": _conditions(raw.get("conditions")),
+        "conditions": conditions,
         "sensitivity_class": sensitivity,
     }
 
@@ -250,6 +262,10 @@ def _scoped_secure_refs(
     unexpected = sorted(set(refs) - protected)
     if unexpected:
         raise ValueError("Secure resolver references require a matching protected application question.")
+    if refs:
+        # No owner/purpose-bound resolver endpoint exists yet.  A syntactically
+        # valid URI is not authority, so keep protected values unresolved.
+        raise ValueError("Secure resolver references are unavailable until an owner-scoped resolver is installed.")
     return dict(refs)
 
 
@@ -258,7 +274,10 @@ def _provider_from_job(job: Mapping[str, Any]) -> str:
         value = str(job.get(field) or "").strip()
         if not value:
             continue
-        host = (urlsplit(value).hostname or "").casefold().rstrip(".")
+        parsed = urlsplit(value)
+        if parsed.scheme.casefold() != "https" or parsed.username or parsed.password:
+            continue
+        host = (parsed.hostname or "").casefold().rstrip(".")
         for provider, suffixes in _PROVIDER_HOSTS.items():
             if any(host == suffix or host.endswith("." + suffix) for suffix in suffixes):
                 return provider

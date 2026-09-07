@@ -35,6 +35,8 @@ _STOPWORDS = frozenset(
 _JOB_FIELDS = (
     "id",
     "job_fingerprint",
+    "job_url",
+    "apply_url",
     "source",
     "source_tier",
     "company_name",
