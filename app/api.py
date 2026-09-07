@@ -564,7 +564,10 @@ def n8n_status_update(
         normalized_payload["execution_id"] = normalized_execution_id
 
         execution_artifact_id: str | None = None
-        if payload.application_id is not None:
+        # An artifact is execution evidence only once n8n has completed its
+        # preparation run.  Intermediate/error callbacks may carry partial
+        # fields, but must never claim the immutable application binding.
+        if payload.application_id is not None and callback_status == "completed":
             from app import application_execution_artifact
 
             artifact = application_execution_artifact.n8n(

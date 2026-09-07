@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from app import api, database, telegram_sync
+from app import api, application_execution_artifact, database, telegram_sync
 from app.job_store import save_job
 from app.n8n_dispatch import build_payload, insert_queue_item
 from app import n8n_dispatch
@@ -146,6 +146,38 @@ def test_explicit_callback_disable_blocks_cloud_mutation(hunter_db, monkeypatch)
     with pytest.raises(HTTPException) as exc_info:
         api.n8n_status_update(payload)
     assert exc_info.value.status_code == 503
+
+
+def test_noncompleted_callback_never_claims_execution_artifact(hunter_db, monkeypatch) -> None:
+    _seed_contract()
+    monkeypatch.setattr(
+        telegram_sync,
+        "sync_latest_job_card",
+        lambda *_args, **_kwargs: {"success": True, "test": True},
+    )
+    connection = database.get_connection()
+    try:
+        stored = save_job(connection, _job(), actor="fixture_worker")
+        job = dict(connection.execute("SELECT * FROM jobs WHERE id=?", (stored["job_id"],)).fetchone())
+        queue = insert_queue_item(connection, job, "telegram_manual", "production")
+        connection.commit()
+    finally:
+        connection.close()
+    result = api.n8n_status_update(api.N8nStatusUpdate(
+        row_id=int(job["id"]), job_fingerprint=str(job["job_fingerprint"]),
+        n8n_status="running", send_mode="telegram_manual", queue_id=int(queue["id"]),
+        request_id=str(queue["request_id"]), application_id="application-running-1",
+    ))
+    connection = database.get_connection()
+    try:
+        application_execution_artifact.ensure_schema(connection)
+        artifacts = connection.execute(
+            "SELECT COUNT(*) FROM application_execution_artifacts WHERE application_id='application-running-1'"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    assert result["execution_artifact_id"] is None
+    assert artifacts == 0
 
 
 def test_unavailable_n8n_is_recorded_without_losing_queue_item(hunter_db, monkeypatch) -> None:

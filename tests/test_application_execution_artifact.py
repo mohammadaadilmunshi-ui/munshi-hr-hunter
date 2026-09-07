@@ -10,6 +10,7 @@ from app import application_execution_artifact as execution_artifact
 from app import database
 from app.job_store import save_job
 from app import native_resume_service_v5 as resume_v5
+from app.tenant_foundation import owner_context
 from tests.test_native_resume_artifact_v5 import _renderers
 from tests.test_stage_b_native_resume_v5 import _confirmed_profile, _fake_writer, _job
 
@@ -76,3 +77,42 @@ def test_persisted_artifact_is_idempotent_but_cannot_be_rebound(hunter_db) -> No
     assert execution_artifact.persist(artifact)["execution_artifact_id"] == first["execution_artifact_id"]
     with pytest.raises(ValueError, match="different execution artifact"):
         execution_artifact.persist({**artifact, "artifact_sha256": "d" * 64})
+
+
+def test_persist_rejects_a_job_owned_by_another_tenant_user(hunter_db, monkeypatch) -> None:
+    monkeypatch.setenv("MUNSHI_TENANT_FOUNDATION_ENABLED", "1")
+    connection = database.get_connection()
+    try:
+        job = save_job(
+            connection,
+            {
+                "source": "fixture", "ats_job_id": "artifact-owner-1",
+                "company_name": "Example", "title": "People Analytics Analyst",
+                "location_raw": "New York, NY", "state": "NY", "country": "US",
+                "apply_url": "https://boards.greenhouse.io/example/jobs/2",
+                "description_raw": "Analytics work.",
+            },
+            actor="test",
+        )
+        connection.execute("INSERT INTO tenants(tenant_id,display_name) VALUES ('team-a','Team A')")
+        connection.execute("INSERT INTO app_users(user_id,display_name) VALUES ('member-a','Member A')")
+        connection.execute(
+            "INSERT INTO tenant_memberships(tenant_id,user_id,role) VALUES ('team-a','member-a','member')"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    artifact = execution_artifact.n8n(
+        application_id="application-owner-1", job_id=int(job["job_id"]), callback={
+            "engine": "n8n", "job_id": int(job["job_id"]), "artifact_id": "n8n-owner-1",
+            "version_id": "n8n-version-1", "version_number": 1, "filename": "resume.pdf",
+            "mime_type": "application/pdf", "artifact_reference": "hunter-n8n://artifact/owner",
+            "artifact_sha256": "a" * 64, "page_count": 1,
+            "candidate_truth_binding": {"profile_digest": "b" * 64},
+            "job_snapshot_binding": {"job_snapshot_sha256": "c" * 64},
+            "created_at": "2026-09-07T00:00:00+00:00",
+        },
+    )
+    with owner_context(tenant_id="team-a", user_id="member-a"):
+        with pytest.raises(PermissionError, match="not owned"):
+            execution_artifact.persist(artifact)
