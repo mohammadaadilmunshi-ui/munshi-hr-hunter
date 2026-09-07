@@ -120,6 +120,8 @@ def n8n(*, application_id: str, job_id: int, callback: Mapping[str, Any]) -> dic
         "created_at": _required(callback.get("created_at"), "created_at"),
         "submission_authority": False,
     }
+    if result["version_number"] < 1:
+        raise ValueError("n8n execution artifact requires a positive immutable version number.")
     reference = str(result["artifact_reference"])
     parsed_reference = urlsplit(reference)
     if (
@@ -236,3 +238,43 @@ def persist(
     finally:
         if owns:
             connection.close()
+
+
+def persist_verified_n8n(
+    artifact: Mapping[str, Any], *, connection: sqlite3.Connection,
+    tenant_id: str, user_id: str,
+) -> dict[str, Any]:
+    """Persist only evidence already bound by the callback's local queue row."""
+    normalized = dict(artifact)
+    if str(normalized.get("engine") or "").casefold() != "n8n":
+        raise ValueError("Verified n8n persistence requires n8n provenance.")
+    if normalized.get("submission_authority") is not False:
+        raise ValueError("Execution artifacts never grant submission authority.")
+    application_id = _required(normalized.get("application_id"), "application_id")
+    job_id = int(normalized.get("job_id") or 0)
+    _owned_job(connection, job_id=job_id, tenant_id=tenant_id, user_id=user_id)
+    payload_json = _canonical_payload(normalized)
+    existing = connection.execute(
+        """SELECT execution_artifact_id,payload_json FROM application_execution_artifacts
+           WHERE tenant_id=? AND user_id=? AND application_id=?""",
+        (tenant_id, user_id, application_id),
+    ).fetchone()
+    if existing is not None:
+        if str(existing["payload_json"]) != payload_json:
+            raise ValueError("Application identity is already bound to a different execution artifact.")
+        return {**normalized, "execution_artifact_id": str(existing["execution_artifact_id"])}
+    execution_artifact_id = "execution-artifact-" + hashlib.sha256(
+        f"{tenant_id}\0{user_id}\0{application_id}".encode("utf-8")
+    ).hexdigest()[:32]
+    connection.execute(
+        """INSERT INTO application_execution_artifacts(
+               execution_artifact_id,tenant_id,user_id,application_id,job_id,engine,
+               artifact_id,artifact_sha256,artifact_reference,version_id,payload_json
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (execution_artifact_id, tenant_id, user_id, application_id, job_id, "n8n",
+         _required(normalized.get("artifact_id"), "artifact_id"),
+         _required(normalized.get("artifact_sha256"), "artifact_sha256"),
+         _required(normalized.get("artifact_reference"), "artifact_reference"),
+         _required(normalized.get("version_id"), "version_id"), payload_json),
+    )
+    return {**normalized, "execution_artifact_id": execution_artifact_id}

@@ -15,6 +15,7 @@ from app.database import get_connection
 from app.tenant_foundation import (
     DEFAULT_TENANT_ID,
     DEFAULT_USER_ID,
+    OwnerContext,
     current_owner,
     ensure_schema as ensure_tenant_schema,
     tenant_foundation_enabled,
@@ -99,7 +100,10 @@ def bounded_ratio(numerator: int | float, denominator: int | float) -> float:
     return max(0.0, min(1.0, float(numerator) / float(denominator)))
 
 
-def safe_owned_job_snapshot(job_id: int) -> dict[str, Any]:
+def safe_owned_job_snapshot(
+    job_id: int, *, connection: Any | None = None,
+    tenant_id: str | None = None, user_id: str | None = None,
+) -> dict[str, Any]:
     """Read a job through the existing tenant ownership boundary.
 
     Legacy singleton jobs created before tenant ownership was introduced remain
@@ -114,10 +118,24 @@ def safe_owned_job_snapshot(job_id: int) -> dict[str, Any]:
     if resolved_job_id <= 0:
         raise ValueError("Job id must be positive.")
 
-    connection = get_connection()
+    if (tenant_id is None) != (user_id is None):
+        raise ValueError("Explicit job ownership requires both tenant_id and user_id.")
+
+    owns_connection = connection is None
+    connection = connection or get_connection()
     try:
-        ensure_tenant_schema(connection)
-        owner = current_owner(connection)
+        if owns_connection:
+            ensure_tenant_schema(connection)
+        if tenant_id is not None and user_id is not None:
+            owner = OwnerContext(str(tenant_id), str(user_id))
+            membership = connection.execute(
+                "SELECT 1 FROM tenant_memberships WHERE tenant_id=? AND user_id=?",
+                (owner.tenant_id, owner.user_id),
+            ).fetchone()
+            if membership is None:
+                raise LookupError("Explicit job owner is not a current tenant member.")
+        else:
+            owner = current_owner(connection)
         row = connection.execute("SELECT * FROM jobs WHERE id=?", (resolved_job_id,)).fetchone()
         if row is None:
             raise LookupError("Job is unavailable.")
@@ -146,7 +164,8 @@ def safe_owned_job_snapshot(job_id: int) -> dict[str, Any]:
         snapshot["job_snapshot_sha256"] = sha256_json(snapshot)
         return snapshot
     finally:
-        connection.close()
+        if owns_connection:
+            connection.close()
 
 
 def safe_mapping_digest(value: Mapping[str, Any], *, label: str) -> str:

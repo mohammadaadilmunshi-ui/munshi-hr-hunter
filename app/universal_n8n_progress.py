@@ -49,9 +49,13 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
         connection = get_connection()
 
     try:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS telegram_n8n_progress (
+        # Keep schema initialization safe inside a caller-owned transaction.
+        # sqlite3.executescript() issues an implicit COMMIT before executing its
+        # script; the callback path deliberately persists its receipt, verified
+        # artifact, result, queue state, and event atomically. Individual DDL
+        # statements preserve that outer transaction boundary.
+        for statement in (
+            """CREATE TABLE IF NOT EXISTS telegram_n8n_progress (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_id INTEGER NOT NULL,
                 queue_id INTEGER NOT NULL UNIQUE,
@@ -66,15 +70,13 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 completed_at TEXT,
                 FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_telegram_n8n_progress_job
-            ON telegram_n8n_progress(job_id, id DESC);
-
-            CREATE INDEX IF NOT EXISTS idx_telegram_n8n_progress_status
-            ON telegram_n8n_progress(run_status, updated_at);
-            """
-        )
+            )""",
+            """CREATE INDEX IF NOT EXISTS idx_telegram_n8n_progress_job
+               ON telegram_n8n_progress(job_id, id DESC)""",
+            """CREATE INDEX IF NOT EXISTS idx_telegram_n8n_progress_status
+               ON telegram_n8n_progress(run_status, updated_at)""",
+        ):
+            connection.execute(statement)
 
         result_columns = _table_columns(connection, "n8n_results")
         for name, sql_type in RESULT_EXTRA_COLUMNS.items():
