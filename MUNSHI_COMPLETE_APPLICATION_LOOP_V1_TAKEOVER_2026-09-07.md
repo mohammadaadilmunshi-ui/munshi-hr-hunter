@@ -12,6 +12,36 @@ Never alter the original sibling working trees; they have unrelated local edits.
 
 ## Completed commits
 
+Continuation commits after the original handoff:
+
+- `d3622fd` persisted owner-scoped execution artifacts in migration `043`.
+- `5a579f8` added the initial Plan V2 trust-boundary hardening.
+- `291d0b0` gates artifact persistence to completed n8n callbacks.
+- `55b0f5b` closes Plan V2 caller-downgrade/plaintext-condition/provider-URL
+  gaps and makes owned artifact writes immediate-transaction idempotent.
+
+Current source heads before this handoff update:
+
+- Hunter: `55b0f5b8d4dc27800e4ce2ff51ea3295d07774c5`
+- Apply: `5f647932fcef6e6f679c5ca709060ad5e4ab0abe`
+
+Continuation verification:
+
+- Hunter focused suite: `31 passed` —
+  `tests/test_application_plan_v2.py tests/test_application_execution_artifact.py tests/test_downstream_contract.py tests/test_native_application_preparation.py`.
+- Luna recon confirmed migration/callback integration and identified no emitted
+  immutable n8n workflow fields; callbacks therefore remain fail-closed.
+- Sol review required the committed Plan V2 hardening. It also identified the
+  remaining n8n proof gap below.
+
+## Exact next unfinished item
+
+Finish the Phase 3 n8n evidence proof: before persisting an n8n artifact,
+resolve its owner-scoped preflight/application binding and compare its job and
+Candidate Truth bindings to current canonical evidence. Reject absent/stale or
+mismatched bindings; add focused callback persistence tests. Do not change the
+live n8n workflow.
+
 Hunter:
 
 - `0cf90c4` fixture schema setup for the artifact rejection assertion.
