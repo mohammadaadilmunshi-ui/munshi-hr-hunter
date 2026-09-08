@@ -982,3 +982,100 @@ app.include_router(hr_agent_proxy_router)
 
 # AADIL_LIVE_API_ATS_GATE_V2
 # FastAPI must be restarted after this marker is installed.
+
+
+# ---------------------------------------------------------------------------
+# Hunter-owned Application Review V2 authority
+# ---------------------------------------------------------------------------
+
+
+class ApplicationReviewCreateRequest(BaseModel):
+    plan_id: str = Field(min_length=1, max_length=240)
+    idempotency_key: str = Field(min_length=1, max_length=240)
+    prepared_package: dict[str, Any]
+
+
+class ApplicationReviewApprovalRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=240)
+    expected_review_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_prepared_package_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_browser_form_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ApplicationReviewRevalidateRequest(BaseModel):
+    prepared_package: dict[str, Any] | None = None
+
+
+@app.post(
+    "/api/application-reviews",
+    dependencies=[Depends(require_api_secret)],
+)
+def create_application_review(
+    payload: ApplicationReviewCreateRequest,
+) -> dict[str, Any]:
+    from app import application_review_v2
+
+    try:
+        return application_review_v2.create_review(
+            plan_id=payload.plan_id,
+            prepared_package=payload.prepared_package,
+            idempotency_key=payload.idempotency_key,
+        )
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.get(
+    "/api/application-reviews/{review_id}",
+    dependencies=[Depends(require_api_secret)],
+)
+def get_application_review(review_id: str) -> dict[str, Any]:
+    from app import application_review_v2
+
+    try:
+        return application_review_v2.get_review(review_id)
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except (PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.post(
+    "/api/application-reviews/{review_id}/revalidate",
+    dependencies=[Depends(require_api_secret)],
+)
+def revalidate_application_review(
+    review_id: str,
+    payload: ApplicationReviewRevalidateRequest,
+) -> dict[str, Any]:
+    from app import application_review_v2
+
+    try:
+        return application_review_v2.revalidate_review(
+            review_id,
+            prepared_package=payload.prepared_package,
+        )
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.post(
+    "/api/application-reviews/{review_id}/approve",
+    dependencies=[Depends(require_api_secret)],
+)
+def approve_application_review(
+    review_id: str,
+    payload: ApplicationReviewApprovalRequest,
+) -> dict[str, Any]:
+    from app import application_review_v2
+
+    try:
+        return application_review_v2.approve_review(
+            review_id=review_id,
+            idempotency_key=payload.idempotency_key,
+            expected_review_digest=payload.expected_review_digest,
+            expected_prepared_package_digest=payload.expected_prepared_package_digest,
+            expected_browser_form_digest=payload.expected_browser_form_digest,
+        )
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
