@@ -58,20 +58,23 @@ def _review_and_approval():
 
 def test_issues_exact_replay_only_for_owned_synthetic_fixture(authority):
     review, approval = _review_and_approval()
-    kwargs = dict(review_id=review["review_id"], approval_id=approval["approval_id"], idempotency_key="command", expected_review_digest=review["review_digest"], expected_approval_digest=approval["approval_digest"], expected_plan_digest="a"*64, expected_prepared_package_digest=review["prepared_package_digest"], expected_browser_form_digest="b"*64, now=100)
+    kwargs = dict(review_id=review["review_id"], approval_id=approval["approval_id"], session_id="session-1", idempotency_key="command", expected_review_digest=review["review_digest"], expected_approval_digest=approval["approval_digest"], expected_plan_digest="a"*64, expected_prepared_package_digest=review["prepared_package_digest"], expected_browser_form_digest="b"*64, now=100)
     first = commands.issue_submit_command(**kwargs); second = commands.issue_submit_command(**kwargs)
     assert first["envelope"]["submission_authority"] is True
+    assert first["envelope"]["session_id"] == "session-1"
     assert first["envelope"]["target_url"].endswith(".invalid/app")
     assert second["replayed"] is True and second["command_id"] == first["command_id"]
     assert len(first["signature"]) == 64 and second["signature"] == first["signature"]
     assert "answers" not in first["envelope"]
     with pytest.raises(ValueError, match="different bindings"):
         commands.issue_submit_command(**{**kwargs, "expected_plan_digest": "d" * 64})
+    with pytest.raises(ValueError, match="different bindings"):
+        commands.issue_submit_command(**{**kwargs, "session_id": "session-2"})
 
 
 def test_tampered_stored_command_fails_closed(authority, hunter_db):
     review, approval = _review_and_approval()
-    kwargs = dict(review_id=review["review_id"], approval_id=approval["approval_id"], idempotency_key="command", expected_review_digest=review["review_digest"], expected_approval_digest=approval["approval_digest"], expected_plan_digest="a"*64, expected_prepared_package_digest=review["prepared_package_digest"], expected_browser_form_digest="b"*64)
+    kwargs = dict(review_id=review["review_id"], approval_id=approval["approval_id"], session_id="session-1", idempotency_key="command", expected_review_digest=review["review_digest"], expected_approval_digest=approval["approval_digest"], expected_plan_digest="a"*64, expected_prepared_package_digest=review["prepared_package_digest"], expected_browser_form_digest="b"*64)
     commands.issue_submit_command(**kwargs)
     connection = sqlite3.connect(hunter_db)
     connection.execute("UPDATE application_submit_commands_v1 SET envelope_json='{}' WHERE tenant_id='default' AND user_id='owner'")
@@ -82,7 +85,7 @@ def test_tampered_stored_command_fails_closed(authority, hunter_db):
 
 def test_default_off_and_changed_command_binding_fail(authority, monkeypatch):
     review, approval = _review_and_approval(); monkeypatch.delenv(commands.COMMAND_ENV)
-    kwargs = dict(review_id=review["review_id"], approval_id=approval["approval_id"], idempotency_key="command", expected_review_digest=review["review_digest"], expected_approval_digest=approval["approval_digest"], expected_plan_digest="a"*64, expected_prepared_package_digest=review["prepared_package_digest"], expected_browser_form_digest="b"*64)
+    kwargs = dict(review_id=review["review_id"], approval_id=approval["approval_id"], session_id="session-1", idempotency_key="command", expected_review_digest=review["review_digest"], expected_approval_digest=approval["approval_digest"], expected_plan_digest="a"*64, expected_prepared_package_digest=review["prepared_package_digest"], expected_browser_form_digest="b"*64)
     with pytest.raises(RuntimeError): commands.issue_submit_command(**kwargs)
     monkeypatch.setenv(commands.COMMAND_ENV, "true")
     with pytest.raises(ValueError): commands.issue_submit_command(**{**kwargs, "expected_plan_digest":"d"*64})
@@ -94,7 +97,7 @@ def test_fixture_target_mismatch_fails(authority, hunter_db):
     connection.execute("UPDATE jobs SET apply_url='https://other.invalid/app' WHERE id=7")
     connection.commit(); connection.close()
     with pytest.raises(PermissionError, match="synthetic fixture"):
-        commands.issue_submit_command(review_id=review["review_id"], approval_id=approval["approval_id"], idempotency_key="command", expected_review_digest=review["review_digest"], expected_approval_digest=approval["approval_digest"], expected_plan_digest="a"*64, expected_prepared_package_digest=review["prepared_package_digest"], expected_browser_form_digest="b"*64)
+        commands.issue_submit_command(review_id=review["review_id"], approval_id=approval["approval_id"], session_id="session-1", idempotency_key="command", expected_review_digest=review["review_digest"], expected_approval_digest=approval["approval_digest"], expected_plan_digest="a"*64, expected_prepared_package_digest=review["prepared_package_digest"], expected_browser_form_digest="b"*64)
 
 
 def test_migration_is_additive(hunter_db):
