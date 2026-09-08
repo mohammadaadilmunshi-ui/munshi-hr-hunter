@@ -203,9 +203,57 @@ def find_existing_job(
         # the historical row is no longer a valid keeper. Use a deterministic
         # distinct fingerprint so the corrected job can be stored alongside the
         # preserved historical row.
-        job["job_fingerprint"] = (
-            disambiguated_fingerprint(job)
-        )
+        #
+        # The deterministic distinct fingerprint can itself already exist from
+        # an earlier corrected rediscovery. Re-check every occupied distinct slot
+        # before INSERT. A current valid keeper is reused; historical non-keepers
+        # are skipped by advancing to the next deterministic retry slot. This
+        # preserves the historical-rediscovery policy without violating the
+        # UNIQUE jobs.job_fingerprint constraint.
+        distinct_base = disambiguated_fingerprint(job)
+        distinct_attempt = 0
+
+        while True:
+            distinct_fingerprint = (
+                distinct_base
+                if distinct_attempt == 0
+                else f"{distinct_base}:retry:{distinct_attempt}"
+            )
+
+            distinct_row = connection.execute(
+                """
+                SELECT *
+                FROM jobs
+                WHERE job_fingerprint = ?
+                LIMIT 1
+                """,
+                (distinct_fingerprint,),
+            ).fetchone()
+
+            if distinct_row is None:
+                job["job_fingerprint"] = distinct_fingerprint
+                break
+
+            distinct_candidate = dict(distinct_row)
+            if dedupe_keeper_allowed(distinct_candidate, rules=dedupe_rules):
+                evidence = duplicate_evidence(
+                    distinct_candidate,
+                    job,
+                )
+
+                if evidence is not None:
+                    job["_duplicate_evidence"] = evidence
+                    return (
+                        distinct_row,
+                        "disambiguated_job_fingerprint",
+                    )
+
+            try:
+                ignored_keeper_ids.append(int(distinct_candidate.get("id")))
+            except (TypeError, ValueError):
+                pass
+
+            distinct_attempt += 1
 
     if job.get("url_fingerprint"):
         row = connection.execute(
