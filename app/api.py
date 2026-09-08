@@ -15,6 +15,8 @@ from fastapi import (
     Header,
     HTTPException,
     Query,
+    Request,
+    Response,
     status,
 )
 from pydantic import BaseModel, Field
@@ -1078,4 +1080,28 @@ def approve_application_review(
             expected_browser_form_digest=payload.expected_browser_form_digest,
         )
     except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+# Hunter-owned private execution bridge for hosted preparation
+
+@app.post("/api/application-execution/plan-current")
+async def application_execution_plan_current(request: Request) -> Response:
+    from app import application_artifact_transport_v2
+    try:
+        body, headers = application_artifact_transport_v2.current_plan_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+    except (LookupError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+@app.post("/api/application-execution/artifact")
+async def application_execution_artifact(request: Request) -> Response:
+    from app import application_artifact_transport_v2
+    try:
+        body, headers = application_artifact_transport_v2.artifact_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/octet-stream", headers=headers)
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+    except (LookupError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
