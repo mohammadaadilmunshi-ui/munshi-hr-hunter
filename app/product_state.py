@@ -76,12 +76,37 @@ VALID_VIEWS = {"dashboard", "jobs", "auto-prepare", "tracker", "profile", "resea
 VALID_VOLUME_MODES = {"unlimited", "custom_limit", "paused", "pause_after_batch"}
 
 
+_PRODUCT_SCHEMA_OBJECTS = frozenset(
+    {
+        "product_job_state",
+        "idx_product_job_state_saved",
+        "idx_product_job_state_skipped",
+        "auto_prepare_lanes",
+        "candidate_profile_facts",
+        "gmail_messages",
+        "idx_gmail_messages_category_time",
+    }
+)
+
+
+def _schema_ready(connection: sqlite3.Connection) -> bool:
+    placeholders = ",".join("?" for _ in _PRODUCT_SCHEMA_OBJECTS)
+    rows = connection.execute(
+        f"SELECT name FROM sqlite_master WHERE name IN ({placeholders})",
+        tuple(sorted(_PRODUCT_SCHEMA_OBJECTS)),
+    ).fetchall()
+    return {str(row[0]) for row in rows} == _PRODUCT_SCHEMA_OBJECTS
+
+
 def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
     owns_connection = connection is None
     connection = connection or get_connection()
     try:
-        connection.executescript(PRODUCT_SCHEMA)
         ensure_tenant_foundation_schema(connection)
+        if _schema_ready(connection):
+            return
+
+        connection.executescript(PRODUCT_SCHEMA)
         if owns_connection:
             connection.commit()
     finally:

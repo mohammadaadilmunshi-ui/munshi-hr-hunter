@@ -25,6 +25,18 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-initialize_database()
-ensure_native_resume_studio_schema()
+@st.cache_resource(show_spinner=False)
+def _initialize_dashboard_runtime() -> bool:
+    """Initialize additive database/runtime schemas once per Streamlit process.
+
+    Streamlit reruns this module for UI interaction. Re-running the complete
+    database initializer on every rerun turns ordinary dashboard reads into
+    SQLite writers and can contend with schedulers, callbacks, and Telegram.
+    """
+    initialize_database()
+    ensure_native_resume_studio_schema()
+    return True
+
+
+_initialize_dashboard_runtime()
 render()

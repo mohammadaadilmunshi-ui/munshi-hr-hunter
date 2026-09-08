@@ -121,11 +121,33 @@ SCHEMA_STATEMENTS = (
 )
 
 
+_SERVICE_SCHEMA_OBJECTS = frozenset(
+    {
+        "native_resume_sources",
+        "idx_native_resume_sources_owner_active",
+        "native_resume_versions",
+        "idx_native_resume_versions_owner_job",
+    }
+)
+
+
+def _schema_ready(connection: sqlite3.Connection) -> bool:
+    placeholders = ",".join("?" for _ in _SERVICE_SCHEMA_OBJECTS)
+    rows = connection.execute(
+        f"SELECT name FROM sqlite_master WHERE name IN ({placeholders})",
+        tuple(sorted(_SERVICE_SCHEMA_OBJECTS)),
+    ).fetchall()
+    return {str(row[0]) for row in rows} == _SERVICE_SCHEMA_OBJECTS
+
+
 def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
     owns_connection = connection is None
     connection = connection or get_connection()
     try:
         ensure_tenant_schema(connection)
+        if _schema_ready(connection):
+            return
+
         for statement in SCHEMA_STATEMENTS:
             connection.execute(statement)
         if owns_connection:

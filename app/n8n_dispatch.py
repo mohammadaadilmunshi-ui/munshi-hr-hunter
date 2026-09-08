@@ -746,6 +746,14 @@ def queue_candidates(
         queued = []
 
         if not dry_run:
+            # Candidate planning is read-mostly, but schema self-initializers
+            # reached during planning can leave this legacy sqlite3 connection
+            # inside an implicit transaction. Close that completed planning
+            # boundary before acquiring the queue write lock; otherwise the
+            # explicit BEGIN IMMEDIATE below can become a nested BEGIN.
+            if connection.in_transaction:
+                connection.commit()
+
             connection.execute(
                 "BEGIN IMMEDIATE"
             )

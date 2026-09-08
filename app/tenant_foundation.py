@@ -87,11 +87,46 @@ def _valid_identifier(value: str) -> str:
     return candidate
 
 
+_TENANT_SCHEMA_OBJECTS = frozenset(
+    {
+        "tenants",
+        "app_users",
+        "tenant_memberships",
+        "owned_record_owners",
+        "idx_owned_record_owners_user",
+    }
+)
+
+
+def _schema_ready(connection: sqlite3.Connection) -> bool:
+    placeholders = ",".join("?" for _ in _TENANT_SCHEMA_OBJECTS)
+    rows = connection.execute(
+        f"SELECT name FROM sqlite_master WHERE name IN ({placeholders})",
+        tuple(sorted(_TENANT_SCHEMA_OBJECTS)),
+    ).fetchall()
+    if {str(row[0]) for row in rows} != _TENANT_SCHEMA_OBJECTS:
+        return False
+
+    singleton = connection.execute(
+        """
+        SELECT 1
+        FROM tenant_memberships
+        WHERE tenant_id=? AND user_id=?
+        LIMIT 1
+        """,
+        (DEFAULT_TENANT_ID, DEFAULT_USER_ID),
+    ).fetchone()
+    return singleton is not None
+
+
 def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
     """Install additive tables and the deterministic legacy singleton principal."""
     owns_connection = connection is None
     connection = connection or get_connection()
     try:
+        if _schema_ready(connection):
+            return
+
         # Do not use executescript here.  sqlite3.executescript implicitly
         # commits a pending transaction, while individual DDL statements remain
         # part of the caller's transaction.  Owner lookup can occur mid-write.
