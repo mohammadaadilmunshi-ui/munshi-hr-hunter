@@ -1253,6 +1253,17 @@ def _runtime_question_requirement(
         raw.get("sensitivity_class"), "Runtime sensitivity class", 32
     ).upper()
     family = answer_brain_v2.classify_question(question)
+    # A browser may report arbitrary labels.  Until a separate candidate
+    # confirmation authority exists, only an already classified normal family
+    # can enter the plaintext runtime-resolution path.
+    if (
+        explicit_sensitivity != "NORMAL"
+        or family not in answer_brain_v2.NORMAL_QUESTION_FAMILIES
+        or family == "unknown"
+    ):
+        raise ValueError(
+            "Runtime protected, sensitive, or unclassified questions require their separate policy."
+        )
     requirement = _normalize_requirement(
         {
             "question_key": key,
@@ -1734,6 +1745,28 @@ def runtime_plan_supersession(plan_id: str) -> dict[str, Any] | None:
     finally:
         connection.close()
 
+
+def _runtime_replacement_plan_id(prior_plan_id: str) -> str | None:
+    """Return a finalized immutable replacement; reservations do not revoke."""
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        owner = current_owner(connection)
+        row = connection.execute(
+            """SELECT replacement_plan_id FROM application_plan_revisions_v2
+               WHERE tenant_id=? AND user_id=? AND prior_plan_id=?
+                 AND replacement_plan_id IS NOT NULL
+                 AND replacement_plan_digest IS NOT NULL""",
+            (owner.tenant_id, owner.user_id, str(prior_plan_id)),
+        ).fetchone()
+        return str(row["replacement_plan_id"]) if row is not None else None
+    finally:
+        connection.close()
+
+
+def runtime_plan_is_superseded(plan_id: str) -> bool:
+    return _runtime_replacement_plan_id(plan_id) is not None
+
 def get_application_plan(
     plan_id: str,
     *,
@@ -1798,6 +1831,8 @@ def application_plan_freshness(plan_id: str) -> dict[str, Any]:
 
 def executable_plan(plan_id: str) -> dict[str, Any]:
     plan = get_application_plan(plan_id)
+    if runtime_plan_is_superseded(plan_id):
+        raise RuntimeError("Application Plan is superseded by a runtime resolution.")
     freshness = application_plan_freshness(plan_id)
     if plan["executable"] is not True or str(plan["status"]) != "READY_TO_APPLY":
         raise ValueError("Application Plan is not execution-ready.")

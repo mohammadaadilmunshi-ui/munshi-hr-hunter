@@ -992,37 +992,6 @@ app.include_router(hr_agent_proxy_router)
 
 
 
-class RuntimeNeedsInputQuestionRequest(BaseModel):
-    question_key: str = Field(min_length=1, max_length=160)
-    control_id: str = Field(min_length=1, max_length=512)
-    question: str = Field(min_length=1, max_length=2000)
-    semantic_type: str = Field(min_length=1, max_length=128)
-    sensitivity_class: str = Field(min_length=1, max_length=32)
-
-
-class RuntimeNeedsInputContextRequest(BaseModel):
-    session_id: str = Field(min_length=1, max_length=240)
-    checkpoint_id: str = Field(min_length=1, max_length=240)
-    browser_form_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    unresolved_questions: list[RuntimeNeedsInputQuestionRequest] = Field(
-        min_length=1, max_length=50
-    )
-
-
-class RuntimeAnswerResolutionRequest(BaseModel):
-    question_key: str = Field(min_length=1, max_length=160)
-    canonical_answer: str = Field(min_length=1, max_length=8000)
-
-
-class RuntimeNeedsInputResolutionRequest(BaseModel):
-    expected_prior_plan_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
-    revision_idempotency_key: str = Field(min_length=1, max_length=240)
-    runtime_context: RuntimeNeedsInputContextRequest
-    answer_resolutions: list[RuntimeAnswerResolutionRequest] = Field(
-        min_length=1, max_length=50
-    )
-
-
 class ApplicationReviewCreateRequest(BaseModel):
     plan_id: str = Field(min_length=1, max_length=240)
     idempotency_key: str = Field(min_length=1, max_length=240)
@@ -1039,31 +1008,6 @@ class ApplicationReviewApprovalRequest(BaseModel):
 class ApplicationReviewRevalidateRequest(BaseModel):
     prepared_package: dict[str, Any] | None = None
 
-
-
-@app.post(
-    "/api/application-plans/{prior_plan_id}/resolve-runtime-needs-input",
-    dependencies=[Depends(require_api_secret)],
-)
-def resolve_runtime_application_plan_needs_input(
-    prior_plan_id: str,
-    payload: RuntimeNeedsInputResolutionRequest,
-) -> dict[str, Any]:
-    from app import application_plan_resolution_v2
-
-    try:
-        return application_plan_resolution_v2.resolve_runtime_needs_input(
-            prior_plan_id=prior_plan_id,
-            expected_prior_plan_digest=payload.expected_prior_plan_digest,
-            revision_idempotency_key=payload.revision_idempotency_key,
-            runtime_context=payload.runtime_context.model_dump(),
-            answer_resolutions=[item.model_dump() for item in payload.answer_resolutions],
-        )
-    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(error),
-        ) from error
 
 
 @app.post(

@@ -200,6 +200,8 @@ def _plan_review_fields(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def _plan_for_review(plan_id: str) -> dict[str, Any]:
     plan = application_plan_v2.get_application_plan(str(plan_id))
+    if application_plan_v2.runtime_plan_is_superseded(str(plan_id)):
+        raise ValueError("Application Plan is superseded and cannot be reviewed.")
     if (
         plan.get("executable") is not True
         or str(plan.get("status")) != "READY_TO_APPLY"
@@ -580,6 +582,13 @@ def revalidate_review(
         }
 
     plan_id = str(review["plan_id"])
+    if application_plan_v2.runtime_plan_is_superseded(plan_id):
+        _invalidate(review_id, "application_plan_superseded")
+        return {
+            "review_id": str(review_id),
+            "fresh": False,
+            "reason": "application_plan_superseded",
+        }
     freshness = application_plan_v2.application_plan_freshness(plan_id)
     if freshness.get("fresh") is not True:
         _invalidate(review_id, "application_plan_stale")

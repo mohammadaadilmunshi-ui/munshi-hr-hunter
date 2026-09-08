@@ -129,7 +129,7 @@ def test_runtime_browser_resolution_creates_exact_replay_safe_supersession(
             {
                 "question_key": "first_name",
                 "control_id": "first_name",
-                "question": "First name",
+                "question": "Full name",
                 "semantic_type": "text",
                 "sensitivity_class": "NORMAL",
             }
@@ -165,6 +165,9 @@ def test_runtime_browser_resolution_creates_exact_replay_safe_supersession(
     assert lineage["checkpoint_id"] == "checkpoint-1"
     assert lineage["browser_form_digest"] == "f" * 64
     assert replacement["snapshot"]["answers"][0]["execution_value"] == "Aadil"
+    assert plans.runtime_plan_is_superseded(prior["plan_id"]) is True
+    with pytest.raises(RuntimeError, match="superseded"):
+        plans.executable_plan(prior["plan_id"])
     with pytest.raises(ValueError, match="different Application Plan revision"):
         plans.reprepare_runtime_needs_input_plan(
             prior_plan_id=prior["plan_id"],
@@ -210,5 +213,40 @@ def test_runtime_browser_resolution_cannot_downgrade_protected_question(
             },
             answer_resolutions=[
                 {"question_key": "work_authorization", "canonical_answer": "Yes"}
+            ],
+        )
+
+
+def test_runtime_resolution_rejects_unclassified_questions(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(plans.PLAN_ENV, "true")
+    monkeypatch.setenv(plans.RUNTIME_RESOLUTION_ENV, "true")
+    monkeypatch.setattr(plans, "ensure_schema", _simple_schema)
+    monkeypatch.setattr(plans, "_capture", _capture)
+    prior = plans.prepare_application_plan(
+        preflight_package_id="preflight-1",
+        idempotency_key="runtime-unknown-prior",
+        permissions=_permissions(),
+    )
+    with pytest.raises(ValueError, match="unclassified"):
+        plans.reprepare_runtime_needs_input_plan(
+            prior_plan_id=prior["plan_id"],
+            expected_prior_plan_digest=prior["plan_digest"],
+            idempotency_key="runtime-unknown-revision",
+            runtime_context={
+                "session_id": "apply-session-unknown",
+                "checkpoint_id": "checkpoint-unknown",
+                "browser_form_digest": "d" * 64,
+                "unresolved_questions": [{
+                    "question_key": "criminal_history",
+                    "control_id": "criminal_history",
+                    "question": "Have you ever been convicted of a crime?",
+                    "semantic_type": "radio",
+                    "sensitivity_class": "NORMAL",
+                }],
+            },
+            answer_resolutions=[
+                {"question_key": "criminal_history", "canonical_answer": "No"}
             ],
         )
