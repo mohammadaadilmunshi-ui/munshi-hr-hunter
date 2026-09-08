@@ -26,6 +26,7 @@ def test_compose_uses_internal_endpoints_and_named_state() -> None:
     assert "n8n_data:/home/node/.n8n" in compose
     assert "N8N_USER_FOLDER: /home/node" in compose
     assert "N8N_USER_FOLDER: /home/node/.n8n" not in compose
+    assert "MUNSHI_APPLICATION_PLAN_V2_ENABLED: ${MUNSHI_APPLICATION_PLAN_V2_ENABLED:-false}" in compose
     assert "HUNTER_FASTAPI_PORT_MAPPING:-127.0.0.1:8000:8000" in compose
     assert "N8N_PORT_MAPPING:-127.0.0.1:5678:5678" in compose
 
