@@ -105,7 +105,7 @@ def _prepared(**changes) -> dict:
 @pytest.fixture
 def review_authority(hunter_db, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(reviews.REVIEW_ENV, "true")
-    plan_state = {"value": _plan(), "fresh": True}
+    plan_state = {"value": _plan(), "fresh": True, "superseded": False}
 
     monkeypatch.setattr(
         reviews.application_plan_v2,
@@ -116,6 +116,11 @@ def review_authority(hunter_db, monkeypatch: pytest.MonkeyPatch):
         reviews.application_plan_v2,
         "application_plan_freshness",
         lambda _plan_id: {"fresh": plan_state["fresh"]},
+    )
+    monkeypatch.setattr(
+        reviews.application_plan_v2,
+        "runtime_plan_is_superseded",
+        lambda _plan_id: plan_state["superseded"],
     )
     monkeypatch.setattr(
         reviews,
@@ -338,6 +343,33 @@ def test_revalidation_invalidates_when_plan_becomes_stale(
     }
     stored = reviews.get_review(review["review_id"])
     assert stored["invalidated_at"] is not None
+
+
+def test_runtime_supersession_invalidates_review_and_blocks_approval_consumption(
+    review_authority,
+) -> None:
+    review = reviews.create_review(
+        plan_id="application-plan-1",
+        prepared_package=_prepared(),
+        idempotency_key="review-key-1",
+    )
+    approval = reviews.approve_review(
+        review_id=review["review_id"],
+        idempotency_key="approval-key-1",
+        expected_review_digest=review["review_digest"],
+        expected_prepared_package_digest=review["prepared_package_digest"],
+        expected_browser_form_digest=review["browser_form_digest"],
+    )
+    review_authority["superseded"] = True
+    assert reviews.revalidate_review(review["review_id"])["reason"] == "application_plan_superseded"
+    with pytest.raises(ValueError, match="invalidated"):
+        reviews.consume_approval(
+            approval_id=approval["approval_id"],
+            consumption_key="submit-command-1",
+            expected_review_digest=review["review_digest"],
+            expected_prepared_package_digest=review["prepared_package_digest"],
+            expected_browser_form_digest=review["browser_form_digest"],
+        )
 
 
 def test_revalidation_with_changed_form_digest_invalidates_review(
