@@ -39,6 +39,9 @@ from app.tenant_foundation import ensure_schema as ensure_tenant_schema
 
 PLAN_VERSION = "munshi-application-plan-v2"
 PLAN_ENV = "MUNSHI_APPLICATION_PLAN_V2_ENABLED"
+RUNTIME_RESOLUTION_ENV = "MUNSHI_APPLICATION_PLAN_RUNTIME_RESOLUTION_ENABLED"
+RUNTIME_SUPERSESSION_VERSION = "munshi-application-plan-supersession-v1"
+_RUNTIME_REVISION_KIND = "runtime_apply_needs_input_v1"
 SUPPORTED_PROVIDERS = frozenset(
     {"GREENHOUSE", "LEVER", "ASHBY", "SMARTRECRUITERS", "WORKDAY"}
 )
@@ -119,6 +122,15 @@ SCHEMA_STATEMENTS = (
 
 def application_plan_v2_enabled() -> bool:
     return str(os.getenv(PLAN_ENV) or "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def runtime_application_plan_resolution_enabled() -> bool:
+    return str(os.getenv(RUNTIME_RESOLUTION_ENV) or "").strip().casefold() in {
         "1",
         "true",
         "yes",
@@ -1214,6 +1226,514 @@ def reprepare_needs_input_plan(
     return replacement
 
 
+def _runtime_question_requirement(
+    raw: Mapping[str, Any],
+) -> tuple[dict[str, str], dict[str, Any]]:
+    allowed = {
+        "question_key",
+        "control_id",
+        "question",
+        "semantic_type",
+        "sensitivity_class",
+    }
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        raise ValueError(
+            "Unsupported runtime NEEDS_INPUT question fields: " + ", ".join(unknown)
+        )
+    key = canonical_question_key(
+        _text(raw.get("question_key"), "Runtime question key", 160)
+    )
+    control_id = _text(raw.get("control_id"), "Runtime control id", 512)
+    question = _text(raw.get("question"), "Runtime application question", 2000)
+    semantic_type = _text(
+        raw.get("semantic_type") or "unknown", "Runtime semantic type", 128
+    )
+    explicit_sensitivity = _text(
+        raw.get("sensitivity_class"), "Runtime sensitivity class", 32
+    ).upper()
+    family = answer_brain_v2.classify_question(question)
+    requirement = _normalize_requirement(
+        {
+            "question_key": key,
+            "question_family": family,
+            "normalized_question": question,
+            "required": True,
+            "sensitivity_class": explicit_sensitivity,
+        }
+    )
+    if str(requirement["sensitivity_class"]) != "NORMAL":
+        raise ValueError(
+            "Runtime protected, self-ID, credential, work-authorization, and "
+            "post-offer questions require their separate policy."
+        )
+    return (
+        {
+            "question_key": key,
+            "control_id": control_id,
+            "question": question,
+            "semantic_type": semantic_type,
+            "sensitivity_class": "NORMAL",
+        },
+        requirement,
+    )
+
+
+def _normalize_runtime_needs_input_context(
+    value: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if not isinstance(value, Mapping):
+        raise TypeError("Runtime NEEDS_INPUT context must be an object.")
+    allowed = {
+        "session_id",
+        "checkpoint_id",
+        "browser_form_digest",
+        "unresolved_questions",
+    }
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise ValueError(
+            "Unsupported runtime NEEDS_INPUT context fields: " + ", ".join(unknown)
+        )
+    session_id = _text(value.get("session_id"), "Apply session id", 240)
+    checkpoint_id = _text(value.get("checkpoint_id"), "Apply checkpoint id", 240)
+    browser_form_digest = str(value.get("browser_form_digest") or "").strip().lower()
+    if re.fullmatch(r"[0-9a-f]{64}", browser_form_digest) is None:
+        raise ValueError("Runtime browser form digest must be a SHA-256 digest.")
+    unresolved = value.get("unresolved_questions")
+    if (
+        isinstance(unresolved, (str, bytes))
+        or not isinstance(unresolved, Sequence)
+        or not unresolved
+        or len(unresolved) > 50
+    ):
+        raise ValueError(
+            "Runtime NEEDS_INPUT context requires one to fifty unresolved questions."
+        )
+
+    questions: list[dict[str, str]] = []
+    requirements: list[dict[str, Any]] = []
+    for raw in unresolved:
+        if not isinstance(raw, Mapping):
+            raise TypeError("Runtime unresolved questions must be objects.")
+        question, requirement = _runtime_question_requirement(raw)
+        questions.append(question)
+        requirements.append(requirement)
+
+    keys = [item["question_key"] for item in questions]
+    controls = [item["control_id"] for item in questions]
+    if len(keys) != len(set(keys)) or len(controls) != len(set(controls)):
+        raise ValueError(
+            "Runtime NEEDS_INPUT questions require unique question and control identities."
+        )
+    questions.sort(key=lambda item: item["question_key"])
+    requirements.sort(key=lambda item: item["question_key"])
+    return (
+        {
+            "session_id": session_id,
+            "checkpoint_id": checkpoint_id,
+            "browser_form_digest": browser_form_digest,
+            "unresolved_questions": questions,
+        },
+        requirements,
+    )
+
+
+def _runtime_resolution_inputs(
+    runtime_context: Mapping[str, Any],
+    values: Sequence[Mapping[str, Any]],
+) -> list[dict[str, str]]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise TypeError("Runtime application answer resolutions must be a list.")
+    unresolved = {
+        str(item["question_key"])
+        for item in list(runtime_context.get("unresolved_questions") or [])
+        if isinstance(item, Mapping)
+    }
+    result: list[dict[str, str]] = []
+    for raw in values:
+        if not isinstance(raw, Mapping) or set(raw) != {
+            "question_key",
+            "canonical_answer",
+        }:
+            raise ValueError(
+                "Each runtime answer resolution must contain question_key and canonical_answer."
+            )
+        key = canonical_question_key(
+            _text(raw.get("question_key"), "Runtime question key", 160)
+        )
+        if key not in unresolved:
+            raise ValueError(
+                "Runtime answer resolution is not for the current browser question set."
+            )
+        result.append(
+            {
+                "question_key": key,
+                "canonical_answer": _text(
+                    raw.get("canonical_answer"), "Canonical answer", 8000
+                ),
+                "provenance": "candidate_explicit_runtime_resolution",
+            }
+        )
+    if {item["question_key"] for item in result} != unresolved or len(result) != len(
+        unresolved
+    ):
+        raise ValueError(
+            "Every current runtime unresolved question requires one explicit answer."
+        )
+    return sorted(result, key=lambda item: item["question_key"])
+
+
+def _merge_runtime_requirements(
+    prior: Mapping[str, Any],
+    runtime_requirements: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    merged = {
+        str(item["question_key"]): copy.deepcopy(dict(item))
+        for item in list(prior["inputs"].get("answer_requirements") or [])
+        if isinstance(item, Mapping)
+    }
+    for observed in runtime_requirements:
+        key = str(observed["question_key"])
+        existing = merged.get(key)
+        if existing is not None:
+            if (
+                str(existing.get("sensitivity_class")) != "NORMAL"
+                or str(existing.get("question_family"))
+                != str(observed.get("question_family"))
+            ):
+                raise ValueError(
+                    "Runtime browser question conflicts with the immutable plan question identity."
+                )
+            existing["normalized_question"] = str(observed["normalized_question"])
+            existing["required"] = True
+            merged[key] = existing
+        else:
+            merged[key] = copy.deepcopy(dict(observed))
+    return [merged[key] for key in sorted(merged)]
+
+
+def _runtime_revision_payload_json(payload: Mapping[str, Any]) -> str:
+    return json.dumps(
+        dict(payload), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+
+
+def reprepare_runtime_needs_input_plan(
+    *,
+    prior_plan_id: str,
+    expected_prior_plan_digest: str,
+    idempotency_key: str,
+    runtime_context: Mapping[str, Any],
+    answer_resolutions: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Create one replacement Plan for browser-discovered NORMAL questions."""
+    if not application_plan_v2_enabled():
+        raise RuntimeError("Application Plan V2 is disabled.")
+    if not runtime_application_plan_resolution_enabled():
+        raise RuntimeError("Runtime Application Plan resolution is disabled.")
+
+    prior = get_application_plan(_text(prior_plan_id, "Prior Application Plan id", 240))
+    if str(prior["status"]) != "READY_TO_APPLY" or prior["executable"] is not True:
+        raise ValueError(
+            "Runtime NEEDS_INPUT resolution requires the exact previously executable plan."
+        )
+    if (
+        prior.get("submission_authority") is not False
+        or str(prior["snapshot"].get("expected_state")) != "READY_TO_APPLY"
+    ):
+        raise ValueError("Prior Application Plan has invalid execution authority.")
+    if str(expected_prior_plan_digest) != str(prior["plan_digest"]):
+        raise ValueError(
+            "Expected Application Plan digest does not match the current immutable plan."
+        )
+    if sha256_json(plan_digest_payload(prior["snapshot"])) != str(prior["plan_digest"]):
+        raise RuntimeError("Stored Application Plan snapshot digest is invalid.")
+    if application_plan_freshness(str(prior["plan_id"])).get("fresh") is not True:
+        raise RuntimeError("Application Plan is stale and cannot be runtime-revised.")
+
+    normalized_context, runtime_requirements = _normalize_runtime_needs_input_context(
+        runtime_context
+    )
+    resolutions = _runtime_resolution_inputs(normalized_context, answer_resolutions)
+    merged_requirements = _merge_runtime_requirements(prior, runtime_requirements)
+
+    prior_overrides = {
+        canonical_question_key(str(raw_key)): copy.deepcopy(dict(value))
+        for raw_key, value in dict(prior["inputs"].get("answer_overrides") or {}).items()
+    }
+    new_overrides = {
+        item["question_key"]: {
+            "canonical_answer": item["canonical_answer"],
+            "provenance": item["provenance"],
+        }
+        for item in resolutions
+    }
+    combined_overrides = {**prior_overrides, **new_overrides}
+
+    revision_payload = {
+        "kind": _RUNTIME_REVISION_KIND,
+        "runtime_context": normalized_context,
+        "runtime_requirements": runtime_requirements,
+        "resolutions": resolutions,
+    }
+    resolution_digest = sha256_json(revision_payload)
+    revision_json = _runtime_revision_payload_json(revision_payload)
+    key = _text(idempotency_key, "Application Plan revision idempotency key", 240)
+    if key == str(prior["idempotency_key"]):
+        raise ValueError("Application Plan revision requires a new idempotency key.")
+
+    revision_id = f"application-plan-revision-{uuid4()}"
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        if connection.in_transaction:
+            connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        owner = current_owner(connection)
+        existing = connection.execute(
+            """SELECT * FROM application_plan_revisions_v2
+               WHERE tenant_id=? AND user_id=? AND idempotency_key=?""",
+            (owner.tenant_id, owner.user_id, key),
+        ).fetchone()
+        if existing is not None:
+            if (
+                str(existing["prior_plan_id"]) != str(prior["plan_id"])
+                or str(existing["prior_plan_digest"]) != str(prior["plan_digest"])
+                or str(existing["resolution_digest"]) != resolution_digest
+                or str(existing["resolutions_json"]) != revision_json
+            ):
+                raise ValueError(
+                    "Idempotency key belongs to a different Application Plan revision."
+                )
+            replacement_id = str(existing["replacement_plan_id"] or "")
+            replacement_digest = str(existing["replacement_plan_digest"] or "")
+            connection.commit()
+            if replacement_id:
+                replacement = get_application_plan(replacement_id)
+                if str(replacement["plan_digest"]) != replacement_digest:
+                    raise RuntimeError(
+                        "Stored runtime Application Plan replacement digest is invalid."
+                    )
+                freshness = application_plan_freshness(replacement_id)
+                if freshness.get("fresh") is not True or freshness.get("executable") is not True:
+                    raise RuntimeError(
+                        "Runtime Application Plan replacement is stale or non-executable."
+                    )
+                return replacement
+        else:
+            prior_revision = connection.execute(
+                """SELECT revision_id FROM application_plan_revisions_v2
+                   WHERE tenant_id=? AND user_id=? AND prior_plan_id=?""",
+                (owner.tenant_id, owner.user_id, str(prior["plan_id"])),
+            ).fetchone()
+            if prior_revision is not None:
+                raise ValueError(
+                    "Application Plan already has an immutable replacement revision."
+                )
+            occupied_plan_key = connection.execute(
+                """SELECT plan_id FROM application_plans_v2
+                   WHERE tenant_id=? AND user_id=? AND idempotency_key=?""",
+                (owner.tenant_id, owner.user_id, key),
+            ).fetchone()
+            if occupied_plan_key is not None:
+                raise ValueError(
+                    "Application Plan revision idempotency key already belongs to an Application Plan."
+                )
+            connection.execute(
+                """INSERT INTO application_plan_revisions_v2(
+                       revision_id,tenant_id,user_id,prior_plan_id,prior_plan_digest,
+                       replacement_plan_id,replacement_plan_digest,idempotency_key,
+                       resolution_digest,resolutions_json
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    revision_id,
+                    owner.tenant_id,
+                    owner.user_id,
+                    prior["plan_id"],
+                    prior["plan_digest"],
+                    None,
+                    None,
+                    key,
+                    resolution_digest,
+                    revision_json,
+                ),
+            )
+            connection.commit()
+    except sqlite3.IntegrityError as error:
+        connection.rollback()
+        raise ValueError(
+            "Application Plan already has an immutable replacement revision."
+        ) from error
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+    replacement = prepare_application_plan(
+        preflight_package_id=str(prior["inputs"]["preflight_package_id"]),
+        idempotency_key=key,
+        answer_requirements=merged_requirements,
+        permissions=dict(prior["inputs"]["permissions"]),
+        provider_policy=dict(prior["inputs"]["provider_policy"]),
+        secure_resolver_refs=dict(prior["inputs"]["secure_resolver_refs"]),
+        resume_format=str(prior["inputs"]["resume_format"]),
+        cover_letter_id=prior["inputs"].get("cover_letter_id"),
+        _answer_overrides=combined_overrides,
+    )
+    if str(replacement["plan_id"]) == str(prior["plan_id"]):
+        raise RuntimeError(
+            "Runtime Application Plan revision did not create a distinct snapshot."
+        )
+    if str(replacement["status"]) != "READY_TO_APPLY" or replacement["executable"] is not True:
+        raise RuntimeError(
+            "Runtime-resolved Application Plan did not become execution-ready."
+        )
+    replacement_freshness = application_plan_freshness(str(replacement["plan_id"]))
+    if (
+        replacement_freshness.get("fresh") is not True
+        or replacement_freshness.get("executable") is not True
+    ):
+        raise RuntimeError(
+            "Runtime-resolved Application Plan is stale or non-executable."
+        )
+
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        if connection.in_transaction:
+            connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        owner = current_owner(connection)
+        existing = connection.execute(
+            """SELECT * FROM application_plan_revisions_v2
+               WHERE tenant_id=? AND user_id=? AND idempotency_key=?""",
+            (owner.tenant_id, owner.user_id, key),
+        ).fetchone()
+        if existing is None:
+            raise RuntimeError("Application Plan revision reservation disappeared.")
+        if (
+            str(existing["prior_plan_id"]) != str(prior["plan_id"])
+            or str(existing["prior_plan_digest"]) != str(prior["plan_digest"])
+            or str(existing["resolution_digest"]) != resolution_digest
+            or str(existing["resolutions_json"]) != revision_json
+        ):
+            raise RuntimeError(
+                "Application Plan runtime revision reservation binding changed."
+            )
+        existing_replacement_id = str(existing["replacement_plan_id"] or "")
+        existing_replacement_digest = str(existing["replacement_plan_digest"] or "")
+        if existing_replacement_id:
+            if (
+                existing_replacement_id != str(replacement["plan_id"])
+                or existing_replacement_digest != str(replacement["plan_digest"])
+            ):
+                raise RuntimeError(
+                    "Application Plan runtime revision finalized to another replacement."
+                )
+            connection.commit()
+            return get_application_plan(existing_replacement_id)
+
+        updated = connection.execute(
+            """UPDATE application_plan_revisions_v2
+               SET replacement_plan_id=?, replacement_plan_digest=?
+               WHERE revision_id=? AND tenant_id=? AND user_id=?
+                 AND replacement_plan_id IS NULL AND replacement_plan_digest IS NULL""",
+            (
+                replacement["plan_id"],
+                replacement["plan_digest"],
+                existing["revision_id"],
+                owner.tenant_id,
+                owner.user_id,
+            ),
+        )
+        if updated.rowcount != 1:
+            raise RuntimeError(
+                "Application Plan runtime revision finalization lost its reservation."
+            )
+        connection.commit()
+    except sqlite3.IntegrityError as error:
+        connection.rollback()
+        raise ValueError(
+            "Application Plan already has an immutable replacement revision."
+        ) from error
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+    return replacement
+
+
+def runtime_plan_supersession(plan_id: str) -> dict[str, Any] | None:
+    """Return transport lineage only for post-handoff runtime revisions."""
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        owner = current_owner(connection)
+        row = connection.execute(
+            """SELECT * FROM application_plan_revisions_v2
+               WHERE tenant_id=? AND user_id=? AND replacement_plan_id=?""",
+            (owner.tenant_id, owner.user_id, str(plan_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(str(row["resolutions_json"]))
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                "Stored Application Plan revision payload is invalid."
+            ) from error
+        if not isinstance(payload, Mapping) or payload.get("kind") != _RUNTIME_REVISION_KIND:
+            return None
+        if sha256_json(payload) != str(row["resolution_digest"]):
+            raise RuntimeError(
+                "Stored runtime Application Plan revision digest is invalid."
+            )
+        replacement = connection.execute(
+            """SELECT plan_digest FROM application_plans_v2
+               WHERE plan_id=? AND tenant_id=? AND user_id=?""",
+            (str(plan_id), owner.tenant_id, owner.user_id),
+        ).fetchone()
+        prior = connection.execute(
+            """SELECT plan_digest FROM application_plans_v2
+               WHERE plan_id=? AND tenant_id=? AND user_id=?""",
+            (str(row["prior_plan_id"]), owner.tenant_id, owner.user_id),
+        ).fetchone()
+        if replacement is None or prior is None:
+            raise RuntimeError(
+                "Runtime Application Plan revision references a missing plan."
+            )
+        if (
+            str(replacement["plan_digest"]) != str(row["replacement_plan_digest"])
+            or str(prior["plan_digest"]) != str(row["prior_plan_digest"])
+        ):
+            raise RuntimeError(
+                "Runtime Application Plan revision lineage digest is invalid."
+            )
+        context = payload.get("runtime_context")
+        if not isinstance(context, Mapping):
+            raise RuntimeError(
+                "Runtime Application Plan revision lacks browser context."
+            )
+        return {
+            "version": RUNTIME_SUPERSESSION_VERSION,
+            "prior_plan_id": str(row["prior_plan_id"]),
+            "prior_plan_digest": str(row["prior_plan_digest"]),
+            "replacement_plan_id": str(row["replacement_plan_id"]),
+            "replacement_plan_digest": str(row["replacement_plan_digest"]),
+            "resolution_digest": str(row["resolution_digest"]),
+            "session_id": str(context["session_id"]),
+            "checkpoint_id": str(context["checkpoint_id"]),
+            "browser_form_digest": str(context["browser_form_digest"]),
+            "unresolved_questions": copy.deepcopy(
+                list(context["unresolved_questions"])
+            ),
+        }
+    finally:
+        connection.close()
+
 def get_application_plan(
     plan_id: str,
     *,
@@ -1283,4 +1803,5 @@ def executable_plan(plan_id: str) -> dict[str, Any]:
         raise ValueError("Application Plan is not execution-ready.")
     if freshness["fresh"] is not True:
         raise RuntimeError("Application Plan is stale.")
+    plan["runtime_supersession"] = runtime_plan_supersession(plan_id)
     return plan

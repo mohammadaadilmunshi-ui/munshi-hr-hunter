@@ -205,3 +205,40 @@ def test_plan_acceptance_ack_is_correlated_and_not_submission(
             plan_id="application-plan-1",
             plan_digest="f" * 64,
         )
+
+def test_runtime_supersession_uses_v3_and_binds_exact_browser_context(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = _plan()
+    plan["runtime_supersession"] = {
+        "version": "munshi-application-plan-supersession-v1",
+        "prior_plan_id": "application-plan-prior",
+        "prior_plan_digest": "a" * 64,
+        "replacement_plan_id": "application-plan-1",
+        "replacement_plan_digest": plan["plan_digest"],
+        "resolution_digest": "b" * 64,
+        "session_id": "apply-session-1",
+        "checkpoint_id": "checkpoint-1",
+        "browser_form_digest": "c" * 64,
+        "unresolved_questions": [
+            {
+                "question_key": "first_name",
+                "control_id": "first_name",
+                "question": "First name",
+                "semantic_type": "text",
+                "sensitivity_class": "NORMAL",
+            }
+        ],
+    }
+    _wire_transport(hunter_db, monkeypatch, plan)
+    signed = transport.create_signed_plan_transport(
+        plan_id="application-plan-1",
+        idempotency_key="runtime-handoff-key",
+        timestamp=1000,
+    )
+    envelope = json.loads(signed.body)
+    assert envelope["version"] == "munshi-application-plan-handoff-v3"
+    assert envelope["content_contract"]["receiver_min_version"] == 3
+    assert envelope["content_contract"]["receiver_max_version"] == 3
+    assert envelope["supersession"] == plan["runtime_supersession"]
+    assert envelope["submission_authority"] is False

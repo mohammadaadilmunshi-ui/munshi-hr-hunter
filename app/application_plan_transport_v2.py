@@ -19,6 +19,7 @@ from app.database import get_connection
 from app.tenant_foundation import current_owner, ensure_schema as ensure_tenant_schema
 
 TRANSPORT_VERSION = "munshi-application-plan-handoff-v2"
+SUPERSESSION_TRANSPORT_VERSION = "munshi-application-plan-handoff-v3"
 LIVE_HANDOFF_ENV = "MUNSHI_APPLY_LIVE_HANDOFF_ENABLED"
 
 SCHEMA_STATEMENTS = (
@@ -84,8 +85,13 @@ def _canonical(value: dict[str, Any]) -> bytes:
 def _envelope(plan: dict[str, Any], handoff_id: str) -> dict[str, Any]:
     snapshot = dict(plan["snapshot"])
     provider = str(plan["provider"]).upper()
-    return {
-        "version": TRANSPORT_VERSION,
+    supersession = plan.get("runtime_supersession")
+    is_supersession = isinstance(supersession, dict)
+    receiver_version = 3 if is_supersession else 2
+    payload: dict[str, Any] = {
+        "version": (
+            SUPERSESSION_TRANSPORT_VERSION if is_supersession else TRANSPORT_VERSION
+        ),
         "handoff_id": handoff_id,
         "tenant_id": str(plan["tenant_id"]),
         "user_id": str(plan["user_id"]),
@@ -96,12 +102,15 @@ def _envelope(plan: dict[str, Any], handoff_id: str) -> dict[str, Any]:
         "state": "READY_TO_APPLY",
         "content_contract": {
             "application_plan_version": application_plan_v2.PLAN_VERSION,
-            "receiver_min_version": 2,
-            "receiver_max_version": 2,
+            "receiver_min_version": receiver_version,
+            "receiver_max_version": receiver_version,
         },
         "plan": snapshot,
         "submission_authority": False,
     }
+    if is_supersession:
+        payload["supersession"] = dict(supersession)
+    return payload
 
 
 def create_signed_plan_transport(
@@ -158,7 +167,7 @@ def create_signed_plan_transport(
                 str(plan["application_id"]),
                 str(plan["provider"]).upper(),
                 key,
-                TRANSPORT_VERSION,
+                str(payload["version"]),
                 str(plan["plan_digest"]),
                 digest,
                 body.decode("utf-8"),
