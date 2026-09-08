@@ -656,13 +656,13 @@ def start_stored_job_run(
         return {
             "success": False,
             "started": False,
-            "message": "n8n is offline on port 5678. No webhook was called.",
+            "message": "n8n is unavailable at the configured endpoint for this Hunter instance. No webhook was called.",
         }
     if not _service_port_open("fastapi"):
         return {
             "success": False,
             "started": False,
-            "message": "FastAPI is offline on port 8000. No webhook was called.",
+            "message": "Hunter API is unavailable at the configured endpoint for this instance. No webhook was called.",
         }
 
     LOCK_DIR.mkdir(parents=True, exist_ok=True)
@@ -828,9 +828,9 @@ def run(job_id: int, chat_id: int | None = None) -> dict[str, Any]:
                 f"Daily manual n8n limit reached ({used}/{limit})."
             )
         if not _service_port_open("n8n"):
-            raise RuntimeError("n8n is offline on port 5678.")
+            raise RuntimeError("n8n is unavailable at the configured endpoint for this Hunter instance.")
         if not _service_port_open("fastapi"):
-            raise RuntimeError("FastAPI is offline on port 8000.")
+            raise RuntimeError("Hunter API is unavailable at the configured endpoint for this instance.")
 
         _edit_progress(
             chat_id,
@@ -952,7 +952,7 @@ def run(job_id: int, chat_id: int | None = None) -> dict[str, Any]:
                         if execution_id
                         else "🧩 Execution: <b>waiting to start</b>"
                     ),
-                    f"📡 Localhost callback: <b>{_safe(callback_status)}</b>",
+                    f"📡 Hunter callback: <b>{_safe(callback_status)}</b>",
                 ]
             )
             if text != last_text:
@@ -1012,7 +1012,7 @@ def run(job_id: int, chat_id: int | None = None) -> dict[str, Any]:
             time.sleep(poll_seconds)
 
         raise TimeoutError(
-            "Timed out waiting for the localhost callback. "
+            "Timed out waiting for the Hunter callback. "
             "The queue/execution may still need inspection before retrying."
         )
 

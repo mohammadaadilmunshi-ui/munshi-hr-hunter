@@ -2241,10 +2241,22 @@ def _job_rankings() -> None:
                 "rankings_n8n_starting_job_v17"
             )
 
+            n8n_host_v18, n8n_port_v18 = service_endpoint("n8n")
+            fastapi_host_v18, fastapi_port_v18 = service_endpoint("fastapi")
+            prepare_backend_ready_v18 = (
+                _service_up(n8n_host_v18, n8n_port_v18)
+                and _service_up(fastapi_host_v18, fastapi_port_v18)
+            )
+            if not prepare_backend_ready_v18 and starting_job_v17 == job_id:
+                st.session_state.pop("rankings_n8n_starting_job_v17", None)
+                starting_job_v17 = None
+
             if package_ready_v17:
                 n8n_card_state_v17 = "ready"
                 if starting_job_v17 == job_id:
                     st.session_state.pop("rankings_n8n_starting_job_v17", None)
+            elif not prepare_backend_ready_v18:
+                n8n_card_state_v17 = "unavailable"
             elif queue_state_v17 in open_states_v17:
                 n8n_card_state_v17 = "running"
             elif starting_job_v17 == job_id:
@@ -2297,7 +2309,18 @@ def _job_rankings() -> None:
                     )
 
             with actions[3]:
-                if n8n_card_state_v17 == "ready":
+                if n8n_card_state_v17 == "unavailable":
+                    st.link_button(
+                        "Open cloud Prepare",
+                        "https://dashboard.munshi.systems",
+                        help=(
+                            "This dashboard instance does not own the authoritative "
+                            "Hunter + n8n runtime. Prepare must run from the cloud "
+                            "control plane."
+                        ),
+                        use_container_width=True,
+                    )
+                elif n8n_card_state_v17 == "ready":
                     st.button(
                         "✓ Ready",
                         key=f"rankings_n8n_ready_v17_{job_id}",
@@ -2366,8 +2389,16 @@ def _job_rankings() -> None:
                                 st.session_state["rankings_n8n_starting_job_v17"] = job_id
                                 level_v17 = "success"
                             elif bool(start_result.get("success")):
+                                st.session_state.pop(
+                                    "rankings_n8n_starting_job_v17",
+                                    None,
+                                )
                                 level_v17 = "info"
                             else:
+                                st.session_state.pop(
+                                    "rankings_n8n_starting_job_v17",
+                                    None,
+                                )
                                 level_v17 = "warning"
                             st.session_state["rankings_n8n_notice_v17"] = {
                                 "level": level_v17,
@@ -2376,6 +2407,10 @@ def _job_rankings() -> None:
                             }
                             st.rerun()
                         except Exception as error:
+                            st.session_state.pop(
+                                "rankings_n8n_starting_job_v17",
+                                None,
+                            )
                             st.session_state["rankings_n8n_notice_v17"] = {
                                 "level": "error",
                                 "message": "Could not start the guarded n8n worker: " + str(error),
