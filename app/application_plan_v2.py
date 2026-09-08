@@ -10,6 +10,7 @@ may be represented only by a narrowly scoped `hunter-secure://` resolver
 reference and explicit execution permission. Credential/post-offer values remain
 unresolved in V2.
 """
+
 from __future__ import annotations
 
 import copy
@@ -22,15 +23,19 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from app import answer_brain_v2
-from app import application_execution_artifact
+from app import (
+    answer_brain_v2,
+    application_execution_artifact,
+    cover_letter_artifact_v1,
+    native_resume_artifact_v5,
+)
 from app import application_preflight_package_v1 as preflight_v1
-from app import native_resume_artifact_v5
 from app import native_resume_service_v5 as resume_v5
 from app.database import get_connection
 from app.phase45_truth_binding import canonical_question_key
 from app.phase67_common import safe_owned_job_snapshot, sha256_json
-from app.tenant_foundation import current_owner, ensure_schema as ensure_tenant_schema
+from app.tenant_foundation import current_owner
+from app.tenant_foundation import ensure_schema as ensure_tenant_schema
 
 PLAN_VERSION = "munshi-application-plan-v2"
 PLAN_ENV = "MUNSHI_APPLICATION_PLAN_V2_ENABLED"
@@ -115,7 +120,9 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
 def _text(value: Any, label: str, maximum: int = 2000) -> str:
     result = " ".join(str(value or "").split())
     if not result or len(result) > maximum:
-        raise ValueError(f"{label} is required and must be at most {maximum} characters.")
+        raise ValueError(
+            f"{label} is required and must be at most {maximum} characters."
+        )
     return result
 
 
@@ -131,7 +138,9 @@ def _conditions(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("Application answer conditions must be an object.")
     result = copy.deepcopy(dict(value))
-    encoded = json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    encoded = json.dumps(
+        result, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
     if len(encoded) > 4000:
         raise ValueError("Application answer conditions are too large.")
     return result
@@ -147,7 +156,10 @@ def _infer_sensitivity(family: str, key: str, question: str, explicit: Any) -> s
         inferred = "POST_OFFER"
     elif family == "work_authorization":
         inferred = "PROTECTED"
-    elif any(token in key.casefold() for token in ("ssn", "social_security", "passport", "date_of_birth")):
+    elif any(
+        token in key.casefold()
+        for token in ("ssn", "social_security", "passport", "date_of_birth")
+    ):
         inferred = "POST_OFFER"
     else:
         inferred = {
@@ -162,7 +174,13 @@ def _infer_sensitivity(family: str, key: str, question: str, explicit: Any) -> s
     if value not in SENSITIVITY_CLASSES:
         raise ValueError("Unsupported application answer sensitivity class.")
     # Callers may add caution, never relax the category inferred from the field.
-    ranks = {"NORMAL": 0, "PROTECTED": 1, "SELF_ID": 2, "CREDENTIAL": 3, "POST_OFFER": 4}
+    ranks = {
+        "NORMAL": 0,
+        "PROTECTED": 1,
+        "SELF_ID": 2,
+        "CREDENTIAL": 3,
+        "POST_OFFER": 4,
+    }
     return value if ranks[value] >= ranks[inferred] else inferred
 
 
@@ -180,10 +198,14 @@ def _normalize_requirement(raw: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(required, bool):
         raise ValueError(f"Required flag for {key} must be boolean.")
     profile_fact_key = str(raw.get("profile_fact_key") or "").strip().casefold() or None
-    sensitivity = _infer_sensitivity(family, key, normalized_question, raw.get("sensitivity_class"))
+    sensitivity = _infer_sensitivity(
+        family, key, normalized_question, raw.get("sensitivity_class")
+    )
     conditions = _conditions(raw.get("conditions"))
     if sensitivity != "NORMAL" and conditions:
-        raise ValueError("Non-normal application questions cannot carry plaintext conditions.")
+        raise ValueError(
+            "Non-normal application questions cannot carry plaintext conditions."
+        )
     return {
         "question_key": key,
         "question_family": family,
@@ -195,7 +217,9 @@ def _normalize_requirement(raw: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _normalize_requirements(values: Sequence[Mapping[str, Any]] | None) -> list[dict[str, Any]]:
+def _normalize_requirements(
+    values: Sequence[Mapping[str, Any]] | None,
+) -> list[dict[str, Any]]:
     if values is None:
         return []
     if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
@@ -203,7 +227,9 @@ def _normalize_requirements(values: Sequence[Mapping[str, Any]] | None) -> list[
     result = [_normalize_requirement(value) for value in values]
     keys = [value["question_key"] for value in result]
     if len(keys) != len(set(keys)):
-        raise ValueError("Application answer requirements must have unique question keys.")
+        raise ValueError(
+            "Application answer requirements must have unique question keys."
+        )
     return sorted(result, key=lambda value: value["question_key"])
 
 
@@ -212,6 +238,7 @@ def _normalize_permissions(value: Mapping[str, Any] | None) -> dict[str, bool]:
     names = (
         "background_prepare",
         "resume_upload",
+        "cover_letter_upload",
         "normal_answer_autofill",
         "protected_fact_execution",
         "self_id_execution",
@@ -226,7 +253,9 @@ def _normalize_permissions(value: Mapping[str, Any] | None) -> dict[str, bool]:
         result[name] = candidate
     unknown = sorted(set(raw) - set(names))
     if unknown:
-        raise ValueError("Unsupported Application Plan permissions: " + ", ".join(unknown))
+        raise ValueError(
+            "Unsupported Application Plan permissions: " + ", ".join(unknown)
+        )
     return result
 
 
@@ -243,10 +272,24 @@ def _normalize_secure_refs(value: Mapping[str, Any] | None) -> dict[str, str]:
             raise ValueError(f"Secure resolver reference for {key} is invalid.")
         parsed = urlsplit(reference)
         expected_path = "/" + key.replace(".", "/")
-        if parsed.scheme != "hunter-secure" or parsed.netloc != "candidate-truth" or parsed.path != expected_path:
-            raise ValueError(f"Secure resolver reference for {key} is outside its Candidate Truth scope.")
-        if parsed.query or parsed.fragment or parsed.username or parsed.password or parsed.port:
-            raise ValueError(f"Secure resolver reference for {key} is outside its Candidate Truth scope.")
+        if (
+            parsed.scheme != "hunter-secure"
+            or parsed.netloc != "candidate-truth"
+            or parsed.path != expected_path
+        ):
+            raise ValueError(
+                f"Secure resolver reference for {key} is outside its Candidate Truth scope."
+            )
+        if (
+            parsed.query
+            or parsed.fragment
+            or parsed.username
+            or parsed.password
+            or parsed.port
+        ):
+            raise ValueError(
+                f"Secure resolver reference for {key} is outside its Candidate Truth scope."
+            )
         result[key] = reference
     return result
 
@@ -261,11 +304,15 @@ def _scoped_secure_refs(
     }
     unexpected = sorted(set(refs) - protected)
     if unexpected:
-        raise ValueError("Secure resolver references require a matching protected application question.")
+        raise ValueError(
+            "Secure resolver references require a matching protected application question."
+        )
     if refs:
         # No owner/purpose-bound resolver endpoint exists yet.  A syntactically
         # valid URI is not authority, so keep protected values unresolved.
-        raise ValueError("Secure resolver references are unavailable until an owner-scoped resolver is installed.")
+        raise ValueError(
+            "Secure resolver references are unavailable until an owner-scoped resolver is installed."
+        )
     return dict(refs)
 
 
@@ -279,7 +326,9 @@ def _provider_from_job(job: Mapping[str, Any]) -> str:
             continue
         host = (parsed.hostname or "").casefold().rstrip(".")
         for provider, suffixes in _PROVIDER_HOSTS.items():
-            if any(host == suffix or host.endswith("." + suffix) for suffix in suffixes):
+            if any(
+                host == suffix or host.endswith("." + suffix) for suffix in suffixes
+            ):
                 return provider
     return "UNSUPPORTED"
 
@@ -296,12 +345,16 @@ def _normalize_provider_policy(
     permitted = raw.get("permitted", provider in SUPPORTED_PROVIDERS)
     if not isinstance(permitted, bool):
         raise ValueError("Provider policy permitted must be boolean.")
-    authentication_mode = str(raw.get("authentication_mode") or "PAUSE_IF_REQUIRED").strip().upper()
+    authentication_mode = (
+        str(raw.get("authentication_mode") or "PAUSE_IF_REQUIRED").strip().upper()
+    )
     if authentication_mode not in {"NONE", "PAUSE_IF_REQUIRED"}:
         raise ValueError("Unsupported provider authentication mode.")
     captcha_policy = str(raw.get("captcha_policy") or "PAUSE").strip().upper()
     if captcha_policy != "PAUSE":
-        raise ValueError("Application Plan V2 never permits automatic CAPTCHA handling.")
+        raise ValueError(
+            "Application Plan V2 never permits automatic CAPTCHA handling."
+        )
     return {
         "provider": provider,
         "permitted": permitted,
@@ -321,8 +374,13 @@ def _owner_binding(package_snapshot: Mapping[str, Any]) -> dict[str, str]:
     finally:
         connection.close()
     truth = dict(package_snapshot.get("application_truth") or {})
-    if str(truth.get("tenant_id") or "") != owner.tenant_id or str(truth.get("user_id") or "") != owner.user_id:
-        raise PermissionError("Application preflight package owner does not match the current tenant user.")
+    if (
+        str(truth.get("tenant_id") or "") != owner.tenant_id
+        or str(truth.get("user_id") or "") != owner.user_id
+    ):
+        raise PermissionError(
+            "Application preflight package owner does not match the current tenant user."
+        )
     identity = {"tenant_id": owner.tenant_id, "user_id": owner.user_id}
     return {**identity, "owner_digest": sha256_json(identity)}
 
@@ -370,13 +428,17 @@ def _resolve_requirement(
                 "requires_review": True,
                 "current_truth_binding": None,
             },
-            "credential_or_post_offer_value_requires_explicit_flow" if required else None,
+            "credential_or_post_offer_value_requires_explicit_flow"
+            if required
+            else None,
         )
 
     if sensitivity in {"PROTECTED", "SELF_ID"}:
         reference = secure_refs.get(key)
         permission_name = (
-            "self_id_execution" if sensitivity == "SELF_ID" else "protected_fact_execution"
+            "self_id_execution"
+            if sensitivity == "SELF_ID"
+            else "protected_fact_execution"
         )
         permitted = bool(permissions.get(permission_name))
         if reference and permitted:
@@ -464,20 +526,27 @@ def _resolve_requirement(
             "confidence": answer.get("confidence"),
             "provenance": answer.get("evidence_provenance"),
             "autofill_allowed": executable,
-            "requires_review": not executable or family in {"salary", "open_ended_job_specific"},
+            "requires_review": not executable
+            or family in {"salary", "open_ended_job_specific"},
             "current_truth_binding": answer.get("candidate_truth_binding"),
         },
         reason,
     )
 
 
-def _submitted_duplicate(connection: sqlite3.Connection, application_id: str, job_id: int) -> bool:
-    job = connection.execute("SELECT already_applied FROM jobs WHERE id=?", (int(job_id),)).fetchone()
+def _submitted_duplicate(
+    connection: sqlite3.Connection, application_id: str, job_id: int
+) -> bool:
+    job = connection.execute(
+        "SELECT already_applied FROM jobs WHERE id=?", (int(job_id),)
+    ).fetchone()
     if job is not None and int(job[0] or 0) == 1:
         return True
     tables = {
         str(row[0])
-        for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
     }
     if "application_lifecycle_records" in tables:
         row = connection.execute(
@@ -506,13 +575,16 @@ def _capture(
     provider_policy: Mapping[str, Any] | None,
     secure_refs: Mapping[str, str],
     resume_format: str,
+    cover_letter_id: str | None = None,
 ) -> dict[str, Any]:
     package = preflight_v1.get_preflight_package(preflight_package_id)
     freshness = preflight_v1.preflight_package_freshness(preflight_package_id)
     if freshness.get("fresh") is not True:
         raise RuntimeError("Application preflight package is stale.")
     if str(package.get("status")) != "READY_TO_APPLY":
-        raise ValueError("Application Plan requires a READY_TO_APPLY preflight package.")
+        raise ValueError(
+            "Application Plan requires a READY_TO_APPLY preflight package."
+        )
 
     package_snapshot = dict(package["snapshot"])
     owner_binding = _owner_binding(package_snapshot)
@@ -526,7 +598,9 @@ def _capture(
     resume_version_id = str(package["resume_version_id"])
     resume = resume_v5.get_version(resume_version_id)
     if resume.get("stage_b_bound") is not True:
-        raise ValueError("Execution-ready Application Plan requires a Stage B-bound Native Resume V5 version.")
+        raise ValueError(
+            "Execution-ready Application Plan requires a Stage B-bound Native Resume V5 version."
+        )
     if str(resume.get("html_sha256") or "") != str(package["resume_sha256"]):
         raise RuntimeError("Preflight and Native V5 rendered resume digests differ.")
 
@@ -555,8 +629,53 @@ def _capture(
     candidate_binding = dict(projection.get("candidate_profile_binding") or {})
     resume_binding = dict(resume.get("candidate_truth_binding") or {})
     for field in ("source_extraction_id", "profile_revision", "profile_digest"):
-        if str(candidate_binding.get(field) or "") != str(resume_binding.get(field) or ""):
-            raise RuntimeError("Application Plan resume Candidate Truth binding is stale.")
+        if str(candidate_binding.get(field) or "") != str(
+            resume_binding.get(field) or ""
+        ):
+            raise RuntimeError(
+                "Application Plan resume Candidate Truth binding is stale."
+            )
+
+    cover_letter: dict[str, Any] | None = None
+    if cover_letter_id:
+        cover = cover_letter_artifact_v1.get_artifact(str(cover_letter_id))
+        cover_freshness = cover_letter_artifact_v1.freshness(str(cover_letter_id))
+        if cover_freshness.get("fresh") is not True:
+            raise RuntimeError("Cover-letter artifact is stale.")
+        checks = (
+            str(cover["application_id"]) == str(package["application_id"]),
+            str(cover["preflight_package_id"]) == str(preflight_package_id),
+            str(cover["preflight_package_digest"]) == str(package["package_digest"]),
+            int(cover["job_id"]) == job_id,
+            str(cover["job_snapshot_sha256"]) == job_digest,
+            str(cover["candidate_profile_digest"])
+            == str(candidate_binding["profile_digest"]),
+            str(cover["resume_version_id"]) == resume_version_id,
+            str(cover["resume_artifact_sha256"]) == str(selected["sha256"]),
+            cover.get("submission_authority") is False,
+        )
+        if not all(checks):
+            raise RuntimeError(
+                "Cover-letter artifact does not match current Application Plan bindings."
+            )
+        cover_letter_artifact_v1.artifact_bytes(str(cover_letter_id))
+        cover_letter = {
+            "version": str(cover["version"]),
+            "artifact_id": str(cover["artifact_id"]),
+            "artifact_reference": str(cover["artifact_reference"]),
+            "artifact_sha256": str(cover["artifact_sha256"]),
+            "content_sha256": str(cover["content_sha256"]),
+            "filename": str(cover["filename"]),
+            "mime_type": str(cover["mime_type"]),
+            "byte_count": int(cover["byte_count"]),
+            "page_count": int(cover["page_count"]),
+            "preflight_package_digest": str(cover["preflight_package_digest"]),
+            "job_snapshot_sha256": str(cover["job_snapshot_sha256"]),
+            "candidate_profile_digest": str(cover["candidate_profile_digest"]),
+            "resume_version_id": str(cover["resume_version_id"]),
+            "resume_artifact_sha256": str(cover["resume_artifact_sha256"]),
+            "submission_authority": False,
+        }
 
     provider = _provider_from_job(job)
     policy = _normalize_provider_policy(provider_policy, provider=provider)
@@ -579,6 +698,8 @@ def _capture(
         global_blockers.append("background_prepare_permission_missing")
     if not permissions.get("resume_upload"):
         global_blockers.append("resume_upload_permission_missing")
+    if cover_letter is not None and not permissions.get("cover_letter_upload"):
+        global_blockers.append("cover_letter_upload_permission_missing")
     if provider not in SUPPORTED_PROVIDERS or not policy["permitted"]:
         global_blockers.append("provider_not_permitted_or_supported")
 
@@ -591,8 +712,7 @@ def _capture(
         connection.close()
 
     executable = not unresolved and not global_blockers
-    status = "READY_TO_APPLY" if executable else "NEEDS_INPUT"
-    return {
+    result = {
         "version": PLAN_VERSION,
         "application_id": str(package["application_id"]),
         "preflight_package_id": str(preflight_package_id),
@@ -635,6 +755,9 @@ def _capture(
         "submission_authority": False,
         "automatic_actions_executed": False,
     }
+    if cover_letter is not None:
+        result["cover_letter"] = cover_letter
+    return result
 
 
 def plan_digest_payload(snapshot: Mapping[str, Any]) -> dict[str, Any]:
@@ -654,6 +777,7 @@ def prepare_application_plan(
     provider_policy: Mapping[str, Any] | None = None,
     secure_resolver_refs: Mapping[str, Any] | None = None,
     resume_format: str = "PDF",
+    cover_letter_id: str | None = None,
 ) -> dict[str, Any]:
     """Create one immutable, idempotent, revalidated Application Plan V2."""
     if not application_plan_v2_enabled():
@@ -662,8 +786,11 @@ def prepare_application_plan(
     key = _text(idempotency_key, "Application Plan idempotency key", 240)
     requirements = _normalize_requirements(answer_requirements)
     normalized_permissions = _normalize_permissions(permissions)
-    secure_refs = _scoped_secure_refs(requirements, _normalize_secure_refs(secure_resolver_refs))
+    secure_refs = _scoped_secure_refs(
+        requirements, _normalize_secure_refs(secure_resolver_refs)
+    )
     resume_format = str(resume_format or "PDF").strip().upper()
+    normalized_cover_letter_id = str(cover_letter_id or "").strip() or None
 
     inputs = {
         "preflight_package_id": package_id,
@@ -673,6 +800,8 @@ def prepare_application_plan(
         "secure_resolver_refs": secure_refs,
         "resume_format": resume_format,
     }
+    if normalized_cover_letter_id is not None:
+        inputs["cover_letter_id"] = normalized_cover_letter_id
     first = _capture(
         preflight_package_id=package_id,
         requirements=requirements,
@@ -680,6 +809,7 @@ def prepare_application_plan(
         provider_policy=provider_policy,
         secure_refs=secure_refs,
         resume_format=resume_format,
+        cover_letter_id=normalized_cover_letter_id,
     )
     digest = sha256_json(plan_digest_payload(first))
 
@@ -692,6 +822,7 @@ def prepare_application_plan(
         provider_policy=provider_policy,
         secure_refs=secure_refs,
         resume_format=resume_format,
+        cover_letter_id=normalized_cover_letter_id,
     )
     second_digest = sha256_json(plan_digest_payload(second))
     if second_digest != digest:
@@ -714,7 +845,9 @@ def prepare_application_plan(
         ).fetchone()
         if prior is not None:
             if str(prior["plan_digest"]) != digest:
-                raise ValueError("Idempotency key belongs to a different Application Plan.")
+                raise ValueError(
+                    "Idempotency key belongs to a different Application Plan."
+                )
             return get_application_plan(str(prior["plan_id"]), connection=connection)
 
         same = connection.execute(
@@ -726,7 +859,12 @@ def prepare_application_plan(
             return get_application_plan(str(same["plan_id"]), connection=connection)
 
         plan_id = f"application-plan-{uuid4()}"
-        snapshot = {**second, "plan_id": plan_id, "idempotency_key": key, "plan_digest": digest}
+        snapshot = {
+            **second,
+            "plan_id": plan_id,
+            "idempotency_key": key,
+            "plan_digest": digest,
+        }
         connection.execute(
             """INSERT INTO application_plans_v2(
                    plan_id,tenant_id,user_id,application_id,job_id,preflight_package_id,
@@ -752,8 +890,12 @@ def prepare_application_plan(
                 second["resume"]["version_id"],
                 second["resume"]["artifact_id"],
                 second["resume"]["artifact_sha256"],
-                json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
-                json.dumps(inputs, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+                json.dumps(
+                    snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ),
+                json.dumps(
+                    inputs, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ),
                 digest,
             ),
         )
@@ -782,7 +924,9 @@ def get_application_plan(
             (str(plan_id), owner.tenant_id, owner.user_id),
         ).fetchone()
         if row is None:
-            raise LookupError("Application Plan is not owned by the current tenant user.")
+            raise LookupError(
+                "Application Plan is not owned by the current tenant user."
+            )
         result = dict(row)
         result["snapshot"] = json.loads(result.pop("snapshot_json"))
         result["inputs"] = json.loads(result.pop("inputs_json"))
@@ -806,6 +950,7 @@ def application_plan_freshness(plan_id: str) -> dict[str, Any]:
             provider_policy=dict(inputs["provider_policy"]),
             secure_refs=dict(inputs["secure_resolver_refs"]),
             resume_format=str(inputs["resume_format"]),
+            cover_letter_id=(str(inputs.get("cover_letter_id") or "").strip() or None),
         )
         current_digest = sha256_json(plan_digest_payload(current))
         if current_digest != str(plan["plan_digest"]):

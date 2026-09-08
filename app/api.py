@@ -1105,3 +1105,15 @@ async def application_execution_artifact(request: Request) -> Response:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
     except (LookupError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.post("/api/application-execution/cover-letter")
+async def application_execution_cover_letter(request: Request) -> Response:
+    from app import application_artifact_transport_v2
+    try:
+        body, headers = application_artifact_transport_v2.cover_letter_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/pdf", headers=headers)
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+    except (LookupError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error

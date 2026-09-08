@@ -17,6 +17,7 @@ Consuming an approval is NOT a submit command and carries submission_authority
 False.  The later submit-authority tranche must separately create and verify an
 exactly-once submit command.
 """
+
 from __future__ import annotations
 
 import copy
@@ -30,7 +31,8 @@ from uuid import uuid4
 from app import application_plan_v2
 from app.database import get_connection
 from app.phase67_common import sha256_json
-from app.tenant_foundation import current_owner, ensure_schema as ensure_tenant_schema
+from app.tenant_foundation import current_owner
+from app.tenant_foundation import ensure_schema as ensure_tenant_schema
 
 REVIEW_VERSION = "munshi-application-review-v2"
 APPROVAL_VERSION = "munshi-application-review-approval-v2"
@@ -116,13 +118,17 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
 def _text(value: Any, label: str, maximum: int = 2000) -> str:
     result = " ".join(str(value or "").split())
     if not result or len(result) > maximum:
-        raise ValueError(f"{label} is required and must be at most {maximum} characters.")
+        raise ValueError(
+            f"{label} is required and must be at most {maximum} characters."
+        )
     return result
 
 
 def _digest(value: Any, label: str) -> str:
     result = str(value or "").strip().lower()
-    if len(result) != 64 or any(character not in "0123456789abcdef" for character in result):
+    if len(result) != 64 or any(
+        character not in "0123456789abcdef" for character in result
+    ):
         raise ValueError(f"{label} must be a lowercase SHA-256 digest.")
     return result
 
@@ -139,7 +145,9 @@ def _non_negative_int(value: Any, label: str) -> int:
     return result
 
 
-def _safe_review_fields(values: Sequence[Mapping[str, Any]] | None) -> list[dict[str, Any]]:
+def _safe_review_fields(
+    values: Sequence[Mapping[str, Any]] | None,
+) -> list[dict[str, Any]]:
     if values is None:
         return []
     if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
@@ -150,7 +158,9 @@ def _safe_review_fields(values: Sequence[Mapping[str, Any]] | None) -> list[dict
             raise ValueError("Each prepared review field must be an object.")
         sensitivity = str(raw.get("sensitivity_class") or "NORMAL").strip().upper()
         if sensitivity not in application_plan_v2.SENSITIVITY_CLASSES:
-            raise ValueError("Prepared review field has an unsupported sensitivity class.")
+            raise ValueError(
+                "Prepared review field has an unsupported sensitivity class."
+            )
         display = raw.get("display_value")
         if sensitivity != "NORMAL":
             display = "[protected or sensitive value]"
@@ -159,7 +169,8 @@ def _safe_review_fields(values: Sequence[Mapping[str, Any]] | None) -> list[dict
         result.append(
             {
                 "question_key": str(raw.get("question_key") or "").strip() or None,
-                "question_family": str(raw.get("question_family") or "").strip() or None,
+                "question_family": str(raw.get("question_family") or "").strip()
+                or None,
                 "display_value": copy.deepcopy(display),
                 "sensitivity_class": sensitivity,
                 "requires_review": bool(raw.get("requires_review")),
@@ -189,7 +200,10 @@ def _plan_review_fields(plan: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def _plan_for_review(plan_id: str) -> dict[str, Any]:
     plan = application_plan_v2.get_application_plan(str(plan_id))
-    if plan.get("executable") is not True or str(plan.get("status")) != "READY_TO_APPLY":
+    if (
+        plan.get("executable") is not True
+        or str(plan.get("status")) != "READY_TO_APPLY"
+    ):
         raise ValueError("Application Plan is not execution-ready for review.")
     if plan.get("submission_authority") is not False:
         raise ValueError("Application Plan unexpectedly carries submission authority.")
@@ -220,21 +234,48 @@ def _normalized_prepared_package(
         240,
     )
     if application_id != str(plan_record["application_id"]):
-        raise ValueError("Prepared package application does not match Application Plan.")
+        raise ValueError(
+            "Prepared package application does not match Application Plan."
+        )
 
     expected_provider = str(plan_record["provider"]).strip().upper()
     provider = _text(prepared_package.get("provider"), "Prepared provider", 64).upper()
     if provider != expected_provider:
         raise ValueError("Prepared package provider does not match Application Plan.")
 
-    form_digest = _digest(prepared_package.get("browser_form_digest"), "Browser form digest")
-    resume_sha256 = _digest(prepared_package.get("resume_sha256"), "Prepared resume digest")
+    form_digest = _digest(
+        prepared_package.get("browser_form_digest"), "Browser form digest"
+    )
+    resume_sha256 = _digest(
+        prepared_package.get("resume_sha256"), "Prepared resume digest"
+    )
     expected_resume = _digest(
         dict(plan["resume"]).get("artifact_sha256"),
         "Application Plan resume digest",
     )
     if resume_sha256 != expected_resume:
-        raise ValueError("Prepared resume does not match immutable Application Plan artifact.")
+        raise ValueError(
+            "Prepared resume does not match immutable Application Plan artifact."
+        )
+
+    cover_letter = plan.get("cover_letter")
+    cover_letter_sha256: str | None = None
+    supplied_cover = prepared_package.get("cover_letter_sha256")
+    if cover_letter is not None:
+        if not isinstance(cover_letter, Mapping):
+            raise ValueError("Application Plan cover-letter binding is invalid.")
+        expected_cover = _digest(
+            cover_letter.get("artifact_sha256"), "Application Plan cover-letter digest"
+        )
+        cover_letter_sha256 = _digest(supplied_cover, "Prepared cover-letter digest")
+        if cover_letter_sha256 != expected_cover:
+            raise ValueError(
+                "Prepared cover letter does not match immutable Application Plan artifact."
+            )
+    elif supplied_cover not in (None, ""):
+        raise ValueError(
+            "Prepared package contains an unexpected cover-letter artifact."
+        )
 
     if prepared_package.get("plan_digest") is not None:
         supplied_plan_digest = _digest(
@@ -242,7 +283,9 @@ def _normalized_prepared_package(
             "Prepared package plan digest",
         )
         if supplied_plan_digest != str(plan_record["plan_digest"]):
-            raise ValueError("Prepared package plan digest does not match Application Plan.")
+            raise ValueError(
+                "Prepared package plan digest does not match Application Plan."
+            )
 
     required_fields = _non_negative_int(
         prepared_package.get("required_fields", 0),
@@ -282,7 +325,7 @@ def _normalized_prepared_package(
     if not review_fields:
         review_fields = _plan_review_fields(plan)
 
-    return {
+    result = {
         "application_id": application_id,
         "provider": provider,
         "destination_url": destination_url,
@@ -295,6 +338,9 @@ def _normalized_prepared_package(
         "checkpoint_id": checkpoint_id,
         "review_fields": review_fields,
     }
+    if cover_letter_sha256 is not None:
+        result["cover_letter_sha256"] = cover_letter_sha256
+    return result
 
 
 def _review_result(
@@ -313,8 +359,12 @@ def _review_result(
         "review": snapshot,
         "approved": approval is not None,
         "approval_id": str(approval["approval_id"]) if approval is not None else None,
-        "approval_digest": str(approval["approval_digest"]) if approval is not None else None,
-        "approval_consumed": bool(approval is not None and approval["consumed_at"] is not None),
+        "approval_digest": str(approval["approval_digest"])
+        if approval is not None
+        else None,
+        "approval_consumed": bool(
+            approval is not None and approval["consumed_at"] is not None
+        ),
         "submission_authority": False,
     }
 
@@ -330,7 +380,9 @@ def get_review(review_id: str) -> dict[str, Any]:
             (str(review_id), owner.tenant_id, owner.user_id),
         ).fetchone()
         if row is None:
-            raise LookupError("Application review is not owned by the current tenant user.")
+            raise LookupError(
+                "Application review is not owned by the current tenant user."
+            )
         return _review_result(connection, row)
     finally:
         connection.close()
@@ -354,6 +406,11 @@ def create_review(
     prepared_digest = sha256_json(prepared)
 
     resume = dict(plan["resume"])
+    cover_letter = (
+        dict(plan["cover_letter"])
+        if isinstance(plan.get("cover_letter"), Mapping)
+        else None
+    )
     snapshot = {
         "version": REVIEW_VERSION,
         "application_id": str(plan_record["application_id"]),
@@ -367,7 +424,9 @@ def create_review(
             "artifact_id": resume.get("artifact_id"),
             "sha256": resume.get("artifact_sha256"),
             "truth_status": "BOUND",
-            "job_binding": copy.deepcopy(dict(resume.get("source_bindings", {}).get("job") or {})),
+            "job_binding": copy.deepcopy(
+                dict(resume.get("source_bindings", {}).get("job") or {})
+            ),
         },
         "application": {
             "required_fields": prepared["required_fields"],
@@ -386,6 +445,18 @@ def create_review(
         "submission_readiness": "READY_FOR_REVIEW",
         "submission_authority": False,
     }
+    if cover_letter is not None:
+        snapshot["cover_letter"] = {
+            "filename": cover_letter.get("filename"),
+            "artifact_id": cover_letter.get("artifact_id"),
+            "sha256": cover_letter.get("artifact_sha256"),
+            "page_count": cover_letter.get("page_count"),
+            "truth_status": "BOUND",
+        }
+        snapshot["bindings"]["cover_letter_artifact_sha256"] = prepared[
+            "cover_letter_sha256"
+        ]
+
     review_digest = sha256_json(snapshot)
     review_id = "review-v2-" + review_digest[:32]
 
@@ -404,7 +475,9 @@ def create_review(
         ).fetchone()
         if prior is not None:
             if str(prior["review_digest"]) != review_digest:
-                raise ValueError("Idempotency key belongs to a different application review.")
+                raise ValueError(
+                    "Idempotency key belongs to a different application review."
+                )
             connection.commit()
             return _review_result(connection, prior)
 
@@ -455,7 +528,9 @@ def create_review(
                 prepared["browser_form_digest"],
                 prepared["resume_sha256"],
                 review_digest,
-                json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+                json.dumps(
+                    snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ),
             ),
         )
         connection.commit()
@@ -508,7 +583,11 @@ def revalidate_review(
     freshness = application_plan_v2.application_plan_freshness(plan_id)
     if freshness.get("fresh") is not True:
         _invalidate(review_id, "application_plan_stale")
-        return {"review_id": str(review_id), "fresh": False, "reason": "application_plan_stale"}
+        return {
+            "review_id": str(review_id),
+            "fresh": False,
+            "reason": "application_plan_stale",
+        }
 
     plan_record = application_plan_v2.get_application_plan(plan_id)
     plan = dict(plan_record["snapshot"])
@@ -567,7 +646,9 @@ def approve_review(
         expected_prepared_package_digest,
         "Expected prepared package digest",
     )
-    expected_form = _digest(expected_browser_form_digest, "Expected browser form digest")
+    expected_form = _digest(
+        expected_browser_form_digest, "Expected browser form digest"
+    )
 
     current = revalidate_review(review_id)
     if current.get("fresh") is not True:
@@ -578,7 +659,9 @@ def approve_review(
         or str(review["prepared_package_digest"]) != expected_prepared
         or str(review["browser_form_digest"]) != expected_form
     ):
-        raise ValueError("Approval does not match the exact displayed application review.")
+        raise ValueError(
+            "Approval does not match the exact displayed application review."
+        )
 
     approval_material = {
         "version": APPROVAL_VERSION,
@@ -604,9 +687,13 @@ def approve_review(
             (str(review_id), owner.tenant_id, owner.user_id),
         ).fetchone()
         if locked_review is None:
-            raise LookupError("Application review is not owned by the current tenant user.")
+            raise LookupError(
+                "Application review is not owned by the current tenant user."
+            )
         if locked_review["invalidated_at"] is not None:
-            raise ValueError("Application review was invalidated before approval committed.")
+            raise ValueError(
+                "Application review was invalidated before approval committed."
+            )
         if (
             str(locked_review["review_digest"]) != expected_review
             or str(locked_review["prepared_package_digest"]) != expected_prepared
@@ -624,7 +711,9 @@ def approve_review(
                 str(prior_key["review_id"]) != str(review_id)
                 or str(prior_key["approval_digest"]) != approval_digest
             ):
-                raise ValueError("Approval idempotency key belongs to a different review.")
+                raise ValueError(
+                    "Approval idempotency key belongs to a different review."
+                )
             connection.commit()
             return {
                 "approval_id": str(prior_key["approval_id"]),
@@ -643,7 +732,9 @@ def approve_review(
             (owner.tenant_id, owner.user_id, str(review_id)),
         ).fetchone()
         if prior_review is not None:
-            raise ValueError("Application review is already approved under another idempotency key.")
+            raise ValueError(
+                "Application review is already approved under another idempotency key."
+            )
 
         approval_id = f"review-approval-{uuid4()}"
         connection.execute(
@@ -705,7 +796,9 @@ def consume_approval(
         expected_prepared_package_digest,
         "Expected prepared package digest",
     )
-    expected_form = _digest(expected_browser_form_digest, "Expected browser form digest")
+    expected_form = _digest(
+        expected_browser_form_digest, "Expected browser form digest"
+    )
 
     connection = get_connection()
     try:
@@ -719,15 +812,21 @@ def consume_approval(
             (str(approval_id), owner.tenant_id, owner.user_id),
         ).fetchone()
         if approval is None:
-            raise LookupError("Application review approval is not owned by the current tenant user.")
+            raise LookupError(
+                "Application review approval is not owned by the current tenant user."
+            )
         if approval["invalidated_at"] is not None:
-            raise ValueError("Application review approval belongs to an invalidated review.")
+            raise ValueError(
+                "Application review approval belongs to an invalidated review."
+            )
         if (
             str(approval["review_digest"]) != expected_review
             or str(approval["prepared_package_digest"]) != expected_prepared
             or str(approval["browser_form_digest"]) != expected_form
         ):
-            raise ValueError("Approval consumption does not match exact review bindings.")
+            raise ValueError(
+                "Approval consumption does not match exact review bindings."
+            )
         review_id = str(approval["review_id"])
     finally:
         connection.close()
@@ -751,9 +850,13 @@ def consume_approval(
             (str(approval_id), owner.tenant_id, owner.user_id),
         ).fetchone()
         if row is None:
-            raise LookupError("Application review approval is not owned by the current tenant user.")
+            raise LookupError(
+                "Application review approval is not owned by the current tenant user."
+            )
         if row["invalidated_at"] is not None:
-            raise ValueError("Application review approval was invalidated before consumption.")
+            raise ValueError(
+                "Application review approval was invalidated before consumption."
+            )
         if (
             str(row["review_digest"]) != expected_review
             or str(row["prepared_package_digest"]) != expected_prepared
@@ -762,7 +865,9 @@ def consume_approval(
             raise ValueError("Approval bindings changed before consumption.")
         if row["consumed_at"] is not None:
             if str(row["consumption_key"] or "") != key:
-                raise ValueError("Application review approval was already consumed by another command.")
+                raise ValueError(
+                    "Application review approval was already consumed by another command."
+                )
             connection.commit()
             return {
                 "approval_id": str(approval_id),
