@@ -89,6 +89,31 @@ SCHEMA_STATEMENTS = (
     );""",
     """CREATE INDEX IF NOT EXISTS idx_application_plans_v2_owner_application
        ON application_plans_v2(tenant_id,user_id,application_id,created_at DESC);""",
+    """CREATE TABLE IF NOT EXISTS application_plan_revisions_v2 (
+        revision_id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        prior_plan_id TEXT NOT NULL,
+        prior_plan_digest TEXT NOT NULL CHECK(length(prior_plan_digest)=64),
+        replacement_plan_id TEXT,
+        replacement_plan_digest TEXT
+          CHECK(replacement_plan_digest IS NULL OR length(replacement_plan_digest)=64),
+        idempotency_key TEXT NOT NULL,
+        resolution_digest TEXT NOT NULL CHECK(length(resolution_digest)=64),
+        resolutions_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CHECK(
+            (replacement_plan_id IS NULL AND replacement_plan_digest IS NULL)
+            OR (replacement_plan_id IS NOT NULL AND replacement_plan_digest IS NOT NULL)
+        ),
+        UNIQUE(tenant_id,user_id,idempotency_key),
+        UNIQUE(tenant_id,user_id,prior_plan_id),
+        UNIQUE(tenant_id,user_id,replacement_plan_id),
+        FOREIGN KEY(tenant_id,user_id)
+          REFERENCES tenant_memberships(tenant_id,user_id) ON DELETE RESTRICT,
+        FOREIGN KEY(prior_plan_id) REFERENCES application_plans_v2(plan_id) ON DELETE RESTRICT,
+        FOREIGN KEY(replacement_plan_id) REFERENCES application_plans_v2(plan_id) ON DELETE RESTRICT
+    );""",
 )
 
 
@@ -400,6 +425,7 @@ def _resolve_requirement(
     *,
     permissions: Mapping[str, bool],
     secure_refs: Mapping[str, str],
+    answer_overrides: Mapping[str, Mapping[str, str]] | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     key = str(requirement["question_key"])
     family = str(requirement["question_family"])
@@ -477,6 +503,29 @@ def _resolve_requirement(
             )
             if required
             else None,
+        )
+
+    override = dict((answer_overrides or {}).get(key) or {})
+    if override:
+        if sensitivity != "NORMAL":
+            raise ValueError("Only normal application questions may use an explicit resolution.")
+        permitted = bool(permissions.get("normal_answer_autofill"))
+        return (
+            {
+                **common,
+                "execution_value": override["canonical_answer"] if permitted else None,
+                "secure_resolver_ref": None,
+                "display_value": _display_value(override["canonical_answer"]),
+                "source": "explicit_candidate_resolution",
+                "confidence": 1.0,
+                "provenance": override["provenance"],
+                "autofill_allowed": permitted,
+                "requires_review": True,
+                "current_truth_binding": None,
+            },
+            None
+            if permitted or not required
+            else "normal_answer_autofill_permission_missing",
         )
 
     resolved = answer_brain_v2.resolve_answer(
@@ -576,6 +625,7 @@ def _capture(
     secure_refs: Mapping[str, str],
     resume_format: str,
     cover_letter_id: str | None = None,
+    answer_overrides: Mapping[str, Mapping[str, str]] | None = None,
 ) -> dict[str, Any]:
     package = preflight_v1.get_preflight_package(preflight_package_id)
     freshness = preflight_v1.preflight_package_freshness(preflight_package_id)
@@ -686,6 +736,7 @@ def _capture(
             requirement,
             permissions=permissions,
             secure_refs=secure_refs,
+            answer_overrides=answer_overrides,
         )
         answers.append(answer)
         if reason:
@@ -778,6 +829,7 @@ def prepare_application_plan(
     secure_resolver_refs: Mapping[str, Any] | None = None,
     resume_format: str = "PDF",
     cover_letter_id: str | None = None,
+    _answer_overrides: Mapping[str, Mapping[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Create one immutable, idempotent, revalidated Application Plan V2."""
     if not application_plan_v2_enabled():
@@ -791,6 +843,10 @@ def prepare_application_plan(
     )
     resume_format = str(resume_format or "PDF").strip().upper()
     normalized_cover_letter_id = str(cover_letter_id or "").strip() or None
+    normalized_overrides = {
+        canonical_question_key(str(key)): dict(value)
+        for key, value in dict(_answer_overrides or {}).items()
+    }
 
     inputs = {
         "preflight_package_id": package_id,
@@ -799,6 +855,7 @@ def prepare_application_plan(
         "provider_policy": copy.deepcopy(dict(provider_policy or {})),
         "secure_resolver_refs": secure_refs,
         "resume_format": resume_format,
+        "answer_overrides": normalized_overrides,
     }
     if normalized_cover_letter_id is not None:
         inputs["cover_letter_id"] = normalized_cover_letter_id
@@ -810,6 +867,7 @@ def prepare_application_plan(
         secure_refs=secure_refs,
         resume_format=resume_format,
         cover_letter_id=normalized_cover_letter_id,
+        answer_overrides=normalized_overrides,
     )
     digest = sha256_json(plan_digest_payload(first))
 
@@ -823,6 +881,7 @@ def prepare_application_plan(
         secure_refs=secure_refs,
         resume_format=resume_format,
         cover_letter_id=normalized_cover_letter_id,
+        answer_overrides=normalized_overrides,
     )
     second_digest = sha256_json(plan_digest_payload(second))
     if second_digest != digest:
@@ -908,6 +967,253 @@ def prepare_application_plan(
         connection.close()
 
 
+def _resolution_inputs(
+    plan: Mapping[str, Any], values: Sequence[Mapping[str, Any]]
+) -> list[dict[str, str]]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise TypeError("Application answer resolutions must be a list.")
+    unresolved = {
+        str(item["question_key"])
+        for item in list(plan["snapshot"].get("unresolved") or [])
+        if isinstance(item, Mapping)
+    }
+    requirements = {
+        str(item["question_key"]): item
+        for item in list(plan["inputs"].get("answer_requirements") or [])
+        if isinstance(item, Mapping)
+    }
+    result: list[dict[str, str]] = []
+    for raw in values:
+        if not isinstance(raw, Mapping) or set(raw) != {"question_key", "canonical_answer"}:
+            raise ValueError("Each answer resolution must contain question_key and canonical_answer.")
+        key = canonical_question_key(_text(raw.get("question_key"), "Question key", 160))
+        requirement = requirements.get(key)
+        if key not in unresolved or requirement is None:
+            raise ValueError("Answer resolution is not for a current unresolved question.")
+        if str(requirement.get("sensitivity_class")) != "NORMAL":
+            raise ValueError("Protected, self-ID, credential, and post-offer questions require their separate policy.")
+        result.append(
+            {
+                "question_key": key,
+                "canonical_answer": _text(raw.get("canonical_answer"), "Canonical answer", 8000),
+                "provenance": "candidate_explicit_resolution",
+            }
+        )
+    if {item["question_key"] for item in result} != unresolved or len(result) != len(unresolved):
+        raise ValueError("Every current unresolved question requires one explicit answer resolution.")
+    return sorted(result, key=lambda item: item["question_key"])
+
+
+def reprepare_needs_input_plan(
+    *,
+    prior_plan_id: str,
+    expected_prior_plan_digest: str,
+    idempotency_key: str,
+    answer_resolutions: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Resolve normal NEEDS_INPUT answers into a new immutable Plan revision."""
+    if not application_plan_v2_enabled():
+        raise RuntimeError("Application Plan V2 is disabled.")
+    prior = get_application_plan(_text(prior_plan_id, "Prior Application Plan id", 240))
+    if str(prior["status"]) != "NEEDS_INPUT" or bool(prior["executable"]):
+        raise ValueError("Only a non-executable NEEDS_INPUT Application Plan can be reprepared.")
+    if prior.get("submission_authority") is not False or str(prior["snapshot"].get("expected_state")) != "NEEDS_INPUT":
+        raise ValueError("Application Plan has an invalid NEEDS_INPUT authority state.")
+    if str(expected_prior_plan_digest) != str(prior["plan_digest"]):
+        raise ValueError("Expected Application Plan digest does not match the current immutable plan.")
+    if sha256_json(plan_digest_payload(prior["snapshot"])) != str(prior["plan_digest"]):
+        raise RuntimeError("Stored Application Plan snapshot digest is invalid.")
+    if not list(prior["snapshot"].get("unresolved") or []) or list(prior["snapshot"].get("global_blockers") or []):
+        raise ValueError("Application Plan has unresolved non-answer blockers and cannot be safely reprepared.")
+    if application_plan_freshness(str(prior["plan_id"])).get("fresh") is not True:
+        raise RuntimeError("Application Plan is stale and cannot be reprepared.")
+    key = _text(idempotency_key, "Application Plan revision idempotency key", 240)
+    if key == str(prior["idempotency_key"]):
+        raise ValueError("Application Plan revision requires a new idempotency key.")
+    resolutions = _resolution_inputs(prior, answer_resolutions)
+    resolution_digest = sha256_json(resolutions)
+
+    revision_id = f"application-plan-revision-{uuid4()}"
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        if connection.in_transaction:
+            connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        owner = current_owner(connection)
+        existing = connection.execute(
+            """SELECT * FROM application_plan_revisions_v2
+               WHERE tenant_id=? AND user_id=? AND idempotency_key=?""",
+            (owner.tenant_id, owner.user_id, key),
+        ).fetchone()
+        if existing is not None:
+            if (
+                str(existing["prior_plan_id"]) != str(prior["plan_id"])
+                or str(existing["prior_plan_digest"]) != str(prior["plan_digest"])
+                or str(existing["resolution_digest"]) != resolution_digest
+            ):
+                raise ValueError(
+                    "Idempotency key belongs to a different Application Plan revision."
+                )
+            existing_replacement_id = str(existing["replacement_plan_id"] or "")
+            existing_replacement_digest = str(existing["replacement_plan_digest"] or "")
+            connection.commit()
+            if existing_replacement_id:
+                existing_plan = get_application_plan(existing_replacement_id)
+                if str(existing_plan["plan_digest"]) != existing_replacement_digest:
+                    raise RuntimeError(
+                        "Stored Application Plan revision replacement digest is invalid."
+                    )
+                existing_freshness = application_plan_freshness(existing_replacement_id)
+                if (
+                    existing_freshness.get("fresh") is not True
+                    or existing_freshness.get("executable") is not True
+                ):
+                    raise RuntimeError(
+                        "Resolved Application Plan revision is stale or no longer execution-ready."
+                    )
+                return existing_plan
+        else:
+            prior_revision = connection.execute(
+                """SELECT revision_id FROM application_plan_revisions_v2
+                   WHERE tenant_id=? AND user_id=? AND prior_plan_id=?""",
+                (owner.tenant_id, owner.user_id, str(prior["plan_id"])),
+            ).fetchone()
+            if prior_revision is not None:
+                raise ValueError(
+                    "Application Plan already has an immutable replacement revision."
+                )
+            occupied_plan_key = connection.execute(
+                """SELECT plan_id FROM application_plans_v2
+                   WHERE tenant_id=? AND user_id=? AND idempotency_key=?""",
+                (owner.tenant_id, owner.user_id, key),
+            ).fetchone()
+            if occupied_plan_key is not None:
+                raise ValueError(
+                    "Application Plan revision idempotency key already belongs to an Application Plan."
+                )
+            connection.execute(
+                """INSERT INTO application_plan_revisions_v2(
+                       revision_id,tenant_id,user_id,prior_plan_id,prior_plan_digest,
+                       replacement_plan_id,replacement_plan_digest,idempotency_key,
+                       resolution_digest,resolutions_json
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    revision_id,
+                    owner.tenant_id,
+                    owner.user_id,
+                    prior["plan_id"],
+                    prior["plan_digest"],
+                    None,
+                    None,
+                    key,
+                    resolution_digest,
+                    json.dumps(
+                        resolutions,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+            connection.commit()
+    except sqlite3.IntegrityError as error:
+        connection.rollback()
+        raise ValueError(
+            "Application Plan already has an immutable replacement revision."
+        ) from error
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+    replacement = prepare_application_plan(
+        preflight_package_id=str(prior["inputs"]["preflight_package_id"]),
+        idempotency_key=key,
+        answer_requirements=list(prior["inputs"]["answer_requirements"]),
+        permissions=dict(prior["inputs"]["permissions"]),
+        provider_policy=dict(prior["inputs"]["provider_policy"]),
+        secure_resolver_refs=dict(prior["inputs"]["secure_resolver_refs"]),
+        resume_format=str(prior["inputs"]["resume_format"]),
+        cover_letter_id=prior["inputs"].get("cover_letter_id"),
+        _answer_overrides={item["question_key"]: item for item in resolutions},
+    )
+    if str(replacement["plan_id"]) == str(prior["plan_id"]):
+        raise RuntimeError("Application Plan revision did not create a distinct immutable snapshot.")
+    if str(replacement["status"]) != "READY_TO_APPLY" or replacement["executable"] is not True:
+        raise RuntimeError("Resolved Application Plan did not become execution-ready.")
+    replacement_freshness = application_plan_freshness(str(replacement["plan_id"]))
+    if (
+        replacement_freshness.get("fresh") is not True
+        or replacement_freshness.get("executable") is not True
+    ):
+        raise RuntimeError(
+            "Resolved Application Plan is stale or no longer execution-ready."
+        )
+
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        if connection.in_transaction:
+            connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        owner = current_owner(connection)
+        existing = connection.execute(
+            """SELECT * FROM application_plan_revisions_v2
+               WHERE tenant_id=? AND user_id=? AND idempotency_key=?""",
+            (owner.tenant_id, owner.user_id, key),
+        ).fetchone()
+        if existing is None:
+            raise RuntimeError("Application Plan revision reservation disappeared.")
+        if (
+            str(existing["prior_plan_id"]) != str(prior["plan_id"])
+            or str(existing["prior_plan_digest"]) != str(prior["plan_digest"])
+            or str(existing["resolution_digest"]) != resolution_digest
+        ):
+            raise RuntimeError("Application Plan revision reservation binding changed.")
+        existing_replacement_id = str(existing["replacement_plan_id"] or "")
+        existing_replacement_digest = str(existing["replacement_plan_digest"] or "")
+        if existing_replacement_id:
+            if (
+                existing_replacement_id != str(replacement["plan_id"])
+                or existing_replacement_digest != str(replacement["plan_digest"])
+            ):
+                raise RuntimeError(
+                    "Application Plan revision already finalized to a different replacement."
+                )
+            connection.commit()
+            return get_application_plan(existing_replacement_id)
+
+        updated = connection.execute(
+            """UPDATE application_plan_revisions_v2
+               SET replacement_plan_id=?, replacement_plan_digest=?
+               WHERE revision_id=? AND tenant_id=? AND user_id=?
+                 AND replacement_plan_id IS NULL AND replacement_plan_digest IS NULL""",
+            (
+                replacement["plan_id"],
+                replacement["plan_digest"],
+                existing["revision_id"],
+                owner.tenant_id,
+                owner.user_id,
+            ),
+        )
+        if updated.rowcount != 1:
+            raise RuntimeError("Application Plan revision finalization lost its reservation.")
+        connection.commit()
+    except sqlite3.IntegrityError as error:
+        connection.rollback()
+        raise ValueError(
+            "Application Plan already has an immutable replacement revision."
+        ) from error
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+    return replacement
+
+
 def get_application_plan(
     plan_id: str,
     *,
@@ -951,6 +1257,7 @@ def application_plan_freshness(plan_id: str) -> dict[str, Any]:
             secure_refs=dict(inputs["secure_resolver_refs"]),
             resume_format=str(inputs["resume_format"]),
             cover_letter_id=(str(inputs.get("cover_letter_id") or "").strip() or None),
+            answer_overrides=dict(inputs.get("answer_overrides") or {}),
         )
         current_digest = sha256_json(plan_digest_payload(current))
         if current_digest != str(plan["plan_digest"]):

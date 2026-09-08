@@ -501,3 +501,197 @@ def test_plan_persistence_accepts_exact_idempotent_retry_and_rejects_key_reuse(
             idempotency_key="plan-key",
             permissions=_permissions(),
         )
+
+
+def test_needs_input_reprepare_is_immutable_owner_scoped_and_replay_safe(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(plans.PLAN_ENV, "true")
+
+    def simple_schema(connection=None):
+        owns = connection is None
+        connection = connection or database.get_connection()
+        try:
+            connection.execute("""CREATE TABLE IF NOT EXISTS application_plans_v2(
+                plan_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+                application_id TEXT NOT NULL, job_id INTEGER NOT NULL, preflight_package_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL, plan_version TEXT NOT NULL, status TEXT NOT NULL,
+                executable INTEGER NOT NULL, provider TEXT NOT NULL, job_snapshot_sha256 TEXT NOT NULL,
+                candidate_profile_digest TEXT NOT NULL, resume_version_id TEXT NOT NULL,
+                resume_artifact_id TEXT NOT NULL, resume_artifact_sha256 TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL, inputs_json TEXT NOT NULL, plan_digest TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(tenant_id,user_id,idempotency_key), UNIQUE(tenant_id,user_id,plan_digest))""")
+            connection.execute("""CREATE TABLE IF NOT EXISTS application_plan_revisions_v2(
+                revision_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
+                prior_plan_id TEXT NOT NULL, prior_plan_digest TEXT NOT NULL,
+                replacement_plan_id TEXT, replacement_plan_digest TEXT, idempotency_key TEXT NOT NULL,
+                resolution_digest TEXT NOT NULL, resolutions_json TEXT NOT NULL,
+                UNIQUE(tenant_id,user_id,idempotency_key), UNIQUE(tenant_id,user_id,prior_plan_id),
+                UNIQUE(tenant_id,user_id,replacement_plan_id))""")
+            if owns:
+                connection.commit()
+        finally:
+            if owns:
+                connection.close()
+
+    monkeypatch.setattr(plans, "ensure_schema", simple_schema)
+
+    def capture(**kwargs):
+        ready = bool(kwargs.get("answer_overrides", {}).get("candidate.phone"))
+        return {
+            "version": plans.PLAN_VERSION,
+            "application_id": "application-1",
+            "job": {"id": 42, "job_snapshot_digest": "d" * 64},
+            "candidate_truth_binding": {"profile_digest": "a" * 64},
+            "resume": {"version_id": "resume-v5-1", "artifact_id": "artifact-pdf-1", "artifact_sha256": "3" * 64},
+            "provider_policy": {"provider": "GREENHOUSE"},
+            "expected_state": "READY_TO_APPLY" if ready else "NEEDS_INPUT",
+            "executable": ready,
+            "answers": [{"question_key": "candidate.phone", "execution_value": "555-0100" if ready else None}],
+            "unresolved": [] if ready else [{"question_key": "candidate.phone", "reason": "no_safe_answer"}],
+            "permissions": _permissions(), "global_blockers": [],
+            "submission_authority": False, "automatic_actions_executed": False,
+        }
+
+    monkeypatch.setattr(plans, "_capture", capture)
+    first = plans.prepare_application_plan(
+        preflight_package_id="preflight-1", idempotency_key="needs-input-1",
+        answer_requirements=[{"question_key": "candidate.phone", "question_family": "candidate_fact"}],
+        permissions=_permissions(),
+    )
+    original_snapshot = copy.deepcopy(first["snapshot"])
+    real_freshness = plans.application_plan_freshness
+
+    def fail_only_replacement_freshness(plan_id: str) -> dict:
+        if plan_id == first["plan_id"]:
+            return {"fresh": True, "executable": False}
+        return {"fresh": False, "executable": False}
+
+    monkeypatch.setattr(plans, "application_plan_freshness", fail_only_replacement_freshness)
+    with pytest.raises(RuntimeError, match="stale"):
+        plans.reprepare_needs_input_plan(
+            prior_plan_id=first["plan_id"], idempotency_key="needs-input-revision-1",
+            expected_prior_plan_digest=first["plan_digest"],
+            answer_resolutions=[{"question_key": "candidate.phone", "canonical_answer": "555-0100"}],
+        )
+
+    connection = database.get_connection()
+    try:
+        pending = connection.execute(
+            """SELECT * FROM application_plan_revisions_v2
+               WHERE idempotency_key='needs-input-revision-1'"""
+        ).fetchone()
+        persisted_replacement = connection.execute(
+            """SELECT plan_id FROM application_plans_v2
+               WHERE idempotency_key='needs-input-revision-1'"""
+        ).fetchone()
+    finally:
+        connection.close()
+    assert pending is not None
+    assert pending["replacement_plan_id"] is None
+    assert pending["replacement_plan_digest"] is None
+    assert pending["prior_plan_digest"] == first["plan_digest"]
+    assert persisted_replacement is not None
+    persisted_replacement_id = str(persisted_replacement["plan_id"])
+
+    with pytest.raises(ValueError, match="immutable replacement revision"):
+        plans.reprepare_needs_input_plan(
+            prior_plan_id=first["plan_id"], idempotency_key="needs-input-revision-race",
+            expected_prior_plan_digest=first["plan_digest"],
+            answer_resolutions=[{"question_key": "candidate.phone", "canonical_answer": "555-0100"}],
+        )
+
+    monkeypatch.setattr(plans, "application_plan_freshness", real_freshness)
+    revision = plans.reprepare_needs_input_plan(
+        prior_plan_id=first["plan_id"], idempotency_key="needs-input-revision-1",
+        expected_prior_plan_digest=first["plan_digest"],
+        answer_resolutions=[{"question_key": "candidate.phone", "canonical_answer": "555-0100"}],
+    )
+    replay = plans.reprepare_needs_input_plan(
+        prior_plan_id=first["plan_id"], idempotency_key="needs-input-revision-1",
+        expected_prior_plan_digest=first["plan_digest"],
+        answer_resolutions=[{"question_key": "candidate.phone", "canonical_answer": "555-0100"}],
+    )
+    assert revision["plan_id"] != first["plan_id"]
+    assert revision["plan_id"] == persisted_replacement_id
+    assert revision["status"] == "READY_TO_APPLY"
+    assert replay["plan_id"] == revision["plan_id"]
+    assert plans.get_application_plan(first["plan_id"])["snapshot"] == original_snapshot
+
+    connection = database.get_connection()
+    try:
+        lineage = connection.execute(
+            """SELECT * FROM application_plan_revisions_v2
+               WHERE idempotency_key='needs-input-revision-1'"""
+        ).fetchone()
+    finally:
+        connection.close()
+    assert lineage["prior_plan_digest"] == first["plan_digest"]
+    assert lineage["replacement_plan_id"] == revision["plan_id"]
+    assert lineage["replacement_plan_digest"] == revision["plan_digest"]
+
+    with pytest.raises(ValueError, match="Expected Application Plan digest"):
+        plans.reprepare_needs_input_plan(
+            prior_plan_id=first["plan_id"], expected_prior_plan_digest="0" * 64,
+            idempotency_key="needs-input-revision-wrong-digest",
+            answer_resolutions=[{"question_key": "candidate.phone", "canonical_answer": "555-0100"}],
+        )
+    with pytest.raises(ValueError, match="different Application Plan revision"):
+        plans.reprepare_needs_input_plan(
+            prior_plan_id=first["plan_id"], idempotency_key="needs-input-revision-1",
+            expected_prior_plan_digest=first["plan_digest"],
+            answer_resolutions=[{"question_key": "candidate.phone", "canonical_answer": "555-0101"}],
+        )
+
+    real_current_owner = plans.current_owner
+    monkeypatch.setattr(
+        plans,
+        "current_owner",
+        lambda _connection=None: SimpleNamespace(tenant_id="other", user_id="other"),
+    )
+    with pytest.raises(LookupError, match="not owned"):
+        plans.reprepare_needs_input_plan(
+            prior_plan_id=first["plan_id"], idempotency_key="needs-input-revision-owner",
+            expected_prior_plan_digest=first["plan_digest"],
+            answer_resolutions=[{"question_key": "candidate.phone", "canonical_answer": "555-0100"}],
+        )
+    monkeypatch.setattr(plans, "current_owner", real_current_owner)
+    protected = copy.deepcopy(first)
+    protected["snapshot"]["unresolved"] = [{"question_key": "candidate.phone", "reason": "protected"}]
+    protected["inputs"]["answer_requirements"][0]["sensitivity_class"] = "PROTECTED"
+    with pytest.raises(ValueError, match="separate policy"):
+        plans._resolution_inputs(protected, [{"question_key": "candidate.phone", "canonical_answer": "x"}])
+    monkeypatch.setattr(plans, "application_plan_freshness", lambda _id: {"fresh": False})
+    with pytest.raises(RuntimeError, match="stale"):
+        plans.reprepare_needs_input_plan(
+            prior_plan_id=first["plan_id"], expected_prior_plan_digest=first["plan_digest"],
+            idempotency_key="needs-input-revision-stale",
+            answer_resolutions=[{"question_key": "candidate.phone", "canonical_answer": "555-0100"}],
+        )
+
+def test_explicit_resolution_does_not_grant_execution_without_autofill_permission() -> None:
+    requirement = plans._normalize_requirement(
+        {
+            "question_key": "candidate.phone",
+            "question_family": "candidate_fact",
+            "question": "What is your phone number?",
+            "required": True,
+        }
+    )
+    answer, reason = plans._resolve_requirement(
+        requirement,
+        permissions=_permissions(normal_answer_autofill=False),
+        secure_refs={},
+        answer_overrides={
+            "candidate.phone": {
+                "canonical_answer": "555-0100",
+                "provenance": "candidate_explicit_resolution",
+            }
+        },
+    )
+    assert answer["display_value"] == "555-0100"
+    assert answer["execution_value"] is None
+    assert answer["autofill_allowed"] is False
+    assert answer["requires_review"] is True
+    assert reason == "normal_answer_autofill_permission_missing"
