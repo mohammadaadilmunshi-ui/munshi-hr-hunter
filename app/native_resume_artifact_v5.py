@@ -20,6 +20,9 @@ from app.database import get_connection
 from app.tenant_foundation import current_owner
 
 ARTIFACT_VERSION = "native-resume-v5-artifact-v1"
+MIN_OCCUPIED_HEIGHT_RATIO = 0.62
+MAX_BOTTOM_WHITESPACE_RATIO = 0.30
+MIN_SAFE_BOTTOM_POINTS = 16.0
 
 SCHEMA_STATEMENTS = (
     """CREATE TABLE IF NOT EXISTS native_resume_v5_artifacts (
@@ -86,6 +89,85 @@ def _validated_pdf_page_count(data: bytes) -> int:
     if pages != 1:
         raise ValueError(f"Native Resume V5 PDF must be exactly one page; parsed {pages} pages.")
     return pages
+
+
+def _page_fit_metrics(
+    *,
+    page_height: float,
+    fragments: list[tuple[float, float]],
+) -> dict[str, Any]:
+    if page_height <= 0:
+        raise ValueError("Native Resume V5 PDF page height is invalid.")
+    usable = [
+        (float(y), max(6.0, float(font_size or 0)))
+        for y, font_size in fragments
+        if 0 <= float(y) <= float(page_height)
+    ]
+    if len(usable) < 6:
+        raise ValueError(
+            "Native Resume V5 PDF does not contain enough visible text "
+            "to verify page fit."
+        )
+
+    lowest = min(y for y, _font in usable)
+    highest = max(y + (font * 0.9) for y, font in usable)
+    occupied = max(0.0, min(1.0, (highest - lowest) / page_height))
+    bottom_blank = max(0.0, min(1.0, lowest / page_height))
+
+    if lowest < MIN_SAFE_BOTTOM_POINTS:
+        raise ValueError(
+            "Native Resume V5 PDF content is too close to the bottom page edge."
+        )
+    if (
+        occupied < MIN_OCCUPIED_HEIGHT_RATIO
+        or bottom_blank > MAX_BOTTOM_WHITESPACE_RATIO
+    ):
+        raise ValueError(
+            "Native Resume V5 PDF is visibly under-filled; "
+            "regenerate with more supported evidence."
+        )
+
+    return {
+        "status": "PASS",
+        "pdf_pages": 1,
+        "occupied_height_ratio": round(occupied, 4),
+        "bottom_whitespace_ratio": round(bottom_blank, 4),
+        "text_fragment_count": len(usable),
+    }
+
+
+def _validated_pdf_layout(data: bytes) -> dict[str, Any]:
+    try:
+        reader = PdfReader(io.BytesIO(data), strict=True)
+        if len(reader.pages) != 1:
+            raise ValueError(
+                "Native Resume V5 PDF must be exactly one page; "
+                f"parsed {len(reader.pages)} pages."
+            )
+        page = reader.pages[0]
+        page_height = float(page.mediabox.height)
+        fragments: list[tuple[float, float]] = []
+
+        def visitor_text(text, _cm, tm, _font_dict, font_size):
+            if not str(text or "").strip():
+                return
+            try:
+                y = float(tm[5])
+                size = float(font_size or 0)
+            except (TypeError, ValueError, IndexError):
+                return
+            if 0 <= y <= page_height:
+                fragments.append((y, size))
+
+        page.extract_text(visitor_text=visitor_text)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(
+            "Native Resume V5 PDF renderer returned an invalid document."
+        ) from exc
+
+    return _page_fit_metrics(page_height=page_height, fragments=fragments)
 
 
 def _artifact_id(tenant_id: str, user_id: str, version_id: str, kind: str) -> str:
@@ -166,7 +248,8 @@ def materialize(version_id: str) -> dict[str, Any]:
     _validate_docx_bytes(docx)
     if not pdf.startswith(b"%PDF"):
         raise RuntimeError("Native Resume V5 PDF renderer returned an invalid document.")
-    page_count = _validated_pdf_page_count(pdf)
+    _validated_pdf_page_count(pdf)
+    page_verification = _validated_pdf_layout(pdf)
 
     # Rendering may take time. Revalidate truth/job/Stage B before persistence so
     # an artifact cannot become current merely because generation started earlier.
@@ -263,9 +346,28 @@ def materialize(version_id: str) -> dict[str, Any]:
         "stage_b_binding": record["stage_b_binding"],
         "docx": by_kind["DOCX"],
         "pdf": by_kind["PDF"],
-        "page_verification": {"status": "PASS", "pdf_pages": 1},
+        "page_verification": page_verification,
         "submission_authority": False,
     }
+
+
+def pdf_page_quality(version_id: str) -> dict[str, Any]:
+    """Re-check page fit from the immutable stored PDF without rendering again."""
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        owner = current_owner(connection)
+        row = connection.execute(
+            """SELECT content FROM native_resume_v5_artifacts
+               WHERE version_id=? AND tenant_id=? AND user_id=?
+                 AND artifact_kind='PDF'""",
+            (str(version_id), owner.tenant_id, owner.user_id),
+        ).fetchone()
+        if row is None:
+            raise LookupError("Native Resume V5 PDF artifact was not found.")
+        return _validated_pdf_layout(bytes(row["content"]))
+    finally:
+        connection.close()
 
 
 def artifact_bytes(artifact_id: str) -> bytes:

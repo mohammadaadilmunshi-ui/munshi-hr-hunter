@@ -15,17 +15,25 @@ def test_native_job_label_matches_resume_studio_selector_format() -> None:
     assert _job_label(row) == "#42 · Example Co · People Analytics Analyst · 91% match"
 
 
-def test_native_v5_gate_is_default_off(monkeypatch) -> None:
+def test_native_v5_is_available_by_default_but_can_be_explicitly_disabled(
+    monkeypatch,
+) -> None:
     monkeypatch.delenv("MUNSHI_NATIVE_RESUME_V5_ENABLED", raising=False)
+    assert native_resume_v5_enabled() is True
+
+    monkeypatch.setenv("MUNSHI_NATIVE_RESUME_V5_ENABLED", "false")
     assert native_resume_v5_enabled() is False
+
     monkeypatch.setenv("MUNSHI_NATIVE_RESUME_V5_ENABLED", "true")
     assert native_resume_v5_enabled() is True
 
 
-def test_product_shell_installs_engine_selector_after_v22() -> None:
+def test_product_shell_preserves_n8n_and_installs_selector() -> None:
     root = Path(__file__).resolve().parents[1]
     shell = (root / "app" / "product_shell.py").read_text(encoding="utf-8")
-    selector = (root / "app" / "resume_engine_selector.py").read_text(encoding="utf-8")
+    selector = (root / "app" / "resume_engine_selector.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "install_product_v22(product_pages)" in shell
     assert "install_resume_engine_selector(product_pages)" in shell
@@ -34,38 +42,38 @@ def test_product_shell_installs_engine_selector_after_v22() -> None:
     )
     assert "render_resume_engine_selector()" in shell
 
-    # Existing n8n behavior is preserved byte-for-byte behind the wrapper rather
-    # than replaced by Native V5.
     assert "_resume_engine_original_n8n_prepare = pages_module._prepare_job" in selector
     assert "pages_module._prepare_job = _request_engine_choice" in selector
     assert "_run_n8n(job_id)" in selector
-    assert "n8n workflow · proven current pipeline" in selector
 
-    # Native execution explicitly consumes the Stage B-bound V5 service and is
-    # still preparation-only/default-off.
     assert "from app.native_resume_service_v5 import" in selector
-    assert "native_resume_v5_enabled()" in selector
-    assert '"MUNSHI_NATIVE_RESUME_V5_ENABLED"' in selector
+    assert "artifacts.materialize" in selector
+    assert "current_candidate_profile_snapshot" in selector
     assert "record.get(\"stage_b_bound\") is not True" in selector
-    assert "Neither choice marks an" in selector
-    assert "application Submitted" in selector
+    assert "status.get('model')" not in selector
+    assert 'status.get("model")' not in selector
+    assert "MUNSHI Native Resume" in selector
 
 
-def test_native_resume_studio_exposes_pdf_and_docx_outputs() -> None:
+def test_resume_studio_entrypoint_uses_candidate_truth_first_v4_page() -> None:
     root = Path(__file__).resolve().parents[1]
-    compatibility_page = (root / "app" / "resume_studio_page.py").read_text(encoding="utf-8")
-    v2_page = (root / "app" / "resume_studio_page_v2.py").read_text(encoding="utf-8")
-    v3_page = (root / "app" / "resume_studio_page_v3.py").read_text(encoding="utf-8")
-    service = (root / "app" / "native_resume_service.py").read_text(encoding="utf-8")
+    entrypoint = (root / "app" / "resume_studio_page.py").read_text(
+        encoding="utf-8"
+    )
+    page = (root / "app" / "resume_studio_page_v4.py").read_text(
+        encoding="utf-8"
+    )
 
-    # V3 owns the current UI while V2 continues to provide the proven immutable
-    # resume preview/download workspace behind the stable entry point.
-    assert "from app.resume_studio_page_v3 import render" in compatibility_page
-    assert "v2page._version_workspace" in v3_page
-    assert '"Download DOCX"' in v2_page
-    assert '"Build PDF"' in v2_page
-    assert '"Download PDF"' in v2_page
-    assert "version_docx(" in v2_page
-    assert "version_pdf(" in v2_page
-    assert "def render_docx_bytes" in service
-    assert "def render_pdf_bytes" in service
+    assert "from app.resume_studio_page_v4 import render" in entrypoint
+    assert "resume_studio_page_v3" not in entrypoint
+    assert "native_resume_service_v4" not in entrypoint
+
+    assert "current_candidate_profile_snapshot" in page
+    assert "file_uploader" not in page
+    assert "extract_profile" not in page
+    assert "save_confirmed_source" not in page
+    assert "Native profile extractor" not in page
+    assert "Advanced resume settings" in page
+    assert "artifacts.materialize" in page
+    assert '"Download DOCX"' in page
+    assert '"Download PDF"' in page

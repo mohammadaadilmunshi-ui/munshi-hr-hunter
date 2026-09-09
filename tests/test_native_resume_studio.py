@@ -129,6 +129,11 @@ def test_renderer_is_single_column_text_first_and_escapes_content() -> None:
     assert "column-count" not in html
     assert "display: flex" in html  # entry headers only; the page itself remains single column
     assert "position: absolute" not in html
+    assert "letter-spacing" in html
+    assert "resume-header" in html
+    assert "skill-summary" in html
+    assert html.index("WORK EXPERIENCE") < html.index("EDUCATION")
+    assert html.index("EDUCATION") < html.index("SKILLS")
 
 
 def test_readiness_budget_reports_long_summary_bullets_and_document() -> None:

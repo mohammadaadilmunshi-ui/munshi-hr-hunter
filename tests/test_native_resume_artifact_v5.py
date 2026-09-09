@@ -29,6 +29,18 @@ def _renderers(
         "version_pdf",
         lambda _version_id: (_pdf(pages=pages, suffix=suffix), pages),
     )
+    if pages == 1:
+        monkeypatch.setattr(
+            artifacts,
+            "_validated_pdf_layout",
+            lambda _data: {
+                "status": "PASS",
+                "pdf_pages": 1,
+                "occupied_height_ratio": 0.82,
+                "bottom_whitespace_ratio": 0.12,
+                "text_fragment_count": 40,
+            },
+        )
 
 
 def test_materialize_persists_exact_one_page_pdf_and_docx_idempotently(
@@ -43,7 +55,9 @@ def test_materialize_persists_exact_one_page_pdf_and_docx_idempotently(
     first = artifacts.materialize(resume["version_id"])
     second = artifacts.materialize(resume["version_id"])
 
-    assert first["page_verification"] == {"status": "PASS", "pdf_pages": 1}
+    assert first["page_verification"]["status"] == "PASS"
+    assert first["page_verification"]["pdf_pages"] == 1
+    assert first["page_verification"]["occupied_height_ratio"] == 0.82
     assert first["pdf"]["page_count"] == 1
     assert first["pdf"]["sha256"] == hashlib.sha256(_pdf()).hexdigest()
     assert first["docx"]["sha256"] == hashlib.sha256(
@@ -139,3 +153,41 @@ def test_artifact_materialization_fails_closed_after_job_snapshot_changes(
 
     with pytest.raises(RuntimeError, match="stored job changed"):
         artifacts.materialize(resume["version_id"])
+
+def test_page_fit_metrics_rejects_sparse_resume() -> None:
+    with pytest.raises(ValueError, match="under-filled"):
+        artifacts._page_fit_metrics(
+            page_height=792.0,
+            fragments=[
+                (730.0, 20.0),
+                (690.0, 10.0),
+                (650.0, 10.0),
+                (610.0, 10.0),
+                (570.0, 10.0),
+                (530.0, 10.0),
+            ],
+        )
+
+
+def test_page_fit_metrics_accepts_professional_full_page_coverage() -> None:
+    result = artifacts._page_fit_metrics(
+        page_height=792.0,
+        fragments=[
+            (744.0, 21.0),
+            (710.0, 10.0),
+            (660.0, 10.0),
+            (590.0, 10.0),
+            (500.0, 10.0),
+            (410.0, 10.0),
+            (320.0, 10.0),
+            (230.0, 10.0),
+            (140.0, 10.0),
+            (82.0, 10.0),
+        ],
+    )
+    assert result["status"] == "PASS"
+    assert result["occupied_height_ratio"] >= artifacts.MIN_OCCUPIED_HEIGHT_RATIO
+    assert (
+        result["bottom_whitespace_ratio"]
+        <= artifacts.MAX_BOTTOM_WHITESPACE_RATIO
+    )

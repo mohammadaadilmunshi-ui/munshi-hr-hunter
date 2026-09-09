@@ -278,7 +278,8 @@ def generate_resume(
         or (
             "Tailor this resume to the selected job using the Stage B supported requirements and retention order. "
             "Never claim anything listed in stage_b_resume_plan.do_not_claim. "
-            "Use only supplied candidate evidence IDs."
+            "Use only supplied candidate evidence IDs. Retain enough relevant supported evidence to create a "
+            "visually complete one-page professional resume; never pad the page with unsupported content."
         ),
         "locked_sections": locks,
         "current_resume": parent_document.model_dump() if parent_document else None,

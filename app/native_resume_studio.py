@@ -282,56 +282,66 @@ def _section_heading(label: str) -> str:
 
 
 def render_ats_html(document: ResumeDocument) -> str:
-    """Render a single-column, text-first ATS-safe HTML document.
+    """Render a polished, single-column, ATS-safe one-page resume."""
 
-    No evidence IDs, scores, hidden text, icons, columns, charts, or decorative
-    content are emitted.  The caller may print this HTML to PDF later.
-    """
+    word_count = document_word_count(document)
+    if word_count < 360:
+        body_font, line_height, section_gap, bullet_gap = 10.9, 1.24, 9, 3.0
+    elif word_count < 500:
+        body_font, line_height, section_gap, bullet_gap = 10.6, 1.19, 8, 2.5
+    elif word_count < 650:
+        body_font, line_height, section_gap, bullet_gap = 10.3, 1.15, 7, 2.0
+    else:
+        body_font, line_height, section_gap, bullet_gap = 9.9, 1.11, 6, 1.4
+
     blocks: list[str] = [
         '<main class="resume">',
+        '<header class="resume-header">',
         f'<h1>{escape(document.candidate_name)}</h1>',
         f'<div class="contact">{_contact_line(document.contact)}</div>',
+        '</header>',
         _section_heading("Professional Summary"),
-        f'<p>{escape(document.summary.text)}</p>',
+        f'<p class="summary">{escape(document.summary.text)}</p>',
     ]
-
-    if document.education:
-        blocks.append(_section_heading("Education"))
-        for item in document.education:
-            right = escape(item.dates)
-            blocks.append(
-                '<div class="entry-head">'
-                f'<strong>{escape(item.institution)}</strong>'
-                f'<span>{right}</span>'
-                '</div>'
-            )
-            degree_line = escape(item.degree)
-            extras = " | ".join(escape(part) for part in (item.location, item.gpa) if part)
-            blocks.append(f'<div class="entry-line">{degree_line}{(" | " + extras) if extras else ""}</div>')
-
-    if document.skills:
-        blocks.append(_section_heading("Skills"))
-        for group in document.skills:
-            blocks.append(
-                f'<p class="skill-line"><strong>{escape(group.label)}:</strong> '
-                + escape(", ".join(group.skills))
-                + '</p>'
-            )
 
     if document.experience:
         blocks.append(_section_heading("Work Experience"))
         for item in document.experience:
+            blocks.append('<section class="entry">')
             blocks.append(
                 '<div class="entry-head">'
-                f'<span><strong>{escape(item.organization)}</strong> | {escape(item.title)}</span>'
+                f'<strong>{escape(item.title)}</strong>'
                 f'<span>{escape(item.dates)}</span>'
                 '</div>'
             )
+            sub = escape(item.organization)
             if item.location:
-                blocks.append(f'<div class="entry-line">{escape(item.location)}</div>')
+                sub += f' | {escape(item.location)}'
+            blocks.append(f'<div class="entry-sub">{sub}</div>')
             blocks.append('<ul>')
-            blocks.extend(f'<li>{escape(bullet.text)}</li>' for bullet in item.bullets)
-            blocks.append('</ul>')
+            blocks.extend(
+                f'<li>{escape(bullet.text)}</li>' for bullet in item.bullets
+            )
+            blocks.append('</ul></section>')
+
+    if document.education:
+        blocks.append(_section_heading("Education"))
+        for item in document.education:
+            blocks.append('<section class="entry compact-entry">')
+            blocks.append(
+                '<div class="entry-head">'
+                f'<strong>{escape(item.degree)}</strong>'
+                f'<span>{escape(item.dates)}</span>'
+                '</div>'
+            )
+            extras = " | ".join(
+                escape(part)
+                for part in (item.institution, item.location, item.gpa)
+                if part
+            )
+            if extras:
+                blocks.append(f'<div class="entry-sub">{extras}</div>')
+            blocks.append('</section>')
 
     if document.projects:
         blocks.append(_section_heading("Projects"))
@@ -339,47 +349,108 @@ def render_ats_html(document: ResumeDocument) -> str:
             title = escape(item.name)
             if item.subtitle:
                 title += f' | {escape(item.subtitle)}'
-            blocks.append(f'<div class="entry-head"><strong>{title}</strong></div>')
+            blocks.append('<section class="entry">')
+            blocks.append(
+                f'<div class="project-title"><strong>{title}</strong></div>'
+            )
             blocks.append('<ul>')
-            blocks.extend(f'<li>{escape(bullet.text)}</li>' for bullet in item.bullets)
-            blocks.append('</ul>')
+            blocks.extend(
+                f'<li>{escape(bullet.text)}</li>' for bullet in item.bullets
+            )
+            blocks.append('</ul></section>')
+
+    if document.skills:
+        blocks.append(_section_heading("Skills"))
+        groups = []
+        for group in document.skills:
+            groups.append(
+                f'<strong>{escape(group.label)}:</strong> '
+                + escape(", ".join(group.skills))
+            )
+        blocks.append(
+            '<p class="skill-summary">'
+            + ' <span class="pipe">|</span> '.join(groups)
+            + '</p>'
+        )
 
     if document.certifications:
         blocks.append(_section_heading("Certifications & Achievements"))
-        blocks.append('<ul>')
+        items = []
         for item in document.certifications:
-            text = escape(item.name)
+            value = escape(item.name)
             if item.issuer:
-                text += f' - {escape(item.issuer)}'
-            blocks.append(f'<li>{text}</li>')
-        blocks.append('</ul>')
+                value += f' - {escape(item.issuer)}'
+            items.append(value)
+        blocks.append(
+            '<p class="cert-line">'
+            + ' <span class="pipe">|</span> '.join(items)
+            + '</p>'
+        )
 
     blocks.append('</main>')
     body = "\n".join(blocks)
-    return f'''<!doctype html>
+
+    return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(document.candidate_name)} Resume</title>
 <style>
-@page {{ size: Letter; margin: 0.45in 0.55in; }}
+@page {{ size: Letter; margin: 0.40in 0.55in 0.42in; }}
 * {{ box-sizing: border-box; }}
-body {{ margin: 0; background: #fff; color: #111; font-family: Arial, Helvetica, sans-serif; font-size: 10.5pt; line-height: 1.16; }}
+body {{
+  margin: 0;
+  background: #fff;
+  color: #17212b;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: {body_font}pt;
+  line-height: {line_height};
+}}
 .resume {{ max-width: 8.5in; margin: 0 auto; }}
-h1 {{ margin: 0 0 4px; text-align: center; font-size: 20pt; line-height: 1.05; }}
-.contact {{ text-align: center; margin-bottom: 8px; overflow-wrap: anywhere; }}
-.section-heading {{ margin: 7px 0 4px; padding-bottom: 2px; border-bottom: 1px solid #111; font-size: 11.5pt; line-height: 1.05; }}
+.resume-header {{ padding-bottom: 5px; border-bottom: 1px solid #a8b0b7; }}
+h1 {{
+  margin: 0 0 3px;
+  text-align: center;
+  font-size: 21.5pt;
+  line-height: 1.02;
+  letter-spacing: 0.01em;
+}}
+.contact {{
+  text-align: center;
+  font-size: 9.4pt;
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+}}
+.section-heading {{
+  margin: {section_gap}px 0 4px;
+  padding-bottom: 2px;
+  border-bottom: 1.2px solid #2e3943;
+  font-size: 10.8pt;
+  line-height: 1.05;
+  letter-spacing: 0.075em;
+}}
 p {{ margin: 0 0 4px; }}
-ul {{ margin: 2px 0 5px 18px; padding: 0; }}
-li {{ margin: 0 0 2px; padding-left: 2px; }}
-.entry-head {{ display: flex; justify-content: space-between; gap: 14px; margin-top: 3px; }}
-.entry-head > :last-child {{ white-space: nowrap; }}
-.entry-line {{ margin-bottom: 2px; }}
-.skill-line {{ margin-bottom: 2px; }}
+.summary {{ margin-bottom: 3px; }}
+ul {{ margin: 2px 0 4px 17px; padding: 0; }}
+li {{ margin: 0 0 {bullet_gap}px; padding-left: 1px; }}
+.entry {{ page-break-inside: avoid; margin: 0 0 2px; }}
+.entry-head {{
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: baseline;
+  margin-top: 2px;
+}}
+.entry-head > :last-child {{ white-space: nowrap; font-size: 9.5pt; }}
+.entry-sub {{ margin: 1px 0 2px; font-size: 9.8pt; }}
+.compact-entry {{ margin-bottom: 3px; }}
+.project-title {{ margin-top: 2px; }}
+.skill-summary, .cert-line {{ margin: 0; line-height: 1.18; }}
+.pipe {{ padding: 0 3px; color: #6a737b; }}
 </style>
 </head>
 <body>
 {body}
 </body>
-</html>'''
+</html>"""

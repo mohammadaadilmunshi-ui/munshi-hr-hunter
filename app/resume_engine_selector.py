@@ -1,41 +1,38 @@
-"""Explicit user choice between the proven n8n writer and Native Resume V5.
+"""User choice between the n8n writer and the MUNSHI Native Resume engine.
 
-This module is deliberately a routing layer, not submission authority. It keeps
-n8n available as the default/proven preparation path while allowing a candidate
-to explicitly choose the Stage B-bound Native Resume V5 writer for a stored job.
-Native V5 is default-off and must be enabled explicitly. Neither choice marks an
-application Submitted.
+The selector is preparation-only. Native Resume V5 uses the permanent Candidate
+Truth Profile and exact stored job, generates immediately, materializes checked
+DOCX/PDF artifacts, and then opens Resume Studio for review. Neither path owns
+final application submission.
 """
 from __future__ import annotations
 
 import os
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import streamlit as st
-
 
 _PAGES: Any = None
 _DIALOG_JOB_KEY = "resume_engine_choice_job_id"
 _NATIVE_V5_ENV = "MUNSHI_NATIVE_RESUME_V5_ENABLED"
 _DEFAULT_NATIVE_INSTRUCTION = (
     "Create the strongest truthful one-page ATS resume for this job. Prioritize "
-    "directly relevant evidence, keep the writing natural and concise, and omit "
+    "directly relevant evidence, keep the writing natural and concise, retain "
+    "enough supported evidence to create a visually complete page, and omit "
     "unsupported requirements rather than inventing them."
 )
 
 
 def native_resume_v5_enabled() -> bool:
-    """Return the explicit default-off Native V5 consumer gate."""
-    return str(os.getenv(_NATIVE_V5_ENV) or "").strip().casefold() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    """Native V5 is available by default and may be explicitly disabled."""
+    raw = os.getenv(_NATIVE_V5_ENV)
+    if raw is None or not raw.strip():
+        return True
+    return raw.strip().casefold() in {"1", "true", "yes", "on", "enabled"}
 
 
 def _request_engine_choice(job_id: int) -> None:
-    """Open the engine chooser on the next Streamlit render."""
     st.session_state[_DIALOG_JOB_KEY] = int(job_id)
 
 
@@ -52,7 +49,6 @@ def _job_label(row: dict[str, Any]) -> str:
 
 
 def _prime_native_job_selection(job_id: int) -> None:
-    """Make Resume Studio open on the exact job the candidate selected."""
     from app.native_resume_service_v5 import resume_job_options
 
     for row in resume_job_options(limit=300):
@@ -61,16 +57,24 @@ def _prime_native_job_selection(job_id: int) -> None:
             return
 
 
-def _route_to_native_studio(job_id: int) -> None:
-    _prime_native_job_selection(job_id)
-    st.session_state["product_view"] = "resume-studio"
+def _set_view(view: str) -> None:
+    st.session_state["product_view"] = view
     try:
-        st.query_params["view"] = "resume-studio"
+        st.query_params["view"] = view
         for parameter in ("job", "pipeline_job", "tab", "section"):
             if parameter in st.query_params:
                 del st.query_params[parameter]
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _route_to_native_studio(job_id: int) -> None:
+    _prime_native_job_selection(job_id)
+    _set_view("resume-studio")
+
+
+def _route_to_profile() -> None:
+    _set_view("profile")
 
 
 def _job_summary(job_id: int) -> dict[str, Any]:
@@ -89,45 +93,82 @@ def _job_summary(job_id: int) -> dict[str, Any]:
 
 def _run_n8n(job_id: int) -> None:
     runner: Callable[[int], None] | None = getattr(
-        _PAGES, "_resume_engine_original_n8n_prepare", None
+        _PAGES,
+        "_resume_engine_original_n8n_prepare",
+        None,
     )
     if not callable(runner):
-        raise RuntimeError("The guarded n8n preparation path is unavailable.")
+        raise TypeError("The guarded n8n preparation path is unavailable.")
     runner(int(job_id))
 
 
-def _run_native(job_id: int) -> tuple[bool, str]:
-    """Run Native V5 only when its explicit gate and prerequisites are present."""
+def _native_readiness() -> tuple[bool, str]:
     if not native_resume_v5_enabled():
-        _route_to_native_studio(job_id)
+        return False, "Native Resume is disabled for this environment."
+
+    from app.native_resume_service_v5 import writer_status
+    from app.phase45_truth_binding import current_candidate_profile_snapshot
+
+    try:
+        current_candidate_profile_snapshot()
+    except Exception as error:  # noqa: BLE001
+        return False, str(error)
+
+    status = writer_status()
+    if not status.get("configured"):
+        return False, "Native Resume setup is incomplete."
+    return True, "Ready to generate from your MUNSHI Profile."
+
+
+def _run_native(job_id: int) -> tuple[bool, str]:
+    """Generate and materialize Native V5 immediately from Candidate Truth."""
+    if not native_resume_v5_enabled():
+        return False, "Native Resume is temporarily unavailable."
+
+    from app import native_resume_artifact_v5 as artifacts
+    from app.native_resume_service_v5 import generate_resume, writer_status
+    from app.phase45_truth_binding import current_candidate_profile_snapshot
+
+    try:
+        current_candidate_profile_snapshot()
+    except Exception:  # noqa: BLE001
+        _route_to_profile()
         return (
             False,
-            "Native Resume V5 is installed but disabled. The proven n8n route remains available.",
+            "Complete your MUNSHI Profile before generating a Native resume.",
         )
 
-    from app.native_resume_service_v5 import active_source, generate_resume, writer_status
-
-    source = active_source()
     status = writer_status()
-    if not source:
-        _route_to_native_studio(job_id)
-        return False, "Native Resume Studio needs a confirmed Master Resume source first."
     if not status.get("configured"):
+        st.session_state["native_resume_advanced_open"] = True
         _route_to_native_studio(job_id)
         return (
             False,
-            "Native Resume Studio is installed, but its writer credential is not configured on this server.",
+            "Open Advanced resume settings to finish Native Resume setup.",
         )
 
     record = generate_resume(
         job_id=int(job_id),
         instruction=_DEFAULT_NATIVE_INSTRUCTION,
+        rewrite_mode="medium",
     )
     if record.get("stage_b_bound") is not True:
         raise RuntimeError("Native Resume V5 returned an unbound resume version.")
+
+    bundle = artifacts.materialize(str(record["version_id"]))
+    verification = bundle.get("page_verification") or {}
+    if verification.get("status") != "PASS":
+        raise RuntimeError("Native Resume page-fit verification did not pass.")
+
     st.session_state["native_resume_selected_version"] = record["version_id"]
+    st.session_state[
+        f"native_resume_page_verification_{record['version_id']}"
+    ] = verification
     _route_to_native_studio(job_id)
-    return True, f"Native Resume V5 ATS resume v{record['version_number']} validated."
+    return (
+        True,
+        f"Native resume v{record['version_number']} created and page-fit checked.",
+    )
 
 
 @st.dialog("Choose resume engine", width="small")
@@ -139,63 +180,47 @@ def _engine_dialog(job_id: int) -> None:
         return
 
     st.markdown(
-        f"**{row.get('company_name') or 'Company'} · {row.get('title') or 'Untitled role'}**"
+        f"**{row.get('company_name') or 'Company'} · "
+        f"{row.get('title') or 'Untitled role'}**"
     )
     st.caption(
-        "Choose how MUNSHI should generate the resume for this preparation. "
-        "n8n remains available and is the default proven path."
+        "Choose how MUNSHI should prepare the tailored resume for this job. "
+        "You will review everything before any submission step."
     )
+
+    choices = ["n8n"]
+    if native_resume_v5_enabled():
+        choices.append("native")
 
     choice = st.radio(
         "Resume generation engine",
-        ["n8n", "native"],
+        choices,
         index=0,
         format_func=lambda value: (
-            "n8n workflow · proven current pipeline"
+            "n8n workflow"
             if value == "n8n"
-            else "Native Resume V5 · exact Stage B evidence path"
+            else "MUNSHI Native Resume"
         ),
         key=f"resume_engine_choice_{job_id}",
     )
 
     if choice == "n8n":
-        st.info(
-            "Runs the existing guarded n8n preparation workflow. This keeps the "
-            "current resume/package pipeline intact and does not claim submission."
-        )
+        st.info("Uses the existing guarded n8n resume preparation workflow.")
     else:
-        try:
-            from app.native_resume_service_v5 import active_source, writer_status
-
-            status = writer_status()
-            source_ready = bool(active_source())
-            writer_ready = bool(status.get("configured"))
-            v5_enabled = native_resume_v5_enabled()
-        except Exception:
-            source_ready = False
-            writer_ready = False
-            v5_enabled = False
-            status = {"model": "Unavailable"}
-
+        ready, message = _native_readiness()
         st.info(
-            "Runs MUNSHI's Stage B-bound Native Resume V5 writer for this exact stored job. "
-            "The generated version is immutable, truth/job/plan bound, reviewable, and does "
-            "not mark the application Submitted."
+            "Built into MUNSHI. Uses your permanent Profile and this job to "
+            "create a truthful, checked one-page resume."
         )
-        if not v5_enabled:
-            readiness = "Disabled by the Native V5 feature gate"
-        elif source_ready and writer_ready:
-            readiness = "Ready to generate now"
+        if ready:
+            st.success(message)
         else:
-            readiness = "Opens Resume Studio to finish native-writer setup"
-        st.caption(
-            f"Native V5 status: {readiness} · model {status.get('model') or 'not configured'}"
-        )
+            st.warning(message)
 
     action, cancel = st.columns((1.7, 1), gap="small")
     with action:
         if st.button(
-            "Continue with selected engine",
+            "Continue",
             type="primary",
             use_container_width=True,
             key=f"resume_engine_continue_{job_id}",
@@ -204,24 +229,31 @@ def _engine_dialog(job_id: int) -> None:
             if choice == "n8n":
                 try:
                     _run_n8n(job_id)
-                except Exception:
-                    if _PAGES is not None and hasattr(_PAGES, "_set_action_feedback"):
+                except Exception:  # noqa: BLE001
+                    if _PAGES is not None and hasattr(
+                        _PAGES,
+                        "_set_action_feedback",
+                    ):
                         _PAGES._set_action_feedback(
                             "error",
-                            "The guarded n8n preparation request could not be started. No submission was claimed.",
+                            "The guarded n8n preparation request could not be started.",
                         )
                 st.rerun()
 
             try:
                 with st.spinner(
-                    "Building Stage B evidence, generating Native V5, and running truth/ATS guards…"
+                    "Creating your tailored Native resume and checking the final page…"
                 ):
                     generated, message = _run_native(job_id)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 st.error(str(error))
                 return
+
             if _PAGES is not None and hasattr(_PAGES, "_set_action_feedback"):
-                _PAGES._set_action_feedback("success" if generated else "warning", message)
+                _PAGES._set_action_feedback(
+                    "success" if generated else "warning",
+                    message,
+                )
             st.rerun()
 
     with cancel:
@@ -235,7 +267,6 @@ def _engine_dialog(job_id: int) -> None:
 
 
 def render_resume_engine_selector() -> None:
-    """Render at most one chooser after the current product page."""
     raw = st.session_state.get(_DIALOG_JOB_KEY)
     if raw is None:
         return
@@ -248,7 +279,7 @@ def render_resume_engine_selector() -> None:
 
 
 def install_resume_engine_selector(pages_module: Any) -> None:
-    """Wrap Product UI preparation without deleting the existing n8n path."""
+    """Wrap the current Prepare action without deleting the proven n8n path."""
     global _PAGES
     _PAGES = pages_module
     if getattr(pages_module, "_resume_engine_selector_installed", False):
