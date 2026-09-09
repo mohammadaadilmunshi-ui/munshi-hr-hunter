@@ -11,6 +11,7 @@ import base64
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import streamlit as st
 
@@ -463,6 +464,149 @@ def _tracker_rows_v22(limit: int = 100) -> list[dict[str, Any]]:
     return rows
 
 
+def _safe_linkedin_url(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return None
+    host = str(parsed.hostname or "").casefold()
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if host != "linkedin.com" and not host.endswith(".linkedin.com"):
+        return None
+    return raw
+
+
+def _recruiter_contact_package(job_id: int) -> dict[str, Any]:
+    from app.database import get_connection
+    from app.universal_n8n_progress import recruiter_contacts_from_result
+
+    connection = get_connection()
+    try:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        empty = {
+            "contacts": [],
+            "contacts_sheet_url": "",
+            "outreach_sheet_url": "",
+        }
+        if "n8n_results" not in tables:
+            return empty
+
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(n8n_results)"
+            ).fetchall()
+        }
+        wanted = [
+            "id",
+            "recruiter_names_json",
+            "recruiter_linkedin_urls_json",
+            "recruiter_contacts_json",
+            "recruiter_found",
+            "contacts_sheet_url",
+            "outreach_sheet_url",
+            "extra_outputs_json",
+            "completed_at",
+            "sent_at",
+        ]
+        selected = [name for name in wanted if name in columns]
+        if "id" not in selected:
+            return empty
+
+        rows = connection.execute(
+            f"SELECT {', '.join(selected)} FROM n8n_results "
+            "WHERE job_id=? ORDER BY id DESC LIMIT 25",
+            (int(job_id),),
+        ).fetchall()
+
+        fallback = dict(empty)
+        for record in rows:
+            value = dict(record)
+            contacts = recruiter_contacts_from_result(value)
+            contacts_sheet = str(value.get("contacts_sheet_url") or "").strip()
+            outreach_sheet = str(value.get("outreach_sheet_url") or "").strip()
+            if contacts:
+                return {
+                    "contacts": contacts,
+                    "contacts_sheet_url": contacts_sheet,
+                    "outreach_sheet_url": outreach_sheet,
+                }
+            if not fallback["contacts_sheet_url"] and contacts_sheet:
+                fallback["contacts_sheet_url"] = contacts_sheet
+            if not fallback["outreach_sheet_url"] and outreach_sheet:
+                fallback["outreach_sheet_url"] = outreach_sheet
+        return fallback
+    finally:
+        connection.close()
+
+
+def _render_recruiter_contacts(job_id: int) -> None:
+    package = _recruiter_contact_package(job_id)
+    contacts = list(package.get("contacts") or [])
+    contacts_sheet = _PAGES.safe_link(package.get("contacts_sheet_url"))
+    outreach_sheet = _PAGES.safe_link(package.get("outreach_sheet_url"))
+
+    if not contacts and not contacts_sheet and not outreach_sheet:
+        return
+
+    st.markdown("### Recruiter / hiring contacts")
+    st.caption(
+        "Recorded by the n8n preparation workflow for this job. "
+        "Nothing is inferred when contact evidence is missing."
+    )
+
+    for index, contact in enumerate(contacts[:8]):
+        with st.container(border=True):
+            left, right = st.columns((4, 1.25), gap="small")
+            with left:
+                name = str(contact.get("name") or "Recruiter / hiring contact")
+                title = str(contact.get("title") or "").strip()
+                email = str(contact.get("email") or "").strip()
+                st.markdown(
+                    f"**{_PAGES.esc(name, 'Recruiter / hiring contact')}**",
+                    unsafe_allow_html=True,
+                )
+                if title:
+                    st.caption(title)
+                if email:
+                    st.caption(f"Email: {email}")
+            with right:
+                linkedin = _safe_linkedin_url(contact.get("linkedin"))
+                if linkedin:
+                    st.link_button(
+                        "Open LinkedIn",
+                        linkedin,
+                        use_container_width=True,
+                    )
+                else:
+                    st.button(
+                        "LinkedIn not recorded",
+                        disabled=True,
+                        use_container_width=True,
+                        key=f"recruiter_no_linkedin_{job_id}_{index}",
+                    )
+
+    links = []
+    if contacts_sheet:
+        links.append(("Open contacts sheet", contacts_sheet))
+    if outreach_sheet:
+        links.append(("Open outreach sheet", outreach_sheet))
+    if links:
+        columns = st.columns(len(links), gap="small")
+        for column, (label, url) in zip(columns, links, strict=True):
+            with column:
+                st.link_button(label, url, use_container_width=True)
+
+
 def _job_bundle(job_id: int) -> dict[str, Any] | None:
     from app.database import get_connection
 
@@ -676,6 +820,8 @@ def _opportunity_dialog(job_id: int) -> None:
             "No prepared resume or cover-letter artifact is recorded for this "
             "job yet. A completed queue state alone is not shown as a resume."
         )
+
+    _render_recruiter_contacts(job_id)
 
     st.markdown("### Actions")
     action_columns = st.columns((1, 1, 1, 1.25))

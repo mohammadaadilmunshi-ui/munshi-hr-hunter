@@ -7,6 +7,8 @@ and checked file downloads.
 """
 from __future__ import annotations
 
+import re
+
 from typing import Any
 
 import streamlit as st
@@ -93,30 +95,199 @@ def _job_label(row: dict[str, Any]) -> str:
     )
 
 
+def _resume_job_catalog(limit: int = 500) -> list[dict[str, Any]]:
+    from app.database import get_connection
+
+    connection = get_connection()
+    try:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        job_columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(jobs)").fetchall()
+        }
+        wanted = [
+            "id",
+            "company_name",
+            "title",
+            "location_raw",
+            "hunter_score",
+            "employment_type",
+            "remote_type",
+            "source",
+            "first_seen_at",
+            "date_posted",
+            "description_raw",
+        ]
+        selected = [name for name in wanted if name in job_columns]
+        if "id" not in selected:
+            return []
+
+        rows = [
+            dict(row)
+            for row in connection.execute(
+                f"SELECT {', '.join(selected)} FROM jobs "
+                "ORDER BY id DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        ]
+
+        state_by_job: dict[int, dict[str, Any]] = {}
+        if "product_job_state" in tables:
+            for row in connection.execute(
+                "SELECT job_id,saved,skipped FROM product_job_state"
+            ).fetchall():
+                state_by_job[int(row["job_id"])] = dict(row)
+
+        prepared: set[int] = set()
+        if "n8n_results" in tables:
+            result_columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(n8n_results)"
+                ).fetchall()
+            }
+            artifact_columns = [
+                name
+                for name in (
+                    "resume_pdf_url",
+                    "resume_doc_url",
+                    "resume_docx_url",
+                    "cover_letter_doc_url",
+                )
+                if name in result_columns
+            ]
+            if artifact_columns:
+                predicate = " OR ".join(
+                    f"trim(COALESCE({name},'')) != ''"
+                    for name in artifact_columns
+                )
+                for row in connection.execute(
+                    f"SELECT DISTINCT job_id FROM n8n_results WHERE {predicate}"
+                ).fetchall():
+                    prepared.add(int(row["job_id"]))
+
+        if "native_resume_versions" in tables:
+            for row in connection.execute(
+                "SELECT DISTINCT job_id FROM native_resume_versions"
+            ).fetchall():
+                prepared.add(int(row["job_id"]))
+
+        for row in rows:
+            job_id = int(row["id"])
+            state = state_by_job.get(job_id, {})
+            row["saved"] = bool(state.get("saved"))
+            row["skipped"] = bool(state.get("skipped"))
+            row["prepared"] = job_id in prepared
+        return rows
+    finally:
+        connection.close()
+
+
+def _job_search_blob(row: dict[str, Any]) -> str:
+    values = (
+        row.get("id"),
+        row.get("company_name"),
+        row.get("title"),
+        row.get("location_raw"),
+        row.get("source"),
+        row.get("employment_type"),
+        row.get("remote_type"),
+        row.get("description_raw"),
+    )
+    return " ".join(str(value or "") for value in values).casefold()
+
+
+def _filter_resume_jobs(
+    rows: list[dict[str, Any]],
+    *,
+    query: str = "",
+    result_set: str = "all",
+    minimum_match: int = 0,
+    sort_by: str = "match_desc",
+) -> list[dict[str, Any]]:
+    terms = [term for term in str(query or "").casefold().split() if term]
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        if result_set == "saved" and not row.get("saved"):
+            continue
+        if result_set == "prepared" and not row.get("prepared"):
+            continue
+        score = row.get("hunter_score")
+        numeric_score = float(score) if score is not None else -1.0
+        if numeric_score < int(minimum_match):
+            continue
+        blob = _job_search_blob(row)
+        if terms and not all(term in blob for term in terms):
+            continue
+        result.append(row)
+
+    if sort_by == "newest":
+        result.sort(
+            key=lambda row: (
+                str(row.get("first_seen_at") or row.get("date_posted") or ""),
+                int(row.get("id") or 0),
+            ),
+            reverse=True,
+        )
+    elif sort_by == "company":
+        result.sort(
+            key=lambda row: (
+                str(row.get("company_name") or "").casefold(),
+                str(row.get("title") or "").casefold(),
+                -float(row.get("hunter_score") or -1),
+            )
+        )
+    else:
+        result.sort(
+            key=lambda row: (
+                float(row.get("hunter_score") or -1),
+                int(row.get("id") or 0),
+            ),
+            reverse=True,
+        )
+    return result
+
+
+def _set_resume_job(row: dict[str, Any]) -> None:
+    job_id = int(row["id"])
+    st.session_state["native_resume_job_id"] = job_id
+    st.session_state["native_resume_job_choice"] = _job_label(row)
+
+
 def _job_workspace() -> tuple[int | None, dict[str, Any]]:
     st.markdown("### Target job")
-    rows = resume_v5.resume_job_options(limit=300)
+    rows = _resume_job_catalog(limit=500)
     if not rows:
         st.info("Save a job first, then return here to create its tailored resume.")
         return None, {}
 
-    labels = {_job_label(row): row for row in rows}
-    options = list(labels)
-    current = st.session_state.get("native_resume_job_choice")
-    if current not in labels:
-        st.session_state["native_resume_job_choice"] = options[0]
+    by_id = {int(row["id"]): row for row in rows}
+    selected_id_raw = st.session_state.get("native_resume_job_id")
+    try:
+        selected_id = int(selected_id_raw)
+    except (TypeError, ValueError):
+        selected_id = 0
 
-    selected_label = st.selectbox(
-        "Job",
-        options,
-        key="native_resume_job_choice",
-        label_visibility="collapsed",
-    )
-    selected = labels[selected_label]
-    job_id = int(selected["id"])
-    context = resume_v5.job_context(job_id)
+    if selected_id not in by_id:
+        legacy = str(st.session_state.get("native_resume_job_choice") or "")
+        match = re.match(r"#(\d+)\s*·", legacy)
+        if match and int(match.group(1)) in by_id:
+            selected_id = int(match.group(1))
+
+    if selected_id not in by_id:
+        ranked = _filter_resume_jobs(rows)
+        selected_id = int(ranked[0]["id"])
+        _set_resume_job(by_id[selected_id])
+
+    context = resume_v5.job_context(selected_id)
 
     with st.container(border=True):
+        st.caption("Selected target")
         st.markdown(
             f"**{esc(context.get('company_name'), 'Company')} · "
             f"{esc(context.get('title'), 'Untitled role')}**",
@@ -131,12 +302,127 @@ def _job_workspace() -> tuple[int | None, dict[str, Any]]:
         if context.get("hunter_score") is not None:
             st.caption(f"Hunter match: {float(context['hunter_score']):.0f}%")
 
+    with st.expander("Find or change job", expanded=True):
+        search_columns = st.columns((3.2, 1.25, 1.1, 1.25), gap="small")
+        with search_columns[0]:
+            query = st.text_input(
+                "Find a job",
+                placeholder=(
+                    "Search company, title, location, source, JD keyword, or job #…"
+                ),
+                key="resume_studio_job_search",
+                label_visibility="collapsed",
+            )
+        with search_columns[1]:
+            result_set = st.selectbox(
+                "Jobs",
+                ["all", "saved", "prepared"],
+                format_func=lambda value: {
+                    "all": "All jobs",
+                    "saved": "Saved",
+                    "prepared": "Prepared",
+                }[value],
+                key="resume_studio_job_result_set",
+                label_visibility="collapsed",
+            )
+        with search_columns[2]:
+            minimum_match = st.selectbox(
+                "Match",
+                [0, 50, 70, 85],
+                format_func=lambda value: (
+                    "Any match" if value == 0 else f"{value}%+"
+                ),
+                key="resume_studio_job_minimum_match",
+                label_visibility="collapsed",
+            )
+        with search_columns[3]:
+            sort_by = st.selectbox(
+                "Sort",
+                ["match_desc", "newest", "company"],
+                format_func=lambda value: {
+                    "match_desc": "Best match",
+                    "newest": "Newest",
+                    "company": "Company A–Z",
+                }[value],
+                key="resume_studio_job_sort",
+                label_visibility="collapsed",
+            )
+
+        filtered = _filter_resume_jobs(
+            rows,
+            query=query,
+            result_set=result_set,
+            minimum_match=int(minimum_match),
+            sort_by=sort_by,
+        )
+        st.caption(
+            f"{len(filtered)} matching job{'s' if len(filtered) != 1 else ''}. "
+            "Choose one to tailor against its exact stored job snapshot."
+        )
+
+        visible_limit = st.selectbox(
+            "Results shown",
+            [8, 16, 32],
+            format_func=lambda value: f"Show {value}",
+            key="resume_studio_job_visible_limit",
+        )
+
+        if not filtered:
+            st.info("No jobs match those filters.")
+        else:
+            for row in filtered[: int(visible_limit)]:
+                job_id = int(row["id"])
+                with st.container(border=True):
+                    left, right = st.columns((5, 1.2), gap="small")
+                    with left:
+                        st.markdown(
+                            f"**{esc(row.get('company_name'), 'Company')} · "
+                            f"{esc(row.get('title'), 'Untitled role')}**",
+                            unsafe_allow_html=True,
+                        )
+                        meta = [
+                            row.get("location_raw"),
+                            row.get("source"),
+                            "Saved" if row.get("saved") else None,
+                            "Prepared" if row.get("prepared") else None,
+                        ]
+                        st.caption(
+                            " · ".join(str(value) for value in meta if value)
+                        )
+                    with right:
+                        score = row.get("hunter_score")
+                        st.markdown(
+                            f"**{float(score):.0f}% match**"
+                            if score is not None
+                            else "**Match n/a**"
+                        )
+                        if job_id == selected_id:
+                            st.button(
+                                "Selected",
+                                disabled=True,
+                                use_container_width=True,
+                                key=f"resume_job_selected_{job_id}",
+                            )
+                        elif st.button(
+                            "Use job",
+                            use_container_width=True,
+                            key=f"resume_job_use_{job_id}",
+                        ):
+                            _set_resume_job(row)
+                            st.rerun()
+
+            if len(filtered) > int(visible_limit):
+                st.caption(
+                    f"{len(filtered) - int(visible_limit)} more results. "
+                    "Refine the search or increase Results shown."
+                )
+
     with st.expander("Review job description", expanded=False):
         st.write(context.get("description_raw") or "No stored description.")
         if context.get("qualifications"):
             st.markdown("**Qualifications**")
             st.write(context["qualifications"])
-    return job_id, context
+    return selected_id, context
 
 
 def _style_selector(key: str, default: str = "medium") -> str:

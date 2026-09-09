@@ -11,7 +11,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from app.database import ROOT_DIR, get_connection
 from app.runtime_config import downstream_int, n8n_database_path, n8n_workflow_id
@@ -274,6 +274,13 @@ def _contact_rows(result: dict[str, Any], extra: dict[str, Any]) -> list[dict[st
         seen.add(key)
         deduped.append(contact)
     return deduped
+
+
+def recruiter_contacts_from_result(
+    result: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    value = dict(result or {})
+    return _contact_rows(value, _extra_outputs(value))
 
 
 def _safe(value: Any, html_mode: bool) -> str:

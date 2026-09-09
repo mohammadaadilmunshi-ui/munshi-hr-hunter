@@ -53,6 +53,7 @@ def _prime_native_job_selection(job_id: int) -> None:
 
     for row in resume_job_options(limit=300):
         if int(row["id"]) == int(job_id):
+            st.session_state["native_resume_job_id"] = int(job_id)
             st.session_state["native_resume_job_choice"] = _job_label(row)
             return
 
