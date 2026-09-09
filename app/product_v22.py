@@ -64,6 +64,76 @@ div[data-baseweb="modal"]{
     border-radius:22px!important;
     box-shadow:0 28px 90px rgba(20,33,41,.24)!important;
 }
+
+/* V2.3: job details use a context-preserving right-side glass drawer only. */
+@keyframes munshiJobDrawerIn{
+    from{transform:translateX(34px);opacity:.78}
+    to{transform:translateX(0);opacity:1}
+}
+.job-detail-drawer-marker{display:none!important}
+div[data-baseweb="modal"]:has(.job-detail-drawer-marker){
+    background:rgba(239,244,241,.38)!important;
+    backdrop-filter:blur(18px) saturate(1.16)!important;
+    -webkit-backdrop-filter:blur(18px) saturate(1.16)!important;
+}
+[data-testid="stDialog"]:has(.job-detail-drawer-marker) [role="dialog"]{
+    position:fixed!important;
+    top:0!important;
+    right:0!important;
+    bottom:0!important;
+    left:auto!important;
+    width:min(640px,94vw)!important;
+    max-width:min(640px,94vw)!important;
+    height:100dvh!important;
+    max-height:100dvh!important;
+    margin:0!important;
+    border-radius:26px 0 0 26px!important;
+    border-right:0!important;
+    border-color:rgba(206,215,208,.92)!important;
+    background:rgba(250,251,249,.94)!important;
+    box-shadow:-28px 0 78px rgba(20,33,41,.20)!important;
+    backdrop-filter:blur(22px) saturate(1.08)!important;
+    -webkit-backdrop-filter:blur(22px) saturate(1.08)!important;
+    overflow-y:auto!important;
+    overscroll-behavior:contain;
+    animation:munshiJobDrawerIn .22s cubic-bezier(.2,.72,.24,1) both;
+}
+[data-testid="stDialog"]:has(.job-detail-drawer-marker) [role="dialog"] h2{
+    font-size:clamp(1.55rem,2.3vw,2rem)!important;
+    line-height:1.16!important;
+    font-weight:700!important;
+    letter-spacing:-.035em!important;
+}
+[data-testid="stDialog"]:has(.job-detail-drawer-marker) [role="dialog"] h3{
+    margin-top:1.15rem!important;
+}
+[data-testid="stDialog"]:has(.job-detail-drawer-marker) [data-testid="stDialogContent"]{
+    padding-bottom:1rem!important;
+}
+[data-testid="stDialog"]:has(.job-detail-drawer-marker) .product-dialog-card{
+    background:rgba(255,255,255,.76)!important;
+    box-shadow:0 10px 30px rgba(20,33,41,.045)!important;
+}
+[class*="st-key-job_drawer_actions_"]{
+    position:sticky!important;
+    bottom:0!important;
+    z-index:30!important;
+    margin:1rem -.2rem -.15rem!important;
+    padding:.85rem .2rem .35rem!important;
+    background:linear-gradient(180deg,rgba(250,251,249,.58),rgba(250,251,249,.96) 28%)!important;
+    backdrop-filter:blur(16px)!important;
+    -webkit-backdrop-filter:blur(16px)!important;
+    border-top:1px solid rgba(223,229,224,.88)!important;
+}
+@media (max-width:700px){
+    [data-testid="stDialog"]:has(.job-detail-drawer-marker) [role="dialog"]{
+        width:100vw!important;
+        max-width:100vw!important;
+        border-radius:0!important;
+        border-left:0!important;
+    }
+}
+
 [data-testid="stDialog"] [data-testid="stMarkdownContainer"],
 [data-testid="stDialog"] [data-testid="stMarkdownContainer"] *{
     color:#142129!important;
@@ -678,6 +748,11 @@ def _opportunity_dialog(job_id: int) -> None:
         st.warning("This stored opportunity is no longer available.")
         return
 
+    st.markdown(
+        '<span class="job-detail-drawer-marker" aria-hidden="true"></span>',
+        unsafe_allow_html=True,
+    )
+
     latest = row["latest_result"]
     artifact = row["artifact_result"]
     queue = row["queue"]
@@ -823,46 +898,47 @@ def _opportunity_dialog(job_id: int) -> None:
 
     _render_recruiter_contacts(job_id)
 
-    st.markdown("### Actions")
-    action_columns = st.columns((1, 1, 1, 1.25))
-    with action_columns[0]:
-        st.button(
-            "Saved" if row["saved"] else "Save",
-            key=f"v22_dialog_save_{job_id}",
-            use_container_width=True,
-            on_click=_PAGES._toggle_job_saved,
-            args=(job_id, bool(row["saved"])),
-        )
-    with action_columns[1]:
-        st.button(
-            "Restore" if row["skipped"] else "Pass",
-            key=f"v22_dialog_pass_{job_id}",
-            use_container_width=True,
-            on_click=_PAGES._toggle_job_skipped,
-            args=(job_id, bool(row["skipped"])),
-        )
-    with action_columns[2]:
-        st.button(
-            "Prepare",
-            key=f"v22_dialog_prepare_{job_id}",
-            type="primary",
-            use_container_width=True,
-            on_click=_PAGES._prepare_job,
-            args=(job_id,),
-        )
-    with action_columns[3]:
-        if apply_url:
-            st.link_button(
-                "Open original job",
-                apply_url,
-                use_container_width=True,
-            )
-        else:
+    with st.container(key=f"job_drawer_actions_{job_id}"):
+        st.markdown("### Actions")
+        action_columns = st.columns((1, 1, 1, 1.25))
+        with action_columns[0]:
             st.button(
-                "Original URL unavailable",
-                disabled=True,
+                "Saved" if row["saved"] else "Save",
+                key=f"v22_dialog_save_{job_id}",
                 use_container_width=True,
+                on_click=_PAGES._toggle_job_saved,
+                args=(job_id, bool(row["saved"])),
             )
+        with action_columns[1]:
+            st.button(
+                "Restore" if row["skipped"] else "Pass",
+                key=f"v22_dialog_pass_{job_id}",
+                use_container_width=True,
+                on_click=_PAGES._toggle_job_skipped,
+                args=(job_id, bool(row["skipped"])),
+            )
+        with action_columns[2]:
+            st.button(
+                "Prepare",
+                key=f"v22_dialog_prepare_{job_id}",
+                type="primary",
+                use_container_width=True,
+                on_click=_PAGES._prepare_job,
+                args=(job_id,),
+            )
+        with action_columns[3]:
+            if apply_url:
+                st.link_button(
+                    "Open original job",
+                    apply_url,
+                    use_container_width=True,
+                )
+            else:
+                st.button(
+                    "Original URL unavailable",
+                    disabled=True,
+                    use_container_width=True,
+                )
 
     with st.expander("Decision evidence", expanded=False):
         st.caption(
