@@ -81,12 +81,10 @@ div[data-baseweb="modal"]{
  */
 body:has(.job-detail-drawer-marker) div[data-baseweb="modal"]{
     background:
-        radial-gradient(circle at 18% 12%,rgba(255,255,255,.34),transparent 30%),
-        radial-gradient(circle at 62% 82%,rgba(217,239,230,.28),transparent 35%),
-        linear-gradient(120deg,rgba(238,246,242,.28),rgba(223,234,230,.16)),
-        rgba(20,33,41,.16)!important;
-    backdrop-filter:blur(18px) saturate(1.16) brightness(1.03)!important;
-    -webkit-backdrop-filter:blur(18px) saturate(1.16) brightness(1.03)!important;
+        linear-gradient(128deg,rgba(255,255,255,.10),rgba(255,255,255,.03)),
+        rgba(232,240,236,.20)!important;
+    backdrop-filter:blur(6px) saturate(1.12) brightness(1.01)!important;
+    -webkit-backdrop-filter:blur(6px) saturate(1.12) brightness(1.01)!important;
 }
 body:has(.job-detail-drawer-marker) div[data-baseweb="modal"]::before{
     content:"";
@@ -94,7 +92,7 @@ body:has(.job-detail-drawer-marker) div[data-baseweb="modal"]::before{
     inset:0;
     pointer-events:none;
     background:
-        linear-gradient(115deg,rgba(255,255,255,.20),transparent 28%,rgba(255,255,255,.08) 58%,transparent 78%);
+        linear-gradient(115deg,rgba(255,255,255,.12),transparent 32%,rgba(255,255,255,.04) 62%,transparent 82%);
     mix-blend-mode:screen;
 }
 [data-testid="stDialog"]:has(.job-detail-drawer-marker),

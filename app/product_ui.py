@@ -8,7 +8,26 @@ from typing import Any
 import streamlit as st
 
 
-PASTELS = ("#DDF1FB", "#DDF8EA", "#FCE9CF", "#FBE2E4", "#FFF2C7", "#EBE6FB")
+PASTELS = (
+    "#DCEFE5",  # mint
+    "#DCEAF6",  # powder blue
+    "#F3DDE6",  # blush
+    "#F3E8C8",  # sand
+    "#E7DFF4",  # lavender
+    "#D9EEF0",  # aqua
+    "#F6E1D4",  # peach
+    "#E4F0D8",  # sage
+    "#F2E2D8",  # warm rose
+    "#DDE7F2",  # cloud blue
+    "#E6F4EC",  # soft jade
+    "#EEE2F1",  # lilac mist
+    "#EAF2D5",  # pistachio
+    "#D9E8F7",  # sky
+    "#F5DDD8",  # coral mist
+    "#F4EED8",  # cream
+    "#E2E4F5",  # periwinkle
+    "#F0E4D2",  # warm oat
+)
 
 
 def esc(value: Any, fallback: str = "Not available") -> str:
