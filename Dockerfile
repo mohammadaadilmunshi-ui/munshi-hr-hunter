@@ -28,6 +28,7 @@ COPY app ./app
 COPY config ./config
 COPY integrations ./integrations
 COPY migrations ./migrations
+COPY scripts/phase17_staging_migrate.py ./scripts/phase17_staging_migrate.py
 COPY scripts/render_n8n_deployment_workflow.py ./scripts/render_n8n_deployment_workflow.py
 COPY scripts/validate_container_environment_contract.py ./scripts/validate_container_environment_contract.py
 

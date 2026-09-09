@@ -11,6 +11,7 @@ import base64
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import streamlit as st
 
@@ -63,6 +64,102 @@ div[data-baseweb="modal"]{
     border-radius:22px!important;
     box-shadow:0 28px 90px rgba(20,33,41,.24)!important;
 }
+
+/* V2.3: job details use a context-preserving right-side glass drawer only. */
+@keyframes munshiJobDrawerIn{
+    from{transform:translateX(34px);opacity:.78}
+    to{transform:translateX(0);opacity:1}
+}
+.job-detail-drawer-marker{display:none!important}
+
+/*
+ * V2.4 liquid glass:
+ * Streamlit's stDialog wrapper spans the whole viewport. V2.3 blurred the
+ * modal layer but the opaque stDialog wrapper still hid the job grid.
+ * Make only the Opportunity drawer wrapper transparent, then glass the true
+ * modal backdrop from body:has(...), which works across the portal boundary.
+ */
+body:has(.job-detail-drawer-marker) div[data-baseweb="modal"]{
+    background:
+        linear-gradient(128deg,rgba(255,255,255,.10),rgba(255,255,255,.03)),
+        rgba(232,240,236,.20)!important;
+    backdrop-filter:blur(6px) saturate(1.12) brightness(1.01)!important;
+    -webkit-backdrop-filter:blur(6px) saturate(1.12) brightness(1.01)!important;
+}
+body:has(.job-detail-drawer-marker) div[data-baseweb="modal"]::before{
+    content:"";
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    background:
+        linear-gradient(115deg,rgba(255,255,255,.12),transparent 32%,rgba(255,255,255,.04) 62%,transparent 82%);
+    mix-blend-mode:screen;
+}
+[data-testid="stDialog"]:has(.job-detail-drawer-marker),
+[data-testid="stDialog"]:has(.job-detail-drawer-marker)>div{
+    background:transparent!important;
+}
+[data-testid="stDialog"]:has(.job-detail-drawer-marker) [role="dialog"]{
+    position:fixed!important;
+    top:0!important;
+    right:0!important;
+    bottom:0!important;
+    left:auto!important;
+    width:min(640px,94vw)!important;
+    max-width:min(640px,94vw)!important;
+    height:100dvh!important;
+    max-height:100dvh!important;
+    margin:0!important;
+    border-radius:26px 0 0 26px!important;
+    border-right:0!important;
+    border-color:rgba(206,215,208,.92)!important;
+    background:
+        linear-gradient(145deg,rgba(255,255,255,.92),rgba(246,250,247,.84))!important;
+    box-shadow:
+        -28px 0 78px rgba(20,33,41,.18),
+        inset 1px 0 0 rgba(255,255,255,.82)!important;
+    backdrop-filter:blur(26px) saturate(1.14)!important;
+    -webkit-backdrop-filter:blur(26px) saturate(1.14)!important;
+    overflow-y:auto!important;
+    overscroll-behavior:contain;
+    animation:munshiJobDrawerIn .22s cubic-bezier(.2,.72,.24,1) both;
+}
+[data-testid="stDialog"]:has(.job-detail-drawer-marker) [role="dialog"] h2{
+    font-size:clamp(1.55rem,2.3vw,2rem)!important;
+    line-height:1.16!important;
+    font-weight:700!important;
+    letter-spacing:-.035em!important;
+}
+[data-testid="stDialog"]:has(.job-detail-drawer-marker) [role="dialog"] h3{
+    margin-top:1.15rem!important;
+}
+[data-testid="stDialog"]:has(.job-detail-drawer-marker) [data-testid="stDialogContent"]{
+    padding-bottom:1rem!important;
+}
+[data-testid="stDialog"]:has(.job-detail-drawer-marker) .product-dialog-card{
+    background:rgba(255,255,255,.76)!important;
+    box-shadow:0 10px 30px rgba(20,33,41,.045)!important;
+}
+[class*="st-key-job_drawer_actions_"]{
+    position:sticky!important;
+    bottom:0!important;
+    z-index:30!important;
+    margin:1rem -.2rem -.15rem!important;
+    padding:.85rem .2rem .35rem!important;
+    background:linear-gradient(180deg,rgba(250,251,249,.58),rgba(250,251,249,.96) 28%)!important;
+    backdrop-filter:blur(16px)!important;
+    -webkit-backdrop-filter:blur(16px)!important;
+    border-top:1px solid rgba(223,229,224,.88)!important;
+}
+@media (max-width:700px){
+    [data-testid="stDialog"]:has(.job-detail-drawer-marker) [role="dialog"]{
+        width:100vw!important;
+        max-width:100vw!important;
+        border-radius:0!important;
+        border-left:0!important;
+    }
+}
+
 [data-testid="stDialog"] [data-testid="stMarkdownContainer"],
 [data-testid="stDialog"] [data-testid="stMarkdownContainer"] *{
     color:#142129!important;
@@ -463,6 +560,149 @@ def _tracker_rows_v22(limit: int = 100) -> list[dict[str, Any]]:
     return rows
 
 
+def _safe_linkedin_url(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return None
+    host = str(parsed.hostname or "").casefold()
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    if host != "linkedin.com" and not host.endswith(".linkedin.com"):
+        return None
+    return raw
+
+
+def _recruiter_contact_package(job_id: int) -> dict[str, Any]:
+    from app.database import get_connection
+    from app.universal_n8n_progress import recruiter_contacts_from_result
+
+    connection = get_connection()
+    try:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        empty = {
+            "contacts": [],
+            "contacts_sheet_url": "",
+            "outreach_sheet_url": "",
+        }
+        if "n8n_results" not in tables:
+            return empty
+
+        columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(n8n_results)"
+            ).fetchall()
+        }
+        wanted = [
+            "id",
+            "recruiter_names_json",
+            "recruiter_linkedin_urls_json",
+            "recruiter_contacts_json",
+            "recruiter_found",
+            "contacts_sheet_url",
+            "outreach_sheet_url",
+            "extra_outputs_json",
+            "completed_at",
+            "sent_at",
+        ]
+        selected = [name for name in wanted if name in columns]
+        if "id" not in selected:
+            return empty
+
+        rows = connection.execute(
+            f"SELECT {', '.join(selected)} FROM n8n_results "
+            "WHERE job_id=? ORDER BY id DESC LIMIT 25",
+            (int(job_id),),
+        ).fetchall()
+
+        fallback = dict(empty)
+        for record in rows:
+            value = dict(record)
+            contacts = recruiter_contacts_from_result(value)
+            contacts_sheet = str(value.get("contacts_sheet_url") or "").strip()
+            outreach_sheet = str(value.get("outreach_sheet_url") or "").strip()
+            if contacts:
+                return {
+                    "contacts": contacts,
+                    "contacts_sheet_url": contacts_sheet,
+                    "outreach_sheet_url": outreach_sheet,
+                }
+            if not fallback["contacts_sheet_url"] and contacts_sheet:
+                fallback["contacts_sheet_url"] = contacts_sheet
+            if not fallback["outreach_sheet_url"] and outreach_sheet:
+                fallback["outreach_sheet_url"] = outreach_sheet
+        return fallback
+    finally:
+        connection.close()
+
+
+def _render_recruiter_contacts(job_id: int) -> None:
+    package = _recruiter_contact_package(job_id)
+    contacts = list(package.get("contacts") or [])
+    contacts_sheet = _PAGES.safe_link(package.get("contacts_sheet_url"))
+    outreach_sheet = _PAGES.safe_link(package.get("outreach_sheet_url"))
+
+    if not contacts and not contacts_sheet and not outreach_sheet:
+        return
+
+    st.markdown("### Recruiter / hiring contacts")
+    st.caption(
+        "Recorded by the n8n preparation workflow for this job. "
+        "Nothing is inferred when contact evidence is missing."
+    )
+
+    for index, contact in enumerate(contacts[:8]):
+        with st.container(border=True):
+            left, right = st.columns((4, 1.25), gap="small")
+            with left:
+                name = str(contact.get("name") or "Recruiter / hiring contact")
+                title = str(contact.get("title") or "").strip()
+                email = str(contact.get("email") or "").strip()
+                st.markdown(
+                    f"**{_PAGES.esc(name, 'Recruiter / hiring contact')}**",
+                    unsafe_allow_html=True,
+                )
+                if title:
+                    st.caption(title)
+                if email:
+                    st.caption(f"Email: {email}")
+            with right:
+                linkedin = _safe_linkedin_url(contact.get("linkedin"))
+                if linkedin:
+                    st.link_button(
+                        "Open LinkedIn",
+                        linkedin,
+                        use_container_width=True,
+                    )
+                else:
+                    st.button(
+                        "LinkedIn not recorded",
+                        disabled=True,
+                        use_container_width=True,
+                        key=f"recruiter_no_linkedin_{job_id}_{index}",
+                    )
+
+    links = []
+    if contacts_sheet:
+        links.append(("Open contacts sheet", contacts_sheet))
+    if outreach_sheet:
+        links.append(("Open outreach sheet", outreach_sheet))
+    if links:
+        columns = st.columns(len(links), gap="small")
+        for column, (label, url) in zip(columns, links, strict=True):
+            with column:
+                st.link_button(label, url, use_container_width=True)
+
+
 def _job_bundle(job_id: int) -> dict[str, Any] | None:
     from app.database import get_connection
 
@@ -533,6 +773,12 @@ def _opportunity_dialog(job_id: int) -> None:
     if not row:
         st.warning("This stored opportunity is no longer available.")
         return
+
+    st.markdown(
+        '<span class="job-detail-drawer-marker" aria-hidden="true"></span>',
+        unsafe_allow_html=True,
+    )
+    st.session_state["last_viewed_job_id"] = int(job_id)
 
     latest = row["latest_result"]
     artifact = row["artifact_result"]
@@ -677,46 +923,49 @@ def _opportunity_dialog(job_id: int) -> None:
             "job yet. A completed queue state alone is not shown as a resume."
         )
 
-    st.markdown("### Actions")
-    action_columns = st.columns((1, 1, 1, 1.25))
-    with action_columns[0]:
-        st.button(
-            "Saved" if row["saved"] else "Save",
-            key=f"v22_dialog_save_{job_id}",
-            use_container_width=True,
-            on_click=_PAGES._toggle_job_saved,
-            args=(job_id, bool(row["saved"])),
-        )
-    with action_columns[1]:
-        st.button(
-            "Restore" if row["skipped"] else "Pass",
-            key=f"v22_dialog_pass_{job_id}",
-            use_container_width=True,
-            on_click=_PAGES._toggle_job_skipped,
-            args=(job_id, bool(row["skipped"])),
-        )
-    with action_columns[2]:
-        st.button(
-            "Prepare",
-            key=f"v22_dialog_prepare_{job_id}",
-            type="primary",
-            use_container_width=True,
-            on_click=_PAGES._prepare_job,
-            args=(job_id,),
-        )
-    with action_columns[3]:
-        if apply_url:
-            st.link_button(
-                "Open original job",
-                apply_url,
-                use_container_width=True,
-            )
-        else:
+    _render_recruiter_contacts(job_id)
+
+    with st.container(key=f"job_drawer_actions_{job_id}"):
+        st.markdown("### Actions")
+        action_columns = st.columns((1, 1, 1, 1.25))
+        with action_columns[0]:
             st.button(
-                "Original URL unavailable",
-                disabled=True,
+                "Saved" if row["saved"] else "Save",
+                key=f"v22_dialog_save_{job_id}",
                 use_container_width=True,
+                on_click=_PAGES._toggle_job_saved,
+                args=(job_id, bool(row["saved"])),
             )
+        with action_columns[1]:
+            st.button(
+                "Restore" if row["skipped"] else "Pass",
+                key=f"v22_dialog_pass_{job_id}",
+                use_container_width=True,
+                on_click=_PAGES._toggle_job_skipped,
+                args=(job_id, bool(row["skipped"])),
+            )
+        with action_columns[2]:
+            st.button(
+                "Prepare",
+                key=f"v22_dialog_prepare_{job_id}",
+                type="primary",
+                use_container_width=True,
+                on_click=_PAGES._prepare_job,
+                args=(job_id,),
+            )
+        with action_columns[3]:
+            if apply_url:
+                st.link_button(
+                    "Open original job",
+                    apply_url,
+                    use_container_width=True,
+                )
+            else:
+                st.button(
+                    "Original URL unavailable",
+                    disabled=True,
+                    use_container_width=True,
+                )
 
     with st.expander("Decision evidence", expanded=False):
         st.caption(
@@ -736,6 +985,19 @@ def _opportunity_dialog(job_id: int) -> None:
 
 
 def _job_detail_v22() -> None:
+    state_key = getattr(
+        _PAGES,
+        "_PRODUCT_JOB_DIALOG_STATE_KEY",
+        "_product_job_dialog_once",
+    )
+    queued = st.session_state.pop(state_key, None)
+    if queued is not None:
+        try:
+            _opportunity_dialog(int(queued))
+        except (TypeError, ValueError):
+            pass
+        return
+
     job_id = _consume_query_id("job", "_product_v22_job_once")
     if job_id is not None:
         _opportunity_dialog(job_id)

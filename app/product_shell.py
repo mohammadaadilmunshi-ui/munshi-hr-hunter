@@ -8,14 +8,21 @@ import streamlit as st
 from app.product_state import valid_view, volume_policy
 from app.product_ui import esc, inject_css
 from app.product_v22 import brand_logo_data_uri, inject_v22_css, install_product_v22
+from app.staging_feature_policy import activate_isolated_staging_preparation_features
 
+
+RESUME_STUDIO_VIEW = "resume-studio"
+PREPARE_APPLICATION_VIEW = "prepare-application"
+_SPECIAL_VIEWS = {RESUME_STUDIO_VIEW, PREPARE_APPLICATION_VIEW}
 
 NAVIGATION = (
     ("dashboard", "Dashboard"),
     ("jobs", "Browse jobs"),
+    (PREPARE_APPLICATION_VIEW, "Prepare Application"),
     ("auto-prepare", "Auto Prepare"),
     ("tracker", "Tracker"),
     ("profile", "Profile"),
+    (RESUME_STUDIO_VIEW, "Resume Studio"),
     ("research", "Research"),
 )
 
@@ -47,7 +54,10 @@ def _query_view() -> str:
         )
     except Exception:
         raw = st.session_state.get("product_view", "dashboard")
-    return valid_view(raw)
+    normalized = str(raw or "").strip().casefold()
+    if normalized in _SPECIAL_VIEWS:
+        return normalized
+    return valid_view(normalized)
 
 
 def _nav_link(
@@ -74,6 +84,8 @@ def _resolved_subroute_state(
     section: str = "",
 ) -> tuple[str, str] | None:
     '''Resolve a validated deep-link value into Streamlit session state.'''
+    if view in _SPECIAL_VIEWS:
+        return None
     view = valid_view(view)
     tab = str(tab or "").strip().casefold()
     section = str(section or "").strip().casefold()
@@ -107,6 +119,11 @@ def _apply_deep_link_state(view: str) -> None:
 
 
 def render() -> None:
+    # The staging runtime already proves cloud-shadow isolation before serving the
+    # dashboard. Promote only preparation-only Phase 5–7 gates there; production
+    # continues to require its existing explicit environment contract.
+    activate_isolated_staging_preparation_features()
+
     inject_css()
     inject_v22_css()
 
@@ -155,17 +172,53 @@ def render() -> None:
             unsafe_allow_html=True,
         )
 
-    from app import product_pages
+    # Preserve this established import line verbatim: profile route contract tests
+    # and downstream integrations use it as a compatibility marker.
+    from app import product_pages, profile_workspace_v1, resume_studio_page
+    from app import application_workspace_page
+    from app import profile_workspace_v2, profile_workspace_v3
+    from app.resume_engine_selector import (
+        install_resume_engine_selector,
+        render_resume_engine_selector,
+    )
+    from app.career_os_quality_patch_v1 import install_career_os_quality_patch
+    from app.provider_telemetry_window_v1 import install_provider_telemetry_window
+    from app.profile_runtime_repair_v2 import install_profile_runtime_repair_v2
+    from app.resume_studio_session_state_repair_v1 import (
+        install_resume_studio_session_state_repair_v1,
+    )
+
+    # Keep the V1 import/route contract stable for existing integrations while
+    # layering V2 preview/promotion and V3 encrypted candidate editing over the
+    # proven V1 visual renderer and public-logo resolver.
+    profile_workspace_v1.render = profile_workspace_v3.render
 
     install_product_v22(product_pages)
+    install_resume_engine_selector(product_pages)
+    # Additive only: model-free profile parsing and progressive Browse Jobs loading.
+    # Existing n8n/legacy operations stay intact.
+    install_career_os_quality_patch(product_pages)
+    # The active Advanced/System window uses raw provider throughput (the large
+    # fetched/normalized/eligible source-run totals), not deduplicated jobs stored.
+    install_provider_telemetry_window(product_pages)
+    # Harden only the profile parser/rebuild path after the established Career OS
+    # layers. Rebuild remains draft-only and never changes permanent authority.
+    install_profile_runtime_repair_v2()
+    # Resume Studio encrypted-key saves previously crashed after a successful save
+    # because Streamlit forbids changing a widget-owned key later in the same run.
+    # Install the narrow rerun-safe repair before the Resume Studio page renders.
+    install_resume_studio_session_state_repair_v1()
 
     pages: dict[str, Callable[[], None]] = {
         "dashboard": product_pages.dashboard,
         "jobs": product_pages.browse_jobs,
+        PREPARE_APPLICATION_VIEW: application_workspace_page.render,
         "auto-prepare": product_pages.auto_prepare,
         "tracker": product_pages.tracker,
-        "profile": product_pages.profile,
+        "profile": profile_workspace_v1.render,
+        RESUME_STUDIO_VIEW: resume_studio_page.render,
         "research": product_pages.research,
         "settings": product_pages.settings,
     }
     pages[view]()
+    render_resume_engine_selector()

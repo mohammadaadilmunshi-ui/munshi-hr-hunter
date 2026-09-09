@@ -51,10 +51,17 @@ def vault_available() -> bool:
 
 
 def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
+    """Ensure vault schema without implicitly committing a caller transaction.
+
+    ``sqlite3.Connection.executescript()`` issues an implicit COMMIT before the
+    script when a transaction is already open. That is unsafe for shared schema
+    helpers used inside larger atomic writes. This schema is one statement, so a
+    normal ``execute()`` preserves the caller's transaction boundary.
+    """
     owns_connection = connection is None
     connection = connection or get_connection()
     try:
-        connection.executescript("""
+        connection.execute("""
         CREATE TABLE IF NOT EXISTS credential_secret (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             credential_type TEXT NOT NULL,
@@ -69,9 +76,11 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
             UNIQUE(credential_type, account_label)
         );
         """)
-        if owns_connection: connection.commit()
+        if owns_connection:
+            connection.commit()
     finally:
-        if owns_connection: connection.close()
+        if owns_connection:
+            connection.close()
 
 
 def store_secret(credential_type: str, secret: str, *, account_label: str = "default") -> None:
