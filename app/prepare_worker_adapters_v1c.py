@@ -50,6 +50,7 @@ SUBMISSION_AUTHORITY = False
 
 _APPLY_SESSION_PATH = "/v1/complete-loop/sessions"
 _APPLY_PREPARE_JOB_PATH = "/v1/complete-loop/preparation-jobs/{job_id}"
+_APPLY_RESOLUTION_TASK_PATH = "/v1/complete-loop/preparation-jobs/{job_id}/resolution-tasks"
 _RUNNING_APPLY_STATES = frozenset({"QUEUED", "RUNNING"})
 _TERMINAL_APPLY_STATES = frozenset(
     {"WAITING_INPUT", "READY_FOR_REVIEW", "BLOCKED", "FAILED_SAFELY", "CANCELLED"}
@@ -480,6 +481,81 @@ def _read_apply_prepare_job(
     )
 
 
+def _read_apply_resolution_tasks(
+    *, job_id: str, tenant_id: str, user_id: str,
+) -> dict[str, Any]:
+    base = _apply_base_url()
+    return _json_request(
+        method="GET",
+        url=base + _APPLY_RESOLUTION_TASK_PATH.format(job_id=str(job_id)),
+        headers=_apply_headers(tenant_id=tenant_id, user_id=user_id),
+    )
+
+
+_RUNTIME_TASK_STATUSES = frozenset({"PENDING", "RESOLVING", "WAITING_FOR_USER"})
+_RUNTIME_TASK_SAFE_FIELDS = (
+    "schema_version", "task_id", "application_id", "session_id",
+    "checkpoint_id", "page_id", "control_id", "question_id", "question",
+    "semantic_type", "category", "sensitivity_class", "status", "risk_level", "auto_resolvable",
+    "requires_user", "grouping_scope", "group_key", "reason",
+    "created_at", "updated_at",
+)
+
+
+def _runtime_unresolved_key(task_id: str) -> str:
+    import hashlib
+    token = hashlib.sha256(str(task_id).encode("utf-8")).hexdigest()[:24]
+    return f"apply.runtime_question:{token}"
+
+
+def _validate_runtime_resolution_sync(
+    payload: Mapping[str, Any], *, prepare_job_id: str, session_id: str,
+    application_id: str, plan_id: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    if (
+        str(payload.get("job_id") or "") != str(prepare_job_id)
+        or str(payload.get("session_id") or "") != str(session_id)
+        or str(payload.get("application_id") or "") != str(application_id)
+        or str(payload.get("plan_id") or "") != str(plan_id)
+        or str(payload.get("prepare_state") or "") != "WAITING_INPUT"
+        or payload.get("resolution_values_exposed") is not False
+        or payload.get("final_review_authority") is not False
+        or payload.get("submission_authority") is not False
+    ):
+        raise RuntimeError("Apply runtime resolution read model is not exactly correlated.")
+    raw_tasks = payload.get("resolution_tasks")
+    if not isinstance(raw_tasks, list):
+        raise RuntimeError("Apply runtime resolution task list is invalid.")
+    safe_tasks = []
+    unresolved = []
+    seen = set()
+    for raw in raw_tasks:
+        if not isinstance(raw, Mapping):
+            raise RuntimeError("Apply runtime resolution task entry is invalid.")
+        if "resolution" in raw:
+            raise RuntimeError("Apply runtime resolution read model exposed a resolution value.")
+        task_id = str(raw.get("task_id") or "").strip()
+        if not task_id or task_id in seen:
+            raise RuntimeError("Apply runtime resolution task identity is invalid.")
+        seen.add(task_id)
+        if (
+            str(raw.get("application_id") or "") != str(application_id)
+            or str(raw.get("session_id") or "") != str(session_id)
+            or str(raw.get("status") or "") not in _RUNTIME_TASK_STATUSES
+            or raw.get("submission_authority") is not False
+        ):
+            raise RuntimeError("Apply runtime resolution task binding is invalid.")
+        sanitized = {key: raw.get(key) for key in _RUNTIME_TASK_SAFE_FIELDS if raw.get(key) is not None}
+        sanitized["submission_authority"] = False
+        safe_tasks.append(sanitized)
+        unresolved.append(_runtime_unresolved_key(task_id))
+    if int(payload.get("open_task_count") or 0) != len(safe_tasks):
+        raise RuntimeError("Apply runtime resolution task count is inconsistent.")
+    safe_tasks.sort(key=lambda row: str(row["task_id"]))
+    unresolved.sort()
+    return safe_tasks, unresolved
+
+
 def _plan_permissions() -> dict[str, bool]:
     return {
         "background_prepare": True,
@@ -503,6 +579,7 @@ def run_ats_form_preparation_once(
     plan_delivery: Callable[..., Any] | None = None,
     session_starter: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
     status_reader: Callable[..., Mapping[str, Any]] | None = None,
+    resolution_task_reader: Callable[..., Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Start/poll Apply's pre-submit browser preparation.
 
@@ -572,6 +649,7 @@ def run_ats_form_preparation_once(
     deliver = plan_delivery or application_plan_delivery_v2.deliver_application_plan
     start_session = session_starter or _start_apply_session
     read_status = status_reader or _read_apply_prepare_job
+    read_resolutions = resolution_task_reader or _read_apply_resolution_tasks
 
     try:
         plan = application_plan_v2.prepare_application_plan(
@@ -678,10 +756,42 @@ def run_ats_form_preparation_once(
 
         state = str(latest.get("state") or "")
         if state == "WAITING_INPUT":
+            resolution_payload = dict(
+                read_resolutions(
+                    job_id=prepare_job_id,
+                    tenant_id=str(plan["tenant_id"]),
+                    user_id=str(plan["user_id"]),
+                )
+            )
+            runtime_tasks, unresolved_keys = _validate_runtime_resolution_sync(
+                resolution_payload,
+                prepare_job_id=prepare_job_id,
+                session_id=str(session["session_id"]),
+                application_id=str(plan["application_id"]),
+                plan_id=str(plan["plan_id"]),
+            )
+            if not runtime_tasks:
+                orchestrator.fail_task(
+                    task_id=str(task["task_id"]),
+                    worker_id=str(worker_id),
+                    error_code="APPLY_RUNTIME_QUESTION_SYNC_PENDING",
+                    error_message="Apply reported WAITING_INPUT before runtime question metadata became available.",
+                    retryable=True,
+                )
+                return {
+                    "operation_id": str(operation_id),
+                    "claimed": True,
+                    "task_status": "PENDING",
+                    "operation_status": "RUNNING",
+                    "apply_prepare_job_id": prepare_job_id,
+                    "apply_prepare_state": state,
+                    "runtime_question_sync_pending": True,
+                    "submission_authority": False,
+                }
             result = orchestrator.task_needs_input(
                 task_id=str(task["task_id"]),
                 worker_id=str(worker_id),
-                unresolved_keys=["apply.runtime_questions"],
+                unresolved_keys=unresolved_keys,
                 output={
                     "version": WORKER_VERSION,
                     "plan_id": str(plan["plan_id"]),
@@ -690,13 +800,18 @@ def run_ats_form_preparation_once(
                     "apply_session_id": str(session["session_id"]),
                     "apply_prepare_job_id": prepare_job_id,
                     "apply_prepare_state": state,
-                    "runtime_question_details_pending_sync": True,
+                    "runtime_resolution_tasks": runtime_tasks,
+                    "runtime_question_details_synced": True,
+                    "runtime_question_details_pending_sync": False,
+                    "runtime_resolution_values_persisted": False,
+                    "replacement_plan_authority": "application_plan_resolution_v2",
                     "submission_authority": False,
                 },
             )
             return {
                 **result,
                 "claimed": True,
+                "runtime_resolution_tasks": runtime_tasks,
                 "submission_authority": False,
             }
 

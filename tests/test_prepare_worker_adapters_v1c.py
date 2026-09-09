@@ -446,11 +446,13 @@ def test_apply_waiting_input_maps_to_hunter_needs_input(worker_db, monkeypatch):
         plan_delivery=lambda **kwargs: _delivery(),
         session_starter=lambda plan: _session("WAITING_INPUT"),
         status_reader=lambda **kwargs: {},
+        resolution_task_reader=lambda **kwargs: _runtime_resolution_payload(),
     )
     assert result["operation_status"] == "NEEDS_INPUT"
-    assert "apply.runtime_questions" in orchestrator.prepare_operation(
-        operation["operation_id"]
-    )["unresolved"]
+    unresolved = orchestrator.prepare_operation(operation["operation_id"])["unresolved"]
+    assert len(unresolved) == 1
+    assert unresolved[0].startswith("apply.runtime_question:")
+    assert "apply.runtime_questions" not in unresolved
 
 
 def test_apply_terminal_failure_fails_safely(worker_db, monkeypatch):
@@ -515,3 +517,117 @@ def test_v1c_never_grants_submission_authority(worker_db):
     permissions = workers._plan_permissions()
     assert permissions["final_review"] is False
     assert permissions["final_submit"] is False
+
+
+# V1D runtime NEEDS_INPUT synchronization
+
+def _runtime_resolution_payload(*, include_resolution=False, session_id="session-94"):
+    task = {
+        "schema_version": "resolution-task-v1", "task_id": "runtime-task-portfolio",
+        "application_id": "application-94", "session_id": session_id,
+        "checkpoint_id": "checkpoint-runtime", "page_id": "page-runtime",
+        "control_id": "portfolio", "question_id": "portfolio",
+        "question": "Portfolio URL", "semantic_type": "URL", "category": "MISSING_FACT",
+        "sensitivity_class": "NORMAL", "status": "WAITING_FOR_USER", "risk_level": "LOW",
+        "auto_resolvable": False, "requires_user": True,
+        "grouping_scope": "APPLICATION", "group_key": "application-94",
+        "reason": "No confirmed answer",
+        "created_at": "2026-09-09T12:00:00+00:00",
+        "updated_at": "2026-09-09T12:00:01+00:00",
+        "submission_authority": False,
+    }
+    if include_resolution:
+        task["resolution"] = {"value": "SECRET-MUST-NOT-PERSIST"}
+    return {
+        "version": "munshi-runtime-resolution-read-v1",
+        "job_id": "prepare-job-94", "session_id": "session-94",
+        "application_id": "application-94", "plan_id": "plan-94",
+        "provider": "GREENHOUSE", "prepare_state": "WAITING_INPUT",
+        "resolution_tasks": [task], "open_task_count": 1,
+        "resolution_values_exposed": False, "final_review_authority": False,
+        "submission_authority": False,
+    }
+
+
+def test_apply_waiting_input_syncs_exact_structured_runtime_questions(worker_db, monkeypatch):
+    operation = _ready_ats(worker_db, monkeypatch, "v1d-runtime-sync")
+    monkeypatch.setattr(workers.application_plan_v2, "prepare_application_plan", lambda **kwargs: _fake_plan())
+    result = workers.run_ats_form_preparation_once(
+        operation_id=operation["operation_id"], worker_id="ats-worker",
+        poll_interval_seconds=0, plan_delivery=lambda **kwargs: _delivery(),
+        session_starter=lambda plan: _session("WAITING_INPUT"),
+        status_reader=lambda **kwargs: {},
+        resolution_task_reader=lambda **kwargs: _runtime_resolution_payload(),
+    )
+    assert result["operation_status"] == "NEEDS_INPUT"
+    persisted = _task(operation["operation_id"], orchestrator.TASK_ATS_FORM_PREPARATION)
+    output = persisted["output"]
+    assert output["runtime_question_details_synced"] is True
+    assert output["runtime_question_details_pending_sync"] is False
+    assert output["runtime_resolution_values_persisted"] is False
+    assert output["replacement_plan_authority"] == "application_plan_resolution_v2"
+    assert output["runtime_resolution_tasks"][0]["question"] == "Portfolio URL"
+    assert output["runtime_resolution_tasks"][0]["sensitivity_class"] == "NORMAL"
+    assert "resolution" not in output["runtime_resolution_tasks"][0]
+    assert "SECRET-MUST-NOT-PERSIST" not in repr(output)
+    unresolved = orchestrator.prepare_operation(operation["operation_id"])["unresolved"]
+    assert len(unresolved) == 1
+    assert unresolved[0].startswith("apply.runtime_question:")
+    assert "apply.runtime_questions" not in unresolved
+
+
+def test_runtime_sync_rejects_any_resolution_value_and_requeues(worker_db, monkeypatch):
+    operation = _ready_ats(worker_db, monkeypatch, "v1d-resolution-leak")
+    monkeypatch.setattr(workers.application_plan_v2, "prepare_application_plan", lambda **kwargs: _fake_plan())
+    with pytest.raises(RuntimeError, match="exposed a resolution value"):
+        workers.run_ats_form_preparation_once(
+            operation_id=operation["operation_id"], worker_id="ats-worker",
+            poll_interval_seconds=0, plan_delivery=lambda **kwargs: _delivery(),
+            session_starter=lambda plan: _session("WAITING_INPUT"),
+            status_reader=lambda **kwargs: {},
+            resolution_task_reader=lambda **kwargs: _runtime_resolution_payload(include_resolution=True),
+        )
+    task = _task(operation["operation_id"], orchestrator.TASK_ATS_FORM_PREPARATION)
+    assert task["status"] == "PENDING"
+    assert "SECRET-MUST-NOT-PERSIST" not in repr(task)
+
+
+def test_runtime_sync_rejects_cross_session_task(worker_db, monkeypatch):
+    operation = _ready_ats(worker_db, monkeypatch, "v1d-cross-session")
+    monkeypatch.setattr(workers.application_plan_v2, "prepare_application_plan", lambda **kwargs: _fake_plan())
+    payload = _runtime_resolution_payload(session_id="session-other")
+    payload["session_id"] = "session-94"
+    with pytest.raises(RuntimeError, match="task binding"):
+        workers.run_ats_form_preparation_once(
+            operation_id=operation["operation_id"], worker_id="ats-worker",
+            poll_interval_seconds=0, plan_delivery=lambda **kwargs: _delivery(),
+            session_starter=lambda plan: _session("WAITING_INPUT"), status_reader=lambda **kwargs: {},
+            resolution_task_reader=lambda **kwargs: payload,
+        )
+
+
+def test_waiting_input_before_task_visibility_requeues_for_safe_sync(worker_db, monkeypatch):
+    operation = _ready_ats(worker_db, monkeypatch, "v1d-sync-race")
+    monkeypatch.setattr(workers.application_plan_v2, "prepare_application_plan", lambda **kwargs: _fake_plan())
+    payload = _runtime_resolution_payload()
+    payload["resolution_tasks"] = []
+    payload["open_task_count"] = 0
+    result = workers.run_ats_form_preparation_once(
+        operation_id=operation["operation_id"], worker_id="ats-worker",
+        poll_interval_seconds=0, plan_delivery=lambda **kwargs: _delivery(),
+        session_starter=lambda plan: _session("WAITING_INPUT"), status_reader=lambda **kwargs: {},
+        resolution_task_reader=lambda **kwargs: payload,
+    )
+    assert result["task_status"] == "PENDING"
+    assert result["runtime_question_sync_pending"] is True
+    assert result["submission_authority"] is False
+
+
+def test_runtime_sync_rejects_authority_escalation():
+    payload = _runtime_resolution_payload()
+    payload["submission_authority"] = True
+    with pytest.raises(RuntimeError, match="not exactly correlated"):
+        workers._validate_runtime_resolution_sync(
+            payload, prepare_job_id="prepare-job-94", session_id="session-94",
+            application_id="application-94", plan_id="plan-94",
+        )
