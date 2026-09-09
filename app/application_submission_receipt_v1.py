@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
+from app import application_lifecycle_authority_v1
 from app import application_submit_command_v1
 from app.database import get_connection
 from app.tenant_foundation import current_owner, ensure_schema as ensure_tenant_schema
@@ -444,30 +445,15 @@ def _lifecycle_after_receipt(
     receipt_id: str,
     receipt: Mapping[str, Any],
 ) -> str:
+    # Route current-state mutation through canonical lifecycle authority.
     application_id = str(receipt["application_id"])
-    row = connection.execute(
-        """SELECT * FROM application_lifecycle_records
-           WHERE application_id=? AND tenant_id=? AND user_id=?""",
-        (application_id, owner.tenant_id, owner.user_id),
-    ).fetchone()
-
     submitted_at = str(receipt["submitted_at"])
     verified_at = str(receipt["verified_at"])
     provider = str(receipt["provider"])
     provider_application_id = str(receipt["provider_application_id"])
     fixture_job_id = int(command["fixture_job_id"])
 
-    if row is not None:
-        prior_receipt = row["verified_receipt_id"]
-        if prior_receipt not in (None, receipt_id):
-            raise ValueError(
-                "Application lifecycle is already bound to another verified receipt."
-            )
-        if str(row["provider"]) != provider:
-            raise ValueError("Application lifecycle provider binding changed.")
-        if row["provider_application_id"] not in (None, provider_application_id):
-            raise ValueError("Application lifecycle provider identity changed.")
-
+    # Preserve V1 receipt evidence events for compatibility/audit.
     _insert_lifecycle_event(
         connection,
         owner=owner,
@@ -489,60 +475,23 @@ def _lifecycle_after_receipt(
         provider_application_id=provider_application_id,
     )
 
-    if row is None:
-        connection.execute(
-            """INSERT INTO application_lifecycle_records(
-                   application_id,tenant_id,user_id,job_id,provider,
-                   provider_application_id,state,verified_receipt_id,state_version,
-                   submitted_at,verified_at,awaiting_response_at
-               ) VALUES (?,?,?,?,?,?,'AWAITING_RESPONSE',?,2,?,?,?)""",
-            (
-                application_id,
-                owner.tenant_id,
-                owner.user_id,
-                fixture_job_id,
-                provider,
-                provider_application_id,
-                receipt_id,
-                submitted_at,
-                verified_at,
-                verified_at,
-            ),
-        )
-        state = "AWAITING_RESPONSE"
-    else:
-        state = str(row["state"])
-        # Never regress a CRM record that has already advanced beyond waiting.
-        advanced = {"ASSESSMENT", "INTERVIEW", "OFFER", "REJECTED", "WITHDRAWN"}
-        if state not in advanced:
-            connection.execute(
-                """UPDATE application_lifecycle_records
-                      SET provider_application_id=?,
-                          state='AWAITING_RESPONSE',
-                          verified_receipt_id=?,
-                          state_version=CASE
-                              WHEN state='AWAITING_RESPONSE' THEN state_version
-                              ELSE state_version+2
-                          END,
-                          submitted_at=COALESCE(submitted_at,?),
-                          verified_at=COALESCE(verified_at,?),
-                          awaiting_response_at=COALESCE(awaiting_response_at,?),
-                          updated_at=CURRENT_TIMESTAMP
-                    WHERE application_id=? AND tenant_id=? AND user_id=?""",
-                (
-                    provider_application_id,
-                    receipt_id,
-                    submitted_at,
-                    verified_at,
-                    verified_at,
-                    application_id,
-                    owner.tenant_id,
-                    owner.user_id,
-                ),
-            )
-            state = "AWAITING_RESPONSE"
+    state = application_lifecycle_authority_v1.record_verified_receipt(
+        connection,
+        owner=owner,
+        application_id=application_id,
+        job_id=fixture_job_id,
+        provider=provider,
+        provider_application_id=provider_application_id,
+        receipt_id=receipt_id,
+        submitted_at=submitted_at,
+        verified_at=verified_at,
+        provenance={
+            "receipt_digest": receipt_digest(receipt),
+            "verification_method": receipt["verification_method"],
+            "verification_attempt_id": receipt["verification_attempt_id"],
+        },
+    )
 
-    # Existing Hunter duplicate prevention already reads this flag.
     if (
         connection.execute(
             "UPDATE jobs SET already_applied=1,updated_at=CURRENT_TIMESTAMP WHERE id=?",
@@ -553,7 +502,6 @@ def _lifecycle_after_receipt(
         raise RuntimeError("Verified receipt fixture job disappeared during CRM commit.")
 
     return state
-
 
 def ingest_verified_receipt(
     *,
