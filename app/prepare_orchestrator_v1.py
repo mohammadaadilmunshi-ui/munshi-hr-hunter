@@ -363,9 +363,11 @@ def _refresh_operation(
         if isinstance(values, list):
             unresolved.extend(str(value) for value in values if str(value).strip())
 
+    # FAILED is terminal. Retryable failures are requeued as PENDING by
+    # fail_task(), so any required task left in FAILED must fail the operation
+    # safely even when the failure was declared non-retryable on attempt 1.
     required_failed = any(
         str(row["status"]) == "FAILED"
-        and int(row["attempts"]) >= int(row["max_attempts"])
         for row in required
     )
     required_needs_input = any(
@@ -695,6 +697,74 @@ def claim_ready_tasks(
         raise
     finally:
         connection.close()
+
+
+
+def heartbeat_task(
+    *,
+    task_id: str,
+    worker_id: str,
+    lease_seconds: int = 300,
+) -> dict[str, Any]:
+    """Extend one RUNNING Prepare task lease owned by the exact worker.
+
+    This supports long-running cross-service background preparation without
+    weakening exactly-one-worker ownership. It grants no submission authority.
+    """
+    task_id = _text(task_id, "Task id", 240)
+    worker_id = _text(worker_id, "Worker id", 160)
+    if int(lease_seconds) < 30 or int(lease_seconds) > 3600:
+        raise ValueError("Lease seconds must be between 30 and 3600.")
+
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        owner = current_owner(connection)
+        if connection.in_transaction:
+            connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """SELECT * FROM prepare_tasks_v1
+               WHERE task_id=? AND tenant_id=? AND user_id=?""",
+            (task_id, owner.tenant_id, owner.user_id),
+        ).fetchone()
+        if row is None:
+            raise LookupError("Prepare task was not found for this owner.")
+        if str(row["status"]) != "RUNNING":
+            raise ValueError("Prepare task is not currently RUNNING.")
+        if str(row["lease_owner"] or "") != worker_id:
+            raise PermissionError("Prepare task lease belongs to another worker.")
+
+        lease_expires = (_now() + timedelta(seconds=int(lease_seconds))).isoformat()
+        updated = connection.execute(
+            """UPDATE prepare_tasks_v1
+                  SET lease_expires_at=?,updated_at=CURRENT_TIMESTAMP
+                WHERE task_id=? AND tenant_id=? AND user_id=?
+                  AND status='RUNNING' AND lease_owner=?""",
+            (
+                lease_expires,
+                task_id,
+                owner.tenant_id,
+                owner.user_id,
+                worker_id,
+            ),
+        )
+        if int(updated.rowcount or 0) != 1:
+            raise RuntimeError("Prepare task lease changed concurrently.")
+        connection.commit()
+        return {
+            "task_id": task_id,
+            "worker_id": worker_id,
+            "status": "RUNNING",
+            "lease_expires_at": lease_expires,
+            "submission_authority": False,
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
 
 
 def _task_for_worker(

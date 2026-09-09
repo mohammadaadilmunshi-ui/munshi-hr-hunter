@@ -1,0 +1,517 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from app import database
+from app import prepare_orchestrator_v1 as orchestrator
+from app import prepare_worker_adapters_v1c as workers
+
+
+OWNER = SimpleNamespace(tenant_id="default", user_id="owner")
+JOB_DIGEST = "a" * 64
+PROJECTION_DIGEST = "b" * 64
+PROFILE_DIGEST = "c" * 64
+
+
+@pytest.fixture()
+def worker_db(hunter_db, monkeypatch):
+    monkeypatch.setenv(workers.WORKERS_ENV, "1")
+    monkeypatch.setenv(workers.ATS_RUNTIME_ENV, "1")
+    monkeypatch.setattr(orchestrator, "current_owner", lambda _connection: OWNER)
+    monkeypatch.setattr(
+        orchestrator,
+        "safe_owned_job_snapshot",
+        lambda job_id: {
+            "job": {"id": int(job_id)},
+            "job_snapshot_sha256": JOB_DIGEST,
+        },
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "current_application_truth_projection",
+        lambda job_id: {
+            "projection_digest": PROJECTION_DIGEST,
+            "candidate_profile_binding": {"profile_digest": PROFILE_DIGEST},
+            "job_context": {"job_snapshot_sha256": JOB_DIGEST},
+        },
+    )
+
+    connection = database.get_connection()
+    try:
+        connection.execute(
+            "INSERT OR IGNORE INTO tenants(tenant_id,display_name) VALUES('default','Default')"
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO app_users(user_id,display_name) VALUES('owner','Owner')"
+        )
+        connection.execute(
+            """INSERT OR IGNORE INTO tenant_memberships(tenant_id,user_id,role)
+               VALUES('default','owner','owner')"""
+        )
+        connection.execute(
+            """INSERT OR REPLACE INTO jobs(
+                   id,job_fingerprint,source,company_name,title,apply_url
+               ) VALUES(
+                   94,'prepare-worker-v1c-job-94','fixture','Acme','People Analyst',
+                   'https://boards.greenhouse.io/acme/jobs/94'
+               )"""
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    orchestrator.ensure_schema()
+    return hunter_db
+
+
+def _start(key):
+    return orchestrator.start_prepare(
+        application_id="application-94",
+        job_id=94,
+        engine="NATIVE",
+        idempotency_key=key,
+    )
+
+
+def _task(operation_id, kind):
+    operation = orchestrator.prepare_operation(operation_id)
+    return next(row for row in operation["tasks"] if row["task_kind"] == kind)
+
+
+def _complete_root(operation_id, kind, worker_id, output):
+    claimed = orchestrator.claim_ready_tasks(
+        operation_id=operation_id,
+        worker_id=worker_id,
+        limit=1,
+        task_kinds=[kind],
+    )
+    assert len(claimed) == 1
+    return orchestrator.complete_task(
+        task_id=claimed[0]["task_id"],
+        worker_id=worker_id,
+        output=output,
+    )
+
+
+def _resume_output():
+    return {
+        "resume_version_id": "resume-v5-94",
+        "candidate_profile_digest": PROFILE_DIGEST,
+        "job_snapshot_sha256": JOB_DIGEST,
+        "pdf": {
+            "artifact_sha256": "d" * 64,
+            "page_count": 1,
+        },
+        "submission_authority": False,
+    }
+
+
+def _answer_output():
+    return {
+        "candidate_profile_digest": PROFILE_DIGEST,
+        "application_truth_projection_digest": PROJECTION_DIGEST,
+        "job_snapshot_sha256": JOB_DIGEST,
+        "requires_ats_form_confirmation": True,
+        "submission_authority": False,
+    }
+
+
+def _cover_output(decision="NOT_REQUIRED"):
+    return {
+        "decision": decision,
+        "requires_ats_form_confirmation": True,
+        "submission_authority": False,
+    }
+
+
+def _ready_dependencies(operation_id, *, cover="NOT_REQUIRED"):
+    _complete_root(
+        operation_id,
+        orchestrator.TASK_RESUME,
+        "resume-worker",
+        _resume_output(),
+    )
+    _complete_root(
+        operation_id,
+        orchestrator.TASK_ANSWER_RESOLUTION,
+        "answer-worker",
+        _answer_output(),
+    )
+    _complete_root(
+        operation_id,
+        orchestrator.TASK_COVER_LETTER_DECISION,
+        "cover-worker",
+        _cover_output(cover),
+    )
+
+
+def _fake_ready_package():
+    return {
+        "package_id": "preflight-94",
+        "package_digest": "e" * 64,
+        "status": "READY_TO_APPLY",
+        "job_id": 94,
+        "job_snapshot_sha256": JOB_DIGEST,
+        "resume_version_id": "resume-v5-94",
+        "snapshot": {
+            "application_question_state": {
+                "complete": True,
+                "unresolved_question_keys": [],
+            },
+            "readiness": {"blockers": []},
+        },
+    }
+
+
+def _run_preflight_ready(operation, monkeypatch):
+    monkeypatch.setattr(
+        workers.opportunity_intelligence_v3,
+        "evaluate_job",
+        lambda job_id, persist=True: {
+            "evaluation_id": "opportunity-94",
+            "result_sha256": "f" * 64,
+        },
+    )
+    monkeypatch.setattr(
+        workers.preflight_v1,
+        "prepare_preflight_package",
+        lambda **kwargs: _fake_ready_package(),
+    )
+    return workers.run_application_preflight_once(
+        operation_id=operation["operation_id"],
+        worker_id="preflight-worker",
+    )
+
+
+def test_preflight_worker_converges_known_requirement_package(worker_db, monkeypatch):
+    operation = _start("v1c-preflight-ready")
+    _ready_dependencies(operation["operation_id"])
+
+    result = _run_preflight_ready(operation, monkeypatch)
+    assert result["task_status"] == "SUCCEEDED"
+    output = result["output"]
+    assert output["preflight_status"] == "READY_TO_APPLY"
+    assert output["known_requirement_set_complete"] is True
+    assert output["live_form_discovery_pending"] is True
+    assert output["employer_form_claimed_complete"] is False
+    assert output["submission_authority"] is False
+
+
+def test_preflight_worker_passes_v5_resume_and_known_scope(worker_db, monkeypatch):
+    operation = _start("v1c-preflight-args")
+    _ready_dependencies(operation["operation_id"])
+    seen = {}
+
+    monkeypatch.setattr(
+        workers.opportunity_intelligence_v3,
+        "evaluate_job",
+        lambda job_id, persist=True: {
+            "evaluation_id": "opportunity-94",
+            "result_sha256": "f" * 64,
+        },
+    )
+
+    def capture(**kwargs):
+        seen.update(kwargs)
+        return _fake_ready_package()
+
+    monkeypatch.setattr(workers.preflight_v1, "prepare_preflight_package", capture)
+    workers.run_application_preflight_once(
+        operation_id=operation["operation_id"],
+        worker_id="preflight-worker",
+    )
+
+    assert seen["resume_version_id"] == "resume-v5-94"
+    assert seen["application_questions_complete"] is True
+    assert seen["unresolved_question_keys"] == []
+
+
+def test_preflight_not_ready_becomes_needs_input(worker_db, monkeypatch):
+    operation = _start("v1c-preflight-needs-input")
+    _ready_dependencies(operation["operation_id"])
+
+    monkeypatch.setattr(
+        workers.opportunity_intelligence_v3,
+        "evaluate_job",
+        lambda job_id, persist=True: {
+            "evaluation_id": "opportunity-94",
+            "result_sha256": "f" * 64,
+        },
+    )
+    package = _fake_ready_package()
+    package["status"] = "NEEDS_INPUT"
+    package["snapshot"]["readiness"]["blockers"] = ["truth_binding_stale"]
+    monkeypatch.setattr(
+        workers.preflight_v1,
+        "prepare_preflight_package",
+        lambda **kwargs: package,
+    )
+
+    result = workers.run_application_preflight_once(
+        operation_id=operation["operation_id"],
+        worker_id="preflight-worker",
+    )
+    assert result["operation_status"] == "NEEDS_INPUT"
+    assert "preflight.blocker:truth_binding_stale" in orchestrator.prepare_operation(
+        operation["operation_id"]
+    )["unresolved"]
+
+
+def test_task_heartbeat_requires_exact_worker(worker_db):
+    operation = _start("v1c-heartbeat")
+    _ready_dependencies(operation["operation_id"])
+    # APPLICATION_PREFLIGHT is now ready.
+    claimed = orchestrator.claim_ready_tasks(
+        operation_id=operation["operation_id"],
+        worker_id="preflight-owner",
+        limit=1,
+        task_kinds=[orchestrator.TASK_APPLICATION_PREFLIGHT],
+    )
+    assert len(claimed) == 1
+
+    heartbeat = orchestrator.heartbeat_task(
+        task_id=claimed[0]["task_id"],
+        worker_id="preflight-owner",
+        lease_seconds=300,
+    )
+    assert heartbeat["status"] == "RUNNING"
+    assert heartbeat["submission_authority"] is False
+
+    with pytest.raises(PermissionError, match="another worker"):
+        orchestrator.heartbeat_task(
+            task_id=claimed[0]["task_id"],
+            worker_id="intruder",
+            lease_seconds=300,
+        )
+
+
+def _fake_plan():
+    return {
+        "plan_id": "plan-94",
+        "plan_digest": "1" * 64,
+        "application_id": "application-94",
+        "tenant_id": "default",
+        "user_id": "owner",
+        "provider": "GREENHOUSE",
+        "status": "READY_TO_APPLY",
+        "executable": True,
+        "submission_authority": False,
+        "snapshot": {
+            "permissions": {
+                "background_prepare": True,
+                "resume_upload": True,
+                "cover_letter_upload": False,
+                "normal_answer_autofill": True,
+                "protected_fact_execution": False,
+                "self_id_execution": False,
+                "final_review": False,
+                "final_submit": False,
+            },
+            "unresolved": [],
+        },
+    }
+
+
+def _delivery():
+    return SimpleNamespace(
+        state="PLAN_ACCEPTED",
+        handoff_id="handoff-94",
+        plan_id="plan-94",
+        plan_digest="1" * 64,
+        replayed=False,
+        submission_authority=False,
+    )
+
+
+def _session(state="QUEUED"):
+    return {
+        "session_id": "session-94",
+        "application_id": "application-94",
+        "plan_id": "plan-94",
+        "state": "SESSION_STARTING",
+        "state_version": 2,
+        "preparation_job": {
+            "job_id": "prepare-job-94",
+            "session_id": "session-94",
+            "application_id": "application-94",
+            "plan_id": "plan-94",
+            "state": state,
+        },
+    }
+
+
+def _ready_ats(worker_db, monkeypatch, key, cover="NOT_REQUIRED"):
+    operation = _start(key)
+    _ready_dependencies(operation["operation_id"], cover=cover)
+    _run_preflight_ready(operation, monkeypatch)
+    return operation
+
+
+def test_ats_runtime_default_off_does_not_claim(worker_db, monkeypatch):
+    operation = _ready_ats(worker_db, monkeypatch, "v1c-runtime-off")
+    monkeypatch.delenv(workers.ATS_RUNTIME_ENV, raising=False)
+
+    result = workers.run_ats_form_preparation_once(
+        operation_id=operation["operation_id"],
+        worker_id="ats-worker",
+    )
+    assert result["claimed"] is False
+    assert result["reason"] == "ats_runtime_start_disabled"
+    assert _task(
+        operation["operation_id"], orchestrator.TASK_ATS_FORM_PREPARATION
+    )["status"] == "PENDING"
+
+
+def test_required_cover_letter_pauses_before_plan_or_http(worker_db, monkeypatch):
+    operation = _ready_ats(
+        worker_db,
+        monkeypatch,
+        "v1c-cover-required",
+        cover="REQUIRED",
+    )
+    called = {"plan": 0}
+
+    def should_not_plan(**kwargs):
+        called["plan"] += 1
+        raise AssertionError("Plan must not be created without required cover letter.")
+
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "prepare_application_plan",
+        should_not_plan,
+    )
+
+    result = workers.run_ats_form_preparation_once(
+        operation_id=operation["operation_id"],
+        worker_id="ats-worker",
+    )
+    assert result["operation_status"] == "NEEDS_INPUT"
+    assert called["plan"] == 0
+    assert "cover_letter.required_artifact" in orchestrator.prepare_operation(
+        operation["operation_id"]
+    )["unresolved"]
+
+
+def test_ats_ready_for_review_completes_orchestrator(worker_db, monkeypatch):
+    operation = _ready_ats(worker_db, monkeypatch, "v1c-ats-ready")
+    seen = {}
+
+    def prepare_plan(**kwargs):
+        seen["permissions"] = dict(kwargs["permissions"])
+        seen["requirements"] = list(kwargs["answer_requirements"])
+        return _fake_plan()
+
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "prepare_application_plan",
+        prepare_plan,
+    )
+
+    result = workers.run_ats_form_preparation_once(
+        operation_id=operation["operation_id"],
+        worker_id="ats-worker",
+        poll_interval_seconds=0,
+        plan_delivery=lambda **kwargs: _delivery(),
+        session_starter=lambda plan: _session("QUEUED"),
+        status_reader=lambda **kwargs: {
+            **_session("READY_FOR_REVIEW")["preparation_job"],
+            "state": "READY_FOR_REVIEW",
+        },
+    )
+
+    assert result["task_status"] == "SUCCEEDED"
+    assert result["operation_status"] == "READY_FOR_REVIEW"
+    assert result["output"]["apply_prepare_state"] == "READY_FOR_REVIEW"
+    assert result["output"]["final_review_approved"] is False
+    assert result["output"]["final_submit_executed"] is False
+    assert seen["requirements"] == []
+    assert seen["permissions"]["final_review"] is False
+    assert seen["permissions"]["final_submit"] is False
+
+
+def test_apply_waiting_input_maps_to_hunter_needs_input(worker_db, monkeypatch):
+    operation = _ready_ats(worker_db, monkeypatch, "v1c-ats-needs-input")
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "prepare_application_plan",
+        lambda **kwargs: _fake_plan(),
+    )
+
+    result = workers.run_ats_form_preparation_once(
+        operation_id=operation["operation_id"],
+        worker_id="ats-worker",
+        poll_interval_seconds=0,
+        plan_delivery=lambda **kwargs: _delivery(),
+        session_starter=lambda plan: _session("WAITING_INPUT"),
+        status_reader=lambda **kwargs: {},
+    )
+    assert result["operation_status"] == "NEEDS_INPUT"
+    assert "apply.runtime_questions" in orchestrator.prepare_operation(
+        operation["operation_id"]
+    )["unresolved"]
+
+
+def test_apply_terminal_failure_fails_safely(worker_db, monkeypatch):
+    operation = _ready_ats(worker_db, monkeypatch, "v1c-ats-failed")
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "prepare_application_plan",
+        lambda **kwargs: _fake_plan(),
+    )
+
+    result = workers.run_ats_form_preparation_once(
+        operation_id=operation["operation_id"],
+        worker_id="ats-worker",
+        poll_interval_seconds=0,
+        plan_delivery=lambda **kwargs: _delivery(),
+        session_starter=lambda plan: _session("FAILED_SAFELY"),
+        status_reader=lambda **kwargs: {},
+    )
+    assert result["task_status"] == "FAILED"
+    assert result["operation_status"] == "FAILED_SAFELY"
+
+
+def test_poll_timeout_requeues_without_submission(worker_db, monkeypatch):
+    operation = _ready_ats(worker_db, monkeypatch, "v1c-ats-timeout")
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "prepare_application_plan",
+        lambda **kwargs: _fake_plan(),
+    )
+
+    result = workers.run_ats_form_preparation_once(
+        operation_id=operation["operation_id"],
+        worker_id="ats-worker",
+        poll_timeout_seconds=0.0001,
+        poll_interval_seconds=0,
+        plan_delivery=lambda **kwargs: _delivery(),
+        session_starter=lambda plan: _session("QUEUED"),
+        status_reader=lambda **kwargs: _session("RUNNING")["preparation_job"],
+    )
+    assert result["task_status"] == "PENDING"
+    assert result["retry_scheduled"] is True
+    assert result["submission_authority"] is False
+
+
+def test_v1c_workers_disabled_before_any_claim(worker_db, monkeypatch):
+    operation = _start("v1c-disabled")
+    _ready_dependencies(operation["operation_id"])
+    monkeypatch.delenv(workers.WORKERS_ENV, raising=False)
+
+    with pytest.raises(RuntimeError, match="disabled"):
+        workers.run_application_preflight_once(
+            operation_id=operation["operation_id"],
+            worker_id="preflight-worker",
+        )
+    assert _task(
+        operation["operation_id"], orchestrator.TASK_APPLICATION_PREFLIGHT
+    )["status"] == "PENDING"
+
+
+def test_v1c_never_grants_submission_authority(worker_db):
+    assert workers.SUBMISSION_AUTHORITY is False
+    permissions = workers._plan_permissions()
+    assert permissions["final_review"] is False
+    assert permissions["final_submit"] is False
