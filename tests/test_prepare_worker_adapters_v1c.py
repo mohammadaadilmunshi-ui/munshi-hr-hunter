@@ -364,34 +364,103 @@ def test_ats_runtime_default_off_does_not_claim(worker_db, monkeypatch):
     )["status"] == "PENDING"
 
 
-def test_required_cover_letter_pauses_before_plan_or_http(worker_db, monkeypatch):
+def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
+    worker_db, monkeypatch
+):
     operation = _ready_ats(
         worker_db,
         monkeypatch,
         "v1c-cover-required",
         cover="REQUIRED",
     )
-    called = {"plan": 0}
+    seen = {}
 
-    def should_not_plan(**kwargs):
-        called["plan"] += 1
-        raise AssertionError("Plan must not be created without required cover letter.")
+    monkeypatch.setattr(
+        workers.native_cover_letter_writer_v1,
+        "generate",
+        lambda **kwargs: {
+            "cover_letter_id": "cover-letter-required-94",
+            "artifact_id": "cover-letter-required-94",
+            "artifact_reference": (
+                "hunter-cover-letter://cover-letter-required-94/pdf"
+            ),
+            "artifact_sha256": "9" * 64,
+            "page_count": 1,
+            "job_snapshot_sha256": JOB_DIGEST,
+            "candidate_profile_digest": PROFILE_DIGEST,
+            "submission_authority": False,
+        },
+    )
+
+    def prepare_plan(**kwargs):
+        seen["cover_letter_id"] = kwargs["cover_letter_id"]
+        seen["permissions"] = dict(kwargs["permissions"])
+        plan = _fake_plan()
+        plan["snapshot"]["permissions"]["cover_letter_upload"] = True
+        return plan
 
     monkeypatch.setattr(
         workers.application_plan_v2,
         "prepare_application_plan",
-        should_not_plan,
+        prepare_plan,
     )
 
     result = workers.run_ats_form_preparation_once(
         operation_id=operation["operation_id"],
         worker_id="ats-worker",
+        poll_interval_seconds=0,
+        plan_delivery=lambda **kwargs: _delivery(),
+        session_starter=lambda plan: _session("QUEUED"),
+        status_reader=lambda **kwargs: {
+            **_session("READY_FOR_REVIEW")["preparation_job"],
+            "state": "READY_FOR_REVIEW",
+        },
     )
-    assert result["operation_status"] == "NEEDS_INPUT"
-    assert called["plan"] == 0
-    assert "cover_letter.required_artifact" in orchestrator.prepare_operation(
-        operation["operation_id"]
-    )["unresolved"]
+
+    assert result["task_status"] == "SUCCEEDED"
+    assert result["operation_status"] == "READY_FOR_REVIEW"
+    assert seen["cover_letter_id"] == "cover-letter-required-94"
+    assert seen["permissions"]["cover_letter_upload"] is True
+    assert seen["permissions"]["final_review"] is False
+    assert seen["permissions"]["final_submit"] is False
+    assert result["output"]["cover_letter_id"] == "cover-letter-required-94"
+    assert result["output"]["cover_letter_artifact_sha256"] == "9" * 64
+    assert result["output"]["cover_letter_page_count"] == 1
+    assert result["output"]["final_review_approved"] is False
+    assert result["output"]["final_submit_executed"] is False
+    assert result["output"]["submission_authority"] is False
+
+
+def test_required_cover_letter_writer_failure_requeues_safely(
+    worker_db, monkeypatch
+):
+    operation = _ready_ats(
+        worker_db,
+        monkeypatch,
+        "v1c-cover-required-failure",
+        cover="REQUIRED",
+    )
+
+    monkeypatch.setattr(
+        workers.native_cover_letter_writer_v1,
+        "generate",
+        lambda **kwargs: (_ for _ in ()).throw(
+            RuntimeError("writer unavailable")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="writer unavailable"):
+        workers.run_ats_form_preparation_once(
+            operation_id=operation["operation_id"],
+            worker_id="ats-worker",
+        )
+
+    task = _task(
+        operation["operation_id"],
+        orchestrator.TASK_ATS_FORM_PREPARATION,
+    )
+    assert task["status"] == "PENDING"
+    assert task["attempts"] == 1
 
 
 def test_ats_ready_for_review_completes_orchestrator(worker_db, monkeypatch):

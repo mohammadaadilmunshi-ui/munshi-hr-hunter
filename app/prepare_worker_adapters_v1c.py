@@ -37,6 +37,7 @@ from app import application_plan_delivery_v2
 from app import application_plan_v2
 from app import application_preflight_package_v1 as preflight_v1
 from app import opportunity_intelligence_v3
+from app import native_cover_letter_writer_v1
 from app import prepare_orchestrator_v1 as orchestrator
 
 
@@ -556,11 +557,14 @@ def _validate_runtime_resolution_sync(
     return safe_tasks, unresolved
 
 
-def _plan_permissions() -> dict[str, bool]:
+def _plan_permissions(
+    *,
+    cover_letter_present: bool = False,
+) -> dict[str, bool]:
     return {
         "background_prepare": True,
         "resume_upload": True,
-        "cover_letter_upload": False,
+        "cover_letter_upload": bool(cover_letter_present),
         "normal_answer_autofill": True,
         "protected_fact_execution": False,
         "self_id_execution": False,
@@ -627,24 +631,39 @@ def run_ats_form_preparation_once(
             "submission_authority": False,
         }
 
+    cover_letter: dict[str, Any] | None = None
     if str(cover.get("decision")) == "REQUIRED":
-        result = orchestrator.task_needs_input(
-            task_id=str(task["task_id"]),
-            worker_id=str(worker_id),
-            unresolved_keys=["cover_letter.required_artifact"],
-            output={
-                "version": WORKER_VERSION,
-                "reason": "jd_explicit_cover_letter_required",
-                "cover_letter_decision": "REQUIRED",
-                "native_cover_letter_worker_required": True,
-                "submission_authority": False,
-            },
-        )
-        return {
-            **result,
-            "claimed": True,
-            "submission_authority": False,
-        }
+        try:
+            cover_letter = native_cover_letter_writer_v1.generate(
+                preflight_package_id=str(preflight["preflight_package_id"]),
+            )
+            if (
+                int(cover_letter.get("page_count") or 0) != 1
+                or cover_letter.get("submission_authority") is not False
+                or str(cover_letter.get("job_snapshot_sha256") or "")
+                != str(operation["job_snapshot_sha256"])
+                or str(cover_letter.get("candidate_profile_digest") or "")
+                != str(operation["candidate_profile_digest"])
+                or not str(cover_letter.get("cover_letter_id") or "")
+            ):
+                raise RuntimeError(
+                    "Native cover-letter worker returned an invalid authority binding."
+                )
+        except Exception:
+            orchestrator.fail_task(
+                task_id=str(task["task_id"]),
+                worker_id=str(worker_id),
+                error_code="NATIVE_COVER_LETTER_PREPARE_FAILED",
+                error_message="Required Native cover-letter generation failed closed.",
+                retryable=True,
+            )
+            raise
+
+    cover_letter_id = (
+        str(cover_letter["cover_letter_id"])
+        if cover_letter is not None
+        else None
+    )
 
     deliver = plan_delivery or application_plan_delivery_v2.deliver_application_plan
     start_session = session_starter or _start_apply_session
@@ -659,11 +678,13 @@ def run_ats_form_preparation_once(
             # requirements. Runtime-discovered NORMAL questions use the already
             # existing immutable replacement-plan flow.
             answer_requirements=[],
-            permissions=_plan_permissions(),
+            permissions=_plan_permissions(
+                cover_letter_present=cover_letter is not None
+            ),
             provider_policy=None,
             secure_resolver_refs={},
             resume_format="PDF",
-            cover_letter_id=None,
+            cover_letter_id=cover_letter_id,
         )
         if (
             str(plan.get("status") or "") != "READY_TO_APPLY"
@@ -828,6 +849,18 @@ def run_ats_form_preparation_once(
                 "apply_prepare_job_id": prepare_job_id,
                 "apply_prepare_state": "READY_FOR_REVIEW",
                 "browser_preparation_completed": True,
+                "cover_letter_decision": str(cover.get("decision") or ""),
+                "cover_letter_id": cover_letter_id,
+                "cover_letter_artifact_sha256": (
+                    str(cover_letter.get("artifact_sha256") or "")
+                    if cover_letter is not None
+                    else None
+                ),
+                "cover_letter_page_count": (
+                    int(cover_letter.get("page_count") or 0)
+                    if cover_letter is not None
+                    else None
+                ),
                 "final_review_approved": False,
                 "final_submit_executed": False,
                 "submission_authority": False,
