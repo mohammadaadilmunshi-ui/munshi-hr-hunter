@@ -55,9 +55,14 @@ def test_resume_job_finder_has_compact_search_ui_not_giant_job_selectbox() -> No
     selector = (root / "app" / "resume_engine_selector.py").read_text(
         encoding="utf-8"
     )
-    assert "Find or change job" in source
-    assert "Search company, title, location, source, JD keyword, or job #" in source
+    assert "Change target job" in source
+    assert "Search company, title, location, source, or JD keyword" in source
     assert '"saved", "prepared"' in source
     assert "native_resume_job_id" in source
+    assert "last_viewed_job_id" in source
+    assert "_resume_job_card_html" in source
+    assert "Use this job" in source
+    assert "expanded=False" in source
+    assert "job ID" in source
     assert 'st.session_state["native_resume_job_id"] = int(job_id)' in selector
     assert 'st.selectbox(\n        "Job",' not in source

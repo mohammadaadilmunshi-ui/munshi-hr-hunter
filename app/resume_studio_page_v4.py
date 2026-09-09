@@ -8,7 +8,7 @@ and checked file downloads.
 from __future__ import annotations
 
 import re
-
+from datetime import datetime
 from typing import Any
 
 import streamlit as st
@@ -18,7 +18,7 @@ from app import native_resume_artifact_v5 as artifacts
 from app import native_resume_service_v5 as resume_v5
 from app import phase45_truth_binding as truth_binding
 from app import resume_studio_page_v2 as advanced_writer_ui
-from app.product_ui import esc, page_intro
+from app.product_ui import esc, page_intro, pastel_for, score_ring
 
 STYLE_LABELS = {
     "slight": "Light",
@@ -118,6 +118,7 @@ def _resume_job_catalog(limit: int = 500) -> list[dict[str, Any]]:
             "hunter_score",
             "employment_type",
             "remote_type",
+            "salary_raw",
             "source",
             "first_seen_at",
             "date_posted",
@@ -253,10 +254,67 @@ def _filter_resume_jobs(
     return result
 
 
+def _relative_job_time(value: Any) -> str:
+    if not value:
+        return "Date not recorded"
+    try:
+        date = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        delta = datetime.now(date.tzinfo) - date
+        hours = int(delta.total_seconds() // 3600)
+        if hours < 1:
+            return "Seen recently"
+        if hours < 24:
+            return f"{hours}h ago"
+        return f"{hours // 24}d ago"
+    except (TypeError, ValueError):
+        return "Date recorded"
+
+
+def _resume_job_card_html(
+    row: dict[str, Any],
+    *,
+    selected: bool = False,
+) -> str:
+    job_id = int(row["id"])
+    tone = pastel_for(job_id)
+    tags = [
+        row.get("remote_type"),
+        row.get("employment_type"),
+        row.get("salary_raw"),
+        "Saved" if row.get("saved") else None,
+        "Prepared" if row.get("prepared") else None,
+        "Selected" if selected else None,
+    ]
+    tags_html = "".join(
+        f'<span class="tag">{esc(tag)}</span>'
+        for tag in tags
+        if str(tag or "").strip()
+    )
+    return f"""<div class="job-card resume-studio-job-card">
+        <div class="job-card-main" style="--card-bg:{tone}">
+            <div class="job-top">
+                <span>{esc(row.get("location_raw"), "Location unknown")}<br>
+                <span class="quiet">{esc(_relative_job_time(row.get("first_seen_at")))}</span></span>
+                {score_ring(row.get("hunter_score"), tone)}
+            </div>
+            <div class="job-title">{esc(row.get("title"), "Untitled role")}</div>
+            <div>{tags_html}</div>
+            <div class="job-company">{esc(row.get("company_name"), "Company not recorded")}</div>
+            <div class="job-meta">{esc(row.get("source"), "Source unknown")}</div>
+        </div>
+    </div>"""
+
+
 def _set_resume_job(row: dict[str, Any]) -> None:
     job_id = int(row["id"])
     st.session_state["native_resume_job_id"] = job_id
     st.session_state["native_resume_job_choice"] = _job_label(row)
+    recent = [
+        int(value)
+        for value in st.session_state.get("resume_studio_recent_job_ids", [])
+        if str(value).isdigit() and int(value) != job_id
+    ]
+    st.session_state["resume_studio_recent_job_ids"] = [job_id, *recent][:8]
 
 
 def _job_workspace() -> tuple[int | None, dict[str, Any]]:
@@ -280,35 +338,78 @@ def _job_workspace() -> tuple[int | None, dict[str, Any]]:
             selected_id = int(match.group(1))
 
     if selected_id not in by_id:
+        candidates = [st.session_state.get("last_viewed_job_id")]
+        candidates.extend(st.session_state.get("resume_studio_recent_job_ids", []))
+        for candidate in candidates:
+            try:
+                candidate_id = int(candidate)
+            except (TypeError, ValueError):
+                continue
+            if candidate_id in by_id:
+                selected_id = candidate_id
+                break
+
+    if selected_id not in by_id:
         ranked = _filter_resume_jobs(rows)
         selected_id = int(ranked[0]["id"])
-        _set_resume_job(by_id[selected_id])
 
+    _set_resume_job(by_id[selected_id])
+    selected_row = by_id[selected_id]
     context = resume_v5.job_context(selected_id)
 
-    with st.container(border=True):
-        st.caption("Selected target")
+    st.markdown(
+        """<style>
+        .resume-studio-job-card .job-card-main{
+            border-radius:15px!important;
+            min-height:224px!important;
+        }
+        [class*="st-key-resume_job_result_"]{
+            border:1px solid var(--m-border);
+            border-radius:18px;
+            overflow:hidden;
+            background:#FFF;
+            padding:0 0 .7rem!important;
+            box-shadow:0 5px 16px rgba(20,33,41,.045);
+            height:100%;
+        }
+        [class*="st-key-resume_job_result_"] .stButton>button{
+            width:calc(100% - 1.2rem)!important;
+            margin:.65rem .6rem 0!important;
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+
+    st.caption("Selected target")
+    selected_card, selected_copy = st.columns((1.05, 1.75), gap="large")
+    with selected_card:
         st.markdown(
-            f"**{esc(context.get('company_name'), 'Company')} · "
-            f"{esc(context.get('title'), 'Untitled role')}**",
+            _resume_job_card_html(selected_row, selected=True),
             unsafe_allow_html=True,
+        )
+    with selected_copy:
+        st.markdown("### Ready to tailor this job")
+        st.write(
+            "MUNSHI keeps the job context with you automatically. "
+            "You never need to remember or enter a job ID."
         )
         details = [
             context.get("location_raw"),
             context.get("employment_type"),
             context.get("remote_type"),
         ]
-        st.caption(" · ".join(str(value) for value in details if value))
+        if any(details):
+            st.caption(" · ".join(str(value) for value in details if value))
         if context.get("hunter_score") is not None:
             st.caption(f"Hunter match: {float(context['hunter_score']):.0f}%")
 
-    with st.expander("Find or change job", expanded=True):
+    with st.expander("Change target job", expanded=False):
         search_columns = st.columns((3.2, 1.25, 1.1, 1.25), gap="small")
         with search_columns[0]:
             query = st.text_input(
                 "Find a job",
                 placeholder=(
-                    "Search company, title, location, source, JD keyword, or job #…"
+                    "Search company, title, location, source, or JD keyword…"
                 ),
                 key="resume_studio_job_search",
                 label_visibility="collapsed",
@@ -360,41 +461,21 @@ def _job_workspace() -> tuple[int | None, dict[str, Any]]:
             "Choose one to tailor against its exact stored job snapshot."
         )
 
-        visible_limit = st.selectbox(
-            "Results shown",
-            [8, 16, 32],
-            format_func=lambda value: f"Show {value}",
-            key="resume_studio_job_visible_limit",
-        )
-
-        if not filtered:
+        visible_rows = filtered[:6]
+        if not visible_rows:
             st.info("No jobs match those filters.")
         else:
-            for row in filtered[: int(visible_limit)]:
+            grid = st.columns(3, gap="medium")
+            for index, row in enumerate(visible_rows):
                 job_id = int(row["id"])
-                with st.container(border=True):
-                    left, right = st.columns((5, 1.2), gap="small")
-                    with left:
+                with grid[index % 3]:
+                    with st.container(key=f"resume_job_result_{job_id}"):
                         st.markdown(
-                            f"**{esc(row.get('company_name'), 'Company')} · "
-                            f"{esc(row.get('title'), 'Untitled role')}**",
+                            _resume_job_card_html(
+                                row,
+                                selected=job_id == selected_id,
+                            ),
                             unsafe_allow_html=True,
-                        )
-                        meta = [
-                            row.get("location_raw"),
-                            row.get("source"),
-                            "Saved" if row.get("saved") else None,
-                            "Prepared" if row.get("prepared") else None,
-                        ]
-                        st.caption(
-                            " · ".join(str(value) for value in meta if value)
-                        )
-                    with right:
-                        score = row.get("hunter_score")
-                        st.markdown(
-                            f"**{float(score):.0f}% match**"
-                            if score is not None
-                            else "**Match n/a**"
                         )
                         if job_id == selected_id:
                             st.button(
@@ -404,17 +485,17 @@ def _job_workspace() -> tuple[int | None, dict[str, Any]]:
                                 key=f"resume_job_selected_{job_id}",
                             )
                         elif st.button(
-                            "Use job",
+                            "Use this job",
                             use_container_width=True,
                             key=f"resume_job_use_{job_id}",
                         ):
                             _set_resume_job(row)
                             st.rerun()
 
-            if len(filtered) > int(visible_limit):
+            if len(filtered) > len(visible_rows):
                 st.caption(
-                    f"{len(filtered) - int(visible_limit)} more results. "
-                    "Refine the search or increase Results shown."
+                    f"{len(filtered) - len(visible_rows)} more matching jobs. "
+                    "Refine the search to narrow the card grid."
                 )
 
     with st.expander("Review job description", expanded=False):

@@ -71,10 +71,35 @@ div[data-baseweb="modal"]{
     to{transform:translateX(0);opacity:1}
 }
 .job-detail-drawer-marker{display:none!important}
-div[data-baseweb="modal"]:has(.job-detail-drawer-marker){
-    background:rgba(239,244,241,.38)!important;
-    backdrop-filter:blur(18px) saturate(1.16)!important;
-    -webkit-backdrop-filter:blur(18px) saturate(1.16)!important;
+
+/*
+ * V2.4 liquid glass:
+ * Streamlit's stDialog wrapper spans the whole viewport. V2.3 blurred the
+ * modal layer but the opaque stDialog wrapper still hid the job grid.
+ * Make only the Opportunity drawer wrapper transparent, then glass the true
+ * modal backdrop from body:has(...), which works across the portal boundary.
+ */
+body:has(.job-detail-drawer-marker) div[data-baseweb="modal"]{
+    background:
+        radial-gradient(circle at 18% 12%,rgba(255,255,255,.34),transparent 30%),
+        radial-gradient(circle at 62% 82%,rgba(217,239,230,.28),transparent 35%),
+        linear-gradient(120deg,rgba(238,246,242,.28),rgba(223,234,230,.16)),
+        rgba(20,33,41,.16)!important;
+    backdrop-filter:blur(18px) saturate(1.16) brightness(1.03)!important;
+    -webkit-backdrop-filter:blur(18px) saturate(1.16) brightness(1.03)!important;
+}
+body:has(.job-detail-drawer-marker) div[data-baseweb="modal"]::before{
+    content:"";
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    background:
+        linear-gradient(115deg,rgba(255,255,255,.20),transparent 28%,rgba(255,255,255,.08) 58%,transparent 78%);
+    mix-blend-mode:screen;
+}
+[data-testid="stDialog"]:has(.job-detail-drawer-marker),
+[data-testid="stDialog"]:has(.job-detail-drawer-marker)>div{
+    background:transparent!important;
 }
 [data-testid="stDialog"]:has(.job-detail-drawer-marker) [role="dialog"]{
     position:fixed!important;
@@ -90,10 +115,13 @@ div[data-baseweb="modal"]:has(.job-detail-drawer-marker){
     border-radius:26px 0 0 26px!important;
     border-right:0!important;
     border-color:rgba(206,215,208,.92)!important;
-    background:rgba(250,251,249,.94)!important;
-    box-shadow:-28px 0 78px rgba(20,33,41,.20)!important;
-    backdrop-filter:blur(22px) saturate(1.08)!important;
-    -webkit-backdrop-filter:blur(22px) saturate(1.08)!important;
+    background:
+        linear-gradient(145deg,rgba(255,255,255,.92),rgba(246,250,247,.84))!important;
+    box-shadow:
+        -28px 0 78px rgba(20,33,41,.18),
+        inset 1px 0 0 rgba(255,255,255,.82)!important;
+    backdrop-filter:blur(26px) saturate(1.14)!important;
+    -webkit-backdrop-filter:blur(26px) saturate(1.14)!important;
     overflow-y:auto!important;
     overscroll-behavior:contain;
     animation:munshiJobDrawerIn .22s cubic-bezier(.2,.72,.24,1) both;
@@ -752,6 +780,7 @@ def _opportunity_dialog(job_id: int) -> None:
         '<span class="job-detail-drawer-marker" aria-hidden="true"></span>',
         unsafe_allow_html=True,
     )
+    st.session_state["last_viewed_job_id"] = int(job_id)
 
     latest = row["latest_result"]
     artifact = row["artifact_result"]
