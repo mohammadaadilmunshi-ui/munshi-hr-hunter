@@ -87,23 +87,38 @@ def _prepare_job(job_id: int) -> None:
         _set_action_feedback("error", "The guarded preparation request could not be started. No submission was claimed.")
 
 
+
+_PRODUCT_JOB_DIALOG_STATE_KEY = "_product_job_dialog_once"
+
+
+def _open_job_detail(job_id: int) -> None:
+    st.session_state[_PRODUCT_JOB_DIALOG_STATE_KEY] = int(job_id)
+
+
 def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
     job_id = int(row["id"])
     tone = pastel_for(job_id)
-    view = "jobs" if key_prefix == "jobs" else "dashboard"
     tags = [row.get("remote_type"), row.get("employment_type"), row.get("salary_raw")]
     if row.get("saved"):
         tags.append("Saved")
     tags_html = "".join(f'<span class="tag">{esc(tag)}</span>' for tag in tags if str(tag or "").strip())
     with st.container(key=f"product_card_{key_prefix}_{job_id}"):
         st.markdown(
-            f"""<a class="job-card-click" href="?view={view}&amp;job={job_id}" target="_self" aria-label="Open {esc(row.get("title"), "job")} details">
+            f"""<div class="job-card-click" role="presentation">
                 <div class="job-card"><div class="job-card-main" style="--card-bg:{tone}">
                 <div class="job-top"><span>{esc(row.get("location_raw"), "Location unknown")}<br><span class="quiet">{esc(_relative_time(row.get("first_seen_at")))}</span></span>{score_ring(row.get("hunter_score"), tone)}</div>
                 <div class="job-title">{esc(row.get("title"), "Untitled role")}</div>
                 <div>{tags_html}</div><div class="job-company">{esc(row.get("company_name"), "Company not recorded")}</div>
-                <div class="job-meta">{esc(row.get("source"), "Source unknown")}</div></div></div></a>""",
+                <div class="job-meta">{esc(row.get("source"), "Source unknown")}</div></div></div></div>""",
             unsafe_allow_html=True,
+        )
+        st.button(
+            "Open job details",
+            key=f"job_open_{key_prefix}_{job_id}",
+            help=f"Open {row.get('title') or 'job'} details",
+            use_container_width=True,
+            on_click=_open_job_detail,
+            args=(job_id,),
         )
         actions = st.columns(3, gap="small")
         saved = bool(row.get("saved"))
@@ -190,6 +205,14 @@ def _job_detail_dialog(job_id: int) -> None:
 
 
 def _job_detail() -> None:
+    queued = st.session_state.pop(_PRODUCT_JOB_DIALOG_STATE_KEY, None)
+    if queued is not None:
+        try:
+            _job_detail_dialog(int(queued))
+        except (TypeError, ValueError):
+            pass
+        return
+
     try:
         raw_job = str(st.query_params.get("job") or "").strip()
     except Exception:

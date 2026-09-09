@@ -985,6 +985,19 @@ def _opportunity_dialog(job_id: int) -> None:
 
 
 def _job_detail_v22() -> None:
+    state_key = getattr(
+        _PAGES,
+        "_PRODUCT_JOB_DIALOG_STATE_KEY",
+        "_product_job_dialog_once",
+    )
+    queued = st.session_state.pop(state_key, None)
+    if queued is not None:
+        try:
+            _opportunity_dialog(int(queued))
+        except (TypeError, ValueError):
+            pass
+        return
+
     job_id = _consume_query_id("job", "_product_v22_job_once")
     if job_id is not None:
         _opportunity_dialog(job_id)
