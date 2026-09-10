@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from scripts import complete_loop_migrate
 
 
@@ -87,3 +89,30 @@ def test_production_deploy_runs_migration_offline_and_restores_db_on_rollback() 
 def test_deployment_ci_runs_complete_loop_deployment_tests() -> None:
     source = Path(".github/workflows/deployment-ci-reusable.yml").read_text(encoding="utf-8")
     assert "tests/test_complete_loop_deployment_migrations.py" in source
+
+
+def test_production_verify_only_allows_normal_shadow_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLOUD_SHADOW_MODE", "true")
+    complete_loop_migrate._assert_environment(
+        "production", verify_only=True, authorization=None
+    )
+
+
+def test_production_mutation_still_rejects_shadow_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLOUD_SHADOW_MODE", "true")
+    with pytest.raises(RuntimeError, match="refuses CLOUD_SHADOW_MODE=true"):
+        complete_loop_migrate._assert_environment(
+            "production",
+            verify_only=False,
+            authorization=complete_loop_migrate.PRODUCTION_AUTHORIZATION,
+        )
+
+
+def test_production_mutation_still_requires_explicit_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLOUD_SHADOW_MODE", "false")
+    with pytest.raises(PermissionError, match="Explicit production Complete Loop migration authorization"):
+        complete_loop_migrate._assert_environment(
+            "production", verify_only=False, authorization=None
+        )

@@ -53,10 +53,11 @@ def _assert_environment(environment: str, *, verify_only: bool, authorization: s
 
     if environment != "production":
         raise RuntimeError(f"Unsupported migration environment: {environment!r}")
-    if not verify_only and authorization != PRODUCTION_AUTHORIZATION:
-        raise PermissionError("Explicit production Complete Loop migration authorization is required.")
-    if _truthy("CLOUD_SHADOW_MODE"):
-        raise RuntimeError("Production Complete Loop migration refuses CLOUD_SHADOW_MODE=true.")
+    if not verify_only:
+        if authorization != PRODUCTION_AUTHORIZATION:
+            raise PermissionError("Explicit production Complete Loop migration authorization is required.")
+        if _truthy("CLOUD_SHADOW_MODE"):
+            raise RuntimeError("Production Complete Loop migration refuses CLOUD_SHADOW_MODE=true.")
 
 
 def _connect(path: Path, *, read_only: bool) -> sqlite3.Connection:
