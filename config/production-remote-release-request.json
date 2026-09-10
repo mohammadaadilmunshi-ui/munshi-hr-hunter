@@ -1,7 +1,7 @@
 {
-  "commit_sha": "a0c5d01ba3318590fdc3923e428054360ab7682b",
-  "source_branch": "release/incident-repair-n8n-tg-prepare-20260910-165233",
-  "expected_current_production_sha": "39dca79c3f75e601fe4b864f350dcca2105c888c",
+  "commit_sha": "691b87b24d45afca3a18964b2ea8d1997a132436",
+  "source_branch": "release/prepare-n8n-routing-repair-20260910-195325",
+  "expected_current_production_sha": "a0c5d01ba3318590fdc3923e428054360ab7682b",
   "release_kind": "staging_proven_release",
   "remote_authorization": "AUTHORIZED_REMOTE_PRODUCTION_RELEASE"
 }
