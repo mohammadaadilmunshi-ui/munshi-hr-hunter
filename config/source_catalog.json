@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "purpose": "Canonical source registration for fresh/staging Hunter databases. Sources are registered disabled and must be activated deliberately after provider-specific validation.",
+  "sources": [
+    {"source_name":"Ashby","source_tier":1,"cadence_minutes":60,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"BambooHR","source_tier":1,"cadence_minutes":60,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":false},
+    {"source_name":"Comeet","source_tier":1,"cadence_minutes":180,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"Greenhouse","source_tier":1,"cadence_minutes":60,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"iCIMS","source_tier":1,"cadence_minutes":60,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":false},
+    {"source_name":"Jobvite","source_tier":1,"cadence_minutes":60,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":false},
+    {"source_name":"Lever","source_tier":1,"cadence_minutes":60,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"NYC Open Data","source_tier":1,"cadence_minutes":120,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"Personio","source_tier":1,"cadence_minutes":180,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":false},
+    {"source_name":"Pinpoint","source_tier":1,"cadence_minutes":180,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"Recruitee","source_tier":1,"cadence_minutes":180,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"RSS Job Feeds","source_tier":1,"cadence_minutes":240,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":false},
+    {"source_name":"Schema JobPosting","source_tier":1,"cadence_minutes":240,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":false},
+    {"source_name":"SmartRecruiters","source_tier":1,"cadence_minutes":60,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"Teamtailor","source_tier":1,"cadence_minutes":60,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":false},
+    {"source_name":"Workable","source_tier":1,"cadence_minutes":360,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"Workday","source_tier":1,"cadence_minutes":360,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":false},
+
+    {"source_name":"Arbeitnow","source_tier":2,"cadence_minutes":360,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"Employer Board Discovery","source_tier":2,"cadence_minutes":720,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"Jobicy","source_tier":2,"cadence_minutes":240,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"Remote OK","source_tier":2,"cadence_minutes":240,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"Remotive","source_tier":2,"cadence_minutes":240,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"USAJobs","source_tier":2,"cadence_minutes":360,"cost_mode":"free_key_required","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"We Work Remotely","source_tier":2,"cadence_minutes":180,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+
+    {"source_name":"Adzuna","source_tier":3,"cadence_minutes":240,"cost_mode":"free_key_required","staging_default_enabled":false,"production_enabled_observed":false},
+    {"source_name":"Dice","source_tier":3,"cadence_minutes":360,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"Google Jobs","source_tier":3,"cadence_minutes":180,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"Indeed Jobs (JobSpy)","source_tier":3,"cadence_minutes":180,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"JobSpy","source_tier":3,"cadence_minutes":180,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+    {"source_name":"LinkedIn Jobs (JobSpy)","source_tier":3,"cadence_minutes":180,"cost_mode":"free","staging_default_enabled":false,"production_enabled_observed":true},
+
+    {"source_name":"Apify","source_tier":4,"cadence_minutes":60,"cost_mode":"paid","staging_default_enabled":false,"production_enabled_observed":false},
+    {"source_name":"SerpAPI","source_tier":4,"cadence_minutes":60,"cost_mode":"paid","staging_default_enabled":false,"production_enabled_observed":false}
+  ]
+}

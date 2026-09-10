@@ -14,6 +14,7 @@ from app.database import get_connection
 
 
 MIGRATIONS = (
+    "migrations.052_adapter_runtime_foundation_v1",
     "migrations.015_tenant_foundation",
     "migrations.016_candidate_digital_twin",
     "migrations.017_candidate_artifacts",
@@ -31,6 +32,11 @@ MIGRATIONS = (
 )
 
 REQUIRED_TABLES = {
+    "ats_company_registry",
+    "source_random_schedule",
+    "source_health",
+    "provider_board_registry",
+    "adapter_coverage",
     "tenants",
     "tenant_memberships",
     "candidate_digital_twin_facts",
