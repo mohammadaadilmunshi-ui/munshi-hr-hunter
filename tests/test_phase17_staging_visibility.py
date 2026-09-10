@@ -52,7 +52,7 @@ def test_product_shell_exposes_candidate_facing_phase17_routes() -> None:
     navigation = dict(product_shell.NAVIGATION)
     assert navigation["profile"] == "Profile"
     assert navigation["resume-studio"] == "Resume Studio"
-    assert navigation["prepare-application"] == "Prepare Application"
+    assert navigation["prepare-application"] == "Applications"
     assert product_shell.PREPARE_APPLICATION_VIEW in product_shell._SPECIAL_VIEWS
 
 
