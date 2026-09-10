@@ -1,6 +1,6 @@
 {
-  "commit_sha": "e2f6d1a476803b75fb955e8cf4cef1f7149cf709",
-  "source_branch": "release/complete-loop-deployment-wiring-20260910-081548",
+  "commit_sha": "39dca79c3f75e601fe4b864f350dcca2105c888c",
+  "source_branch": "release/complete-loop-production-verify-fix-20260910-144428",
   "expected_current_production_sha": "9f90bb40e83f20dd589b010c728652d7d87c9b7f",
   "release_kind": "staging_proven_release",
   "remote_authorization": "AUTHORIZED_REMOTE_PRODUCTION_RELEASE"
