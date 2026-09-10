@@ -76,11 +76,87 @@ ollama_started_before="$(docker inspect -f '{{.State.StartedAt}}' "$O")"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 rollback_tag="${hunter_image_name%:*}:rollback-deploy-$stamp"
 recreated=0
+migration_attempted=0
+hunter_stopped=0
+db_restore_completed=0
+
+restore_production_db() {
+  echo "=== RESTORE PRODUCTION DB BACKUP ===" >&2
+  "${compose[@]}" stop hunter >/dev/null 2>&1 || docker stop "$H" >/dev/null 2>&1 || true
+  hunter_stopped=1
+
+  timeout 1200s docker run --rm -i \
+    --network none \
+    --user 0:0 \
+    --mount "type=volume,src=$hunter_data_volume,dst=/app/hunter/data" \
+    --mount "type=bind,src=$backup_dir,dst=/backup,readonly" \
+    --entrypoint python \
+    "$old_hunter_image_id" \
+    - "$db_path" "/backup/$backup_name" "$db_uid" "$db_gid" "$db_mode" <<'PYRESTORE'
+import os
+import shutil
+import sqlite3
+import sys
+from pathlib import Path
+
+live = Path(sys.argv[1])
+backup = Path(sys.argv[2])
+uid = int(sys.argv[3])
+gid = int(sys.argv[4])
+mode = int(sys.argv[5], 8)
+tmp = Path(str(live) + ".rollback.tmp")
+
+if not backup.is_file():
+    raise SystemExit(f"production rollback backup missing: {backup}")
+
+for candidate in (
+    tmp,
+    Path(str(live) + "-wal"),
+    Path(str(live) + "-shm"),
+    Path(str(live) + "-journal"),
+):
+    try:
+        candidate.unlink()
+    except FileNotFoundError:
+        pass
+
+shutil.copyfile(backup, tmp)
+os.chown(tmp, uid, gid)
+os.chmod(tmp, mode)
+os.replace(tmp, live)
+os.chown(live, uid, gid)
+os.chmod(live, mode)
+
+db = sqlite3.connect(f"file:{live}?mode=ro", uri=True, timeout=60)
+try:
+    db.execute("PRAGMA query_only=ON")
+    quick = str(db.execute("PRAGMA quick_check").fetchone()[0])
+    fk = db.execute("PRAGMA foreign_key_check").fetchall()
+finally:
+    db.close()
+
+if quick != "ok":
+    raise SystemExit(f"restored production DB quick_check failed: {quick}")
+if fk:
+    raise SystemExit(f"restored production DB FK violations: {len(fk)}")
+print("ROLLBACK_DB_RESTORE=PASS")
+PYRESTORE
+  db_restore_completed=1
+}
 
 rollback() {
-  rc=$?
+  trapped_rc=$?
+  rc="${1:-$trapped_rc}"
   trap - ERR
   echo "=== AUTOMATIC DEPLOYMENT ROLLBACK rc=$rc ===" >&2
+
+  if (( migration_attempted )); then
+    if ! restore_production_db; then
+      echo "CRITICAL: production DB rollback restore failed; Hunter remains stopped." >&2
+      exit 99
+    fi
+  fi
+
   if [[ -n "$old_branch" ]]; then
     git checkout -q -B "$old_branch" "$old_head" || true
   else
@@ -88,7 +164,7 @@ rollback() {
   fi
   docker tag "$old_hunter_image_id" "$hunter_image_name" || true
   echo "ROLLBACK_IMAGE_TAG_RESTORED=YES" >&2
-  if (( recreated )); then
+  if (( recreated || hunter_stopped || migration_attempted )); then
     "${compose[@]}" up -d --no-deps --force-recreate hunter || true
     for _ in $(seq 1 48); do
       health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$H" 2>/dev/null || true)"
@@ -154,6 +230,14 @@ print(DB_PATH)
 PY
 )"
 [[ -n "$db_path" ]] || { echo "production DB path unresolved" >&2; exit 24; }
+
+db_meta="$(docker exec "$H" stat -c '%u:%g:%a' "$db_path")"
+IFS=: read -r db_uid db_gid db_mode <<< "$db_meta"
+[[ "$db_uid" =~ ^[0-9]+$ && "$db_gid" =~ ^[0-9]+$ && "$db_mode" =~ ^[0-7]+$ ]] || {
+  echo "production DB ownership/mode unresolved" >&2
+  exit 24
+}
+echo "PRODUCTION_DB_UID_GID_MODE=$db_uid:$db_gid:$db_mode"
 
 db_bytes="$(docker exec "$H" stat -c '%s' "$db_path")"
 [[ "$db_bytes" =~ ^[0-9]+$ ]] || { echo "production DB size unresolved" >&2; exit 25; }
@@ -234,12 +318,14 @@ import sys
 p = sys.argv[1]
 db = sqlite3.connect(f"file:{p}?mode=ro", uri=True, timeout=30)
 try:
-    result = db.execute("PRAGMA quick_check").fetchone()[0]
+    db.execute("PRAGMA query_only=ON")
+    schema_version = int(db.execute("PRAGMA schema_version").fetchone()[0])
+    table_count = int(
+        db.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
+    )
 finally:
     db.close()
-if result != "ok":
-    raise SystemExit(f"host production DB backup quick_check failed: {result}")
-print("PRODUCTION_DB_BACKUP_QUICK_CHECK=PASS")
+print(f"PRODUCTION_DB_BACKUP_HOST_OPEN=PASS schema_version={schema_version} tables={table_count}")
 PY
 echo "PRODUCTION_DB_BACKUP=$db_backup"
 
@@ -273,10 +359,23 @@ python3 -m compileall -q app scripts integrations
 echo "=== BUILD HUNTER ONLY ==="
 "${compose[@]}" config -q
 "${compose[@]}" build hunter
+new_hunter_image_id="$(docker image inspect -f '{{.Id}}' "$hunter_image_name")"
+[[ -n "$new_hunter_image_id" ]] || rollback
+echo "new_hunter_image_id=$new_hunter_image_id"
+
+echo "=== STOP HUNTER FOR COMPLETE-LOOP MIGRATION ==="
+migration_attempted=1
+"${compose[@]}" stop hunter
+hunter_stopped=1
+
+echo "=== APPLY COMPLETE-LOOP MIGRATIONS 041-051 TO PRODUCTION DB ==="
+timeout 1800s docker run --rm -i   --network none   --read-only   --tmpfs /tmp:rw,nosuid,nodev,size=256m   --mount "type=volume,src=$hunter_data_volume,dst=/app/hunter/data"   --entrypoint python   -e CLOUD_SHADOW_MODE=false   "$new_hunter_image_id"   /app/hunter/scripts/complete_loop_migrate.py   --db-path "$db_path"   --environment production   --authorization AUTHORIZED_GUARDED_COMPLETE_LOOP_MIGRATION   --full-quick-check
+echo "PRODUCTION_COMPLETE_LOOP_MIGRATION=PASS"
 
 echo "=== RECREATE HUNTER ONLY ==="
 "${compose[@]}" up -d --no-deps --force-recreate hunter
 recreated=1
+hunter_stopped=0
 
 healthy=0
 for _ in $(seq 1 48); do
@@ -284,7 +383,7 @@ for _ in $(seq 1 48); do
   if [[ "$health" == "healthy" ]]; then healthy=1; break; fi
   sleep 5
 done
-[[ "$healthy" == "1" ]] || { echo "Hunter did not return healthy" >&2; exit 40; }
+[[ "$healthy" == "1" ]] || { echo "Hunter did not return healthy" >&2; rollback 40; }
 
 echo "=== VERIFY NON-HUNTER CONTAINERS UNCHANGED ==="
 [[ "$(docker inspect -f '{{.Id}}' "$N")" == "$n8n_id_before" ]]
@@ -296,6 +395,10 @@ echo "OLLAMA_RECREATED=NO"
 
 echo "=== POSTDEPLOY CONTRACT ==="
 "$VERIFY"
+
+echo "=== VERIFY PRODUCTION COMPLETE-LOOP SCHEMA ==="
+docker exec "$H" python /app/hunter/scripts/complete_loop_migrate.py   --db-path "$db_path"   --environment production   --verify-only
+echo "PRODUCTION_COMPLETE_LOOP_SCHEMA_READY=YES"
 
 echo "=== DEPLOYMENT RESULT ==="
 echo "DEPLOYED_SHA=$commit"

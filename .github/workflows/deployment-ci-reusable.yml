@@ -48,7 +48,8 @@ jobs:
             tests/test_container_environment_contract.py \
             tests/test_hr_agent_portability.py \
             tests/test_n8n_deployment_renderer.py \
-            tests/test_netcup_shadow.py
+            tests/test_netcup_shadow.py \
+            tests/test_complete_loop_deployment_migrations.py
 
       - name: Validate deployment shell
         run: |
