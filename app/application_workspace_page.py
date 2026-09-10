@@ -1,8 +1,11 @@
-"""Candidate-facing Phase 4–7 application preparation workspace.
+"""Candidate-facing Complete Loop application workspace.
 
-This page deliberately exposes preparation intelligence without adding browser,
-email, outreach, or submission authority. Expensive/persisting evaluations run
-only after an explicit candidate click; ordinary page render is read-only.
+This page exposes durable Prepare progress, structured NEEDS_INPUT,
+READY_FOR_REVIEW artifacts, and lifecycle / verified-receipt history while
+preserving the existing evidence-bound Phase 4–7 intelligence.
+
+Ordinary rendering is read-only. An explicit Prepare click starts preparation
+only. Final Review approval and Final Submit remain outside this UI tranche.
 """
 from __future__ import annotations
 
@@ -11,6 +14,7 @@ from typing import Any
 import streamlit as st
 
 from app.product_ui import esc, page_intro
+from app import product_application_flow_v2 as complete_loop
 from app.phase67_common import safe_owned_job_snapshot
 
 
@@ -187,6 +191,337 @@ def _render_job_header(snapshot: dict[str, Any]) -> None:
     st.caption(
         "This workspace prepares evidence and decisions only. It cannot submit an application, send outreach, or use ATS credentials."
     )
+
+
+
+def _human_unresolved(value: str) -> str:
+    text = str(value or '').strip()
+    if text.startswith('apply.runtime_question:'):
+        return 'Employer application question'
+    aliases = {
+        'WORK_AUTH_US': 'U.S. work authorization',
+        'SPONSORSHIP': 'Future sponsorship',
+        'SALARY': 'Compensation expectation',
+        'RELOCATION': 'Relocation',
+        'TRAVEL': 'Travel',
+        'WORK_ARRANGEMENT': 'Work arrangement',
+        'START_DATE': 'Start date',
+    }
+    return aliases.get(text, text.replace('_', ' ').title())
+
+
+def _render_complete_loop(job_id: int) -> dict[str, Any]:
+    flow = complete_loop.flow_for_job(int(job_id))
+    state = str(flow.get('state') or '')
+
+    st.markdown('### Application progress')
+    st.caption(
+        'The current source of truth across preparation, employer-form '
+        'preparation, submission verification, and CRM.'
+    )
+
+    if not state:
+        st.info(
+            'This job has not entered the Complete Application Loop yet. '
+            'Prepare creates a durable application package and does not '
+            'submit anything.'
+        )
+        engine = st.radio(
+            'Resume engine',
+            ['NATIVE', 'N8N'],
+            horizontal=True,
+            format_func=lambda value: (
+                'MUNSHI Native' if value == 'NATIVE' else 'n8n'
+            ),
+            key=f'complete_loop_engine_{job_id}',
+            help=(
+                'MUNSHI Native uses the truth-bound Native Resume engine. '
+                'n8n remains an optional resume-generation path.'
+            ),
+        )
+        if st.button(
+            'Prepare Application',
+            type='primary',
+            use_container_width=True,
+            key=f'complete_loop_prepare_{job_id}',
+        ):
+            try:
+                with st.spinner(
+                    'Starting your evidence-bound application package…'
+                ):
+                    complete_loop.start_prepare_for_job(
+                        int(job_id),
+                        engine=engine,
+                    )
+            except Exception as error:
+                st.error(str(error))
+            else:
+                st.toast(
+                    'Application preparation started.',
+                    icon='✅',
+                )
+                st.rerun()
+
+        st.caption(
+            'Preparation only · Final Review OFF · Final Submit OFF · '
+            'No employer action occurs from this button.'
+        )
+        return flow
+
+    prepare = flow.get('prepare') or {}
+    lifecycle = flow.get('lifecycle') or {}
+
+    metrics = st.columns(4)
+    metrics[0].metric('Status', flow['display_status'])
+    metrics[1].metric(
+        'Progress',
+        f"{int(flow.get('progress_percent') or 0)}%",
+    )
+    metrics[2].metric(
+        'Resume engine',
+        str(prepare.get('engine') or '—').title(),
+    )
+    metrics[3].metric(
+        'Questions',
+        len(flow.get('runtime_questions') or []),
+    )
+    st.progress(int(flow.get('progress_percent') or 0) / 100)
+
+    tasks = list(flow.get('tasks') or [])
+    if tasks:
+        rows = []
+        for task in tasks:
+            raw_status = str(task.get('status') or '')
+            rows.append(
+                {
+                    'Step': task.get('label'),
+                    'Status': {
+                        'PENDING': 'Waiting',
+                        'RUNNING': 'Working',
+                        'SUCCEEDED': 'Ready',
+                        'NEEDS_INPUT': 'Needs input',
+                        'FAILED': 'Needs attention',
+                        'CANCELLED': 'Cancelled',
+                    }.get(raw_status, raw_status.title()),
+                    'Required': (
+                        'Yes' if task.get('required') else 'Optional'
+                    ),
+                }
+            )
+        st.dataframe(
+            rows,
+            hide_index=True,
+            use_container_width=True,
+        )
+
+    if state == 'NEEDS_INPUT':
+        st.warning(
+            'MUNSHI needs information that is not safely available '
+            'from Candidate Truth.'
+        )
+        runtime_questions = list(flow.get('runtime_questions') or [])
+        if runtime_questions:
+            for index, question in enumerate(runtime_questions, 1):
+                with st.container(border=True):
+                    st.markdown(
+                        f"**{esc(question.get('question'), f'Application question {index}')}**",
+                        unsafe_allow_html=True,
+                    )
+                    details = [
+                        str(
+                            question.get('category') or ''
+                        ).replace('_', ' ').title(),
+                        str(
+                            question.get('semantic_type') or ''
+                        ).replace('_', ' ').title(),
+                        str(
+                            question.get('sensitivity_class') or ''
+                        ).replace('_', ' ').title(),
+                    ]
+                    st.caption(
+                        ' · '.join(
+                            value for value in details if value
+                        )
+                    )
+                    if question.get('reason'):
+                        st.caption(str(question['reason']))
+                    if question.get('requires_user'):
+                        st.info(
+                            'Your answer is required. MUNSHI will not '
+                            'invent or expose a stored resolution value.'
+                        )
+        else:
+            unresolved = [
+                _human_unresolved(value)
+                for value in (prepare.get('unresolved') or [])
+            ]
+            if unresolved:
+                for item in unresolved:
+                    st.write(f'• {item}')
+            else:
+                st.caption(
+                    'The runtime is synchronizing the exact employer '
+                    'question metadata.'
+                )
+
+        st.caption(
+            'Answer submission/resume is intentionally not added in this '
+            'source tranche; the immutable replacement-plan authority '
+            'remains the backend boundary.'
+        )
+
+    artifacts = flow.get('artifacts') or {}
+    resume = artifacts.get('resume') or {}
+    cover = artifacts.get('cover_letter') or {}
+    plan = artifacts.get('plan') or {}
+
+    if state in {'READY_FOR_REVIEW', 'READY_TO_SUBMIT'}:
+        st.success(
+            'Your application package is prepared. Review the exact '
+            'artifacts and application evidence before any future '
+            'submit authority is granted.'
+        )
+        artifact_cols = st.columns(3)
+        pdf = resume.get('pdf') or {}
+        artifact_cols[0].metric(
+            'Resume',
+            'Ready' if pdf.get('artifact_id') else 'Not recorded',
+            help=str(pdf.get('filename') or ''),
+        )
+        artifact_cols[1].metric(
+            'Cover letter',
+            (
+                'Ready'
+                if cover.get('cover_letter_id')
+                else str(
+                    cover.get('decision') or 'Not required'
+                ).replace('_', ' ').title()
+            ),
+        )
+        artifact_cols[2].metric(
+            'Application form',
+            (
+                'Prepared'
+                if plan.get('browser_preparation_completed')
+                else 'Review'
+            ),
+        )
+        with st.expander('What will be reviewed', expanded=True):
+            st.write(
+                {
+                    'Resume': (
+                        pdf.get('filename')
+                        or 'Exact bound PDF artifact'
+                    ),
+                    'Cover letter': (
+                        '1-page bound artifact'
+                        if cover.get('cover_letter_id')
+                        else str(
+                            cover.get('decision') or 'Not required'
+                        )
+                    ),
+                    'Provider': plan.get('provider') or 'Not recorded',
+                    'Application plan': (
+                        plan.get('plan_id') or 'Not recorded'
+                    ),
+                    'Final review approved': False,
+                    'Final submit executed': False,
+                }
+            )
+        st.info(
+            'Final Review and Final Submit remain disabled in this UI '
+            'tranche. They activate only after the canonical synthetic '
+            'staging E2E is accepted.'
+        )
+
+    if state in {'FAILED_SAFELY', 'BLOCKED', 'CANCELLED'}:
+        st.warning(
+            'Preparation stopped without claiming submission success. '
+            'You can retry after reviewing the recorded issue.'
+        )
+        if st.button(
+            'Retry preparation',
+            type='primary',
+            key=f'complete_loop_retry_{job_id}',
+            use_container_width=True,
+        ):
+            try:
+                complete_loop.start_prepare_for_job(
+                    int(job_id),
+                    engine=str(prepare.get('engine') or 'NATIVE'),
+                )
+            except Exception as error:
+                st.error(str(error))
+            else:
+                st.rerun()
+
+    if lifecycle:
+        st.markdown('#### Application timeline')
+        timeline = list(lifecycle.get('timeline') or [])
+        if timeline:
+            rows = []
+            for item in timeline:
+                raw_state = str(item.get('to_state') or '')
+                rows.append(
+                    {
+                        'Stage': complete_loop.STATE_LABELS.get(
+                            raw_state,
+                            raw_state.replace('_', ' ').title(),
+                        ),
+                        'When': (
+                            item.get('occurred_at')
+                            or item.get('created_at')
+                        ),
+                        'Reason': item.get('reason') or '',
+                    }
+                )
+            st.dataframe(
+                rows,
+                hide_index=True,
+                use_container_width=True,
+            )
+
+        receipt = lifecycle.get('receipt')
+        if receipt:
+            st.success('✓ Submission independently verified')
+            receipt_cols = st.columns(3)
+            receipt_cols[0].metric(
+                'Provider',
+                str(receipt.get('provider') or '—'),
+            )
+            receipt_cols[1].metric(
+                'Application ID',
+                str(
+                    receipt.get('provider_application_id') or '—'
+                ),
+            )
+            receipt_cols[2].metric(
+                'Verification',
+                str(
+                    receipt.get('verification_status') or '—'
+                ),
+            )
+            with st.expander(
+                'Verified submission receipt',
+                expanded=False,
+            ):
+                st.json(
+                    {
+                        'receipt_id': receipt.get('receipt_id'),
+                        'receipt_digest': receipt.get(
+                            'receipt_digest'
+                        ),
+                        'submitted_at': receipt.get('submitted_at'),
+                        'verified_at': receipt.get('verified_at'),
+                        'resume_sha256': receipt.get('resume_sha256'),
+                        'cover_letter_sha256': receipt.get(
+                            'cover_letter_sha256'
+                        ),
+                    }
+                )
+
+    return flow
+
 
 
 def _render_opportunity(job_id: int, current: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -396,9 +731,9 @@ def _render_readiness(
 
 def render() -> None:
     page_intro(
-        "PREPARE APPLICATION",
-        "One evidence-bound workspace for this job",
-        "Review the opportunity, resume, safe application answers, relationship evidence, and final readiness before any future handoff.",
+        "APPLICATIONS",
+        "Prepare, resolve, review, and track one application",
+        "MUNSHI builds the package in the background, surfaces only genuine missing information, and keeps submission verification separate from preparation.",
     )
     jobs = _job_options()
     if not jobs:
@@ -425,6 +760,8 @@ def render() -> None:
 
     snapshot = safe_owned_job_snapshot(job_id)
     _render_job_header(snapshot)
+    _render_complete_loop(job_id)
+    st.divider()
 
     opportunity = _latest_opportunity(job_id)
     relationship = _latest_relationship(job_id)

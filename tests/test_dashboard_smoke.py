@@ -178,3 +178,49 @@ def test_usajobs_credentials_and_runtime_labels_are_independent() -> None:
 
     labels = usajobs_status_labels(configured=True, runtime_enabled=False, connection_verified=True)
     assert labels == {"credentials": "Configured", "connection": "Verified", "runtime": "Disabled"}
+
+
+def test_complete_loop_product_ui_uses_durable_prepare_not_legacy_n8n():
+    pages = (
+        ROOT / "app" / "product_pages.py"
+    ).read_text(encoding="utf-8")
+    workspace = (
+        ROOT / "app" / "application_workspace_page.py"
+    ).read_text(encoding="utf-8")
+    shell = (
+        ROOT / "app" / "product_shell.py"
+    ).read_text(encoding="utf-8")
+
+    prepare_block = pages.split("def _prepare_job(", 1)[1].split(
+        "_PRODUCT_JOB_DIALOG_STATE_KEY",
+        1,
+    )[0]
+    assert "product_application_flow_v2" in prepare_block
+    assert "stored_job_n8n_worker" not in prepare_block
+    assert "start_prepare_for_job" in prepare_block
+    assert (
+        "from app.stored_job_n8n_worker import start_stored_job_run"
+        not in pages
+    )
+    assert "Prepare persisted job" in pages
+
+    assert "Application progress" in workspace
+    assert "READY_FOR_REVIEW" in workspace
+    assert "Submission independently verified" in workspace
+    assert "Final Review and Final Submit remain disabled" in workspace
+    assert '(PREPARE_APPLICATION_VIEW, "Applications")' in shell
+
+
+def test_complete_loop_product_ui_does_not_grant_submit_authority():
+    flow_source = (
+        ROOT / "app" / "product_application_flow_v2.py"
+    ).read_text(encoding="utf-8")
+    workspace = (
+        ROOT / "app" / "application_workspace_page.py"
+    ).read_text(encoding="utf-8")
+
+    assert "'submission_authority': False" in flow_source
+    assert "execute_submit" not in flow_source
+    assert "submit_application" not in flow_source
+    assert "submission_authority=True" not in workspace
+    assert "final_submit=True" not in workspace

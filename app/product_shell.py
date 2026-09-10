@@ -18,7 +18,7 @@ _SPECIAL_VIEWS = {RESUME_STUDIO_VIEW, PREPARE_APPLICATION_VIEW}
 NAVIGATION = (
     ("dashboard", "Dashboard"),
     ("jobs", "Browse jobs"),
-    (PREPARE_APPLICATION_VIEW, "Prepare Application"),
+    (PREPARE_APPLICATION_VIEW, "Applications"),
     ("auto-prepare", "Auto Prepare"),
     ("tracker", "Tracker"),
     ("profile", "Profile"),

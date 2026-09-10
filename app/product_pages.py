@@ -75,16 +75,45 @@ def _toggle_job_skipped(job_id: int, currently_skipped: bool) -> None:
     _set_action_feedback("success", "Restored job to results." if currently_skipped else "Passed on job.")
 
 
+def _application_flow(job_id: int) -> dict[str, Any]:
+    try:
+        from app import product_application_flow_v2 as complete_loop
+
+        return complete_loop.flow_for_job(int(job_id))
+    except Exception:
+        return {
+            "job_id": int(job_id),
+            "state": "",
+            "display_status": "Not started",
+            "progress_percent": 0,
+            "authority": "none",
+            "cta": "prepare",
+            "cta_label": "Prepare",
+            "submission_authority": False,
+        }
+
+
 def _prepare_job(job_id: int) -> None:
     try:
-        from app.stored_job_n8n_worker import start_stored_job_run
-        result = start_stored_job_run(int(job_id), actor="dashboard_product_ui")
-        if result.get("success"):
-            _set_action_feedback("success", str(result.get("message") or "Preparation request processed."))
-        else:
-            _set_action_feedback("warning", str(result.get("message") or "Preparation was not started."))
-    except Exception:
-        _set_action_feedback("error", "The guarded preparation request could not be started. No submission was claimed.")
+        from app import product_application_flow_v2 as complete_loop
+
+        result = complete_loop.start_prepare_for_job(
+            int(job_id),
+            engine="NATIVE",
+        )
+        _set_action_feedback(
+            "success",
+            (
+                "Application preparation is already in progress."
+                if result.get("replayed")
+                else "Application preparation started."
+            ),
+        )
+    except Exception as error:
+        _set_action_feedback(
+            "error",
+            "Preparation could not start safely: " + str(error),
+        )
 
 
 
@@ -97,8 +126,11 @@ def _open_job_detail(job_id: int) -> None:
 
 def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
     job_id = int(row["id"])
+    flow = _application_flow(job_id)
     tone = pastel_for(job_id)
     tags = [row.get("remote_type"), row.get("employment_type"), row.get("salary_raw")]
+    if flow.get("state"):
+        tags.append(flow.get("display_status"))
     if row.get("saved"):
         tags.append("Saved")
     tags_html = "".join(f'<span class="tag">{esc(tag)}</span>' for tag in tags if str(tag or "").strip())
@@ -128,7 +160,29 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
         with actions[1]:
             st.button("Restore" if skipped else "Pass", key=f"{key_prefix}_skip_{job_id}", use_container_width=True, on_click=_toggle_job_skipped, args=(job_id, skipped))
         with actions[2]:
-            st.button("Prepare", key=f"{key_prefix}_prepare_{job_id}", type="primary", use_container_width=True, on_click=_prepare_job, args=(job_id,))
+            if flow.get("cta") == "prepare":
+                st.button(
+                    str(flow.get("cta_label") or "Prepare"),
+                    key=f"{key_prefix}_prepare_{job_id}",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=_prepare_job,
+                    args=(job_id,),
+                )
+            else:
+                st.link_button(
+                    str(flow.get("cta_label") or "Application"),
+                    f"?view=prepare-application&job={job_id}",
+                    type=(
+                        "primary"
+                        if flow.get("state") in {
+                            "NEEDS_INPUT",
+                            "READY_FOR_REVIEW",
+                        }
+                        else "secondary"
+                    ),
+                    use_container_width=True,
+                )
 
 def _clear_job_query() -> None:
     try:
@@ -156,6 +210,14 @@ def _job_detail_dialog(job_id: int) -> None:
     row["skipped"] = int(state_record["skipped"]) if state_record else 0
     st.markdown(f"## {esc(row.get('title'), 'Untitled role')}", unsafe_allow_html=True)
     st.caption(f"{row.get('company_name') or 'Company not recorded'} · {row.get('location_raw') or 'Location unknown'} · {row.get('source') or 'Source unknown'}")
+    flow = _application_flow(job_id)
+    st.markdown(
+        f"""<div class="product-callout"><div>
+        <strong>Application · {esc(flow.get('display_status'))}</strong>
+        <span>{int(flow.get('progress_percent') or 0)}% of required preparation evidence complete</span>
+        </div><span class="status-chip">{esc(flow.get('authority'), 'Not started')}</span></div>""",
+        unsafe_allow_html=True,
+    )
     left, right = st.columns((1.55, 1), gap="large")
     with left:
         st.markdown("### Role summary")
@@ -183,7 +245,22 @@ def _job_detail_dialog(job_id: int) -> None:
     with action_columns[1]:
         st.button("Restore" if row["skipped"] else "Pass", key=f"dialog_skip_{job_id}", use_container_width=True, on_click=_toggle_job_skipped, args=(job_id, bool(row["skipped"])))
     with action_columns[2]:
-        st.button("Prepare", key=f"dialog_prepare_{job_id}", type="primary", use_container_width=True, on_click=_prepare_job, args=(job_id,))
+        if flow.get("cta") == "prepare":
+            st.button(
+                str(flow.get("cta_label") or "Prepare"),
+                key=f"dialog_prepare_{job_id}",
+                type="primary",
+                use_container_width=True,
+                on_click=_prepare_job,
+                args=(job_id,),
+            )
+        else:
+            st.link_button(
+                str(flow.get("cta_label") or "Application"),
+                f"?view=prepare-application&job={job_id}",
+                type="primary",
+                use_container_width=True,
+            )
     with action_columns[3]:
         if safe_link(row.get("apply_url")):
             st.link_button("Open application", safe_link(row["apply_url"]), use_container_width=True)
@@ -393,12 +470,8 @@ def _manual_add() -> None:
                     st.success(f"Job {saved['job_id']} was persisted through the canonical manual path.")
             job_id = st.session_state.get("product_manual_saved_job_id")
             if job_id and st.button("Prepare persisted job", key="product_manual_prepare"):
-                from app.stored_job_n8n_worker import start_stored_job_run
-                prepared = start_stored_job_run(int(job_id), actor="dashboard_product_manual_input")
-                if prepared.get("success"):
-                    st.success(str(prepared.get("message") or "Preparation request processed."))
-                else:
-                    st.warning(str(prepared.get("message") or "Preparation was not started."))
+                _prepare_job(int(job_id))
+                st.rerun()
 
 
 def auto_prepare() -> None:
@@ -512,8 +585,58 @@ def tracker() -> None:
     tab = st.radio("Tracker view", ["Pipeline", "Inbox"], horizontal=True, label_visibility="collapsed", key="product_tracker_tab", on_change=_sync_subroute, args=("tab", "product_tracker_tab", {"Pipeline": "pipeline", "Inbox": "inbox"}))
     if tab == "Inbox":
         _inbox(); return
-    records = tracker_rows(limit=250)
-    preferred = ["Prepared", "In progress", "Needs review", "Blocked", "Submitted", "Failed", "Skipped", "Queue completed", "Status not recorded"]
+    legacy_records = tracker_rows(limit=250)
+    try:
+        from app import product_application_flow_v2 as complete_loop
+
+        modern_records = complete_loop.pipeline_rows(limit=250)
+    except Exception:
+        modern_records = []
+
+    merged = {
+        int(row["job_id"]): dict(row)
+        for row in legacy_records
+    }
+    for row in modern_records:
+        job_id = int(row["job_id"])
+        combined = dict(merged.get(job_id) or {})
+        combined.update(row)
+        merged[job_id] = combined
+
+    records = list(merged.values())
+    records.sort(
+        key=lambda row: str(
+            row.get("updated_at")
+            or row.get("completed_at")
+            or row.get("queued_at")
+            or ""
+        ),
+        reverse=True,
+    )
+
+    preferred = [
+        "Preparing",
+        "Needs input",
+        "Ready for review",
+        "Ready to submit",
+        "Submitting",
+        "Submitted",
+        "Submission needs verification",
+        "Submission verified",
+        "Awaiting response",
+        "Assessment",
+        "Interview",
+        "Offer",
+        "Prepared",
+        "In progress",
+        "Needs review",
+        "Blocked",
+        "Needs attention",
+        "Failed",
+        "Skipped",
+        "Queue completed",
+        "Status not recorded",
+    ]
     represented = list(dict.fromkeys(str(record.get("display_status") or "Status not recorded") for record in records))
     statuses = ["All"] + [status for status in preferred if status in represented]
     statuses += [status for status in represented if status not in statuses]
@@ -538,6 +661,19 @@ def tracker() -> None:
         facts[1].metric("Hunter match", f"{float(record['hunter_score']):.0f}%" if record.get("hunter_score") is not None else "Not available")
         facts[2].metric("ATS score", record.get("final_ats_score") if record.get("final_ats_score") is not None else "Not available")
         st.caption("Recorded lifecycle evidence · " + str(record.get("status_evidence") or "none"))
+        if record.get("progress_percent") is not None:
+            st.progress(
+                int(record.get("progress_percent") or 0) / 100
+            )
+        if record.get("runtime_question_count"):
+            st.warning(
+                f"{int(record['runtime_question_count'])} employer question(s) need attention."
+            )
+        st.link_button(
+            "Open application workspace",
+            f"?view=prepare-application&job={int(record['job_id'])}",
+            use_container_width=True,
+        )
         artifacts = st.columns(3)
         with artifacts[0]:
             if safe_link(record.get("resume_pdf_url")): st.link_button("Open resume", safe_link(record["resume_pdf_url"]), use_container_width=True)
