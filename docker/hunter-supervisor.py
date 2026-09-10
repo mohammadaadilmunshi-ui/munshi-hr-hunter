@@ -137,10 +137,23 @@ def main() -> int:
         children.append(Lane("telegram", [python, "-m", "app.telegram_listener"]))
     discovery = enabled("HUNTER_ENABLE_DISCOVERY_SCHEDULER")
     coordinator = enabled("HUNTER_ENABLE_COORDINATOR")
+    prepare_worker = enabled("HUNTER_ENABLE_PREPARE_WORKER")
     if discovery:
         children.append(Lane("discovery-scheduler", [python, "-m", "app.randomized_source_runner", "--scheduled"], repeat=True, interval=max(30, int(os.getenv("HUNTER_DISCOVERY_INTERVAL_SECONDS", "3600")))))
     if coordinator:
         children.append(Lane("coordinator", coordinator_command(python), repeat=True, interval=max(30, int(os.getenv("HUNTER_COORDINATOR_INTERVAL_SECONDS", "3600")))))
+    if prepare_worker:
+        children.append(
+            Lane(
+                "prepare-worker",
+                [python, "-m", "app.prepare_worker_runtime_v1"],
+                repeat=True,
+                interval=max(
+                    5,
+                    int(os.getenv("HUNTER_PREPARE_WORKER_INTERVAL_SECONDS", "15")),
+                ),
+            )
+        )
 
     signal.signal(signal.SIGTERM, terminate_children)
     signal.signal(signal.SIGINT, terminate_children)

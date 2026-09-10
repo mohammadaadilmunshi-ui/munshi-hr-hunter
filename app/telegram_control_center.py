@@ -1522,6 +1522,11 @@ def system_status_text() -> str:
 
         return "notice"
 
+    fastapi_host, fastapi_port = service_endpoint("fastapi")
+    n8n_host, n8n_port = service_endpoint("n8n")
+    fastapi_online = _port_open(fastapi_port, fastapi_host)
+    n8n_online = _port_open(n8n_port, n8n_host)
+
     connection = _get_connection()
 
     try:
