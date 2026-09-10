@@ -92,15 +92,23 @@ def _job_summary(job_id: int) -> dict[str, Any]:
         connection.close()
 
 
-def _run_n8n(job_id: int) -> None:
-    runner: Callable[[int], None] | None = getattr(
-        _PAGES,
-        "_resume_engine_original_n8n_prepare",
-        None,
-    )
-    if not callable(runner):
-        raise TypeError("The guarded n8n preparation path is unavailable.")
-    runner(int(job_id))
+def _run_n8n(job_id: int) -> dict[str, Any]:
+    # Explicit n8n choice uses the existing guarded stored-job runner directly.
+    from app.stored_job_n8n_worker import start_stored_job_run
+
+    result = start_stored_job_run(int(job_id), actor="dashboard")
+    if not isinstance(result, dict):
+        raise TypeError(
+            "The guarded n8n preparation path returned an invalid result."
+        )
+    if result.get("success") is not True:
+        raise RuntimeError(
+            str(
+                result.get("message")
+                or "The guarded n8n preparation path was blocked."
+            )
+        )
+    return result
 
 
 def _native_readiness() -> tuple[bool, str]:
@@ -229,15 +237,27 @@ def _engine_dialog(job_id: int) -> None:
             st.session_state.pop(_DIALOG_JOB_KEY, None)
             if choice == "n8n":
                 try:
-                    _run_n8n(job_id)
-                except Exception:  # noqa: BLE001
+                    result = _run_n8n(job_id)
+                    if _PAGES is not None and hasattr(
+                        _PAGES,
+                        "_set_action_feedback",
+                    ):
+                        _PAGES._set_action_feedback(
+                            "success" if result.get("started") else "info",
+                            str(
+                                result.get("message")
+                                or "The guarded n8n preparation request was accepted."
+                            ),
+                        )
+                except Exception as error:  # noqa: BLE001
                     if _PAGES is not None and hasattr(
                         _PAGES,
                         "_set_action_feedback",
                     ):
                         _PAGES._set_action_feedback(
                             "error",
-                            "The guarded n8n preparation request could not be started.",
+                            "The guarded n8n preparation request could not be started: "
+                            + str(error),
                         )
                 st.rerun()
 

@@ -500,6 +500,7 @@ def _reset_failed_queue(queue_id: int) -> None:
 
 def _create_or_reuse_queue(job: dict[str, Any]) -> tuple[int, str]:
     from app.n8n_dispatch import (
+        _begin_dispatch_transaction,
         ensure_schema,
         insert_queue_item,
     )
@@ -527,7 +528,7 @@ def _create_or_reuse_queue(job: dict[str, Any]) -> tuple[int, str]:
                 return int(row["id"]), "retry_failed_queue"
             return int(row["id"]), f"reuse_{status or 'existing'}"
 
-        connection.execute("BEGIN IMMEDIATE")
+        _begin_dispatch_transaction(connection)
         queue = insert_queue_item(
             connection,
             job,
