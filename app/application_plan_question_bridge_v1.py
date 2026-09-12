@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app import application_answer_autofill_v1 as answer_autofill
 from app import application_answer_router_v1 as answer_router
 from app import application_field_intelligence_v1 as field_intelligence
 from app import application_plan_v2
@@ -66,6 +67,10 @@ def normalize_visible_question(value: str | Mapping[str, Any]) -> dict[str, Any]
     if explicit_profile_key and not requirement.get("profile_fact_key"):
         requirement["profile_fact_key"] = explicit_profile_key
 
+    # Bind derived projections to the current confirmed profile digest/revision so
+    # a later profile edit cannot silently reuse an older first/last/city projection.
+    requirement = answer_autofill.enrich_requirement(requirement)
+
     requirement["provider_field_id"] = str(
         raw.get("field_id") or raw.get("provider_field_id") or ""
     ).strip() or None
@@ -77,6 +82,7 @@ def normalize_visible_question(value: str | Mapping[str, Any]) -> dict[str, Any]
     requirement["field_intelligence_version"] = (
         field_intelligence.INTELLIGENCE_VERSION if structural is not None else None
     )
+    requirement["answer_autofill_version"] = answer_autofill.AUTOFILL_VERSION
     return requirement
 
 
@@ -127,6 +133,7 @@ def prepare_application_plan_from_questions(
         "version": BRIDGE_VERSION,
         "answer_router_version": answer_router.ROUTER_VERSION,
         "field_intelligence_version": field_intelligence.INTELLIGENCE_VERSION,
+        "answer_autofill_version": answer_autofill.AUTOFILL_VERSION,
         "normalized_question_count": len(requirements),
     }
     return result
