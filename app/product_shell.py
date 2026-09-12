@@ -200,6 +200,12 @@ def render() -> None:
     # is deliberately installed after it so the vault appends to the same
     # Credentials surface instead of replacing the newer AutoApply controls.
     install_autoapply_settings_ui(product_pages)
+    # Streamlit reruns this shell on every interaction. AutoApply deliberately
+    # reassigns product_pages.settings above, so an old one-time vault marker
+    # would otherwise prevent the secure-vault wrapper from being reattached.
+    # Clear only that wrapper marker, then install exactly one fresh wrapper over
+    # the current Settings function for this run.
+    product_pages._secure_api_vault_ui_installed = False
     install_secure_api_vault_ui(product_pages)
     install_resume_engine_selector(product_pages)
     # Additive only: model-free profile parsing and progressive Browse Jobs loading.
