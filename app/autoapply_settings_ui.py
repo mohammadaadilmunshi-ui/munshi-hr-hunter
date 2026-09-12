@@ -1,9 +1,9 @@
 """AutoApply controls for the established MUNSHI product Settings surface.
 
-The page stores non-secret product preferences in Hunter's canonical settings
-store. API credentials are accepted only through the existing encrypted vault
-and are never read back into the browser. Rendering this page never grants
-submission authority or starts an application.
+Non-secret preferences live in Hunter's canonical settings store. API credentials
+are accepted only through the existing encrypted vault and are never read back
+into the browser. Rendering this page never grants submission authority or starts
+an application.
 """
 from __future__ import annotations
 
@@ -65,13 +65,14 @@ def _save_preferences(value: dict[str, Any]) -> None:
 
 
 def _vault_secret_exists(credential_type: str) -> bool:
-    """Check encrypted-vault metadata without decrypting the secret."""
+    """Check only encrypted-vault metadata; never decrypt a stored secret."""
     connection = get_connection()
     try:
-        exists = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='credential_secret'"
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='credential_secret'"
         ).fetchone()
-        if not exists:
+        if not table:
             return False
         row = connection.execute(
             "SELECT 1 FROM credential_secret "
@@ -86,7 +87,7 @@ def _vault_secret_exists(credential_type: str) -> bool:
 
 
 def _runtime_health() -> dict[str, Any]:
-    """Probe only the non-secret Apply health endpoint with a bounded timeout."""
+    """Read only the non-secret Apply health endpoint with a bounded timeout."""
     explicit = str(os.getenv("MUNSHI_APPLY_RUNTIME_HEALTH_URL") or "").strip()
     isolated = str(os.getenv("CLOUD_SHADOW_MODE") or "").strip().casefold() == "true"
     url = explicit or ("http://apply:8000/health" if isolated else "")
@@ -109,9 +110,11 @@ def _runtime_health() -> dict[str, Any]:
 
 def _card(title: str, value: str, detail: str) -> None:
     st.markdown(
-        f"""<div class="settings-v22-card"><b>{_PAGES.esc(title)}</b>
+        f"""<div class="settings-v22-card">
+        <b>{_PAGES.esc(title)}</b>
         <span><strong>{_PAGES.esc(value)}</strong></span>
-        <span>{_PAGES.esc(detail)}</span></div>""",
+        <span>{_PAGES.esc(detail)}</span>
+        </div>""",
         unsafe_allow_html=True,
     )
 
@@ -160,9 +163,11 @@ def _autoapply_form() -> None:
     preferences = _preferences()
     st.markdown("### Autonomous Apply")
     st.markdown(
-        '<div class="settings-v22-copy">Configure the browser application executor here. '
-        'This does not bypass Candidate Truth, Application Plan, security checkpoints, '
-        'review digests, provider policy, or independent submission verification.</div>',
+        """<div class="settings-v22-copy">
+        Configure the browser application executor here. This does not bypass
+        Candidate Truth, Application Plan, security checkpoints, review digests,
+        provider policy, or independent submission verification.
+        </div>""",
         unsafe_allow_html=True,
     )
     _autoapply_status(preferences)
@@ -249,8 +254,9 @@ def _anthropic_credential() -> None:
         return
     if not available:
         st.warning(
-            "API-key mode is selected, but encrypted credential storage is not configured on this server. "
-            "The credential field stays unavailable until the vault is configured."
+            "API-key mode is selected, but encrypted credential storage is not "
+            "configured on this server. The credential field stays unavailable "
+            "until the vault is configured."
         )
         return
 
@@ -264,7 +270,10 @@ def _anthropic_credential() -> None:
             "Anthropic API key",
             type="password",
             placeholder="Stored value is never displayed",
-            help="Saving replaces the encrypted credential. Plaintext is never read back into this page.",
+            help=(
+                "Saving replaces the encrypted credential. Plaintext is never "
+                "read back into this page."
+            ),
         )
         if st.form_submit_button(
             "Replace encrypted API key" if configured else "Store encrypted API key",
@@ -279,7 +288,9 @@ def _anthropic_credential() -> None:
                 except VaultError as error:
                     st.error(str(error))
                 else:
-                    st.success("Anthropic API credential stored without displaying the saved value.")
+                    st.success(
+                        "Anthropic API credential stored without displaying the saved value."
+                    )
                     st.rerun()
 
     if configured and st.button(
@@ -295,20 +306,22 @@ def _anthropic_credential() -> None:
 def _security_checkpoint_card() -> None:
     st.markdown("### Security checkpoint continuation")
     st.markdown(
-        '<div class="settings-v22-card"><b>User-assisted verification · automatic continuation</b>'
-        '<span>If CAPTCHA, MFA, OTP, identity, or another protected verification step appears, '
-        'MUNSHI pauses and checkpoints the exact Chromium session. The website popup focuses that '
-        'tab and resumes only after the extension re-scans the page and confirms the checkpoint is gone.'</n        '</span></div>'
-        .replace("gone.</span>", "gone.</span>"),
+        """<div class="settings-v22-card">
+        <b>User-assisted verification · automatic continuation</b>
+        <span>If CAPTCHA, MFA, OTP, identity, or another protected verification
+        step appears, MUNSHI pauses and checkpoints the exact Chromium session.
+        The website popup focuses that tab and resumes only after the extension
+        re-scans the page and confirms the checkpoint is gone.</span>
+        </div>""",
         unsafe_allow_html=True,
     )
     st.caption(
-        "Passwords, verification codes, cookies, and challenge answers are never copied into this Settings page."
+        "Passwords, verification codes, cookies, and challenge answers are never "
+        "copied into this Settings page."
     )
 
 
 def _credentials() -> None:
-    preferences = _preferences()
     st.markdown("### Credentials & AutoApply")
     if vault_available():
         st.success("Encrypted credential storage is available on this server.")
@@ -318,9 +331,11 @@ def _credentials() -> None:
             "Subscription mode remains selectable; API-key entry stays unavailable."
         )
     st.markdown(
-        '<div class="settings-v22-card"><b>Credential policy</b>'
-        '<span>Passwords and API keys are never displayed in plaintext. Credential readiness and '
-        'application authority are separate states.</span></div>',
+        """<div class="settings-v22-card">
+        <b>Credential policy</b>
+        <span>Passwords and API keys are never displayed in plaintext.
+        Credential readiness and application authority are separate states.</span>
+        </div>""",
         unsafe_allow_html=True,
     )
     _autoapply_form()
@@ -332,7 +347,9 @@ def settings_v23() -> None:
     _PAGES.page_intro(
         "PREFERENCES",
         "Settings",
-        "Readable product controls first. AutoApply configuration and credential readiness are visible here; engineering diagnostics remain under Advanced / System.",
+        "Readable product controls first. AutoApply configuration and credential "
+        "readiness are visible here; engineering diagnostics remain under "
+        "Advanced / System.",
     )
     options = [
         "Apply",
@@ -370,9 +387,12 @@ def settings_v23() -> None:
             preferences = _preferences()
             st.markdown("### Review and submission authority")
             st.markdown(
-                '<div class="settings-v22-card"><b>What this controls</b>'
-                '<span>Review preference is separate from targeting, work authorization, dedupe, ATS, '
-                'Application Plan, provider safety, and independent verification.</span></div>',
+                """<div class="settings-v22-card">
+                <b>What this controls</b>
+                <span>Review preference is separate from targeting, work
+                authorization, dedupe, ATS, Application Plan, provider safety,
+                and independent verification.</span>
+                </div>""",
                 unsafe_allow_html=True,
             )
             with st.form("product_v23_review_form"):
@@ -386,7 +406,8 @@ def settings_v23() -> None:
             _card(
                 "Final submit preference",
                 "Requested" if preferences["allow_final_submit"] else "Off",
-                "Change this under Credentials & AutoApply. Runtime submit authority remains a separate gate.",
+                "Change this under Credentials & AutoApply. "
+                "Runtime submit authority remains a separate gate.",
             )
 
         elif section == "Automation":
@@ -397,15 +418,20 @@ def settings_v23() -> None:
             _card(
                 "Discovery / preparation volume",
                 policy["mode"].replace("_", " ").title(),
-                f"{sum(bool(lane['enabled']) for lane in lanes)} of {len(lanes)} target lane(s) enabled.",
+                f"{sum(bool(lane['enabled']) for lane in lanes)} of "
+                f"{len(lanes)} target lane(s) enabled.",
             )
             _card(
                 "Autonomous browser executor",
                 "Enabled" if preferences["enabled"] else "Disabled",
-                f"{preferences['model'].title()} · max {preferences['max_turns']} turns · ${preferences['max_cost_per_application_usd']:.2f} ceiling per application",
+                f"{preferences['model'].title()} · max {preferences['max_turns']} "
+                f"turns · ${preferences['max_cost_per_application_usd']:.2f} "
+                "ceiling per application",
             )
             st.markdown(
-                '<a class="product-nav-link" href="?view=settings&amp;section=credentials" target="_self">Configure AutoApply →</a>',
+                '<a class="product-nav-link" '
+                'href="?view=settings&amp;section=credentials" '
+                'target="_self">Configure AutoApply →</a>',
                 unsafe_allow_html=True,
             )
 
@@ -421,9 +447,12 @@ def settings_v23() -> None:
             _card(
                 "MUNSHI Apply profile bridge",
                 "Connected" if extension else "Local only",
-                "Server-side MasterProfile data is available."
-                if extension
-                else "The browser extension keeps MasterProfile locally until a secure sync bridge is enabled.",
+                (
+                    "Server-side MasterProfile data is available."
+                    if extension
+                    else "The browser extension keeps MasterProfile locally until "
+                    "a secure sync bridge is enabled."
+                ),
             )
             _PAGES._inbox()
 
@@ -437,7 +466,9 @@ def settings_v23() -> None:
                 f"Master resume: {'configured' if designated else 'not configured'}.",
             )
             st.markdown(
-                '<a class="product-nav-link" href="?view=profile&amp;tab=details" target="_self">Open Profile details →</a>',
+                '<a class="product-nav-link" '
+                'href="?view=profile&amp;tab=details" '
+                'target="_self">Open Profile details →</a>',
                 unsafe_allow_html=True,
             )
 
