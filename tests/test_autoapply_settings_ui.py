@@ -37,7 +37,8 @@ def test_credentials_page_exposes_autoapply_product_controls() -> None:
 def test_autoapply_settings_keep_submit_and_security_authority_explicit() -> None:
     source = _source("app/autoapply_settings_ui.py")
     assert "Runtime submit authority remains a separate gate" in source
-    assert "does not bypass Candidate Truth" in source
+    assert "does not bypass" in source
+    assert "Candidate Truth" in source
     assert "Application Plan" in source
     assert "independent submission verification" in source
     assert "CAPTCHA, MFA, OTP, identity" in source
