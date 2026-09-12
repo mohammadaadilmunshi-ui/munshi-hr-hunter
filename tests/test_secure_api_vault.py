@@ -139,6 +139,15 @@ def test_initial_dashboard_installs_vault_after_v22() -> None:
     )
 
 
+def test_vault_provisioner_forwards_embedded_python_to_container() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "deploy" / "netcup" / "provision_secure_vault_key.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "docker run --rm -i" in source
+    assert '"$image" - <<\'PY\'' in source
+
+
 def test_invalid_secret_inputs_fail_without_echoing_value(hunter_db, monkeypatch) -> None:
     pytest.importorskip("cryptography")
     monkeypatch.setenv("MUNSHI_VAULT_KEY", _encoded_key())
