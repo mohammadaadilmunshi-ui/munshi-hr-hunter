@@ -56,6 +56,6 @@ def test_api_key_never_round_trips_to_ui() -> None:
 def test_runtime_probe_is_read_only_health_only() -> None:
     source = _source("app/autoapply_settings_ui.py")
     assert '"http://apply:8000/health"' in source
-    assert "urllib.request.urlopen" in source
+    assert "httpx.get" in source
     assert "MUNSHI_APPLY_RUNTIME_HEALTH_URL" in source
     assert "timeout=1.25" in source
