@@ -190,6 +190,9 @@ def render() -> None:
         install_resume_studio_session_state_repair_v1,
     )
     from app.secure_api_vault_ui import install_secure_api_vault_ui
+    from app.settings_profile_authority_ui_v1 import (
+        install_settings_profile_authority_ui,
+    )
 
     # Preserve the established V3 route contract first, then layer the V4
     # unified Profile authority on the same long-lived V1 entrypoint.
@@ -215,6 +218,11 @@ def render() -> None:
     # the current Settings function for this run.
     product_pages._secure_api_vault_ui_installed = False
     install_secure_api_vault_ui(product_pages)
+    # The Profile settings adapter is also rerun-safe and intentionally installed
+    # last so Profile & defaults is projected from the same Candidate Truth read
+    # model while every other Settings section keeps the established wrappers.
+    product_pages._settings_profile_authority_ui_installed = False
+    install_settings_profile_authority_ui(product_pages)
     install_resume_engine_selector(product_pages)
     # Additive only: model-free profile parsing and progressive Browse Jobs loading.
     # Existing n8n/legacy operations stay intact.
