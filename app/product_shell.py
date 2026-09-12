@@ -5,6 +5,7 @@ from typing import Callable
 
 import streamlit as st
 
+from app.autoapply_settings_ui import install_autoapply_settings_ui
 from app.product_state import valid_view, volume_policy
 from app.product_ui import esc, inject_css
 from app.product_v22 import brand_logo_data_uri, inject_v22_css, install_product_v22
@@ -194,6 +195,9 @@ def render() -> None:
     profile_workspace_v1.render = profile_workspace_v3.render
 
     install_product_v22(product_pages)
+    # Additive settings layer: expose AutoApply preferences and encrypted
+    # credential readiness on the same Settings page users already operate.
+    install_autoapply_settings_ui(product_pages)
     install_resume_engine_selector(product_pages)
     # Additive only: model-free profile parsing and progressive Browse Jobs loading.
     # Existing n8n/legacy operations stay intact.
