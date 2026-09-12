@@ -1,11 +1,11 @@
 """Canonical visible-question bridge into immutable Application Plan V2.
 
 Provider adapters, MUNSHI Apply, and AutoApply should not invent their own
-question keys.  They hand visible labels/prompts to this module; it performs the
-same deterministic semantic normalization and passes the resulting requirements
-to Application Plan V2.
+question keys. They hand visible labels/prompts/field metadata to this module;
+it first uses deterministic structural field intelligence (HTML autocomplete,
+labels, names) and then falls back to the shared semantic question catalog.
 
-This is a producer-side convenience layer only.  Application Plan V2 remains the
+This is a producer-side convenience layer only. Application Plan V2 remains the
 answer, permission, provider-policy, digest, and idempotency authority.
 """
 from __future__ import annotations
@@ -13,7 +13,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app import application_answer_autofill_v1 as answer_autofill
 from app import application_answer_router_v1 as answer_router
+from app import application_field_intelligence_v1 as field_intelligence
 from app import application_plan_v2
 
 BRIDGE_VERSION = "application-plan-question-bridge-v1"
@@ -28,6 +30,13 @@ def normalize_visible_question(value: str | Mapping[str, Any]) -> dict[str, Any]
             or raw.get("label")
             or raw.get("prompt")
             or raw.get("normalized_question")
+            or raw.get("rawText")
+            or raw.get("aria_label")
+            or raw.get("ariaLabel")
+            or raw.get("placeholder")
+            or raw.get("field_name")
+            or raw.get("fieldName")
+            or raw.get("name")
             or ""
         ).strip()
         required = bool(raw.get("required", True))
@@ -36,7 +45,18 @@ def normalize_visible_question(value: str | Mapping[str, Any]) -> dict[str, Any]
         text = str(value or "").strip()
         required = True
 
-    requirement = answer_router.requirement_from_question(text, required=required)
+    structural = (
+        field_intelligence.requirement_from_field(raw, required=required)
+        if raw
+        else None
+    )
+    if structural is not None:
+        requirement = structural
+    else:
+        # Apply semantic hints for protected/self-ID domains are intentionally not
+        # converted into NORMAL structural fields. Preserve their visible raw text
+        # here so the canonical catalog can recover the protected semantic key.
+        requirement = answer_router.requirement_from_question(text, required=required)
 
     # Browser/provider metadata may narrow a requirement, but it must not silently
     # change a semantic key or downgrade the catalog's sensitivity classification.
@@ -53,14 +73,28 @@ def normalize_visible_question(value: str | Mapping[str, Any]) -> dict[str, Any]
     if explicit_profile_key and not requirement.get("profile_fact_key"):
         requirement["profile_fact_key"] = explicit_profile_key
 
+    # Bind derived projections to the current confirmed profile digest/revision so
+    # a later profile edit cannot silently reuse an older first/last/city projection.
+    requirement = answer_autofill.enrich_requirement(requirement)
+
     requirement["provider_field_id"] = str(
-        raw.get("field_id") or raw.get("provider_field_id") or ""
+        raw.get("field_id")
+        or raw.get("provider_field_id")
+        or raw.get("controlId")
+        or ""
     ).strip() or None
     requirement["provider_field_name"] = str(
-        raw.get("field_name") or raw.get("name") or ""
+        raw.get("field_name")
+        or raw.get("fieldName")
+        or raw.get("name")
+        or ""
     ).strip() or None
     requirement["answer_router_version"] = answer_router.ROUTER_VERSION
     requirement["question_bridge_version"] = BRIDGE_VERSION
+    requirement["field_intelligence_version"] = (
+        field_intelligence.INTELLIGENCE_VERSION if structural is not None else None
+    )
+    requirement["answer_autofill_version"] = answer_autofill.AUTOFILL_VERSION
     return requirement
 
 
@@ -110,6 +144,8 @@ def prepare_application_plan_from_questions(
     result["question_bridge"] = {
         "version": BRIDGE_VERSION,
         "answer_router_version": answer_router.ROUTER_VERSION,
+        "field_intelligence_version": field_intelligence.INTELLIGENCE_VERSION,
+        "answer_autofill_version": answer_autofill.AUTOFILL_VERSION,
         "normalized_question_count": len(requirements),
     }
     return result

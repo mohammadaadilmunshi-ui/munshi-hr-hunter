@@ -465,617 +465,392 @@ def _friendly_status(raw_status: Any, queue_status: Any, *, artifact: bool = Fal
         return "Completed"
 
     if status:
-        return "Review status"
+        return status.replace("_", " ").title()
 
-    return "Status not recorded"
+    return "Queued"
 
 
-def _status_description(status: str) -> str:
+def _status_description(raw_status: Any, queue_status: Any, *, artifact: bool = False) -> str:
+    display = _friendly_status(raw_status, queue_status, artifact=artifact)
     descriptions = {
-        "Prepared": "A resume or application package artifact is recorded and ready to review.",
-        "Needs review": "The workflow finished with a truth, quality, or placement issue that needs your review.",
-        "No resume generated": "The workflow completed, but no resume artifact was produced for this run.",
-        "In progress": "The guarded preparation pipeline is still processing this job.",
-        "Blocked": "Canonical targeting or eligibility evidence prevented normal preparation.",
-        "Submitted": "External submission evidence is recorded for this application.",
-        "Failed": "The latest preparation attempt ended in a recorded failure.",
-        "Skipped": "You passed on this opportunity.",
-        "Completed": "The queue completed, but no prepared artifact is recorded in the latest evidence.",
-        "Review status": "The workflow has a recorded state that should be inspected before acting.",
-        "Status not recorded": "No lifecycle evidence is recorded for this item yet.",
+        "Submitted": "The employer submission has been confirmed by external evidence.",
+        "Prepared": "The application package was prepared successfully.",
+        "Completed": "The recorded preparation run completed.",
+        "Needs review": "Preparation stopped for a review decision or truth check.",
+        "No resume generated": "The run completed without a usable resume artifact.",
+        "Blocked": "A targeting, eligibility, or safety gate stopped this opportunity.",
+        "Failed": "The latest recorded run failed before completion.",
+        "In progress": "Preparation is currently running or waiting in the queue.",
+        "Skipped": "The queue intentionally skipped this item.",
+        "Queued": "This item is waiting for preparation.",
     }
-    return descriptions.get(status, "Open the item to review its recorded evidence.")
+    return descriptions.get(display, "Recorded workflow state: " + display + ".")
 
 
-def _tracker_rows_v22(limit: int = 100) -> list[dict[str, Any]]:
-    original = getattr(_PAGES, "_product_v22_original_tracker_rows")
-    rows = original(limit=limit)
-
-    # The latest workflow result is authoritative for lifecycle status, but an
-    # earlier successful result may hold the prepared resume/cover-letter URLs.
-    # Recover those real artifacts without pretending they belong to the latest
-    # run. This fixes jobs whose prepared document exists but was hidden by a
-    # later review-only result.
-    missing_ids = [
-        int(row["job_id"])
-        for row in rows
-        if not (
-            _PAGES.safe_link(row.get("resume_pdf_url"))
-            or _PAGES.safe_link(row.get("resume_doc_url"))
-            or _PAGES.safe_link(row.get("cover_letter_doc_url"))
-        )
-    ]
-    artifact_by_job: dict[int, dict[str, Any]] = {}
-    if missing_ids:
-        from app.database import get_connection
-
-        connection = get_connection()
-        try:
-            for job_id in missing_ids:
-                record = connection.execute(
-                    """SELECT resume_doc_url,resume_pdf_url,cover_letter_doc_url,
-                              final_ats_score,completed_at,sent_at
-                         FROM n8n_results
-                        WHERE job_id=?
-                          AND (
-                              trim(COALESCE(resume_pdf_url,'')) != ''
-                           OR trim(COALESCE(resume_doc_url,'')) != ''
-                           OR trim(COALESCE(cover_letter_doc_url,'')) != ''
-                          )
-                        ORDER BY id DESC
-                        LIMIT 1""",
-                    (job_id,),
-                ).fetchone()
-                if record:
-                    artifact_by_job[job_id] = dict(record)
-        finally:
-            connection.close()
-
+def _tracker_rows_v22() -> list[dict[str, Any]]:
+    rows = _PAGES._product_v22_original_tracker_rows()
+    result: list[dict[str, Any]] = []
     for row in rows:
-        fallback = artifact_by_job.get(int(row["job_id"]), {})
-        for field in (
-            "resume_doc_url",
-            "resume_pdf_url",
-            "cover_letter_doc_url",
-        ):
-            if not _PAGES.safe_link(row.get(field)) and _PAGES.safe_link(fallback.get(field)):
-                row[field] = fallback[field]
-        if row.get("final_ats_score") is None and fallback.get("final_ats_score") is not None:
-            row["final_ats_score"] = fallback["final_ats_score"]
-        row["artifact_prepared_at"] = fallback.get("completed_at") or fallback.get("sent_at")
-
-        artifact = bool(
-            _PAGES.safe_link(row.get("resume_pdf_url"))
-            or _PAGES.safe_link(row.get("resume_doc_url"))
-            or _PAGES.safe_link(row.get("cover_letter_doc_url"))
+        copy = dict(row)
+        display = _friendly_status(
+            copy.get("status"),
+            copy.get("queue_status"),
+            artifact=bool(copy.get("artifact")),
         )
-        status = _friendly_status(
-            row.get("n8n_status"),
-            row.get("queue_status"),
-            artifact=artifact,
+        copy["display_status"] = display
+        copy["status_description"] = _status_description(
+            copy.get("status"),
+            copy.get("queue_status"),
+            artifact=bool(copy.get("artifact")),
         )
-        row["display_status"] = status
-        row["status_description"] = _status_description(status)
-
-    return rows
+        result.append(copy)
+    return result
 
 
-def _safe_linkedin_url(value: Any) -> str | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    try:
-        parsed = urlparse(raw)
-    except ValueError:
-        return None
-    host = str(parsed.hostname or "").casefold()
-    if parsed.scheme not in {"http", "https"}:
-        return None
-    if host != "linkedin.com" and not host.endswith(".linkedin.com"):
-        return None
-    return raw
+def _provider_name(url: Any) -> str:
+    value = str(url or "").casefold()
+    if "greenhouse" in value:
+        return "Greenhouse"
+    if "lever.co" in value or "lever.co/" in value:
+        return "Lever"
+    if "ashbyhq" in value:
+        return "Ashby"
+    if "smartrecruiters" in value:
+        return "SmartRecruiters"
+    if "workday" in value or "myworkdayjobs" in value:
+        return "Workday"
+    return "Employer site"
 
 
-def _recruiter_contact_package(job_id: int) -> dict[str, Any]:
-    from app.database import get_connection
-    from app.universal_n8n_progress import recruiter_contacts_from_result
+def _compact_reasons(detail: dict[str, Any], candidate: dict[str, Any]) -> list[str]:
+    reasons = [
+        str(item).strip()
+        for item in detail.get("fit_reasons") or candidate.get("fit_reasons") or []
+        if str(item).strip()
+    ]
+    if reasons:
+        return reasons[:3]
 
-    connection = get_connection()
-    try:
-        tables = {
-            str(row[0])
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
-        empty = {
-            "contacts": [],
-            "contacts_sheet_url": "",
-            "outreach_sheet_url": "",
-        }
-        if "n8n_results" not in tables:
-            return empty
-
-        columns = {
-            str(row[1])
-            for row in connection.execute(
-                "PRAGMA table_info(n8n_results)"
-            ).fetchall()
-        }
-        wanted = [
-            "id",
-            "recruiter_names_json",
-            "recruiter_linkedin_urls_json",
-            "recruiter_contacts_json",
-            "recruiter_found",
-            "contacts_sheet_url",
-            "outreach_sheet_url",
-            "extra_outputs_json",
-            "completed_at",
-            "sent_at",
-        ]
-        selected = [name for name in wanted if name in columns]
-        if "id" not in selected:
-            return empty
-
-        rows = connection.execute(
-            f"SELECT {', '.join(selected)} FROM n8n_results "
-            "WHERE job_id=? ORDER BY id DESC LIMIT 25",
-            (int(job_id),),
-        ).fetchall()
-
-        fallback = dict(empty)
-        for record in rows:
-            value = dict(record)
-            contacts = recruiter_contacts_from_result(value)
-            contacts_sheet = str(value.get("contacts_sheet_url") or "").strip()
-            outreach_sheet = str(value.get("outreach_sheet_url") or "").strip()
-            if contacts:
-                return {
-                    "contacts": contacts,
-                    "contacts_sheet_url": contacts_sheet,
-                    "outreach_sheet_url": outreach_sheet,
-                }
-            if not fallback["contacts_sheet_url"] and contacts_sheet:
-                fallback["contacts_sheet_url"] = contacts_sheet
-            if not fallback["outreach_sheet_url"] and outreach_sheet:
-                fallback["outreach_sheet_url"] = outreach_sheet
-        return fallback
-    finally:
-        connection.close()
+    fallback: list[str] = []
+    for key in ("targeting_reason", "eligibility_reason"):
+        value = str(candidate.get(key) or "").strip()
+        if value:
+            fallback.append(value.replace("_", " ").capitalize())
+    if not fallback:
+        fallback.append("No deterministic fit rationale was recorded yet.")
+    return fallback[:3]
 
 
-def _render_recruiter_contacts(job_id: int) -> None:
-    package = _recruiter_contact_package(job_id)
-    contacts = list(package.get("contacts") or [])
-    contacts_sheet = _PAGES.safe_link(package.get("contacts_sheet_url"))
-    outreach_sheet = _PAGES.safe_link(package.get("outreach_sheet_url"))
-
-    if not contacts and not contacts_sheet and not outreach_sheet:
-        return
-
-    st.markdown("### Recruiter / hiring contacts")
-    st.caption(
-        "Recorded by the n8n preparation workflow for this job. "
-        "Nothing is inferred when contact evidence is missing."
-    )
-
-    for index, contact in enumerate(contacts[:8]):
-        with st.container(border=True):
-            left, right = st.columns((4, 1.25), gap="small")
-            with left:
-                name = str(contact.get("name") or "Recruiter / hiring contact")
-                title = str(contact.get("title") or "").strip()
-                email = str(contact.get("email") or "").strip()
-                st.markdown(
-                    f"**{_PAGES.esc(name, 'Recruiter / hiring contact')}**",
-                    unsafe_allow_html=True,
-                )
-                if title:
-                    st.caption(title)
-                if email:
-                    st.caption(f"Email: {email}")
-            with right:
-                linkedin = _safe_linkedin_url(contact.get("linkedin"))
-                if linkedin:
-                    st.link_button(
-                        "Open LinkedIn",
-                        linkedin,
-                        use_container_width=True,
-                    )
-                else:
-                    st.button(
-                        "LinkedIn not recorded",
-                        disabled=True,
-                        use_container_width=True,
-                        key=f"recruiter_no_linkedin_{job_id}_{index}",
-                    )
-
-    links = []
-    if contacts_sheet:
-        links.append(("Open contacts sheet", contacts_sheet))
-    if outreach_sheet:
-        links.append(("Open outreach sheet", outreach_sheet))
-    if links:
-        columns = st.columns(len(links), gap="small")
-        for column, (label, url) in zip(columns, links, strict=True):
-            with column:
-                st.link_button(label, url, use_container_width=True)
+def _score_summary(candidate: dict[str, Any], detail: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "Match": _PAGES.percent_value(detail.get("score") or candidate.get("score")),
+        "Targeting": str(candidate.get("targeting_status") or "Not scored").replace("_", " ").title(),
+        "Eligibility": str(candidate.get("eligibility_status") or "Not scored").replace("_", " ").title(),
+    }
 
 
-def _job_bundle(job_id: int) -> dict[str, Any] | None:
-    from app.database import get_connection
-
-    connection = get_connection()
-    try:
-        job = connection.execute(
-            "SELECT * FROM jobs WHERE id=?",
-            (int(job_id),),
-        ).fetchone()
-        if not job:
-            return None
-
-        state = connection.execute(
-            """SELECT saved,skipped
-                 FROM product_job_state
-                WHERE job_id=?""",
-            (int(job_id),),
-        ).fetchone()
-
-        latest = connection.execute(
-            """SELECT id,n8n_status,final_ats_score,resume_doc_url,
-                      resume_pdf_url,cover_letter_doc_url,sent_at,completed_at
-                 FROM n8n_results
-                WHERE job_id=?
-                ORDER BY id DESC
-                LIMIT 1""",
-            (int(job_id),),
-        ).fetchone()
-
-        artifact = connection.execute(
-            """SELECT id,n8n_status,final_ats_score,resume_doc_url,
-                      resume_pdf_url,cover_letter_doc_url,sent_at,completed_at
-                 FROM n8n_results
-                WHERE job_id=?
-                  AND (
-                      trim(COALESCE(resume_pdf_url,'')) != ''
-                   OR trim(COALESCE(resume_doc_url,'')) != ''
-                   OR trim(COALESCE(cover_letter_doc_url,'')) != ''
-                  )
-                ORDER BY id DESC
-                LIMIT 1""",
-            (int(job_id),),
-        ).fetchone()
-
-        queue = connection.execute(
-            """SELECT queue_status,queued_at,updated_at
-                 FROM n8n_dispatch_queue
-                WHERE job_id=?
-                ORDER BY id DESC
-                LIMIT 1""",
-            (int(job_id),),
-        ).fetchone()
-    finally:
-        connection.close()
-
-    row = dict(job)
-    row["saved"] = int(state["saved"]) if state else 0
-    row["skipped"] = int(state["skipped"]) if state else 0
-    row["latest_result"] = dict(latest) if latest else {}
-    row["artifact_result"] = dict(artifact) if artifact else {}
-    row["queue"] = dict(queue) if queue else {}
-    return row
+def _safe_lines(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [line.strip(" •\t") for line in value.splitlines() if line.strip(" •\t")]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
 
 
-@st.dialog("Opportunity details", width="large")
-def _opportunity_dialog(job_id: int) -> None:
-    row = _job_bundle(job_id)
-    if not row:
-        st.warning("This stored opportunity is no longer available.")
-        return
-
+def _fact_strip(items: list[tuple[str, Any]]) -> None:
+    blocks = []
+    for label, value in items:
+        blocks.append(
+            f'<div class="package-fact"><b>{_PAGES.esc(label)}</b>'
+            f'<span>{_PAGES.esc(value, "Not available")}</span></div>'
+        )
     st.markdown(
-        '<span class="job-detail-drawer-marker" aria-hidden="true"></span>',
+        '<div class="package-strip">' + "".join(blocks) + "</div>",
         unsafe_allow_html=True,
     )
-    st.session_state["last_viewed_job_id"] = int(job_id)
 
-    latest = row["latest_result"]
-    artifact = row["artifact_result"]
-    queue = row["queue"]
 
-    resume_url = (
-        _PAGES.safe_link(artifact.get("resume_pdf_url"))
-        or _PAGES.safe_link(artifact.get("resume_doc_url"))
-    )
-    cover_url = _PAGES.safe_link(artifact.get("cover_letter_doc_url"))
-    apply_url = _PAGES.safe_link(row.get("apply_url"))
-    has_artifact = bool(resume_url or cover_url)
+def _job_detail_v22(job_id: int) -> None:
+    candidate = _PAGES.job_by_id(job_id)
+    if candidate is None:
+        st.warning("This opportunity is no longer available in the current result set.")
+        return
 
-    status = _friendly_status(
-        latest.get("n8n_status"),
-        queue.get("queue_status"),
-        artifact=has_artifact,
-    )
+    detail = _PAGES.job_detail_payload(candidate)
+    st.markdown('<div class="job-detail-drawer-marker"></div>', unsafe_allow_html=True)
+    company = detail.get("company_name") or candidate.get("company_name")
+    title = detail.get("job_title") or candidate.get("job_title")
+    provider = _provider_name(detail.get("application_link") or candidate.get("application_link"))
 
-    st.markdown(
-        f"## {_PAGES.esc(row.get('title'), 'Untitled role')}",
-        unsafe_allow_html=True,
-    )
+    st.caption(f"{company or 'Employer'} · {provider}")
+    st.markdown(f"## {_PAGES.esc(title, 'Opportunity')}")
     st.caption(
-        f"{row.get('company_name') or 'Company not recorded'} · "
-        f"{row.get('location_raw') or 'Location unknown'} · "
-        f"{row.get('source') or 'Source unknown'}"
+        " · ".join(
+            item for item in (
+                str(detail.get("location") or candidate.get("location") or "").strip(),
+                str(detail.get("work_arrangement") or candidate.get("work_arrangement") or "").strip(),
+                str(detail.get("employment_type") or candidate.get("employment_type") or "").strip(),
+            ) if item
+        )
+        or "Job details captured by MUNSHI."
     )
 
-    status_html = (
-        f'<div class="product-dialog-card">'
-        f'<strong>{_PAGES.esc(status)}</strong>'
-        f'<span>{_PAGES.esc(_status_description(status))}</span>'
-        f"</div>"
-    )
-    st.markdown(status_html, unsafe_allow_html=True)
+    score = _score_summary(candidate, detail)
+    _fact_strip([
+        ("Match", score["Match"]),
+        ("Targeting", score["Targeting"]),
+        ("Eligibility", score["Eligibility"]),
+    ])
 
-    left, right = st.columns((1.55, 1), gap="large")
+    with st.expander("Why MUNSHI ranked this", expanded=True):
+        reasons = _compact_reasons(detail, candidate)
+        for reason in reasons:
+            st.write(f"• {reason}")
 
-    with left:
+    description = _safe_lines(detail.get("job_description") or candidate.get("job_description"))
+    if description:
         st.markdown("### Role summary")
-        st.write(
-            row.get("description_raw")
-            or "A full job description is not stored for this role."
-        )
+        st.write("\n".join(description[:5]))
 
-    with right:
-        st.metric(
-            "Hunter match",
-            (
-                f"{float(row['hunter_score']):.0f}%"
-                if row.get("hunter_score") is not None
-                else "Not available"
-            ),
-        )
-        st.markdown(
-            f"""<div class="evidence-list">
-                <div class="evidence-item"><b>Employment</b>{_PAGES.esc(row.get("employment_type"))}</div>
-                <div class="evidence-item"><b>Workplace</b>{_PAGES.esc(row.get("remote_type"))}</div>
-                <div class="evidence-item"><b>Target track</b>{_PAGES.esc(row.get("target_track"))}</div>
-                <div class="evidence-item"><b>Compensation</b>{_PAGES.esc(row.get("salary_raw"))}</div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
+    for heading, key in (
+        ("Responsibilities", "responsibilities"),
+        ("Qualifications", "qualifications"),
+        ("Preferred", "preferred_skills"),
+    ):
+        values = _safe_lines(detail.get(key))
+        if not values:
+            continue
+        with st.expander(heading, expanded=False):
+            for item in values[:12]:
+                st.write(f"• {item}")
 
-        authorization = str(row.get("work_authorization") or "").strip()
-        if authorization:
-            st.caption("Work-authorization evidence is recorded.")
-            with st.expander(
-                "Review work-authorization evidence",
-                expanded=False,
-            ):
-                st.write(authorization)
-        else:
-            st.caption("Work authorization: not recorded.")
+    work_auth = str(detail.get("work_authorization") or "").strip()
+    if work_auth:
+        st.markdown("### Work authorization")
+        st.write(work_auth)
 
-        if row.get("hard_rejection_reason"):
-            labeler = getattr(_PAGES, "_research_blocker_label", None)
-            blocker = (
-                labeler(row["hard_rejection_reason"])
-                if callable(labeler)
-                else str(row["hard_rejection_reason"])
-            )
-            st.warning(f"Eligibility evidence: {blocker}")
+    with st.expander("Captured fields", expanded=False):
+        _fact_strip([
+            ("Compensation", detail.get("pay") or candidate.get("salary")),
+            ("Posted", detail.get("posted_date") or candidate.get("posted_date")),
+            ("Deadline", detail.get("apply_deadline")),
+        ])
+        if detail.get("employer_description"):
+            st.write(detail["employer_description"])
 
-    st.markdown("### Prepared package")
-    if has_artifact:
-        ats_value = artifact.get("final_ats_score")
-        prepared_at = artifact.get("completed_at") or artifact.get("sent_at")
-        st.markdown(
-            f"""<div class="package-strip">
-                <div class="package-fact"><b>Package state</b><span>{_PAGES.esc(status)}</span></div>
-                <div class="package-fact"><b>ATS score</b><span>{_PAGES.esc(ats_value, "Not scored")}</span></div>
-                <div class="package-fact"><b>Prepared</b><span>{_PAGES.esc(prepared_at, "Date not recorded")}</span></div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
-        package_actions = st.columns(3, gap="small")
-        with package_actions[0]:
-            if resume_url:
-                st.link_button(
-                    "Open prepared resume",
-                    resume_url,
-                    type="primary",
-                    use_container_width=True,
-                )
-            else:
-                st.button(
-                    "Resume not recorded",
-                    disabled=True,
-                    use_container_width=True,
-                )
-        with package_actions[1]:
-            if cover_url:
-                st.link_button(
-                    "Open cover letter",
-                    cover_url,
-                    use_container_width=True,
-                )
-            else:
-                st.button(
-                    "Cover letter not recorded",
-                    disabled=True,
-                    use_container_width=True,
-                )
-        with package_actions[2]:
-            if apply_url:
-                st.link_button(
-                    "Open application",
-                    apply_url,
-                    use_container_width=True,
-                )
-            else:
-                st.button(
-                    "Application URL not recorded",
-                    disabled=True,
-                    use_container_width=True,
-                )
-    else:
-        st.info(
-            "No prepared resume or cover-letter artifact is recorded for this "
-            "job yet. A completed queue state alone is not shown as a resume."
-        )
-
-    _render_recruiter_contacts(job_id)
-
-    with st.container(key=f"job_drawer_actions_{job_id}"):
-        st.markdown("### Actions")
-        action_columns = st.columns((1, 1, 1, 1.25))
-        with action_columns[0]:
-            st.button(
-                "Saved" if row["saved"] else "Save",
-                key=f"v22_dialog_save_{job_id}",
+    with st.container(
+        key=f"job_drawer_actions_{job_id}",
+    ):
+        columns = st.columns((1, 1.1))
+        with columns[0]:
+            st.link_button(
+                "Open employer site",
+                _PAGES.safe_link(
+                    detail.get("application_link") or candidate.get("application_link")
+                ),
                 use_container_width=True,
-                on_click=_PAGES._toggle_job_saved,
-                args=(job_id, bool(row["saved"])),
             )
-        with action_columns[1]:
-            st.button(
-                "Restore" if row["skipped"] else "Pass",
-                key=f"v22_dialog_pass_{job_id}",
-                use_container_width=True,
-                on_click=_PAGES._toggle_job_skipped,
-                args=(job_id, bool(row["skipped"])),
-            )
-        with action_columns[2]:
-            st.button(
-                "Prepare",
-                key=f"v22_dialog_prepare_{job_id}",
+        with columns[1]:
+            if st.button(
+                "Prepare this job",
+                key=f"detail_prepare_v22_{job_id}",
                 type="primary",
                 use_container_width=True,
-                on_click=_PAGES._prepare_job,
-                args=(job_id,),
-            )
-        with action_columns[3]:
-            if apply_url:
-                st.link_button(
-                    "Open original job",
-                    apply_url,
-                    use_container_width=True,
-                )
-            else:
-                st.button(
-                    "Original URL unavailable",
-                    disabled=True,
-                    use_container_width=True,
-                )
-
-    with st.expander("Decision evidence", expanded=False):
-        st.caption(
-            "Human-readable stored evidence only. Raw extractor JSON is kept out of the normal product experience."
-        )
-        st.dataframe(
-            [{
-                "Source": row.get("source"),
-                "Workplace": row.get("remote_type"),
-                "Date posted": row.get("date_posted"),
-                "Target track": row.get("target_track"),
-                "Eligibility blocker": row.get("hard_rejection_reason"),
-            }],
-            hide_index=True,
-            use_container_width=True,
-        )
+            ):
+                st.session_state["product_prepare_job_id"] = job_id
+                st.session_state["product_view"] = "auto-prepare"
+                st.query_params["view"] = "auto-prepare"
+                st.rerun()
 
 
-def _job_detail_v22() -> None:
-    state_key = getattr(
-        _PAGES,
-        "_PRODUCT_JOB_DIALOG_STATE_KEY",
-        "_product_job_dialog_once",
-    )
-    queued = st.session_state.pop(state_key, None)
-    if queued is not None:
-        try:
-            _opportunity_dialog(int(queued))
-        except (TypeError, ValueError):
-            pass
+def _pipeline_list_v22(rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        st.info("No preparation history matches the current filters.")
         return
 
-    job_id = _consume_query_id("job", "_product_v22_job_once")
-    if job_id is not None:
-        _opportunity_dialog(job_id)
-
-
-def _pipeline_list_v22(records: list[dict[str, Any]]) -> None:
-    rows: list[str] = []
-    for record in records:
-        hunter = (
-            f"{float(record['hunter_score']):.0f}% match"
-            if record.get("hunter_score") is not None
-            else "Match not scored"
+    for row in rows[:120]:
+        href = _PAGES.product_url(
+            "tracker",
+            tab="pipeline",
+            application=str(row["id"]),
         )
-        ats = (
-            f"ATS {float(record['final_ats_score']):.0f}"
-            if record.get("final_ats_score") is not None
-            else "ATS not scored"
-        )
-        updated = (
-            record.get("completed_at")
-            or record.get("updated_at")
-            or record.get("queued_at")
-            or "Date not recorded"
-        )
-        job_id = int(record["job_id"])
-        rows.append(
-            f"""<a class="pipeline-row-link"
-                    href="?view=tracker&amp;pipeline_job={job_id}"
-                    target="_self"
-                    aria-label="Open {_PAGES.esc(record.get('title'), 'application item')}">
+        updated = _PAGES.short_time(row.get("updated_at"))
+        subline = " · ".join(
+            item for item in (
+                updated,
+                str(row.get("location") or "").strip(),
+            ) if item
+        ) or "Recorded by MUNSHI"
+        st.markdown(
+            f"""
+            <a class="pipeline-row-link" href="{href}" target="_self">
                 <div class="pipeline-row">
-                    <div>
-                        <strong>{_PAGES.esc(record.get("company_name"), "Company not recorded")}</strong>
-                        <span>{_PAGES.esc(record.get("title"), "Untitled role")}</span>
-                    </div>
-                    <div>
-                        <span class="status-chip">{_PAGES.esc(record.get("display_status"))}</span>
-                        <span class="pipeline-status-copy">{_PAGES.esc(record.get("status_description"))}</span>
-                        <span class="pipeline-meta">{_PAGES.esc(updated)}</span>
-                    </div>
-                    <div>
-                        <strong>{_PAGES.esc(hunter)}</strong>
-                        <span class="pipeline-meta">{_PAGES.esc(ats)}</span>
-                    </div>
+                    <div class="pipeline-primary"><b>{_PAGES.esc(row["company_name"] or "Company")} · {_PAGES.esc(row["title"] or "Untitled role")}</b><span>{_PAGES.esc(subline)}</span></div>
+                    <div><span class="pipeline-status">{_PAGES.esc(row["display_status"])}</span><span class="pipeline-status-copy">{_PAGES.esc(row["status_description"])}</span></div>
+                    <div><span class="fit-chip">{_PAGES.esc(row.get("score") or "—")} fit</span></div>
                     <div class="pipeline-open">Open →</div>
                 </div>
-            </a>"""
+            </a>
+            """,
+            unsafe_allow_html=True,
         )
 
-    st.markdown(
-        f'<div class="table-shell">{"".join(rows)}</div>',
-        unsafe_allow_html=True,
-    )
+
+def _job_ids_from_runs(runs: list[dict[str, Any]]) -> list[int]:
+    values: list[int] = []
+    for run in runs:
+        try:
+            value = int(run.get("job_id"))
+        except (TypeError, ValueError):
+            continue
+        if value not in values:
+            values.append(value)
+    return values
 
 
-def _tracker_detail_v22() -> None:
-    job_id = _consume_query_id(
-        "pipeline_job",
-        "_product_v22_pipeline_once",
+def _latest_run(runs: list[dict[str, Any]], job_id: int) -> dict[str, Any] | None:
+    relevant = [run for run in runs if run.get("job_id") == job_id]
+    return relevant[0] if relevant else None
+
+
+def _package_payload(job_id: int) -> dict[str, Any]:
+    rows = _PAGES.application_rows(limit=500)
+    runs = _PAGES.preparation_runs(limit=700)
+    row = next((item for item in rows if item["id"] == job_id), None)
+    run = _latest_run(runs, job_id)
+    return {
+        "row": row,
+        "run": run,
+    }
+
+
+def _package_artifacts(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    row = payload.get("row") or {}
+    run = payload.get("run") or {}
+    artifacts: list[dict[str, Any]] = []
+    if row.get("resume_doc_url"):
+        artifacts.append({"label": "Resume", "url": row["resume_doc_url"]})
+    if row.get("cover_letter_doc_url"):
+        artifacts.append({"label": "Cover letter", "url": row["cover_letter_doc_url"]})
+    raw = run.get("artifacts_json")
+    if raw:
+        try:
+            values = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = []
+        if isinstance(values, list):
+            for value in values:
+                if isinstance(value, str) and value.strip():
+                    artifacts.append({"label": "Artifact", "url": value.strip()})
+                elif isinstance(value, dict):
+                    url = value.get("url") or value.get("path")
+                    if url:
+                        artifacts.append({
+                            "label": value.get("label") or value.get("type") or "Artifact",
+                            "url": url,
+                        })
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for artifact in artifacts:
+        url = str(artifact["url"])
+        if url in seen:
+            continue
+        seen.add(url)
+        deduped.append(artifact)
+    return deduped
+
+
+def _package_dialog(job_id: int) -> None:
+    payload = _package_payload(job_id)
+    row = payload.get("row") or {}
+    run = payload.get("run") or {}
+    if not row and not run:
+        st.warning("No recorded package is available for this item.")
+        return
+
+    company = row.get("company_name") or "Company"
+    title = row.get("title") or "Untitled role"
+    display = _friendly_status(
+        row.get("status") or run.get("status"),
+        run.get("queue_status"),
+        artifact=bool(row.get("resume_doc_url")),
     )
-    if job_id is not None:
-        _opportunity_dialog(job_id)
+    description = _status_description(
+        row.get("status") or run.get("status"),
+        run.get("queue_status"),
+        artifact=bool(row.get("resume_doc_url")),
+    )
+
+    st.caption(_PAGES.esc(company))
+    st.markdown(f"## {_PAGES.esc(title)}")
+    _fact_strip([
+        ("Status", display),
+        ("Fit", row.get("score") or "—"),
+        ("Updated", _PAGES.short_time(row.get("updated_at") or run.get("updated_at"))),
+    ])
+    st.write(description)
+
+    artifacts = _package_artifacts(payload)
+    st.markdown("### Files")
+    if not artifacts:
+        st.info("No resume or cover-letter artifact was recorded for this run.")
+    else:
+        for artifact in artifacts[:8]:
+            st.link_button(
+                f"Open {artifact['label']}",
+                _PAGES.safe_link(artifact["url"]),
+                use_container_width=True,
+            )
+
+    messages: list[str] = []
+    for source in (run, row):
+        for key in ("truth_reason", "error_message"):
+            value = str(source.get(key) or "").strip()
+            if value and value not in messages:
+                messages.append(value)
+    if messages:
+        st.markdown("### Why it stopped")
+        for message in messages:
+            st.warning(message)
+
+    with st.expander("Technical run metadata", expanded=False):
+        st.json({
+            "application_id": row.get("id"),
+            "run_id": run.get("id"),
+            "queue_status": run.get("queue_status"),
+            "raw_status": run.get("status") or row.get("status"),
+            "raw_stage": run.get("stage"),
+        })
 
 
 def tracker_v22() -> None:
+    rows = _tracker_rows_v22()
+    apps = _PAGES.tracker_rows()
+    app_rows = _PAGES.application_rows(limit=500)
+
     _PAGES.page_intro(
         "TRACKER",
-        "Your application workspace",
-        "Open any row to see the actual package, ATS score, application link, "
-        "and the reason for its current lifecycle state.",
+        "Application tracker",
+        "Open a prepared application to review the exact status, files, and next step.",
     )
 
-    tab = st.radio(
+    stats = {
+        "Preparing": sum(row["display_status"] == "In progress" for row in rows),
+        "Needs review": sum(row["display_status"] == "Needs review" for row in rows),
+        "Prepared": sum(row["display_status"] in {"Prepared", "Completed"} for row in rows),
+        "Submitted": sum(row["display_status"] == "Submitted" for row in rows),
+    }
+    columns = st.columns(4)
+    for column, (label, value) in zip(columns, stats.items()):
+        with column:
+            st.metric(label, value)
+
+    view = st.segmented_control(
         "Tracker view",
         ["Pipeline", "Inbox"],
-        horizontal=True,
-        label_visibility="collapsed",
+        default=st.session_state.get("product_tracker_tab", "Pipeline"),
         key="product_tracker_tab",
+        label_visibility="collapsed",
         on_change=_PAGES._sync_subroute,
         args=(
             "tab",
@@ -1084,200 +859,236 @@ def tracker_v22() -> None:
         ),
     )
 
-    if tab == "Inbox":
+    if view == "Inbox":
         _PAGES._inbox()
         return
 
-    records = _tracker_rows_v22(limit=250)
-    preferred = [
-        "Prepared",
-        "Needs review",
-        "No resume generated",
-        "In progress",
-        "Blocked",
-        "Submitted",
-        "Failed",
-        "Skipped",
-        "Completed",
-        "Review status",
-        "Status not recorded",
-    ]
-    represented = list(
-        dict.fromkeys(
-            str(record.get("display_status") or "Status not recorded")
-            for record in records
+    if not apps and not app_rows:
+        _PAGES.empty_state(
+            "No activity yet",
+            "Your preparation history will appear here as soon as you prepare a job.",
+            href="?view=jobs",
+            action="Browse jobs",
         )
-    )
-    statuses = ["All"]
-    statuses.extend(
-        status
-        for status in preferred
-        if status in represented
-    )
-    statuses.extend(
-        status
-        for status in represented
-        if status not in statuses
-    )
+        return
 
-    filters, search = st.columns((2.5, 1.5), gap="medium")
-    with filters:
-        selected = st.radio(
-            "Pipeline status",
-            statuses,
-            horizontal=True,
-            label_visibility="collapsed",
-        )
+    search, status = st.columns((2.4, 1))
     with search:
-        query = st.text_input(
-            "Search pipeline",
+        text = st.text_input(
+            "Search tracker",
             placeholder="Search company or role",
             label_visibility="collapsed",
+            key="product_v22_tracker_search",
+        )
+    with status:
+        status_value = st.selectbox(
+            "Status filter",
+            ["All", "In progress", "Needs review", "Prepared", "Completed", "Submitted", "Blocked", "Failed", "Skipped"],
+            label_visibility="collapsed",
+            key="product_v22_tracker_status",
         )
 
-    needle = query.strip().casefold()
-    visible = [
-        record
-        for record in records
+    needle = str(text or "").strip().casefold()
+    filtered = [
+        row for row in rows
         if (
-            selected == "All"
-            or record["display_status"] == selected
+            status_value == "All"
+            or row["display_status"] == status_value
         )
         and (
             not needle
-            or needle in (
-                f"{record.get('company_name') or ''} "
-                f"{record.get('title') or ''}"
-            ).casefold()
+            or needle in str(row.get("company_name") or "").casefold()
+            or needle in str(row.get("title") or "").casefold()
         )
     ]
+    _pipeline_list_v22(filtered)
 
-    if visible:
-        st.caption(
-            "Select any row. Status labels describe the recorded product state; "
-            "Submitted is used only when external submission evidence exists."
-        )
-        _pipeline_list_v22(visible)
-    else:
-        st.markdown(
-            '<div class="empty-product"><h3>No pipeline items match this '
-            'filter.</h3><p>Try another lifecycle state or search term.</p></div>',
-            unsafe_allow_html=True,
-        )
+    selected_application = _consume_query_id(
+        "application",
+        "product_v22_tracker_application_once",
+    )
+    if selected_application is not None:
+        @st.dialog("Application details", width="large")
+        def _open_package() -> None:
+            _package_dialog(selected_application)
 
-    _tracker_detail_v22()
+        _open_package()
 
 
-def _extension_profile_record() -> dict[str, Any]:
-    """Read a server-side MUNSHI Apply profile only if a bridge has stored one."""
-    from app.database import get_setting
+def _extension_profile_record() -> dict[str, Any] | None:
+    try:
+        from app import extension_profile_sync_v1
+    except (ImportError, ModuleNotFoundError):
+        return None
+    try:
+        return extension_profile_sync_v1.latest_master_profile()
+    except Exception:
+        return None
 
-    for key in (
-        "munshi_apply_master_profile_v1",
-        "munshi_apply_profile_v1",
-    ):
-        value = get_setting(key, {})
-        if isinstance(value, dict) and value.get("facts"):
-            return value
-    return {}
+
+def _extension_profile_facts(record: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not record:
+        return []
+    payload = record.get("profile") or record.get("payload") or {}
+    facts = payload.get("facts") if isinstance(payload, dict) else None
+    if not isinstance(facts, list):
+        return []
+    return [fact for fact in facts if isinstance(fact, dict)]
 
 
 def _render_profile_facts(facts: list[dict[str, Any]]) -> None:
     if not facts:
-        st.info(
-            "No structured Hunter profile facts are synchronized yet. "
-            "The dashboard will not invent values from job data."
-        )
+        st.info("No structured profile facts have been saved yet.")
         return
-
-    for fact in facts:
-        try:
-            value = json.loads(str(fact.get("value_json") or '""'))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            value = fact.get("value_json")
+    for fact in facts[:40]:
+        value = fact.get("value")
         if isinstance(value, list):
-            value_text = " · ".join(str(item) for item in value)
-        else:
-            value_text = str(value)
+            value = " · ".join(str(item) for item in value)
         st.markdown(
             f"""<div class="profile-fact-card">
                 <b>{_PAGES.esc(fact.get("fact_key"), "Profile fact")}</b>
-                <span>{_PAGES.esc(value_text, "Not available")}</span>
-                <span>Source: {_PAGES.esc(fact.get("source_label"), "Candidate")}</span>
+                <span>{_PAGES.esc(value, "Not available")}</span>
             </div>""",
             unsafe_allow_html=True,
         )
 
 
 def profile_v22() -> None:
-    _PAGES.page_intro(
-        "PROFILE",
-        "Your candidate workspace",
-        "Master resume, tailored application artifacts, and verified profile "
-        "facts are separated so nothing is silently inferred.",
-    )
+    tab = st.session_state.get("product_profile_tab", "Profile details")
+    options = ["Resume", "Cover letters", "Profile details"]
+    if tab not in options:
+        tab = "Profile details"
+        st.session_state["product_profile_tab"] = tab
 
-    tab = st.radio(
-        "Profile section",
-        ["Resume", "Cover letters", "Profile details"],
-        horizontal=True,
-        label_visibility="collapsed",
+    rows = _PAGES.application_rows(limit=500)
+    resume_artifacts = [row for row in rows if row.get("resume_doc_url")]
+    cover_artifacts = [row for row in rows if row.get("cover_letter_doc_url")]
+    designated = _PAGES.master_resume()
+    facts = _PAGES.candidate_facts()
+
+    st.markdown(
+        f"""
+        <div class="profile-topline">
+            <div class="profile-selector">Default <span>⌄</span></div>
+            <div class="profile-favorite">☆</div>
+            <div class="profile-favorite">⌫</div>
+            <div class="profile-add">＋ Add Profile</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    tabs = st.segmented_control(
+        "Profile tab",
+        options,
+        default=tab,
         key="product_profile_tab",
+        label_visibility="collapsed",
         on_change=_PAGES._sync_subroute,
         args=(
             "tab",
             "product_profile_tab",
-            {
-                "Resume": "resume",
-                "Cover letters": "cover-letter",
-                "Profile details": "details",
-            },
+            {"Resume": "resume", "Cover letters": "cover-letter", "Profile details": "details"},
         ),
     )
+    if tabs != tab:
+        tab = tabs
 
-    records = _tracker_rows_v22(limit=400)
-    resume_artifacts = [
-        row
-        for row in records
-        if (
-            _PAGES.safe_link(row.get("resume_pdf_url"))
-            or _PAGES.safe_link(row.get("resume_doc_url"))
-        )
-    ]
-    cover_artifacts = [
-        row
-        for row in records
-        if _PAGES.safe_link(row.get("cover_letter_doc_url"))
-    ]
-    facts = _PAGES.candidate_facts()
-    designated = _PAGES.master_resume()
-    extension_profile = _extension_profile_record()
+    if tab == "Resume":
+        st.markdown("### Master resume")
+        if designated:
+            with st.container(
+                key="product_v22_master_resume",
+                border=True,
+            ):
+                st.markdown(
+                    f"**{_PAGES.esc(designated.get('label') or 'Master resume')}**",
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "Explicitly designated master artifact · "
+                    + str(
+                        designated.get("designated_at")
+                        or "date not recorded"
+                    )
+                )
+                actions = st.columns((1, 1, 2))
+                with actions[0]:
+                    st.link_button(
+                        "Open master resume",
+                        _PAGES.safe_link(designated["url"]),
+                        type="primary",
+                        use_container_width=True,
+                    )
+                with actions[1]:
+                    if st.button(
+                        "Clear designation",
+                        key="product_v22_clear_master",
+                        use_container_width=True,
+                    ):
+                        _PAGES.clear_master_resume()
+                        st.rerun()
+                with actions[2]:
+                    st.caption(
+                        "Master and tailored resumes remain separate. "
+                        "MUNSHI never silently replaces your master resume."
+                    )
+                if st.toggle(
+                    "Use this master resume for new jobs",
+                    value=True,
+                    disabled=True,
+                    key="product_v22_master_toggle",
+                ):
+                    pass
+        else:
+            st.info(
+                "No master resume is designated yet. Create or prepare a resume "
+                "in Resume Studio, then set that artifact as your master."
+            )
+
+        st.markdown("### Prepared resumes")
+        if not resume_artifacts:
+            st.info("No recorded resume artifacts are available yet.")
+            return
+        for artifact in resume_artifacts:
+            with st.container(
+                key=f"product_v22_resume_{artifact['job_id']}",
+                border=True,
+            ):
+                description, action = st.columns((3, 1))
+                with description:
+                    st.markdown(
+                        f"**{_PAGES.esc(artifact.get('company_name'))} · "
+                        f"{_PAGES.esc(artifact.get('title'))}**",
+                        unsafe_allow_html=True,
+                    )
+                    st.caption(
+                        f"{artifact.get('display_status')} · "
+                        f"{artifact.get('status_description')}"
+                    )
+                with action:
+                    st.link_button(
+                        "Open resume",
+                        _PAGES.safe_link(artifact["resume_doc_url"]),
+                        use_container_width=True,
+                    )
+        return
 
     if tab == "Profile details":
-        st.markdown(
-            f"""<div class="profile-source-grid">
-                <div class="profile-source">
-                    <b>Hunter profile facts</b>
-                    <span>{len(facts)} structured candidate-provided fact(s) stored on this server.</span>
-                </div>
-                <div class="profile-source">
-                    <b>Master resume</b>
-                    <span>{"Designated and available." if designated else "Not designated yet."}</span>
-                </div>
-                <div class="profile-source">
-                    <b>MUNSHI Apply profile</b>
-                    <span>{"Server-side profile bridge data is available." if extension_profile else "Extension profile is browser-local; no server sync record is available yet."}</span>
-                </div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
-
-        if extension_profile:
-            st.markdown("### MUNSHI Apply verified profile")
-            safe_facts = []
-            for fact in extension_profile.get("facts", []):
-                if not isinstance(fact, dict):
-                    continue
+        extension = _extension_profile_record()
+        extension_facts = _extension_profile_facts(extension)
+        if extension:
+            st.markdown("### MUNSHI Apply profile")
+            profile_meta = extension.get("profile") or extension.get("payload") or {}
+            with st.container(key="product_v22_extension_profile", border=True):
+                st.markdown(
+                    f"**{_PAGES.esc(profile_meta.get('fullName') or profile_meta.get('name') or 'Candidate profile')}**"
+                )
+                st.caption(
+                    "Extension-synced MasterProfile · "
+                    + str(extension.get("updated_at") or extension.get("created_at") or "date not recorded")
+                )
+            safe_facts: list[dict[str, Any]] = []
+            for fact in extension_facts:
                 if fact.get("protected"):
                     continue
                 category = str(fact.get("category") or "")
@@ -1423,63 +1234,23 @@ def profile_v22() -> None:
                     "MUNSHI never silently replaces your master resume."
                 )
             if st.toggle(
-                "Preview master resume",
-                key="product_v22_master_preview",
+                "Use this master resume for new jobs",
+                value=True,
+                disabled=True,
+                key="product_v22_master_toggle",
             ):
-                _PAGES.components.iframe(
-                    designated["url"],
-                    height=760,
-                    scrolling=True,
-                )
+                pass
     else:
-        st.markdown(
-            '<div class="empty-product"><h3>No master resume designated</h3>'
-            '<p>Choose a real prepared resume artifact below. MUNSHI will not '
-            'guess which document is your master.</p></div>',
-            unsafe_allow_html=True,
+        st.info(
+            "No master resume is designated yet. Create or prepare a resume "
+            "in Resume Studio, then set that artifact as your master."
         )
 
-    if resume_artifacts and not designated:
-        options = {
-            (
-                f"{row.get('company_name') or 'Company not recorded'} — "
-                f"{row.get('title') or 'Untitled role'} · ATS "
-                f"{row.get('final_ats_score') if row.get('final_ats_score') is not None else 'N/A'}"
-            ): row
-            for row in resume_artifacts
-        }
-        chosen = st.selectbox(
-            "Choose an existing prepared resume",
-            list(options),
-            key="product_v22_master_choice",
-        )
-        selected = options[chosen]
-        if st.button(
-            "Set selected resume as master",
-            type="primary",
-            key="product_v22_set_master",
-        ):
-            resume_url = (
-                _PAGES.safe_link(selected.get("resume_pdf_url"))
-                or _PAGES.safe_link(selected.get("resume_doc_url"))
-            )
-            _PAGES.save_master_resume(
-                int(selected["job_id"]),
-                resume_url,
-                chosen,
-            )
-            st.rerun()
-
-    st.markdown("### Tailored resume history")
+    st.markdown("### Prepared resumes")
     if not resume_artifacts:
         st.info("No recorded resume artifacts are available yet.")
         return
-
     for artifact in resume_artifacts:
-        resume_url = (
-            _PAGES.safe_link(artifact.get("resume_pdf_url"))
-            or _PAGES.safe_link(artifact.get("resume_doc_url"))
-        )
         with st.container(
             key=f"product_v22_resume_{artifact['job_id']}",
             border=True,
@@ -1491,101 +1262,53 @@ def profile_v22() -> None:
                     f"{_PAGES.esc(artifact.get('title'))}**",
                     unsafe_allow_html=True,
                 )
-                ats = (
-                    artifact.get("final_ats_score")
-                    if artifact.get("final_ats_score") is not None
-                    else "Not available"
-                )
                 st.caption(
-                    f"ATS {ats} · {artifact.get('display_status')} · "
+                    f"{artifact.get('display_status')} · "
                     f"{artifact.get('status_description')}"
                 )
             with action:
                 st.link_button(
                     "Open resume",
-                    resume_url,
+                    _PAGES.safe_link(artifact["resume_doc_url"]),
                     use_container_width=True,
                 )
 
 
-def _stat_card(label: str, value: Any, help_text: str) -> None:
-    st.markdown(
-        f"""<div class="system-stat">
-            <div class="label">{_PAGES.esc(label)}</div>
-            <div class="value">{_PAGES.esc(value, "0")}</div>
-            <div class="help">{_PAGES.esc(help_text)}</div>
-        </div>""",
-        unsafe_allow_html=True,
-    )
-
-
 def advanced_v22() -> None:
-    snapshot = _PAGES.research_snapshot()
-    lifetime = snapshot.get("lifetime") or {}
-    headline = snapshot.get("headline") or {}
-
-    st.markdown("### System intelligence")
-    st.markdown(
-        '<div class="settings-v22-copy">These are real evidence-backed totals. '
-        'Cumulative provider telemetry is kept separate from the current '
-        'deduplicated job inventory so the dashboard does not inflate counts.'
-        "</div>",
-        unsafe_allow_html=True,
+    snapshot = _PAGES.system_snapshot()
+    st.markdown("### Advanced / System")
+    st.caption(
+        "Operator detail for maintenance. Normal product use should not require this page."
     )
 
     stats = [
-        (
-            "Opportunities scanned",
-            f"{int(lifetime.get('scanned') or 0):,}",
-            "Cumulative provider records observed across source runs.",
-        ),
-        (
-            "Normalized records",
-            f"{int(lifetime.get('normalized') or 0):,}",
-            "Records successfully normalized by source telemetry.",
-        ),
-        (
-            "Jobs stored",
-            f"{int(headline.get('jobs') or 0):,}",
-            "Current canonical deduplicated opportunity inventory.",
-        ),
-        (
-            "Eligible telemetry",
-            f"{int(lifetime.get('eligible') or 0):,}",
-            "Source-run records counted eligible in telemetry.",
-        ),
-        (
-            "Recorded source runs",
-            f"{int(lifetime.get('runs') or 0):,}",
-            "Durable discovery source-run records.",
-        ),
-        (
-            "Targeting decisions",
-            f"{int(lifetime.get('decisions') or 0):,}",
-            "Canonical targeting decisions recorded.",
-        ),
-        (
-            "Telegram-delivered jobs",
-            f"{int(lifetime.get('jobs_delivered') or 0):,}",
-            "Opportunity cards with durable delivery evidence.",
-        ),
-        (
-            "ATS-scored packages",
-            f"{int(snapshot.get('ats', {}).get('scored_packages') or 0):,}",
-            "Prepared package results with an ATS score.",
-        ),
-        (
-            "Explicitly blocked",
-            f"{int(headline.get('blocked') or 0):,}",
-            "Stored jobs with an explicit blocker.",
-        ),
+        ("Hunter", "Healthy" if snapshot["healthy"] else "Needs attention", "Local app service"),
+        ("n8n", "Configured" if snapshot["n8n_configured"] else "Not configured", "Workflow bridge"),
+        ("Telegram", "Enabled" if snapshot["telegram_enabled"] else "Off", "Operator alerts"),
+        ("Sources", str(snapshot["source_count"]), "Configured discovery sources"),
+        ("Stored jobs", str(snapshot["jobs_stored"]), "Jobs currently retained in Hunter"),
+        ("Automation", _PAGES.volume_policy()["mode"].replace("_", " ").title(), "Volume policy"),
     ]
+    columns = st.columns(3)
+    for index, (label, value, help_text) in enumerate(stats):
+        with columns[index % 3]:
+            st.markdown(
+                f"""<div class="system-stat"><div class="label">{_PAGES.esc(label)}</div><div class="value">{_PAGES.esc(value)}</div><div class="help">{_PAGES.esc(help_text)}</div></div>""",
+                unsafe_allow_html=True,
+            )
 
-    for start in range(0, len(stats), 3):
-        columns = st.columns(3, gap="medium")
-        for column, stat in zip(columns, stats[start:start + 3]):
-            with column:
-                _stat_card(*stat)
+    policy = _PAGES.volume_policy()
+    if policy["mode"] == "unlimited":
+        st.success(
+            "Unlimited means MUNSHI does not impose a business-volume quota. "
+            "Provider, targeting, eligibility, dedupe, and safety controls still apply."
+        )
+    elif policy["mode"] == "custom_limit":
+        st.info(
+            f"Custom volume target: {policy.get('daily_limit')} jobs per day."
+        )
+    else:
+        st.warning(f"Automation mode: {policy['mode'].replace('_', ' ')}")
 
     telemetry = snapshot.get("source_telemetry") or []
     if telemetry:
@@ -1758,13 +1481,41 @@ def settings_v22() -> None:
             _PAGES._inbox()
 
         elif section == "Profile & defaults":
-            facts = _PAGES.candidate_facts()
-            designated = _PAGES.master_resume()
+            from app import candidate_profile_authority_v1 as profile_authority
+
+            authority = profile_authority.authority_snapshot()
+            master = dict(authority.get("master_resume") or {})
+            profile = dict(authority.get("profile") or {})
+            confirmed_count = int(profile.get("structured_fact_count") or 0)
+            draft_count = int(profile.get("draft_fact_count") or 0)
+            confirmed = bool(profile.get("confirmed"))
+
+            if confirmed:
+                headline = f"{confirmed_count} confirmed Candidate Truth fact(s)"
+                detail = "Candidate Truth is confirmed against the active Master Resume."
+            elif draft_count:
+                headline = f"{draft_count} extracted profile value(s) ready for review"
+                detail = (
+                    "Candidate Truth is not confirmed yet. Open Profile details to review "
+                    "the extracted values once, then MUNSHI can prepare reusable answers automatically."
+                )
+            elif master.get("configured") and profile.get("extraction_id"):
+                headline = "Profile extraction is available but has no usable values yet"
+                detail = "Open Profile details to inspect the current extraction before AutoApply testing."
+            elif master.get("configured"):
+                headline = "Master Resume ready · profile extraction still needed"
+                detail = (
+                    "The active Master Resume is configured, but Candidate Truth has not been built for it yet."
+                )
+            else:
+                headline = "Candidate profile setup needed"
+                detail = "Add a Master Resume first, then build and confirm Candidate Truth once."
+
             st.markdown("### Profile & defaults")
             st.markdown(
                 f"""<div class="settings-v22-card">
-                    <b>{len(facts)} structured profile fact(s)</b>
-                    <span>Master resume: {"configured" if designated else "not configured"}. Open Profile to review source-backed facts and prepared artifacts.</span>
+                    <b>{_PAGES.esc(headline)}</b>
+                    <span>Master Resume: {"configured" if master.get("configured") else "not configured"}. {_PAGES.esc(detail)}</span>
                 </div>""",
                 unsafe_allow_html=True,
             )
