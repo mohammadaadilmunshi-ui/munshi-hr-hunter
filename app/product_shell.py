@@ -177,7 +177,7 @@ def render() -> None:
     # and downstream integrations use it as a compatibility marker.
     from app import product_pages, profile_workspace_v1, resume_studio_page
     from app import application_workspace_page
-    from app import profile_workspace_v2, profile_workspace_v3
+    from app import profile_workspace_v2, profile_workspace_v3, profile_workspace_v4
     from app.resume_engine_selector import (
         install_resume_engine_selector,
         render_resume_engine_selector,
@@ -190,10 +190,10 @@ def render() -> None:
     )
     from app.secure_api_vault_ui import install_secure_api_vault_ui
 
-    # Keep the V1 import/route contract stable for existing integrations while
-    # layering V2 preview/promotion and V3 encrypted candidate editing over the
-    # proven V1 visual renderer and public-logo resolver.
-    profile_workspace_v1.render = profile_workspace_v3.render
+    # Keep the long-lived V1 import/route contract stable while presenting one
+    # V4 Profile Details authority surface for Master Resume, Candidate Truth,
+    # and Application Answer Vault readiness.
+    profile_workspace_v1.render = profile_workspace_v4.render
 
     install_product_v22(product_pages)
     # Keep the current AutoApply Settings layer first; the secure vault wrapper
