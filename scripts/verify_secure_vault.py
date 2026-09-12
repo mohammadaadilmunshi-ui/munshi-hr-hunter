@@ -5,6 +5,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
+
+# When executed as ``python scripts/verify_secure_vault.py``, Python places the
+# scripts directory (not the repository root) on sys.path. Add the repository
+# root explicitly so this verifier behaves the same locally, in CI, and inside
+# the Hunter container.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from app.database import initialize_database
 from app.secure_vault import vault_readiness
