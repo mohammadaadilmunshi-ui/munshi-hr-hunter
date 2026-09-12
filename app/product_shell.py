@@ -188,6 +188,7 @@ def render() -> None:
     from app.resume_studio_session_state_repair_v1 import (
         install_resume_studio_session_state_repair_v1,
     )
+    from app.secure_api_vault_ui import install_secure_api_vault_ui
 
     # Keep the V1 import/route contract stable for existing integrations while
     # layering V2 preview/promotion and V3 encrypted candidate editing over the
@@ -195,9 +196,11 @@ def render() -> None:
     profile_workspace_v1.render = profile_workspace_v3.render
 
     install_product_v22(product_pages)
-    # Additive settings layer: expose AutoApply preferences and encrypted
-    # credential readiness on the same Settings page users already operate.
+    # Keep the current AutoApply Settings layer first; the secure vault wrapper
+    # is deliberately installed after it so the vault appends to the same
+    # Credentials surface instead of replacing the newer AutoApply controls.
     install_autoapply_settings_ui(product_pages)
+    install_secure_api_vault_ui(product_pages)
     install_resume_engine_selector(product_pages)
     # Additive only: model-free profile parsing and progressive Browse Jobs loading.
     # Existing n8n/legacy operations stay intact.
