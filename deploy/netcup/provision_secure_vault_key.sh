@@ -70,8 +70,9 @@ docker image inspect "$image" >/dev/null
 volume="${project}_hunter_secrets"
 docker volume inspect "$volume" >/dev/null 2>&1 || docker volume create "$volume" >/dev/null
 
-# Write/validate entirely inside the Docker volume. No key material crosses stdout.
-docker run --rm \
+# Write/validate entirely inside the Docker volume. Keep stdin attached so the
+# embedded Python program is actually delivered to the container.
+docker run --rm -i \
   --network none \
   --user 0:0 \
   --mount "type=volume,src=${volume},dst=/vault" \
