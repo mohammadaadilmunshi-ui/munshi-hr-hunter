@@ -24,15 +24,6 @@ _SETTINGS_KEY = "product_autoapply_preferences_v1"
 _ANTHROPIC_CREDENTIAL_TYPE = "autoapply_anthropic_api_key"
 _AUTH_MODES = ("subscription", "api")
 _MODELS = ("sonnet", "opus", "haiku")
-_DEFAULTS: dict[str, Any] = {
-    "enabled": False,
-    "auth_mode": "subscription",
-    "model": "sonnet",
-    "headless": False,
-    "max_turns": 40,
-    "max_cost_per_application_usd": 1.0,
-    "allow_final_submit": False,
-}
 
 
 def _preferences(value: Any = None) -> dict[str, Any]:
@@ -125,12 +116,23 @@ def _card(title: str, value: str, detail: str) -> None:
     )
 
 
+def _auth_status(preferences: dict[str, Any]) -> tuple[str, str]:
+    if preferences["auth_mode"] == "subscription":
+        return (
+            "Subscription selected",
+            "Claude Code login is verified separately by the MUNSHI Apply executor.",
+        )
+    if _vault_secret_exists(_ANTHROPIC_CREDENTIAL_TYPE):
+        return (
+            "API key stored",
+            "Encrypted in the dashboard vault; executor readiness is verified separately.",
+        )
+    return ("Needs credential", "No encrypted Anthropic API key is stored.")
+
+
 def _autoapply_status(preferences: dict[str, Any]) -> None:
     runtime = _runtime_health()
-    credential_ready = (
-        preferences["auth_mode"] == "subscription"
-        or _vault_secret_exists(_ANTHROPIC_CREDENTIAL_TYPE)
-    )
+    auth_value, auth_detail = _auth_status(preferences)
     columns = st.columns(4, gap="small")
     with columns[0]:
         _card(
@@ -145,13 +147,7 @@ def _autoapply_status(preferences: dict[str, Any]) -> None:
             str(runtime.get("schema_version") or "Runtime health not currently confirmed"),
         )
     with columns[2]:
-        _card(
-            "Claude authentication",
-            "Ready" if credential_ready else "Needs setup",
-            "Subscription login"
-            if preferences["auth_mode"] == "subscription"
-            else "Encrypted API credential",
-        )
+        _card("Claude authentication", auth_value, auth_detail)
     with columns[3]:
         _card(
             "Final submit",
@@ -236,6 +232,7 @@ def _autoapply_form() -> None:
                 }
             )
             st.success("AutoApply preferences saved. Runtime safety gates are unchanged.")
+            st.rerun()
 
 
 def _anthropic_credential() -> None:
@@ -301,7 +298,8 @@ def _security_checkpoint_card() -> None:
         '<div class="settings-v22-card"><b>User-assisted verification · automatic continuation</b>'
         '<span>If CAPTCHA, MFA, OTP, identity, or another protected verification step appears, '
         'MUNSHI pauses and checkpoints the exact Chromium session. The website popup focuses that '
-        'tab and resumes only after the extension re-scans the page and confirms the checkpoint is gone.'</n        '</span></div>',
+        'tab and resumes only after the extension re-scans the page and confirms the checkpoint is gone.'</n        '</span></div>'
+        .replace("gone.</span>", "gone.</span>"),
         unsafe_allow_html=True,
     )
     st.caption(
@@ -325,7 +323,7 @@ def _credentials() -> None:
         'application authority are separate states.</span></div>',
         unsafe_allow_html=True,
     )
-    _autoapply_status(preferences)
+    _autoapply_form()
     _anthropic_credential()
     _security_checkpoint_card()
 
