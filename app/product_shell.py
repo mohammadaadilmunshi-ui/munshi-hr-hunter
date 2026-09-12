@@ -177,7 +177,8 @@ def render() -> None:
     # and downstream integrations use it as a compatibility marker.
     from app import product_pages, profile_workspace_v1, resume_studio_page
     from app import application_workspace_page
-    from app import profile_workspace_v2, profile_workspace_v3
+    from app import candidate_profile_authority_v1 as profile_authority
+    from app import profile_workspace_v2, profile_workspace_v3, profile_workspace_v4
     from app.resume_engine_selector import (
         install_resume_engine_selector,
         render_resume_engine_selector,
@@ -190,10 +191,17 @@ def render() -> None:
     )
     from app.secure_api_vault_ui import install_secure_api_vault_ui
 
-    # Keep the V1 import/route contract stable for existing integrations while
-    # layering V2 preview/promotion and V3 encrypted candidate editing over the
-    # proven V1 visual renderer and public-logo resolver.
+    # Preserve the established V3 route contract first, then layer the V4
+    # unified Profile authority on the same long-lived V1 entrypoint.
     profile_workspace_v1.render = profile_workspace_v3.render
+    profile_workspace_v1.render = profile_workspace_v4.render
+
+    # Product Settings V2.3 historically imported the retired n8n-generated
+    # artifact designation as its Master Resume signal. Point only its read
+    # surface at the same Native Resume/Candidate Truth authority used by Profile
+    # and Resume Studio, without mutating the old artifact history.
+    product_pages.master_resume = profile_authority.master_resume
+    product_pages.candidate_facts = profile_authority.candidate_facts
 
     install_product_v22(product_pages)
     # Keep the current AutoApply Settings layer first; the secure vault wrapper
