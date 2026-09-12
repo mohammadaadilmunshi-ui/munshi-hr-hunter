@@ -48,5 +48,6 @@ jobs:
             tests/test_product_ui_sol_remainder.py \
             tests/test_product_ui_v21.py \
             tests/test_product_ui_v22.py \
+            tests/test_autoapply_settings_ui.py \
             tests/test_profile_runtime_repair_v2.py \
             tests/test_production_vault_activation_contract.py
