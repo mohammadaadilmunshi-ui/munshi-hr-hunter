@@ -1,6 +1,6 @@
 """Unified Profile workspace for pre-AutoApply readiness.
 
-V4 keeps the existing Resume and Cover Letter tabs intact.  Profile Details now
+V4 keeps the existing Resume and Cover Letter tabs intact. Profile Details now
 presents one authority view for Candidate Truth, the active Master Resume, and
 the reusable Application Answer Vault used by both deterministic MUNSHI Apply
 and AutoApply planning.
@@ -11,6 +11,7 @@ from typing import Any
 
 import streamlit as st
 
+from app import application_answer_autofill_v1 as answer_autofill
 from app import application_answer_router_v1 as answer_router
 from app import application_question_catalog_v1 as question_catalog
 from app import candidate_profile_authority_v1 as profile_authority
@@ -28,9 +29,9 @@ def _status_cards(authority: dict[str, Any], answers: dict[str, Any]) -> None:
         st.metric("Candidate Truth", "Confirmed" if profile["confirmed"] else "Needs review")
         st.caption(f"{int(authority.get('structured_fact_count') or 0)} structured fact(s)")
     with cards[2]:
-        st.metric("Common Q&A", f"{answers['coverage_percent']:.0f}%")
+        st.metric("Known meanings", f"{answers['ready_concept_count']}/{answers['concept_count']}")
         st.caption(
-            f"{answers['ready_concept_count']} of {answers['concept_count']} canonical answers ready"
+            f"{int(answers.get('autofill_ready_count') or 0)} deterministic answer(s) ready to fill"
         )
     with cards[3]:
         ready = authority["ready_for_application_planning"] and bool(
@@ -82,67 +83,106 @@ def _answer_filter(rows: list[dict[str, Any]], selection: str) -> list[dict[str,
     return rows
 
 
-def _answer_vault_workspace() -> None:
+def _answer_vault_workspace(authority: dict[str, Any]) -> None:
     readiness = answer_router.readiness_projection()
     st.markdown("### Application Answer Vault")
     st.write(
-        "MUNSHI normalizes provider wording into one semantic answer before the "
-        "Application Plan is built. The same mapping is used whether execution "
-        "continues through MUNSHI Apply or AutoApply."
+        "The 100 entries are a recognition catalog, not a questionnaire. MUNSHI "
+        "uses Candidate Truth and previously confirmed answers first, derives safe "
+        "structural variants such as first/last name, and asks only for the unresolved delta."
     )
     st.info(
-        f"Catalog: {readiness['common_question_count']} common question phrasings → "
-        f"{readiness['concept_count']} canonical concepts. Unknown or ambiguous "
-        "questions remain NEEDS_INPUT instead of being guessed."
+        "Deterministic fill runs first for both MUNSHI Apply and AutoApply. Claude may "
+        "help interpret an unusual page or control only after deterministic matching "
+        "fails; it does not invent candidate facts."
     )
 
+    profile_confirmed = bool(authority.get("profile", {}).get("confirmed"))
+    if not profile_confirmed:
+        st.warning(
+            "Confirm Candidate Truth once before automatic answer preparation. The Master "
+            "Resume can be configured while the confirmed profile still has 0 structured facts."
+        )
+
+    if st.button(
+        "Prepare answers automatically from Candidate Truth",
+        type="primary",
+        use_container_width=True,
+        disabled=not profile_confirmed,
+        key="profile_v4_prepare_answers",
+    ):
+        try:
+            result = answer_autofill.prepare_from_candidate_truth()
+        except Exception as error:  # noqa: BLE001
+            st.error(str(error))
+        else:
+            st.success(
+                f"Prepared {result['prepared_count']} reusable deterministic answers from the "
+                "current confirmed profile. Protected/self-ID fields were not copied into plaintext."
+            )
+            st.rerun()
+
+    readiness = answer_router.readiness_projection()
+    delta = answer_autofill.onboarding_delta(readiness)
     metrics = st.columns(4, gap="small")
-    metrics[0].metric("Common phrasings", int(readiness["common_question_count"]))
-    metrics[1].metric("Canonical concepts", int(readiness["concept_count"]))
-    metrics[2].metric("Ready concepts", int(readiness["ready_concept_count"]))
-    metrics[3].metric("Coverage", f"{float(readiness['coverage_percent']):.0f}%")
+    metrics[0].metric("Recognition phrasings", int(readiness["common_question_count"]))
+    metrics[1].metric("Canonical meanings", int(readiness["concept_count"]))
+    metrics[2].metric("Autofill ready", int(readiness.get("autofill_ready_count") or 0))
+    metrics[3].metric("Reusable gaps", len(delta))
 
-    filter_value = st.segmented_control(
-        "Answer status",
-        ["All", "Ready", "Needs input", "Protected / ask when needed"],
-        default="All",
-        key="profile_v4_answer_filter",
-    ) or "All"
-    visible = _answer_filter(list(readiness["rows"]), filter_value)
-    table = [
-        {
-            "Concept": row["question_key"],
-            "Example": row["example_question"],
-            "Status": "Ready" if row["ready"] else row["source"].replace("_", " ").title(),
-            "Domain": row["sensitivity_class"],
-        }
-        for row in visible
-    ]
-    st.dataframe(table, use_container_width=True, hide_index=True, height=360)
+    if not delta and profile_confirmed:
+        st.success(
+            "No reusable normal-domain setup is required right now. Job-specific or unusual "
+            "questions will be handled contextually when an application actually needs them."
+        )
+    elif delta:
+        st.caption(
+            "You do not need to complete these now. MUNSHI will request an answer only when "
+            "a real application requires one; saving it once makes future equivalent wording reusable."
+        )
 
-    normal_missing = [
-        row
-        for row in readiness["rows"]
-        if not row["ready"] and row["sensitivity_class"] == "NORMAL"
-    ]
-    if normal_missing:
-        st.markdown("#### Add a reusable answer")
-        options = {row["question_key"]: row for row in normal_missing}
+    with st.expander("Advanced: view the 100-phrase recognition catalog", expanded=False):
+        filter_value = st.segmented_control(
+            "Answer status",
+            ["All", "Ready", "Needs input", "Protected / ask when needed"],
+            default="All",
+            key="profile_v4_answer_filter",
+        ) or "All"
+        visible = _answer_filter(list(readiness["rows"]), filter_value)
+        table = [
+            {
+                "Concept": row["question_key"],
+                "Example": row["example_question"],
+                "Status": (
+                    "Autofill ready"
+                    if row.get("autofill_ready")
+                    else "Ready"
+                    if row["ready"]
+                    else row["source"].replace("_", " ").title()
+                ),
+                "Domain": row["sensitivity_class"],
+            }
+            for row in visible
+        ]
+        st.dataframe(table, use_container_width=True, hide_index=True, height=360)
+
+    if delta:
+        st.markdown("#### Optional: save one reusable answer now")
+        options = {row["question_key"]: row for row in delta}
         selected_key = st.selectbox(
             "Question",
             list(options),
             format_func=lambda key: options[key]["example_question"],
             key="profile_v4_answer_question",
         )
-        selected = options[selected_key]
         with st.form("profile_v4_answer_form", clear_on_submit=True):
             answer = st.text_area(
                 "Confirmed answer",
                 height=100,
-                placeholder="Enter the answer MUNSHI may reuse when this meaning appears again.",
+                placeholder="Only add this if you want it reusable before a real application asks.",
             )
             allow = st.checkbox(
-                "Allow deterministic autofill when this same semantic question appears",
+                "Allow deterministic autofill when this same meaning appears",
                 value=True,
             )
             save = st.form_submit_button(
@@ -163,14 +203,12 @@ def _answer_vault_workspace() -> None:
             except Exception as error:  # noqa: BLE001
                 st.error(str(error))
             else:
-                st.success("Answer saved under its canonical semantic concept.")
+                st.success("Answer saved under its canonical semantic meaning.")
                 st.rerun()
-    else:
-        st.success("All normal catalog concepts currently have a reusable source or answer.")
 
     st.caption(
-        "Work authorization, self-identification, credentials, and post-offer "
-        "sensitive fields are intentionally not copied into the normal plaintext answer vault."
+        "Work authorization, self-identification, credentials, and post-offer sensitive "
+        "fields remain in their dedicated protected flows instead of the normal plaintext answer vault."
     )
 
 
@@ -232,6 +270,6 @@ def render() -> None:
     with candidate_tab:
         _candidate_truth_workspace()
     with answers_tab:
-        _answer_vault_workspace()
+        _answer_vault_workspace(authority)
     with resume_tab:
         _master_resume_workspace(authority)
