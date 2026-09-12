@@ -30,9 +30,12 @@ def normalize_visible_question(value: str | Mapping[str, Any]) -> dict[str, Any]
             or raw.get("label")
             or raw.get("prompt")
             or raw.get("normalized_question")
+            or raw.get("rawText")
             or raw.get("aria_label")
+            or raw.get("ariaLabel")
             or raw.get("placeholder")
             or raw.get("field_name")
+            or raw.get("fieldName")
             or raw.get("name")
             or ""
         ).strip()
@@ -50,6 +53,9 @@ def normalize_visible_question(value: str | Mapping[str, Any]) -> dict[str, Any]
     if structural is not None:
         requirement = structural
     else:
+        # Apply semantic hints for protected/self-ID domains are intentionally not
+        # converted into NORMAL structural fields. Preserve their visible raw text
+        # here so the canonical catalog can recover the protected semantic key.
         requirement = answer_router.requirement_from_question(text, required=required)
 
     # Browser/provider metadata may narrow a requirement, but it must not silently
@@ -72,10 +78,16 @@ def normalize_visible_question(value: str | Mapping[str, Any]) -> dict[str, Any]
     requirement = answer_autofill.enrich_requirement(requirement)
 
     requirement["provider_field_id"] = str(
-        raw.get("field_id") or raw.get("provider_field_id") or ""
+        raw.get("field_id")
+        or raw.get("provider_field_id")
+        or raw.get("controlId")
+        or ""
     ).strip() or None
     requirement["provider_field_name"] = str(
-        raw.get("field_name") or raw.get("name") or ""
+        raw.get("field_name")
+        or raw.get("fieldName")
+        or raw.get("name")
+        or ""
     ).strip() or None
     requirement["answer_router_version"] = answer_router.ROUTER_VERSION
     requirement["question_bridge_version"] = BRIDGE_VERSION
