@@ -1,11 +1,11 @@
 """Smart, truth-bound answer preparation for application autofill.
 
 The 100-question catalog is recognition coverage, not a 100-question onboarding
-form.  This module prepares only safe deterministic answers from the current
+form. This module prepares only safe deterministic answers from the current
 confirmed Candidate Truth profile and stores reusable normal-domain answers under
 the same semantic keys used by both MUNSHI Apply and AutoApply.
 
-No candidate-specific value is hard-coded here.  Protected/self-ID/credential/
+No candidate-specific value is hard-coded here. Protected/self-ID/credential/
 post-offer domains remain outside the normal answer vault.
 """
 from __future__ import annotations
@@ -32,6 +32,14 @@ _DERIVED_PROJECTIONS: tuple[tuple[str, str, str], ...] = (
     ("contact.country", "contact.location", "location_country"),
 )
 
+# These concepts are meaningful only in the context of a real job or concrete
+# skill. They stay in the recognition catalog, but should never become generic
+# onboarding questions such as "years with this skill?".
+_CONTEXTUAL_REUSABLE_KEYS = {
+    "experience.relevant_years",
+    "experience.skill_years",
+}
+
 
 def _binding_conditions(snapshot: Mapping[str, Any], projection: str) -> dict[str, Any]:
     return {
@@ -45,7 +53,7 @@ def enrich_requirement(requirement: Mapping[str, Any]) -> dict[str, Any]:
     """Bind a structural projection to the current confirmed profile revision.
 
     A changed profile digest therefore stops an older derived answer from matching
-    silently.  Direct catalog facts continue to use Answer Brain's truth-binding
+    silently. Direct catalog facts continue to use Answer Brain's truth-binding
     sidecar instead of duplicating profile content into conditions.
     """
     result = dict(requirement)
@@ -75,9 +83,9 @@ def _fact(snapshot: Mapping[str, Any], key: str) -> dict[str, Any] | None:
 def prepare_from_candidate_truth() -> dict[str, Any]:
     """Prepare every safe reusable answer that Candidate Truth already supports.
 
-    This function is intentionally idempotent.  Calling it again after a profile
+    This function is intentionally idempotent. Calling it again after a profile
     edit refreshes profile-bound answers and writes new digest-scoped derived
-    answers.  It never creates protected/self-ID/post-offer/credential plaintext.
+    answers. It never creates protected/self-ID/post-offer/credential plaintext.
     """
     snapshot = truth_binding.current_candidate_profile_snapshot()
     direct_saved: list[str] = []
@@ -159,6 +167,8 @@ def onboarding_delta(readiness: Mapping[str, Any]) -> list[dict[str, Any]]:
         if row.get("ready"):
             continue
         if str(row.get("family") or "") in deferred_families:
+            continue
+        if str(row.get("question_key") or "") in _CONTEXTUAL_REUSABLE_KEYS:
             continue
         if str(row.get("sensitivity_class") or "") != "NORMAL":
             continue
