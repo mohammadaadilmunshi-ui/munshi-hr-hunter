@@ -1,4 +1,4 @@
-"""Stable entry point for the Candidate-Truth-first Resume Studio."""
-from app.resume_studio_page_v4 import render
+"""Stable entry point for Candidate-Truth-first Resume Studio V5."""
+from app.resume_studio_page_v5 import render
 
 __all__ = ["render"]
