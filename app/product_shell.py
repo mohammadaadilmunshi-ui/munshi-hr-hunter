@@ -191,9 +191,9 @@ def render() -> None:
     )
     from app.secure_api_vault_ui import install_secure_api_vault_ui
 
-    # Keep the long-lived V1 import/route contract stable while presenting one
-    # V4 Profile Details authority surface for Master Resume, Candidate Truth,
-    # and Application Answer Vault readiness.
+    # Preserve the established V3 route contract first, then layer the V4
+    # unified Profile authority on the same long-lived V1 entrypoint.
+    profile_workspace_v1.render = profile_workspace_v3.render
     profile_workspace_v1.render = profile_workspace_v4.render
 
     # Product Settings V2.3 historically imported the retired n8n-generated
