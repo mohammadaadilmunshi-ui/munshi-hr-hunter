@@ -1,8 +1,8 @@
 """Shared question-routing boundary for MUNSHI Apply and AutoApply.
 
-Provider/browser code supplies visible question text.  This module converts that
+Provider/browser code supplies visible question text. This module converts that
 text into a stable catalog concept and delegates answer authority to Answer Brain
-V2 / Candidate Truth.  It never guesses a factual answer and never owns browser
+V2 / Candidate Truth. It never guesses a factual answer and never owns browser
 or submission authority.
 """
 from __future__ import annotations
@@ -102,23 +102,34 @@ def _snapshot_fact_keys() -> set[str]:
 
 
 def readiness_projection() -> dict[str, Any]:
-    """Non-secret catalog coverage for Profile/Settings readiness UI."""
+    """Non-secret catalog coverage and deterministic-autofill readiness."""
     fact_keys = _snapshot_fact_keys()
     stored_keys: set[str] = set()
+    autofill_keys: set[str] = set()
     answer_brain_available = True
     try:
         for answer in answer_brain_v2.normal_answer_projection():
             key = str(answer.get("question_key") or "").strip()
-            if key and answer.get("user_confirmed"):
-                stored_keys.add(key)
+            if not key or not answer.get("user_confirmed"):
+                continue
+            if (
+                str(answer.get("source") or "") == "profile_evidence"
+                and answer.get("truth_binding_current") is not True
+            ):
+                continue
+            stored_keys.add(key)
+            if answer.get("autofill_allowed"):
+                autofill_keys.add(key)
     except RuntimeError:
         answer_brain_available = False
 
     rows: list[dict[str, Any]] = []
     ready_count = 0
+    autofill_ready_count = 0
     for concept in catalog.CONCEPTS:
         source = "needs_input"
         ready = False
+        autofill_ready = False
         if concept.sensitivity_class in {"CREDENTIAL", "POST_OFFER"}:
             source = "ask_when_required"
         elif concept.sensitivity_class == "SELF_ID":
@@ -132,17 +143,22 @@ def readiness_projection() -> dict[str, Any]:
         elif concept.key in stored_keys:
             source = "confirmed_answer_vault"
             ready = True
+            autofill_ready = concept.key in autofill_keys
         elif concept.profile_fact_key and concept.profile_fact_key.casefold() in fact_keys:
             source = "candidate_truth"
             ready = True
         if ready:
             ready_count += 1
+        if autofill_ready:
+            autofill_ready_count += 1
         rows.append(
             {
                 "question_key": concept.key,
                 "family": concept.family,
                 "sensitivity_class": concept.sensitivity_class,
                 "ready": ready,
+                "autofill_ready": autofill_ready,
+                "autofill_default": bool(concept.autofill_default),
                 "source": source,
                 "example_question": concept.aliases[0],
             }
@@ -154,6 +170,7 @@ def readiness_projection() -> dict[str, Any]:
         "common_question_count": catalog.catalog_metrics()["common_question_count"],
         "concept_count": len(catalog.CONCEPTS),
         "ready_concept_count": ready_count,
+        "autofill_ready_count": autofill_ready_count,
         "coverage_percent": round(ready_count / len(catalog.CONCEPTS) * 100, 1),
         "answer_brain_available": answer_brain_available,
         "rows": rows,

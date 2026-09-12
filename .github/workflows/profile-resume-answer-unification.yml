@@ -33,8 +33,11 @@ jobs:
             app/candidate_profile_authority_v1.py \
             app/application_question_catalog_v1.py \
             app/application_answer_router_v1.py \
+            app/application_field_intelligence_v1.py \
+            app/application_answer_autofill_v1.py \
             app/application_plan_question_bridge_v1.py \
             app/profile_workspace_v4.py \
+            app/settings_profile_authority_ui_v1.py \
             app/resume_one_page_guard_v1.py \
             app/resume_studio_page_v5.py \
             app/product_shell.py
@@ -42,7 +45,10 @@ jobs:
       - name: Run focused unification tests
         run: |
           python -m pytest -q \
-            tests/test_profile_resume_answer_unification_v1.py
+            tests/test_profile_resume_answer_unification_v1.py \
+            tests/test_application_smart_autofill_v1.py \
+            tests/test_apply_semantic_field_bridge_v1.py \
+            tests/test_settings_profile_authority_ui_v1.py
 
       - name: Guard shared-answer and final-submit boundaries
         run: |
@@ -50,15 +56,28 @@ jobs:
           grep -F 'application_plan_v2.prepare_application_plan' app/application_plan_question_bridge_v1.py
           grep -F 'answer_brain_v2.resolve_answer' app/application_answer_router_v1.py
           grep -F 'MUNSHI Apply and AutoApply' app/application_answer_router_v1.py
+          grep -F 'Prepare answers automatically from Candidate Truth' app/profile_workspace_v4.py
+          grep -F 'field_intelligence.requirement_from_field' app/application_plan_question_bridge_v1.py
+          grep -F 'semanticType' app/application_field_intelligence_v1.py
+          grep -F 'profile_authority.authority_snapshot()' app/settings_profile_authority_ui_v1.py
           grep -F 'allow_final_submit": False' app/secure_api_vault_ui.py
-          ! grep -E 'captcha.*(solver|bypass)|security.*bypass' app/application_question_catalog_v1.py app/application_answer_router_v1.py app/application_plan_question_bridge_v1.py
+          ! grep -E 'captcha.*(solver|bypass)|security.*bypass' \
+            app/application_question_catalog_v1.py \
+            app/application_answer_router_v1.py \
+            app/application_field_intelligence_v1.py \
+            app/application_answer_autofill_v1.py \
+            app/application_plan_question_bridge_v1.py
 
-      - name: Prove 100-question catalog contract
+      - name: Prove 100-question catalog contract stays internal
         run: |
           python - <<'PY'
+          from pathlib import Path
           from app.application_question_catalog_v1 import catalog_metrics
           metrics = catalog_metrics()
           assert metrics['common_question_count'] == 100, metrics
           assert metrics['concept_count'] == 50, metrics
+          source = Path('app/profile_workspace_v4.py').read_text(encoding='utf-8')
+          assert 'Advanced: view the 100-phrase recognition catalog' not in source
+          assert 'Recognition phrasings' not in source
           print(metrics)
           PY
