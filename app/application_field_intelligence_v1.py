@@ -2,7 +2,7 @@
 
 This module converts common provider field metadata (label/name/autocomplete/type)
 into stable semantic requirements and can project safe values from the confirmed
-Candidate Truth snapshot.  It is deliberately provider-neutral and contains no
+Candidate Truth snapshot. It is deliberately provider-neutral and contains no
 candidate-specific values.
 
 The intended execution order is:
@@ -14,6 +14,8 @@ The intended execution order is:
 
 MUNSHI Apply and AutoApply can therefore share one factual authority even when a
 provider asks for "Full name", "First name", "Given name", "Surname", etc.
+MUNSHI Apply's semanticType is accepted as classification evidence only; it can
+never supply a candidate value or downgrade a protected domain.
 """
 from __future__ import annotations
 
@@ -58,6 +60,34 @@ _AUTOCOMPLETE_MAP: dict[str, FieldIntent] = {
     "postal-code": FieldIntent("contact.postal_code", "contact.location", "location_postal"),
     "country": FieldIntent("contact.country", "contact.location", "location_country"),
     "country-name": FieldIntent("contact.country", "contact.location", "location_country"),
+}
+
+# This mirrors only Apply semantic types that are safe structural projections of
+# normal Candidate Truth. Work authorization, sponsorship, EEO/self-ID,
+# background/drug/clearance and other protected semantics deliberately do not
+# appear here; those continue through their dedicated Hunter policies.
+_APPLY_SAFE_SEMANTIC_MAP: dict[str, FieldIntent] = {
+    "PERSONAL": _AUTOCOMPLETE_MAP["name"],
+    "FIRST_NAME": _AUTOCOMPLETE_MAP["given-name"],
+    "MIDDLE_NAME": _AUTOCOMPLETE_MAP["additional-name"],
+    "LAST_NAME": _AUTOCOMPLETE_MAP["family-name"],
+    "EMAIL": _AUTOCOMPLETE_MAP["email"],
+    "PHONE": _AUTOCOMPLETE_MAP["tel"],
+    "LINKEDIN": FieldIntent("contact.linkedin", "contact.linkedin", "identity", "url"),
+    "PORTFOLIO": FieldIntent("contact.portfolio", "contact.portfolio", "identity", "url"),
+    "WEBSITE": FieldIntent("contact.portfolio", "contact.portfolio", "identity", "url"),
+    "CURRENT_LOCATION": FieldIntent("contact.location", "contact.location", "identity"),
+    "CITY": _AUTOCOMPLETE_MAP["address-level2"],
+    "STATE_PROVINCE": _AUTOCOMPLETE_MAP["address-level1"],
+    "POSTAL_CODE": _AUTOCOMPLETE_MAP["postal-code"],
+    "COUNTRY": _AUTOCOMPLETE_MAP["country-name"],
+    "EMPLOYER_NAME": _AUTOCOMPLETE_MAP["organization"],
+    "JOB_TITLE": _AUTOCOMPLETE_MAP["organization-title"],
+    "SCHOOL_NAME": FieldIntent("education.institution", "education.0.institution", "identity"),
+    "DEGREE": FieldIntent("education.degree", "education.0.degree", "identity"),
+    "FIELD_OF_STUDY": FieldIntent("education.field", "education.0.field", "identity"),
+    "GRADUATION_DATE": FieldIntent("education.graduation", "education.0.end_date", "identity"),
+    "GPA": FieldIntent("education.gpa", "education.0.gpa", "identity"),
 }
 
 _LABEL_RULES: tuple[tuple[re.Pattern[str], FieldIntent], ...] = (
@@ -133,14 +163,20 @@ def _normalized(value: Any) -> str:
 def split_person_name(full_name: str) -> dict[str, str]:
     """Conservatively derive common name components from one confirmed full name.
 
-    This is generic transformation logic, not candidate-specific hard-coding.  It
+    This is generic transformation logic, not candidate-specific hard-coding. It
     intentionally avoids culturally speculative reordering: first token becomes
     given name, final non-suffix token becomes family name, and intervening tokens
     remain the middle/additional name.
     """
     tokens = [token for token in _clean(full_name).split(" ") if token]
     if not tokens:
-        return {"full_name": "", "first_name": "", "middle_name": "", "last_name": "", "suffix": ""}
+        return {
+            "full_name": "",
+            "first_name": "",
+            "middle_name": "",
+            "last_name": "",
+            "suffix": "",
+        }
 
     suffix = ""
     if len(tokens) > 1 and tokens[-1].rstrip(".").casefold() in _SUFFIXES:
@@ -166,16 +202,30 @@ def parse_location(value: str) -> dict[str, str]:
     """Extract only structurally obvious location pieces; never guess missing data."""
     text = _clean(value)
     if not text:
-        return {"full": "", "city": "", "region": "", "postal_code": "", "country": ""}
+        return {
+            "full": "",
+            "city": "",
+            "region": "",
+            "postal_code": "",
+            "country": "",
+        }
     parts = [part.strip() for part in text.split(",") if part.strip()]
-    result = {"full": text, "city": "", "region": "", "postal_code": "", "country": ""}
+    result = {
+        "full": text,
+        "city": "",
+        "region": "",
+        "postal_code": "",
+        "country": "",
+    }
     if parts:
         result["city"] = parts[0]
     if len(parts) >= 2:
         region_tokens = parts[1].split()
         if region_tokens:
             result["region"] = region_tokens[0]
-        if len(region_tokens) >= 2 and re.fullmatch(r"[A-Za-z0-9 -]{3,12}", " ".join(region_tokens[1:])):
+        if len(region_tokens) >= 2 and re.fullmatch(
+            r"[A-Za-z0-9 -]{3,12}", " ".join(region_tokens[1:])
+        ):
             result["postal_code"] = " ".join(region_tokens[1:])
     if len(parts) >= 3:
         result["country"] = parts[-1]
@@ -183,8 +233,19 @@ def parse_location(value: str) -> dict[str, str]:
 
 
 def field_intent(metadata: Mapping[str, Any] | None) -> FieldIntent | None:
-    """Resolve a provider field into one semantic intent, or return None."""
+    """Resolve a provider/Apply field into one safe structural semantic intent."""
     raw = dict(metadata or {})
+
+    apply_semantic = _clean(
+        raw.get("semantic_type") or raw.get("semanticType")
+    ).upper()
+    if apply_semantic:
+        # Unknown/protected Apply semantics are deliberately ignored here. They
+        # fall through to canonical question routing, which retains sensitivity.
+        mapped = _APPLY_SAFE_SEMANTIC_MAP.get(apply_semantic)
+        if mapped is not None:
+            return mapped
+
     autocomplete = _clean(raw.get("autocomplete")).casefold()
     if autocomplete:
         # HTML autocomplete may contain section-* and billing/shipping prefixes.
@@ -196,11 +257,15 @@ def field_intent(metadata: Mapping[str, Any] | None) -> FieldIntent | None:
         raw.get("label"),
         raw.get("question"),
         raw.get("prompt"),
+        raw.get("rawText"),
         raw.get("aria_label"),
+        raw.get("ariaLabel"),
         raw.get("placeholder"),
         raw.get("field_name"),
+        raw.get("fieldName"),
         raw.get("name"),
         raw.get("id"),
+        raw.get("controlId"),
     )
     combined = " ".join(_clean(value) for value in candidates if _clean(value))
     if not combined:
@@ -225,9 +290,12 @@ def requirement_from_field(
         raw.get("question")
         or raw.get("label")
         or raw.get("prompt")
+        or raw.get("rawText")
         or raw.get("aria_label")
+        or raw.get("ariaLabel")
         or raw.get("placeholder")
         or raw.get("field_name")
+        or raw.get("fieldName")
         or raw.get("name")
         or intent.key
     )
@@ -244,6 +312,11 @@ def requirement_from_field(
             "version": INTELLIGENCE_VERSION,
             "confidence": intent.confidence,
             "projection": intent.projection,
+            "classification_source": (
+                "munshi_apply_semantic_type"
+                if raw.get("semantic_type") or raw.get("semanticType")
+                else "provider_field_metadata"
+            ),
         },
     }
 
@@ -299,7 +372,10 @@ def resolve_profile_projection(
     if fact is None:
         return {"status": "NEEDS_INPUT", "reason": "profile_fact_missing"}
     if fact.get("protected") is True:
-        return {"status": "NEEDS_INPUT", "reason": "protected_profile_fact_requires_explicit_policy"}
+        return {
+            "status": "NEEDS_INPUT",
+            "reason": "protected_profile_fact_requires_explicit_policy",
+        }
 
     value = _project(fact.get("value"), projection)
     if not value:
