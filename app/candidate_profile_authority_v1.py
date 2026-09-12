@@ -76,7 +76,10 @@ def authority_snapshot() -> dict[str, Any]:
     if extracted:
         try:
             resolved_profile = profile_overrides.resolve_profile(extracted)
-        except Exception:  # read model must remain available even if overrides fail
+        except (KeyError, LookupError, RuntimeError, TypeError, ValueError):
+            # Read-only readiness must remain visible even if an optional override
+            # record is malformed. Candidate Truth confirmation still remains a
+            # separate authoritative gate below.
             resolved_profile = dict(extracted.get("profile") or {})
 
     truth: dict[str, Any] | None = None
