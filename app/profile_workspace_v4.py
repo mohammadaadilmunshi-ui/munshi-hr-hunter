@@ -41,7 +41,7 @@ def _status_cards(authority: dict[str, Any], answers: dict[str, Any]) -> None:
     with cards[2]:
         st.metric("Autofill ready", summary["autofill_ready"])
         st.caption(
-            f"Reusable gaps: {summary['reusable_gaps']} · Protected configured: {summary['protected_ready']}"
+            f"Reusable gaps: {summary['reusable_gaps']} · Protected ready: {summary['protected_ready']}"
         )
     with cards[3]:
         ready = authority["ready_for_application_planning"] and bool(summary["known"])
