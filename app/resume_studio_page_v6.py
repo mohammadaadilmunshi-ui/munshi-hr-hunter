@@ -1,8 +1,8 @@
 """Resume Studio V6 presentation shell.
 
 V6 preserves V5 generation, truth/JD binding, one-page verification and immutable
-artifact behavior. It adds a competitor-style presentation toolbar and applies
-those choices to the on-screen Native resume canvas only. Checked DOCX/PDF
+artifact behavior. It adds a professional Standard/Jake presentation toolbar and
+applies those choices to the on-screen Native resume canvas only. Checked DOCX/PDF
 artifacts remain the exact V5 authority until presentation metadata is versioned
 into the artifact contract in a later tranche.
 """
@@ -20,9 +20,11 @@ from app import resume_studio_page_v5 as v5
 def _presentation_settings() -> dict[str, Any]:
     st.markdown("### Resume appearance")
     st.caption(
-        "Choose how Native resumes look while editing. Truth, ATS checks, JD coverage, and one-page generation remain unchanged."
+        "Choose how Native resumes look while editing. Standard is a crisp ATS-safe sans-serif layout; Jake uses a distinct Computer-Modern-inspired editorial layout. Truth, ATS checks, JD coverage and one-page generation remain unchanged."
     )
-    template_col, font_col, size_col, align_col, fit_col = st.columns((1.2, 1.45, .9, 1.1, 1.2), gap="small")
+    template_col, font_col, size_col, align_col, fit_col = st.columns(
+        (1.2, 1.45, .9, 1.1, 1.2), gap="small"
+    )
     with template_col:
         template = st.segmented_control(
             "Template",
@@ -30,20 +32,38 @@ def _presentation_settings() -> dict[str, Any]:
             default=st.session_state.get("native_resume_canvas_template", "Standard"),
             key="native_resume_canvas_template",
         ) or "Standard"
+
+    font_key = "native_resume_canvas_font"
+    template_seen_key = "native_resume_canvas_template_seen"
+    previous_template = st.session_state.get(template_seen_key)
+    if previous_template != template:
+        st.session_state[template_seen_key] = template
+        st.session_state[font_key] = "Computer Modern" if template == "Jake" else "Arial"
+    elif st.session_state.get(font_key) not in presentation.FONTS:
+        st.session_state[font_key] = "Computer Modern" if template == "Jake" else "Arial"
+
     with font_col:
-        current_font = st.session_state.get("native_resume_canvas_font", "Arial")
+        current_font = st.session_state.get(font_key, "Arial")
         font = st.selectbox(
             "Font",
             list(presentation.FONTS),
-            index=list(presentation.FONTS).index(current_font) if current_font in presentation.FONTS else 0,
-            key="native_resume_canvas_font",
+            index=(
+                list(presentation.FONTS).index(current_font)
+                if current_font in presentation.FONTS
+                else 0
+            ),
+            key=font_key,
         )
     with size_col:
         current_size = st.session_state.get("native_resume_canvas_font_size", 10.5)
         font_size = st.selectbox(
             "Size",
             list(presentation.FONT_SIZES),
-            index=list(presentation.FONT_SIZES).index(current_size) if current_size in presentation.FONT_SIZES else 2,
+            index=(
+                list(presentation.FONT_SIZES).index(current_size)
+                if current_size in presentation.FONT_SIZES
+                else 2
+            ),
             format_func=lambda value: f"{value:g}pt",
             key="native_resume_canvas_font_size",
         )
@@ -71,8 +91,7 @@ def _presentation_settings() -> dict[str, Any]:
         }
     )
     st.caption(
-        "Preview styling is intentionally presentation-only for this tranche. "
-        "The checked PDF/DOCX download remains the immutable Standard V5 artifact until presentation settings are versioned into the artifact digest."
+        "Preview styling is presentation-only in this tranche. The checked PDF/DOCX download remains the immutable Standard V5 artifact until presentation settings are versioned into the artifact digest."
     )
     return settings
 
