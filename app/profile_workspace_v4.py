@@ -31,14 +31,14 @@ def _status_cards(authority: dict[str, Any], answers: dict[str, Any]) -> None:
         st.metric("Known meanings", f"{summary['known']}/{summary['total']}")
         if remaining:
             st.caption(
-                f"{remaining} remaining include protected/contextual meanings, not {remaining} mandatory onboarding questions"
+                f"{remaining} remaining include protected/contextual meanings; they are not mandatory onboarding questions."
             )
         else:
             st.caption("Every current semantic meaning has an authority path")
     with cards[2]:
         st.metric("Autofill ready", summary["autofill_ready"])
         st.caption(
-            f"{summary['reusable_gaps']} reusable gap(s) · {summary['protected_ready']} protected meaning(s) ready"
+            f"Reusable gaps: {summary['reusable_gaps']} · Protected ready: {summary['protected_ready']}"
         )
     with cards[3]:
         ready = authority["ready_for_application_planning"] and bool(summary["known"])
