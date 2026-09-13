@@ -16,7 +16,7 @@ from app import candidate_profile_authority_v1 as profile_authority
 from app import master_resume_file_ui_v1 as master_resume_ui
 from app import profile_answer_center_ui_v3 as answer_center
 from app import profile_workspace_v3 as v3
-from app import resume_visual_studio_v6 as visual_v6
+from app import resume_visual_studio_v7 as visual_v7
 
 
 _DETAIL_SECTIONS = ("Candidate Truth", "Application Answers", "Master Resume")
@@ -30,24 +30,23 @@ def _status_cards(authority: dict[str, Any], answers: dict[str, Any]) -> None:
 
     with cards[0]:
         st.metric("Candidate Truth", "Confirmed" if profile["confirmed"] else "Needs review")
-        st.caption(f"{int(authority.get('structured_fact_count') or 0)} structured fact(s)")
+        st.caption(f"{int(authority.get('structured_fact_count') or 0)} structured facts")
     with cards[1]:
-        st.metric("Known meanings", f"{summary['known']}/{summary['total']}")
-        if remaining:
-            st.caption(
-                f"{remaining} remaining include protected/contextual meanings; they are not mandatory onboarding questions."
-            )
-        else:
-            st.caption("Every current semantic meaning has an authority path")
+        st.metric("Answer coverage", f"{summary['known']}/{summary['total']}")
+        st.caption(
+            f"{remaining} meaning{'s' if remaining != 1 else ''} still need a secure or application-time path"
+            if remaining
+            else "Every current semantic meaning has an authority path"
+        )
     with cards[2]:
         st.metric("Autofill ready", summary["autofill_ready"])
         st.caption(
-            f"Reusable gaps: {summary['reusable_gaps']} · Protected ready: {summary['protected_ready']}"
+            f"Reusable gaps: {summary['reusable_gaps']} · Protected configured: {summary['protected_ready']}"
         )
     with cards[3]:
         ready = authority["ready_for_application_planning"] and bool(summary["known"])
         st.metric("AutoApply foundation", "Ready to test" if ready else "Needs setup")
-        st.caption("Final-submit authority stays separate.")
+        st.caption("Final-submit authority remains separate")
 
 
 def _candidate_truth_workspace() -> None:
@@ -96,11 +95,11 @@ def _master_resume_details(authority: dict[str, Any]) -> None:
         )
     else:
         st.warning(
-            "Candidate Truth is not confirmed against the current Master Resume. Review/confirm it before an application can use this source."
+            "Candidate Truth is not confirmed against the current Master Resume. Review and confirm it before an application can use this source."
         )
 
     st.caption(
-        "Preview, Edit source, Replace, Download source text and Edit in Resume Studio are available from the Master Resume file card above."
+        "Preview, source editing, replacement, source-text download and Resume Studio editing are available from the Master Resume card above."
     )
     with st.expander("Advanced source details", expanded=False):
         st.code(
@@ -117,26 +116,65 @@ def _master_resume_details(authority: dict[str, Any]) -> None:
         )
 
 
-def _selected_detail_section() -> str:
+def _detail_navigation(authority: dict[str, Any], answers: dict[str, Any]) -> str:
+    """Render Profile Details as three first-class work areas, not tiny radio pills."""
     current = str(st.session_state.get("profile_v4_detail_section") or "Candidate Truth")
     if current not in _DETAIL_SECTIONS:
         current = "Candidate Truth"
         st.session_state["profile_v4_detail_section"] = current
-    return st.radio(
-        "Profile details section",
-        _DETAIL_SECTIONS,
-        index=_DETAIL_SECTIONS.index(current),
-        horizontal=True,
-        label_visibility="collapsed",
-        key="profile_v4_detail_section",
+
+    summary = answer_center.coverage_breakdown(answers)
+    remaining = max(0, summary["total"] - summary["known"])
+    facts = int(authority.get("structured_fact_count") or 0)
+    master = dict(authority.get("master_resume") or {})
+
+    st.markdown("### Profile workspace")
+    st.caption("Choose the authority you want to review. Each area stays separate so editing one cannot silently change another.")
+    cols = st.columns(3, gap="medium")
+    cards = (
+        (
+            "Candidate Truth",
+            "Candidate Truth",
+            f"{facts} verified facts",
+            "Review the structured facts MUNSHI is allowed to treat as candidate truth.",
+        ),
+        (
+            "Application Answers",
+            "Application Answers",
+            f"{summary['known']}/{summary['total']} known · {remaining} remaining",
+            "See reusable, protected and application-time meanings and how each will be handled.",
+        ),
+        (
+            "Master Resume",
+            "Master Resume",
+            "Active authority" if master.get("configured") else "Not configured",
+            "Inspect the evidence source that Candidate Truth and resume generation are bound to.",
+        ),
     )
+
+    for col, (section, label, status, description) in zip(cols, cards):
+        with col:
+            with st.container(border=True):
+                st.markdown(f"**{label}**")
+                st.caption(status)
+                st.write(description)
+                if st.button(
+                    "Open" if current != section else "Viewing",
+                    key=f"profile_v4_open_{section.lower().replace(' ', '_')}",
+                    type="primary" if current == section else "secondary",
+                    use_container_width=True,
+                    disabled=current == section,
+                ):
+                    st.session_state["profile_v4_detail_section"] = section
+                    st.rerun()
+
+    return current
 
 
 def render() -> None:
-    # Install the V6 presentation layer before the Master Resume card renders.
-    # This is rerun-safe and changes presentation only; Candidate Truth and
-    # application/submission authority remain untouched.
-    visual_v6.install_resume_visual_studio_v6()
+    # V7 installs the V6 rendering hooks plus the polished Standard/Jake visual
+    # contract. Candidate Truth and application/submission authority are untouched.
+    visual_v7.install_resume_visual_studio_v7()
 
     v3.v1._inject_css()
     tab = v3.v1._tab_from_state()
@@ -153,7 +191,7 @@ def render() -> None:
 
     st.markdown("## Candidate Profile & Application Truth")
     st.caption(
-        "One profile authority for Master Resume evidence, Candidate Truth, reusable answers, and protected application defaults."
+        "One profile authority for Master Resume evidence, Candidate Truth, reusable answers and protected application defaults."
     )
 
     # One and only one mount of the interactive Master Resume control surface.
@@ -163,7 +201,7 @@ def render() -> None:
     for warning in authority.get("warnings") or []:
         st.warning(str(warning))
 
-    section = _selected_detail_section()
+    section = _detail_navigation(authority, answers)
     if section == "Candidate Truth":
         _candidate_truth_workspace()
     elif section == "Application Answers":
