@@ -1,8 +1,9 @@
 """Runtime-safe installer for unified job workspaces.
 
 Streamlit link buttons are identity-stable by their label/URL and do not accept a
-widget key on the supported runtime.  Patch only the shared grid helper before
-installing the V1 page overrides so Dashboard-style cards can be reused safely.
+widget key on the supported runtime.  The installer also binds Tracker to the
+already-installed V2.2 humanized tracker projection before replacing the visual
+surface with Dashboard-style job cards.
 """
 from __future__ import annotations
 
@@ -45,6 +46,42 @@ def _card_grid(
                 )
 
 
+def _pipeline_records(product_pages: Any) -> list[dict[str, Any]]:
+    legacy = product_pages.tracker_rows(limit=250)
+    try:
+        from app import product_application_flow_v2 as complete_loop
+
+        modern = complete_loop.pipeline_rows(limit=250)
+    except Exception:
+        modern = []
+
+    merged: dict[int, dict[str, Any]] = {
+        int(row["job_id"]): dict(row)
+        for row in legacy
+        if row.get("job_id") is not None
+    }
+    for row in modern:
+        if row.get("job_id") is None:
+            continue
+        job_id = int(row["job_id"])
+        combined = dict(merged.get(job_id) or {})
+        combined.update(dict(row))
+        merged[job_id] = combined
+
+    rows = list(merged.values())
+    rows.sort(
+        key=lambda row: str(
+            row.get("updated_at")
+            or row.get("completed_at")
+            or row.get("queued_at")
+            or ""
+        ),
+        reverse=True,
+    )
+    return rows
+
+
 def install_unified_job_workspaces(product_pages: Any, application_workspace_page: Any) -> None:
     workspaces._card_grid = _card_grid
+    workspaces._pipeline_records = lambda: _pipeline_records(product_pages)
     workspaces.install_unified_job_workspaces(product_pages, application_workspace_page)
