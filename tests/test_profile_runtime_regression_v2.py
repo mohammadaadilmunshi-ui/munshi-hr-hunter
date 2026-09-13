@@ -6,6 +6,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from app import native_resume_service as resume_v1
+from app import profile_answer_center_ui_v3 as answer_center_v3
 from app.profile_answer_center_ui_v2 import _configured
 
 
@@ -105,6 +106,14 @@ def test_protected_configuration_treats_explicit_false_as_configured() -> None:
     assert _configured("") is False
     assert _configured("   ") is False
     assert _configured("Prefer not to answer") is True
+
+
+def test_legacy_sponsorship_boolean_does_not_claim_now_and_future_meanings() -> None:
+    mapping = answer_center_v3._TRUTH_SAFE_PROTECTED_DETAIL_FIELDS
+    assert "eligibility.sponsorship_now" not in mapping
+    assert "eligibility.sponsorship_future" not in mapping
+    assert mapping["eligibility.work_authorized_us"] == "authorized_to_work"
+    assert mapping["eligibility.visa_status"] == "visa_or_permit"
 
 
 def test_runtime_safe_answer_center_keeps_existing_capabilities() -> None:
