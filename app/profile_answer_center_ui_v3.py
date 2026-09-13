@@ -1,15 +1,15 @@
-"""Truth-safe compatibility layer for the runtime-safe Answer Center.
+"""Truth-safe, first-class Application Answer Center UI.
 
-The legacy encrypted profile has one generic ``sponsorship_required`` boolean,
-while the semantic catalog intentionally distinguishes sponsorship *now* from
-sponsorship *in the future*. One generic value must not make both meanings look
-configured. Until Candidate Truth stores those two answers independently, V3
-leaves both sponsorship concepts pending/contextual instead of overstating
-protected readiness.
+V3 preserves V2 storage and deterministic matching behavior while fixing two UX
+problems: protected/contextual meanings are never overstated as configured, and
+the meanings behind a partial coverage count are visible without hunting through
+a secondary Coverage tab.
 """
 from __future__ import annotations
 
 from typing import Any, Mapping
+
+import streamlit as st
 
 from app import profile_answer_center_ui_v2 as v2
 
@@ -22,13 +22,17 @@ _TRUTH_SAFE_PROTECTED_DETAIL_FIELDS = {
     "self_id.gender": "gender",
     "self_id.race_ethnicity": "ethnicity",
 }
+_ANSWER_SECTIONS = (
+    "Reusable answers",
+    "Protected & self-ID",
+    "Teach MUNSHI",
+    "Coverage details",
+)
 
 
 def _install_truth_safe_policy() -> None:
-    # V2 owns the complete UI/runtime implementation. Override only its internal
-    # readiness projection with the narrower mapping before each public entry.
-    # This does not delete the legacy encrypted sponsorship value; it simply
-    # refuses to claim that one value proves two distinct semantic answers.
+    # One legacy sponsorship_required boolean must not prove two independent
+    # semantic concepts (sponsorship now vs sponsorship in the future).
     v2._PROTECTED_DETAIL_FIELDS.clear()
     v2._PROTECTED_DETAIL_FIELDS.update(_TRUTH_SAFE_PROTECTED_DETAIL_FIELDS)
 
@@ -38,6 +42,160 @@ def coverage_breakdown(readiness: Mapping[str, Any]) -> dict[str, int]:
     return v2.coverage_breakdown(readiness)
 
 
+def _remaining_meanings(readiness: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Return every currently unresolved semantic meaning in user-facing form."""
+    rows = [dict(row) for row in readiness.get("rows") or []]
+    reusable_keys = {
+        str(row.get("question_key") or "")
+        for row in v2.answer_autofill.onboarding_delta(readiness)
+    }
+    protected_config = v2._protected_configuration()
+    remaining: list[dict[str, str]] = []
+
+    for row in rows:
+        key = str(row.get("question_key") or "")
+        if row.get("ready") or protected_config.get(key):
+            continue
+
+        sensitivity = str(row.get("sensitivity_class") or "")
+        family = str(row.get("family") or "")
+        if key in reusable_keys:
+            handling = "Reusable answer you may save now"
+        elif sensitivity in {"PROTECTED", "SELF_ID"}:
+            handling = "Protected/self-ID: secure or application-time handling"
+        elif family in v2._CONTEXTUAL_FAMILIES or key in v2._CONTEXTUAL_KEYS:
+            handling = "Application-time: answered only when a real job requires it"
+        else:
+            handling = "Application-time: MUNSHI will request truth instead of guessing"
+
+        remaining.append(
+            {
+                "Meaning": v2._humanize_key(key),
+                "Example application question": str(row.get("example_question") or v2._humanize_key(key)),
+                "Handling": handling,
+            }
+        )
+    return remaining
+
+
+def _render_remaining_meanings(readiness: Mapping[str, Any]) -> None:
+    rows = _remaining_meanings(readiness)
+    if not rows:
+        st.success("Every current application meaning has a confirmed authority path.")
+        return
+
+    st.markdown(f"#### The {len(rows)} meanings still behind the coverage count")
+    st.caption(
+        "These are the actual meanings MUNSHI does not currently know. They are shown here even when there are zero normal reusable gaps. A protected or job-specific meaning is not silently converted into an onboarding question."
+    )
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+    protected_count = sum(
+        1 for row in rows if row["Handling"].startswith("Protected/self-ID")
+    )
+    if protected_count:
+        action, note = st.columns((1.25, 3.2), gap="medium", vertical_alignment="center")
+        with action:
+            st.button(
+                "Review secure defaults",
+                type="secondary",
+                use_container_width=True,
+                key="answer_center_v3_review_secure_defaults",
+                on_click=v2._open_protected_editor,
+            )
+        with note:
+            st.caption(
+                "Some concepts, including separate sponsorship-now/future meanings, intentionally remain unresolved until Candidate Truth can prove them independently or a real application asks for them."
+            )
+
+
+def _section_navigation() -> str:
+    current = str(st.session_state.get("answer_center_v3_section") or "Reusable answers")
+    if current not in _ANSWER_SECTIONS:
+        current = "Reusable answers"
+        st.session_state["answer_center_v3_section"] = current
+
+    st.markdown("#### Answer workspace")
+    cols = st.columns(4, gap="small")
+    labels = {
+        "Reusable answers": "Normal answers MUNSHI may safely remember",
+        "Protected & self-ID": "Encrypted defaults and voluntary choices",
+        "Teach MUNSHI": "Confirm a new reusable semantic answer",
+        "Coverage details": "Full unresolved-category explanation",
+    }
+    for col, section in zip(cols, _ANSWER_SECTIONS):
+        with col:
+            with st.container(border=True):
+                st.markdown(f"**{section}**")
+                st.caption(labels[section])
+                if st.button(
+                    "Open" if current != section else "Viewing",
+                    key=f"answer_center_v3_open_{section.lower().replace(' ', '_').replace('&', 'and')}",
+                    type="primary" if current == section else "secondary",
+                    use_container_width=True,
+                    disabled=current == section,
+                ):
+                    st.session_state["answer_center_v3_section"] = section
+                    st.rerun()
+    return current
+
+
 def render(authority: dict[str, Any]) -> None:
     _install_truth_safe_policy()
-    v2.render(authority)
+    readiness = v2.answer_router.readiness_projection()
+    summary = coverage_breakdown(readiness)
+
+    st.markdown("### Application Answer Center")
+    st.write(
+        "MUNSHI prepares application answers from Candidate Truth, encrypted protected defaults and previously confirmed reusable answers. Deterministic matching runs first; unusual controls may be interpreted only after deterministic matching fails, and candidate facts are never invented."
+    )
+
+    profile_confirmed = bool(authority.get("profile", {}).get("confirmed"))
+    if not profile_confirmed:
+        st.warning("Confirm Candidate Truth once before automatic answer preparation.")
+
+    if st.button(
+        "Prepare / refresh answers from Candidate Truth",
+        type="primary",
+        use_container_width=True,
+        disabled=not profile_confirmed,
+        key="answer_center_v3_prepare_truth",
+    ):
+        try:
+            result = v2.answer_autofill.prepare_from_candidate_truth()
+        except Exception as error:  # noqa: BLE001
+            st.error(str(error))
+        else:
+            st.success(
+                f"Prepared or refreshed {result['prepared_count']} truth-bound deterministic answer(s)."
+            )
+            st.rerun()
+
+    readiness = v2.answer_router.readiness_projection()
+    summary = coverage_breakdown(readiness)
+    metrics = st.columns(4, gap="small")
+    metrics[0].metric("Known meanings", f"{summary['known']}/{summary['total']}")
+    metrics[1].metric("Autofill ready now", summary["autofill_ready"])
+    metrics[2].metric("Reusable gaps", summary["reusable_gaps"])
+    metrics[3].metric("Protected configured", summary["protected_ready"])
+
+    unresolved = max(0, summary["total"] - summary["known"])
+    if unresolved:
+        st.info(
+            f"{unresolved} semantic meaning(s) are not currently known. They are listed below so the coverage number is explainable rather than hidden."
+        )
+    _render_remaining_meanings(readiness)
+
+    section = _section_navigation()
+    if section == "Reusable answers":
+        v2._render_reusable(readiness)
+    elif section == "Protected & self-ID":
+        v2._render_protected(readiness)
+    elif section == "Teach MUNSHI":
+        v2._render_teach()
+    else:
+        v2._render_coverage(readiness)
+
+    st.caption(
+        "Provider wording stays internal. Coverage describes semantic meanings, not a promise that every possible employer question can be known before a real application exists."
+    )
