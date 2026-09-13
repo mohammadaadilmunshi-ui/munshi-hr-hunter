@@ -16,6 +16,7 @@ from app import candidate_profile_authority_v1 as profile_authority
 from app import master_resume_file_ui_v1 as master_resume_ui
 from app import profile_answer_center_ui_v3 as answer_center
 from app import profile_workspace_v3 as v3
+from app import resume_visual_studio_v6 as visual_v6
 
 
 _DETAIL_SECTIONS = ("Candidate Truth", "Application Answers", "Master Resume")
@@ -132,6 +133,11 @@ def _selected_detail_section() -> str:
 
 
 def render() -> None:
+    # Install the V6 presentation layer before the Master Resume card renders.
+    # This is rerun-safe and changes presentation only; Candidate Truth and
+    # application/submission authority remain untouched.
+    visual_v6.install_resume_visual_studio_v6()
+
     v3.v1._inject_css()
     tab = v3.v1._tab_from_state()
     v3.v1._subnav(tab)
