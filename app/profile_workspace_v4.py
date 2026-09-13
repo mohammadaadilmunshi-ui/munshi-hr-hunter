@@ -13,7 +13,7 @@ import streamlit as st
 
 from app import application_answer_router_v1 as answer_router
 from app import candidate_profile_authority_v1 as profile_authority
-from app import master_resume_file_ui_v1 as master_resume_ui
+from app import master_resume_visual_ui_v2 as master_resume_ui
 from app import profile_answer_center_ui_v3 as answer_center
 from app import profile_workspace_v3 as v3
 
