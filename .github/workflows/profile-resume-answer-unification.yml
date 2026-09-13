@@ -64,6 +64,7 @@ jobs:
           grep -F 'MUNSHI Apply and AutoApply' app/application_answer_router_v1.py
           grep -F 'Prepare / refresh answers from Candidate Truth' app/profile_answer_center_ui_v2.py
           grep -F 'Open encrypted protected defaults editor' app/profile_answer_center_ui_v2.py
+          grep -F 'profile_v4_detail_section' app/profile_answer_center_ui_v2.py
           ! grep -F 'profile_v3._edit_application_defaults' app/profile_answer_center_ui_v2.py
           grep -F 'Edit in Resume Studio' app/master_resume_file_ui_v1.py
           grep -F 'field_intelligence.requirement_from_field' app/application_plan_question_bridge_v1.py
@@ -78,13 +79,19 @@ jobs:
             app/application_plan_question_bridge_v1.py \
             app/profile_answer_center_ui_v2.py
 
-      - name: Prove Master Resume controls mount once
+      - name: Prove heavy Profile panels are lazy and Master Resume mounts once
         run: |
           python - <<'PY'
           from pathlib import Path
-          source = Path('app/profile_workspace_v4.py').read_text(encoding='utf-8')
-          assert source.count('master_resume_ui.render_compact(authority)') == 1, source
-          assert 'master_resume_ui.render_detail(authority)' not in source, source
+          workspace = Path('app/profile_workspace_v4.py').read_text(encoding='utf-8')
+          answer_center = Path('app/profile_answer_center_ui_v2.py').read_text(encoding='utf-8')
+          assert workspace.count('master_resume_ui.render_compact(authority)') == 1, workspace
+          assert 'master_resume_ui.render_detail(authority)' not in workspace, workspace
+          assert 'st.tabs(' not in workspace, workspace
+          assert 'st.tabs(' not in answer_center, answer_center
+          assert 'profile_v4_detail_section' in workspace, workspace
+          assert 'answer_center_v2_section' in answer_center, answer_center
+          print('PROFILE_LAZY_ROUTING=PASS')
           print('MASTER_RESUME_SINGLE_MOUNT=PASS')
           PY
 
