@@ -2,7 +2,7 @@
 
 The current Native Resume source table stores the authoritative normalized source
 text and metadata, not the original PDF/DOCX bytes. This UI therefore presents a
-file-style source card honestly: users can preview/download the authoritative
+professional source authority card: users can preview/download the authoritative
 source text, edit it as a new source revision, replace it with PDF/DOCX/TXT/MD,
 or open Resume Studio for formatted resume editing.
 
@@ -157,16 +157,19 @@ def _render_source_panels(source: dict[str, Any]) -> None:
 
 
 def render_compact(authority: dict[str, Any]) -> None:
-    """Render a file-style Master Resume card near the top of Profile Details."""
+    """Render the active Master Resume as a professional evidence-authority card."""
     master = dict(authority.get("master_resume") or {})
     source = _active_source() if master.get("configured") else {}
 
     with st.container(border=True):
         if not master.get("configured") or not source:
-            left, right = st.columns((3.5, 1.2), gap="small")
+            left, right = st.columns((3.5, 1.2), gap="medium")
             with left:
-                st.markdown("#### 📄 Master Resume")
-                st.caption("No active source yet. Add one once and MUNSHI will use it as Candidate Truth evidence.")
+                st.caption("MASTER RESUME AUTHORITY")
+                st.markdown("### Add your Master Resume")
+                st.write(
+                    "Add the resume you want MUNSHI to treat as permanent evidence for Candidate Truth and future job-specific resumes."
+                )
             with right:
                 st.link_button("Open Resume Studio", "?view=resume-studio", use_container_width=True)
             return
@@ -175,22 +178,26 @@ def render_compact(authority: dict[str, Any]) -> None:
         kind = _file_type(label, str(master.get("source_kind") or source.get("source_kind") or ""))
         facts = int(authority.get("structured_fact_count") or 0)
         profile_confirmed = bool(authority.get("profile", {}).get("confirmed"))
+        truth_label = (
+            f"{facts} confirmed Candidate Truth facts"
+            if profile_confirmed
+            else "Candidate Truth review required"
+        )
 
-        icon_col, info_col, studio_col = st.columns((0.45, 3.45, 1.2), gap="small")
-        with icon_col:
-            st.markdown("## 📄")
+        info_col, studio_col = st.columns((4.0, 1.25), gap="medium", vertical_alignment="center")
         with info_col:
-            st.markdown(f"#### {label}")
-            truth_label = f"{facts} confirmed Candidate Truth fact(s)" if profile_confirmed else "Candidate Truth review required"
+            st.caption("MASTER RESUME AUTHORITY")
+            st.markdown(f"### {label}")
             st.caption(
-                f"Master Resume · {kind} · {truth_label} · Updated {master.get('updated_at') or 'unknown'}"
+                f"{kind} · {truth_label} · Updated {master.get('updated_at') or 'unknown'}"
             )
         with studio_col:
             st.link_button("Edit in Resume Studio", "?view=resume-studio", use_container_width=True)
 
+        st.divider()
         preview_col, edit_col, replace_col, download_col = st.columns(4, gap="small")
         with preview_col:
-            if st.button("Preview", use_container_width=True, key="master_resume_preview_button"):
+            if st.button("Preview resume", use_container_width=True, key="master_resume_preview_button"):
                 _toggle("preview")
                 st.rerun()
         with edit_col:
@@ -198,7 +205,7 @@ def render_compact(authority: dict[str, Any]) -> None:
                 _toggle("edit")
                 st.rerun()
         with replace_col:
-            if st.button("Replace", use_container_width=True, key="master_resume_replace_button"):
+            if st.button("Replace file", use_container_width=True, key="master_resume_replace_button"):
                 _toggle("replace")
                 st.rerun()
         with download_col:
@@ -212,7 +219,7 @@ def render_compact(authority: dict[str, Any]) -> None:
             )
 
         st.caption(
-            "The current source record preserves authoritative extracted text and metadata. Exact original PDF/DOCX bytes are not stored by the legacy source table, so this download is the normalized source text."
+            "Legacy uploads preserve the authoritative extracted text and metadata, not the original PDF/DOCX bytes. Preview uses that same source without inventing or rewriting content."
         )
 
     _render_source_panels(source)
@@ -232,7 +239,7 @@ def render_detail(authority: dict[str, Any]) -> None:
         )
     else:
         st.warning(
-            "Candidate Truth is not confirmed against the current Master Resume. Review/confirm it before an application can use this source."
+            "Candidate Truth is not confirmed against the current Master Resume. Review and confirm it before an application can use this source."
         )
 
     with st.expander("Advanced source details", expanded=False):
