@@ -1,9 +1,9 @@
 """Unified Profile workspace for pre-AutoApply readiness.
 
-V4 keeps the existing Resume and Cover Letter tabs intact. Profile Details now
-presents one authority view for Candidate Truth, the active Master Resume, and
-the reusable/protected application-answer paths used by both deterministic
-MUNSHI Apply and AutoApply planning.
+V4 preserves the established Resume, Cover Letter, Candidate Truth and encrypted
+profile-editing paths while layering the first-class Master Resume card and the
+runtime-safe Answer Center. Heavy Profile Details panels are routed lazily so a
+hidden panel cannot create duplicate widgets or trigger unintended side effects.
 """
 from __future__ import annotations
 
@@ -14,8 +14,11 @@ import streamlit as st
 from app import application_answer_router_v1 as answer_router
 from app import candidate_profile_authority_v1 as profile_authority
 from app import master_resume_file_ui_v1 as master_resume_ui
-from app import profile_answer_center_ui_v1 as answer_center
+from app import profile_answer_center_ui_v3 as answer_center
 from app import profile_workspace_v3 as v3
+
+
+_DETAIL_SECTIONS = ("Candidate Truth", "Application Answers", "Master Resume")
 
 
 def _status_cards(authority: dict[str, Any], answers: dict[str, Any]) -> None:
@@ -78,6 +81,56 @@ def _candidate_truth_workspace() -> None:
     v3.v1._render_profile_details(resolved, v3.v2._details(resolved))
 
 
+def _master_resume_details(authority: dict[str, Any]) -> None:
+    """Render detail-only source status without remounting the top file controls."""
+    master = dict(authority.get("master_resume") or {})
+    st.markdown("### Master Resume authority")
+    if not master.get("configured"):
+        st.warning("No active Master Resume source is configured.")
+        return
+
+    if authority.get("profile", {}).get("confirmed"):
+        st.success(
+            "Candidate Truth is confirmed against this active Master Resume. Resume generation and application planning bind to the same source/profile digest."
+        )
+    else:
+        st.warning(
+            "Candidate Truth is not confirmed against the current Master Resume. Review/confirm it before an application can use this source."
+        )
+
+    st.caption(
+        "Preview, Edit source, Replace, Download source text and Edit in Resume Studio are available from the Master Resume file card above."
+    )
+    with st.expander("Advanced source details", expanded=False):
+        st.code(
+            "\n".join(
+                [
+                    f"label: {master.get('label') or 'Master Resume'}",
+                    f"source_id: {master.get('source_id') or 'unknown'}",
+                    f"source_kind: {master.get('source_kind') or 'unknown'}",
+                    f"sha256: {master.get('sha256') or 'unknown'}",
+                    f"profile_state: {authority.get('state') or 'unknown'}",
+                ]
+            ),
+            language="text",
+        )
+
+
+def _selected_detail_section() -> str:
+    current = str(st.session_state.get("profile_v4_detail_section") or "Candidate Truth")
+    if current not in _DETAIL_SECTIONS:
+        current = "Candidate Truth"
+        st.session_state["profile_v4_detail_section"] = current
+    return st.radio(
+        "Profile details section",
+        _DETAIL_SECTIONS,
+        index=_DETAIL_SECTIONS.index(current),
+        horizontal=True,
+        label_visibility="collapsed",
+        key="profile_v4_detail_section",
+    )
+
+
 def render() -> None:
     v3.v1._inject_css()
     tab = v3.v1._tab_from_state()
@@ -97,21 +150,17 @@ def render() -> None:
         "One profile authority for Master Resume evidence, Candidate Truth, reusable answers, and protected application defaults."
     )
 
-    # The permanent Master Resume is a first-class object, not a hidden technical
-    # record under an advanced tab. Users can preview, edit, replace, download the
-    # normalized source, or continue into Resume Studio from here.
+    # One and only one mount of the interactive Master Resume control surface.
     master_resume_ui.render_compact(authority)
     _status_cards(authority, answers)
 
     for warning in authority.get("warnings") or []:
         st.warning(str(warning))
 
-    candidate_tab, answers_tab, resume_tab = st.tabs(
-        ["Candidate Truth", "Application Answers", "Master Resume"]
-    )
-    with candidate_tab:
+    section = _selected_detail_section()
+    if section == "Candidate Truth":
         _candidate_truth_workspace()
-    with answers_tab:
+    elif section == "Application Answers":
         answer_center.render(authority)
-    with resume_tab:
-        master_resume_ui.render_detail(authority)
+    else:
+        _master_resume_details(authority)

@@ -80,7 +80,11 @@ def test_hunter_image_contains_phase17_migration_runner() -> None:
 
 def test_staging_deploy_explicit_failures_route_through_rollback() -> None:
     source = Path("deploy/netcup/deploy_staging_release.sh").read_text(encoding="utf-8")
-    assert 'rc="${1:-$?}"' in source
+    # Capture ERR status before consulting an optional explicit rollback code.
+    # This is safer than expanding $? inside the default expression after other
+    # shell work may have occurred.
+    assert "trapped_rc=$?" in source
+    assert 'rc="${1:-$trapped_rc}"' in source
     protected = source.split("trap rollback ERR", 1)[1].rsplit("trap - ERR", 1)[0]
     for code in (20, 21, 22, 23, 30, 31):
         assert f"rollback {code}" in protected
