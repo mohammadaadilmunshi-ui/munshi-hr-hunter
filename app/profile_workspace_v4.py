@@ -1,9 +1,9 @@
 """Unified Profile workspace for pre-AutoApply readiness.
 
-V4 keeps the existing Resume and Cover Letter tabs intact. Profile Details now
-presents one authority view for Candidate Truth, the active Master Resume, and
-the reusable/protected application-answer paths used by both deterministic
-MUNSHI Apply and AutoApply planning.
+V4 preserves the established Resume, Cover Letter, Candidate Truth and encrypted
+profile-editing paths while layering the first-class Master Resume card and the
+runtime-safe Answer Center. The Master Resume control surface is mounted exactly
+once per Streamlit run so hidden tab bodies cannot duplicate widget keys.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import streamlit as st
 from app import application_answer_router_v1 as answer_router
 from app import candidate_profile_authority_v1 as profile_authority
 from app import master_resume_file_ui_v1 as master_resume_ui
-from app import profile_answer_center_ui_v1 as answer_center
+from app import profile_answer_center_ui_v2 as answer_center
 from app import profile_workspace_v3 as v3
 
 
@@ -38,7 +38,7 @@ def _status_cards(authority: dict[str, Any], answers: dict[str, Any]) -> None:
     with cards[2]:
         st.metric("Autofill ready", summary["autofill_ready"])
         st.caption(
-            f"Reusable gaps: {summary['reusable_gaps']} · Protected ready: {summary['protected_ready']}"
+            f"Reusable gaps: {summary['reusable_gaps']} · Protected configured: {summary['protected_ready']}"
         )
     with cards[3]:
         ready = authority["ready_for_application_planning"] and bool(summary["known"])
@@ -78,6 +78,41 @@ def _candidate_truth_workspace() -> None:
     v3.v1._render_profile_details(resolved, v3.v2._details(resolved))
 
 
+def _master_resume_details(authority: dict[str, Any]) -> None:
+    """Render detail-only source status without remounting the top file controls."""
+    master = dict(authority.get("master_resume") or {})
+    st.markdown("### Master Resume authority")
+    if not master.get("configured"):
+        st.warning("No active Master Resume source is configured.")
+        return
+
+    if authority.get("profile", {}).get("confirmed"):
+        st.success(
+            "Candidate Truth is confirmed against this active Master Resume. Resume generation and application planning bind to the same source/profile digest."
+        )
+    else:
+        st.warning(
+            "Candidate Truth is not confirmed against the current Master Resume. Review/confirm it before an application can use this source."
+        )
+
+    st.caption(
+        "Preview, Edit source, Replace, Download source text and Edit in Resume Studio are available from the Master Resume file card above."
+    )
+    with st.expander("Advanced source details", expanded=False):
+        st.code(
+            "\n".join(
+                [
+                    f"label: {master.get('label') or 'Master Resume'}",
+                    f"source_id: {master.get('source_id') or 'unknown'}",
+                    f"source_kind: {master.get('source_kind') or 'unknown'}",
+                    f"sha256: {master.get('sha256') or 'unknown'}",
+                    f"profile_state: {authority.get('state') or 'unknown'}",
+                ]
+            ),
+            language="text",
+        )
+
+
 def render() -> None:
     v3.v1._inject_css()
     tab = v3.v1._tab_from_state()
@@ -97,9 +132,7 @@ def render() -> None:
         "One profile authority for Master Resume evidence, Candidate Truth, reusable answers, and protected application defaults."
     )
 
-    # The permanent Master Resume is a first-class object, not a hidden technical
-    # record under an advanced tab. Users can preview, edit, replace, download the
-    # normalized source, or continue into Resume Studio from here.
+    # One and only one mount of the interactive Master Resume control surface.
     master_resume_ui.render_compact(authority)
     _status_cards(authority, answers)
 
@@ -114,4 +147,4 @@ def render() -> None:
     with answers_tab:
         answer_center.render(authority)
     with resume_tab:
-        master_resume_ui.render_detail(authority)
+        _master_resume_details(authority)
