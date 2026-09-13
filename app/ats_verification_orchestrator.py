@@ -17,15 +17,6 @@ from uuid import uuid4
 from app.ats_managed_identity import ensure_application_identity
 from app.tenant_foundation import current_owner
 
-_STATES = {
-    "WAITING",
-    "LINK_READY",
-    "SECURITY_CHECKPOINT",
-    "CONSUMED",
-    "EXPIRED",
-    "REJECTED",
-}
-
 
 class VerificationOrchestrationError(RuntimeError):
     pass
@@ -51,6 +42,7 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
           provider TEXT NOT NULL,
           recipient_email TEXT NOT NULL,
           expected_hosts_json TEXT NOT NULL,
+          expected_sender_domains_json TEXT NOT NULL,
           state TEXT NOT NULL CHECK(state IN (
             'WAITING','LINK_READY','SECURITY_CHECKPOINT','CONSUMED','EXPIRED','REJECTED'
           )),
@@ -78,6 +70,7 @@ def begin_verification(
     account_id: str,
     provider: str,
     expected_link_hosts: Iterable[str],
+    expected_sender_domains: Iterable[str],
     application_key: str | None = None,
     ttl_minutes: int = 30,
 ) -> dict[str, Any]:
@@ -87,8 +80,11 @@ def begin_verification(
     if not 5 <= int(ttl_minutes) <= 1440:
         raise VerificationOrchestrationError("Verification TTL must be between 5 and 1440 minutes.")
     hosts = sorted({_host(value) for value in expected_link_hosts})
-    if not hosts:
-        raise VerificationOrchestrationError("At least one expected verification host is required.")
+    senders = sorted({_host(value) for value in expected_sender_domains})
+    if not hosts or not senders:
+        raise VerificationOrchestrationError(
+            "Expected verification hosts and sender domains are required."
+        )
     owner = current_owner()
     identity = ensure_application_identity()
     now = datetime.now(UTC)
@@ -109,8 +105,9 @@ def begin_verification(
             """
             INSERT INTO ats_verification_requests(
               request_id,tenant_id,user_id,account_id,application_key,provider,
-              recipient_email,expected_hosts_json,state,created_at,expires_at,updated_at
-            ) VALUES(?,?,?,?,?,?,?,?, 'WAITING',?,?,?)
+              recipient_email,expected_hosts_json,expected_sender_domains_json,
+              state,created_at,expires_at,updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?, 'WAITING',?,?,?)
             """,
             (
                 request_id,
@@ -121,6 +118,7 @@ def begin_verification(
                 str(provider or "").strip().upper(),
                 identity["email_address"],
                 json.dumps(hosts, separators=(",", ":")),
+                json.dumps(senders, separators=(",", ":")),
                 now.isoformat(),
                 (now + timedelta(minutes=int(ttl_minutes))).isoformat(),
                 now.isoformat(),
@@ -135,6 +133,7 @@ def begin_verification(
         "provider": str(provider or "").strip().upper(),
         "state": "WAITING",
         "expected_link_hosts": hosts,
+        "expected_sender_domains": senders,
         "mail_relay_ready": identity["relay_ready"],
     }
 
@@ -178,7 +177,12 @@ def observe_message_metadata(
         if str(recipient_email or "").strip().lower() != str(row["recipient_email"]).lower():
             raise VerificationOrchestrationError("Verification recipient does not match the managed identity.")
         sender = _host(sender_domain)
-        if contains_security_code:
+        expected_senders = set(json.loads(row["expected_sender_domains_json"]))
+        if sender not in expected_senders:
+            next_state = "REJECTED"
+            reason = "UNEXPECTED_SENDER_DOMAIN"
+            link_host = None
+        elif contains_security_code:
             next_state = "SECURITY_CHECKPOINT"
             reason = "OTP_OR_SECURITY_CODE"
             link_host = None
