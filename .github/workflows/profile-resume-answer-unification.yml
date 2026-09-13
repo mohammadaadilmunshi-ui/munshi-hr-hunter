@@ -36,6 +36,8 @@ jobs:
             app/application_field_intelligence_v1.py \
             app/application_answer_autofill_v1.py \
             app/application_plan_question_bridge_v1.py \
+            app/master_resume_file_ui_v1.py \
+            app/profile_answer_center_ui_v1.py \
             app/profile_workspace_v4.py \
             app/settings_profile_authority_ui_v1.py \
             app/resume_one_page_guard_v1.py \
@@ -48,7 +50,9 @@ jobs:
             tests/test_profile_resume_answer_unification_v1.py \
             tests/test_application_smart_autofill_v1.py \
             tests/test_apply_semantic_field_bridge_v1.py \
-            tests/test_settings_profile_authority_ui_v1.py
+            tests/test_settings_profile_authority_ui_v1.py \
+            tests/test_profile_answer_vault_ux_v1.py \
+            tests/test_profile_resume_file_answer_center_v1.py
 
       - name: Guard shared-answer and final-submit boundaries
         run: |
@@ -56,7 +60,9 @@ jobs:
           grep -F 'application_plan_v2.prepare_application_plan' app/application_plan_question_bridge_v1.py
           grep -F 'answer_brain_v2.resolve_answer' app/application_answer_router_v1.py
           grep -F 'MUNSHI Apply and AutoApply' app/application_answer_router_v1.py
-          grep -F 'Prepare answers automatically from Candidate Truth' app/profile_workspace_v4.py
+          grep -F 'Prepare / refresh answers from Candidate Truth' app/profile_answer_center_ui_v1.py
+          grep -F 'profile_v3._edit_application_defaults()' app/profile_answer_center_ui_v1.py
+          grep -F 'Edit in Resume Studio' app/master_resume_file_ui_v1.py
           grep -F 'field_intelligence.requirement_from_field' app/application_plan_question_bridge_v1.py
           grep -F 'semanticType' app/application_field_intelligence_v1.py
           grep -F 'profile_authority.authority_snapshot()' app/settings_profile_authority_ui_v1.py
@@ -66,9 +72,10 @@ jobs:
             app/application_answer_router_v1.py \
             app/application_field_intelligence_v1.py \
             app/application_answer_autofill_v1.py \
-            app/application_plan_question_bridge_v1.py
+            app/application_plan_question_bridge_v1.py \
+            app/profile_answer_center_ui_v1.py
 
-      - name: Prove 100-question catalog contract stays internal
+      - name: Prove recognition catalog stays internal
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -76,8 +83,12 @@ jobs:
           metrics = catalog_metrics()
           assert metrics['common_question_count'] == 100, metrics
           assert metrics['concept_count'] == 50, metrics
-          source = Path('app/profile_workspace_v4.py').read_text(encoding='utf-8')
+          source = '\n'.join([
+              Path('app/profile_workspace_v4.py').read_text(encoding='utf-8'),
+              Path('app/profile_answer_center_ui_v1.py').read_text(encoding='utf-8'),
+          ])
           assert 'Advanced: view the 100-phrase recognition catalog' not in source
           assert 'Recognition phrasings' not in source
+          assert 'Common phrasings' not in source
           print(metrics)
           PY
