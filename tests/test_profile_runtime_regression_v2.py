@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from app import native_resume_service as resume_v1
@@ -11,13 +12,7 @@ from app.profile_answer_center_ui_v2 import _configured
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_profile_details_with_master_resume_renders_without_duplicate_keys(hunter_db) -> None:
-    """Reproduce the staging state that exposed StreamlitDuplicateElementKey.
-
-    The generic dashboard smoke test had no active Master Resume, so the file-card
-    widgets never existed and CI missed the duplicate mount. This fixture creates
-    the exact prerequisite before rendering Profile Details.
-    """
+def _seed_master_resume() -> None:
     resume_v1.save_confirmed_source(
         content_text=(
             "Candidate Example\n"
@@ -32,11 +27,49 @@ def test_profile_details_with_master_resume_renders_without_duplicate_keys(hunte
         source_kind="text_upload",
     )
 
+
+def _run_profile(
+    *,
+    detail_section: str = "Candidate Truth",
+    answer_section: str = "Complete reusable profile",
+) -> AppTest:
     app = AppTest.from_file(str(ROOT / "app" / "dashboard.py"), default_timeout=30)
     app.session_state["product_view"] = "profile"
     app.session_state["product_profile_tab"] = "Profile details"
+    app.session_state["profile_v4_detail_section"] = detail_section
+    app.session_state["answer_center_v2_section"] = answer_section
     app.run()
+    return app
 
+
+def test_profile_details_with_master_resume_renders_without_duplicate_keys(hunter_db) -> None:
+    """Reproduce the staging prerequisite that the old smoke test omitted."""
+    _seed_master_resume()
+    app = _run_profile()
+    assert not app.exception
+
+
+@pytest.mark.parametrize(
+    ("detail_section", "answer_section"),
+    [
+        ("Candidate Truth", "Complete reusable profile"),
+        ("Application Answers", "Complete reusable profile"),
+        ("Application Answers", "Protected & self-ID"),
+        ("Application Answers", "Teach MUNSHI"),
+        ("Application Answers", "Coverage"),
+        ("Master Resume", "Complete reusable profile"),
+    ],
+)
+def test_every_profile_detail_route_is_runtime_safe(
+    hunter_db,
+    detail_section: str,
+    answer_section: str,
+) -> None:
+    _seed_master_resume()
+    app = _run_profile(
+        detail_section=detail_section,
+        answer_section=answer_section,
+    )
     assert not app.exception
 
 
