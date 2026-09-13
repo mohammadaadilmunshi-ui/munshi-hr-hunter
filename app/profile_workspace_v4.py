@@ -2,8 +2,8 @@
 
 V4 preserves the established Resume, Cover Letter, Candidate Truth and encrypted
 profile-editing paths while layering the first-class Master Resume card and the
-runtime-safe Answer Center. The Master Resume control surface is mounted exactly
-once per Streamlit run so hidden tab bodies cannot duplicate widget keys.
+runtime-safe Answer Center. Heavy Profile Details panels are routed lazily so a
+hidden panel cannot create duplicate widgets or trigger unintended side effects.
 """
 from __future__ import annotations
 
@@ -16,6 +16,9 @@ from app import candidate_profile_authority_v1 as profile_authority
 from app import master_resume_file_ui_v1 as master_resume_ui
 from app import profile_answer_center_ui_v2 as answer_center
 from app import profile_workspace_v3 as v3
+
+
+_DETAIL_SECTIONS = ("Candidate Truth", "Application Answers", "Master Resume")
 
 
 def _status_cards(authority: dict[str, Any], answers: dict[str, Any]) -> None:
@@ -113,6 +116,21 @@ def _master_resume_details(authority: dict[str, Any]) -> None:
         )
 
 
+def _selected_detail_section() -> str:
+    current = str(st.session_state.get("profile_v4_detail_section") or "Candidate Truth")
+    if current not in _DETAIL_SECTIONS:
+        current = "Candidate Truth"
+        st.session_state["profile_v4_detail_section"] = current
+    return st.radio(
+        "Profile details section",
+        _DETAIL_SECTIONS,
+        index=_DETAIL_SECTIONS.index(current),
+        horizontal=True,
+        label_visibility="collapsed",
+        key="profile_v4_detail_section",
+    )
+
+
 def render() -> None:
     v3.v1._inject_css()
     tab = v3.v1._tab_from_state()
@@ -139,12 +157,10 @@ def render() -> None:
     for warning in authority.get("warnings") or []:
         st.warning(str(warning))
 
-    candidate_tab, answers_tab, resume_tab = st.tabs(
-        ["Candidate Truth", "Application Answers", "Master Resume"]
-    )
-    with candidate_tab:
+    section = _selected_detail_section()
+    if section == "Candidate Truth":
         _candidate_truth_workspace()
-    with answers_tab:
+    elif section == "Application Answers":
         answer_center.render(authority)
-    with resume_tab:
+    else:
         _master_resume_details(authority)
