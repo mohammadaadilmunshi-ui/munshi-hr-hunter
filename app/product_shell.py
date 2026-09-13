@@ -193,6 +193,9 @@ def render() -> None:
     from app.settings_profile_authority_ui_v1 import (
         install_settings_profile_authority_ui,
     )
+    from app.unified_job_workspaces_runtime_patch_v1 import (
+        install_unified_job_workspaces,
+    )
 
     # Preserve the established V3 route contract first, then layer the V4
     # unified Profile authority on the same long-lived V1 entrypoint.
@@ -237,6 +240,10 @@ def render() -> None:
     # because Streamlit forbids changing a widget-owned key later in the same run.
     # Install the narrow rerun-safe repair before the Resume Studio page renders.
     install_resume_studio_session_state_repair_v1()
+    # Last presentation override: Tracker, Research, and Applications all reuse
+    # the same Dashboard/Browse Jobs card renderer and lazy user-facing sections.
+    # This does not change preparation, targeting, or submission authority.
+    install_unified_job_workspaces(product_pages, application_workspace_page)
 
     pages: dict[str, Callable[[], None]] = {
         "dashboard": product_pages.dashboard,
