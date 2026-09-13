@@ -5,6 +5,7 @@ from pathlib import Path
 from streamlit.testing.v1 import AppTest
 
 from app import native_resume_service as resume_v1
+from app.profile_answer_center_ui_v2 import _configured
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,11 +47,31 @@ def test_master_resume_interactive_surface_is_mounted_once() -> None:
     assert "def _master_resume_details(" in workspace
 
 
+def test_profile_and_answer_center_heavy_panels_are_lazy_routed() -> None:
+    workspace = (ROOT / "app" / "profile_workspace_v4.py").read_text(encoding="utf-8")
+    answer_center = (ROOT / "app" / "profile_answer_center_ui_v2.py").read_text(encoding="utf-8")
+
+    assert "st.tabs(" not in workspace
+    assert "st.tabs(" not in answer_center
+    assert "profile_v4_detail_section" in workspace
+    assert "answer_center_v2_section" in answer_center
+
+
 def test_answer_center_does_not_mount_second_application_defaults_form() -> None:
     answer_center = (ROOT / "app" / "profile_answer_center_ui_v2.py").read_text(encoding="utf-8")
     assert "profile_v3._edit_application_defaults" not in answer_center
     assert "Open encrypted protected defaults editor" in answer_center
-    assert "profile_v3_edit_section" in answer_center
+    assert 'st.session_state["profile_v4_detail_section"] = "Candidate Truth"' in answer_center
+    assert 'st.session_state["profile_v3_edit_section"] = "Application defaults & self-ID"' in answer_center
+
+
+def test_protected_configuration_treats_explicit_false_as_configured() -> None:
+    assert _configured(False) is True
+    assert _configured(True) is True
+    assert _configured(None) is False
+    assert _configured("") is False
+    assert _configured("   ") is False
+    assert _configured("Prefer not to answer") is True
 
 
 def test_runtime_safe_answer_center_keeps_existing_capabilities() -> None:
