@@ -168,10 +168,15 @@ def render_document_html(
     return css + base
 
 
-def _section_title(line: str) -> str | None:
+def _normalized_heading_key(line: str) -> str:
     raw = str(line or "").strip()
     normalized = re.sub(r"[^a-z0-9& ]+", "", raw.casefold()).strip()
-    normalized = re.sub(r"\s+", " ", normalized)
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _section_title(line: str) -> str | None:
+    raw = str(line or "").strip()
+    normalized = _normalized_heading_key(raw)
     if normalized in _SECTION_NAMES:
         return _SECTION_NAMES[normalized]
     if (
@@ -220,8 +225,12 @@ def _parse_source(source_text: str) -> tuple[list[str], list[tuple[str, list[str
     current_title: str | None = None
     current_lines: list[str] = []
 
-    for line in lines:
+    for index, line in enumerate(lines):
         title = _section_title(line)
+        # Candidate names are frequently exported in all caps. The first source
+        # line is header identity unless it is a known canonical section label.
+        if index == 0 and _normalized_heading_key(line) not in _SECTION_NAMES:
+            title = None
         if title:
             if current_title is not None:
                 sections.append((current_title, current_lines))
@@ -254,7 +263,10 @@ def _source_section_html(title: str, lines: list[str]) -> str:
             return
         rendered.append(
             '<ul class="source-bullets">'
-            + "".join(f"<li>{html.escape(item)}</li>" for item in bullets)
+            + "".join(
+                f'<li class="source-bullet">{html.escape(item)}</li>'
+                for item in bullets
+            )
             + "</ul>"
         )
         bullets.clear()
