@@ -1,8 +1,8 @@
 """Runtime-safe Application Answer Center over Candidate Truth and Answer Brain.
 
-V2 preserves the guided reusable-answer UX from V1 while avoiding a second
-mount of the encrypted application-defaults editor on the same Streamlit run.
-Protected/self-ID values remain on the existing encrypted Candidate Truth path.
+V2 preserves the guided reusable-answer UX from V1 while avoiding eager mounts
+of hidden Streamlit forms. Protected/self-ID values remain on the existing
+encrypted Candidate Truth path and only the selected Answer Center panel renders.
 """
 from __future__ import annotations
 
@@ -34,6 +34,12 @@ _PROTECTED_DETAIL_FIELDS = {
     "self_id.gender": "gender",
     "self_id.race_ethnicity": "ethnicity",
 }
+_ANSWER_SECTIONS = (
+    "Complete reusable profile",
+    "Protected & self-ID",
+    "Teach MUNSHI",
+    "Coverage",
+)
 
 
 def _concept_map() -> dict[str, Any]:
@@ -86,7 +92,10 @@ def coverage_breakdown(readiness: Mapping[str, Any]) -> dict[str, int]:
     for key, configured in protected_config.items():
         if not configured:
             continue
-        row = next((item for item in rows if str(item.get("question_key") or "") == key), None)
+        row = next(
+            (item for item in rows if str(item.get("question_key") or "") == key),
+            None,
+        )
         if row is not None and not row.get("ready"):
             known += 1
 
@@ -118,13 +127,23 @@ def _batch_input(concept: Any, row: Mapping[str, Any], *, index: int) -> tuple[s
     if answer_type == "long_text":
         return key, st.text_area(label, height=110, key=widget_key)
     if answer_type == "number":
-        return key, st.text_input(label, placeholder="Enter a number or leave blank", key=widget_key)
+        return key, st.text_input(
+            label,
+            placeholder="Enter a number or leave blank",
+            key=widget_key,
+        )
     if answer_type == "date":
-        return key, st.text_input(label, placeholder="e.g. Dec 17, 2026", key=widget_key)
+        return key, st.text_input(
+            label,
+            placeholder="e.g. Dec 17, 2026",
+            key=widget_key,
+        )
     return key, st.text_input(label, key=widget_key)
 
 
-def _save_batch(delta: list[dict[str, Any]], values: Mapping[str, Any]) -> tuple[int, list[str]]:
+def _save_batch(
+    delta: list[dict[str, Any]], values: Mapping[str, Any]
+) -> tuple[int, list[str]]:
     concepts = _concept_map()
     saved = 0
     errors: list[str] = []
@@ -138,7 +157,9 @@ def _save_batch(delta: list[dict[str, Any]], values: Mapping[str, Any]) -> tuple
             errors.append(f"{key}: semantic concept is unavailable")
             continue
         try:
-            answer_router.save_user_answer(concept.aliases[0], value, autofill_allowed=True)
+            answer_router.save_user_answer(
+                concept.aliases[0], value, autofill_allowed=True
+            )
         except Exception as error:  # noqa: BLE001
             errors.append(f"{row.get('example_question') or key}: {error}")
         else:
@@ -182,11 +203,11 @@ def _render_reusable(readiness: dict[str, Any]) -> None:
 
 
 def _open_protected_editor() -> None:
-    # Streamlit callbacks run before the next script pass, so these widget-owned
-    # keys can be set safely before Candidate Truth creates the editor controls.
+    # Callbacks run before the next Streamlit pass, so switching the lazy Profile
+    # route first means the encrypted editor is the only heavy form mounted next.
+    st.session_state["profile_v4_detail_section"] = "Candidate Truth"
     st.session_state["profile_v3_edit_open"] = True
     st.session_state["profile_v3_edit_section"] = "Application defaults & self-ID"
-    st.session_state["answer_center_v2_protected_editor_requested"] = True
 
 
 def _render_protected(readiness: dict[str, Any]) -> None:
@@ -199,14 +220,20 @@ def _render_protected(readiness: dict[str, Any]) -> None:
     )
     cols = st.columns(2, gap="small")
     cols[0].metric("Protected meanings configured", ready)
-    cols[1].metric("Protected meanings not configured", max(0, len(protected_config) - ready))
+    cols[1].metric(
+        "Protected meanings not configured",
+        max(0, len(protected_config) - ready),
+    )
 
-    rows = []
-    for key, configured in protected_config.items():
-        rows.append({
+    rows = [
+        {
             "Meaning": _humanize_key(key),
-            "Status": "Configured in encrypted profile" if configured else "Not configured",
-        })
+            "Status": (
+                "Configured in encrypted profile" if configured else "Not configured"
+            ),
+        }
+        for key, configured in protected_config.items()
+    ]
     st.dataframe(rows, use_container_width=True, hide_index=True)
     st.info(
         "Configure work authorization, sponsorship and voluntary self-identification once in the existing encrypted Candidate Truth editor. "
@@ -219,8 +246,6 @@ def _render_protected(readiness: dict[str, Any]) -> None:
         key="answer_center_v2_open_protected_editor",
         on_click=_open_protected_editor,
     )
-    if st.session_state.get("answer_center_v2_protected_editor_requested"):
-        st.caption("The protected editor is opened under the Candidate Truth tab → Edit Profile Details.")
 
 
 def _render_teach() -> None:
@@ -310,6 +335,24 @@ def _render_coverage(readiness: dict[str, Any]) -> None:
         st.success("All current semantic meanings already have an authority path.")
 
 
+def _selected_answer_section() -> str:
+    current = str(
+        st.session_state.get("answer_center_v2_section")
+        or "Complete reusable profile"
+    )
+    if current not in _ANSWER_SECTIONS:
+        current = "Complete reusable profile"
+        st.session_state["answer_center_v2_section"] = current
+    return st.radio(
+        "Answer Center section",
+        _ANSWER_SECTIONS,
+        index=_ANSWER_SECTIONS.index(current),
+        horizontal=True,
+        label_visibility="collapsed",
+        key="answer_center_v2_section",
+    )
+
+
 def render(authority: dict[str, Any]) -> None:
     readiness = answer_router.readiness_projection()
     summary = coverage_breakdown(readiness)
@@ -358,16 +401,14 @@ def render(authority: dict[str, Any]) -> None:
     else:
         st.success("Every current semantic meaning has an authority path.")
 
-    reusable_tab, protected_tab, teach_tab, coverage_tab = st.tabs(
-        ["Complete reusable profile", "Protected & self-ID", "Teach MUNSHI", "Coverage"]
-    )
-    with reusable_tab:
+    section = _selected_answer_section()
+    if section == "Complete reusable profile":
         _render_reusable(readiness)
-    with protected_tab:
+    elif section == "Protected & self-ID":
         _render_protected(readiness)
-    with teach_tab:
+    elif section == "Teach MUNSHI":
         _render_teach()
-    with coverage_tab:
+    else:
         _render_coverage(readiness)
 
     st.caption(
