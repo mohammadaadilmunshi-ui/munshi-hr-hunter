@@ -319,12 +319,20 @@ p = sys.argv[1]
 db = sqlite3.connect(f"file:{p}?mode=ro", uri=True, timeout=30)
 try:
     db.execute("PRAGMA query_only=ON")
+    quick = str(db.execute("PRAGMA quick_check").fetchone()[0])
+    fk = db.execute("PRAGMA foreign_key_check").fetchall()
     schema_version = int(db.execute("PRAGMA schema_version").fetchone()[0])
     table_count = int(
         db.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
     )
 finally:
     db.close()
+
+if quick != "ok":
+    raise SystemExit(f"host production DB backup quick_check failed: {quick}")
+if fk:
+    raise SystemExit(f"host production DB backup FK violations: {len(fk)}")
+print("PRODUCTION_DB_BACKUP_QUICK_CHECK=PASS")
 print(f"PRODUCTION_DB_BACKUP_HOST_OPEN=PASS schema_version={schema_version} tables={table_count}")
 PY
 echo "PRODUCTION_DB_BACKUP=$db_backup"
