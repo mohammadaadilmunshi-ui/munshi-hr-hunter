@@ -91,7 +91,7 @@ def _presentation_settings() -> dict[str, Any]:
         }
     )
     st.caption(
-        "Preview styling is presentation-only in this tranche. The checked PDF/DOCX download remains the immutable V5 artifact until presentation settings are versioned into the artifact digest."
+        "Preview styling is presentation-only in this tranche. The checked PDF/DOCX download remains the immutable Standard V5 artifact until presentation settings are versioned into the artifact digest."
     )
     return settings
 
