@@ -310,7 +310,43 @@ def _fake_plan():
                 "final_submit": False,
             },
             "unresolved": [],
+            "resume": {"artifact_sha256": "8" * 64},
         },
+    }
+
+
+def _frozen_review(*, cover_sha256=None):
+    review = {
+        "application_id": "application-94",
+        "plan_id": "plan-94",
+        "session_id": "session-94",
+        "provider": "GREENHOUSE",
+        "destination_url": "https://boards.example.test/submit",
+        "resume": {"sha256": "8" * 64},
+        "application": {
+            "required_fields": 2,
+            "completed": 2,
+            "unresolved": 0,
+            "warnings": [],
+        },
+        "answers": [],
+        "plan_digest": "1" * 64,
+        "checkpoint_id": "checkpoint-94",
+        "browser_verification": {"form_digest": "2" * 64},
+        "submission_readiness": "READY_FOR_REVIEW",
+    }
+    if cover_sha256:
+        review["cover_letter"] = {"sha256": cover_sha256}
+    return {"review_id": "apply-review-94", "review_digest": "3" * 64, "review": review}
+
+
+def _recorded_review(**kwargs):
+    return {
+        "review_id": "hunter-review-94",
+        "review_digest": "4" * 64,
+        "prepared_package_digest": "5" * 64,
+        "browser_form_digest": "2" * 64,
+        "approved": False,
     }
 
 
@@ -415,6 +451,8 @@ def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
             **_session("READY_FOR_REVIEW")["preparation_job"],
             "state": "READY_FOR_REVIEW",
         },
+        review_builder=lambda **kwargs: _frozen_review(cover_sha256="9" * 64),
+        review_recorder=_recorded_review,
     )
 
     assert result["task_status"] == "SUCCEEDED"
@@ -426,7 +464,8 @@ def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
     assert result["output"]["cover_letter_id"] == "cover-letter-required-94"
     assert result["output"]["cover_letter_artifact_sha256"] == "9" * 64
     assert result["output"]["cover_letter_page_count"] == 1
-    assert result["output"]["final_review_approved"] is False
+    assert result["output"]["customer_review_approved"] is False
+    assert result["output"]["additional_customer_approval_required"] is False
     assert result["output"]["final_submit_executed"] is False
     assert result["output"]["submission_authority"] is False
 
@@ -488,12 +527,15 @@ def test_ats_ready_for_review_completes_orchestrator(worker_db, monkeypatch):
             **_session("READY_FOR_REVIEW")["preparation_job"],
             "state": "READY_FOR_REVIEW",
         },
+        review_builder=lambda **kwargs: _frozen_review(),
+        review_recorder=_recorded_review,
     )
 
     assert result["task_status"] == "SUCCEEDED"
     assert result["operation_status"] == "READY_FOR_REVIEW"
     assert result["output"]["apply_prepare_state"] == "READY_FOR_REVIEW"
-    assert result["output"]["final_review_approved"] is False
+    assert result["output"]["customer_review_approved"] is False
+    assert result["output"]["additional_customer_approval_required"] is False
     assert result["output"]["final_submit_executed"] is False
     assert seen["requirements"] == []
     assert seen["permissions"]["final_review"] is False
