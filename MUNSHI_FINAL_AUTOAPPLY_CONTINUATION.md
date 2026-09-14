@@ -14,7 +14,7 @@ This reuses confirmed NORMAL facts and existing structural projections; protecte
 The worker checks the resolver's profile digest and rechecks Application Truth after refresh. Stale or failed refresh cannot complete the task.
 Existing retry limits and per-operation task isolation remain unchanged.
 Targeted tests cover refresh ordering, replay, missing protected facts, digest mismatch, concurrent edits, and failure isolation.
-Executable results pending the dedicated targeted CI workflow. No local repository test result claimed.
+GitHub Actions run 34804734083 passed: 24 tests in 4.74s at source SHA a1d726e881a09027d9e9fcdacc2ed095b215d290. Only tests/test_prepare_worker_adapters_v1b.py and tests/test_application_smart_autofill_v1.py were executed. No local repository test result claimed.
 
 ## Not complete
 
@@ -25,8 +25,7 @@ No Apply source changes in this tranche.
 
 ## Exact next task
 
-Check AutoApply preparation targeted workflow on this Hunter branch.
-Then connect automatic admission to existing eligibility gates without creating duplicate n8n/native work.
+Targeted tests passed; source is committed and pushed. Connect automatic admission to existing eligibility gates without creating duplicate n8n/native work.
 Relevant inspected files: app/unified_hourly_coordinator.py, app/n8n_dispatch.py, app/product_application_flow_v2.py, app/prepare_worker_adapters_v1a.py, app/prepare_worker_adapters_v1b.py.
 Coordinator currently calls queue_candidates then dispatch_pending for n8n.
 product_application_flow_v2.start_prepare_for_job creates the durable graph on manual Prepare.
