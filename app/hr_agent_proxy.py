@@ -187,8 +187,12 @@ def score_resume(
 
 
 # Keep inbound mail isolated from the submission-sensitive app/api.py surface.
-# app/api.py already includes this router, so registering the mail router here
-# adds only the new endpoint without changing existing application handlers.
-from app.inbound_mail import router as inbound_mail_router
+# app/api.py already mounts this router, so register the authenticated mail
+# handler directly here rather than relying on nested-router flattening details.
+from app.inbound_mail import inbound_mail as inbound_mail_endpoint
 
-router.include_router(inbound_mail_router)
+router.add_api_route(
+    "/api/mail/inbound",
+    inbound_mail_endpoint,
+    methods=["POST"],
+)
