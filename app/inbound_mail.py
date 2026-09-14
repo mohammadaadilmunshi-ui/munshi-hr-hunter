@@ -126,11 +126,12 @@ def _safe_metadata(
 
 def _signing_secret() -> bytes:
     value = str(os.getenv("MUNSHI_MAIL_SIGNING_SECRET") or "").strip()
-    if not value:
+    encoded = value.encode("utf-8")
+    if len(encoded) < 32:
         raise InboundMailConfigurationError(
-            "Inbound mail signing is not configured."
+            "Inbound mail signing secret must be at least 32 bytes."
         )
-    return value.encode("utf-8")
+    return encoded
 
 
 def _signed_at(
