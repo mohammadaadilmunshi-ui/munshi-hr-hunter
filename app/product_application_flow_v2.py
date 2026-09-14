@@ -317,6 +317,17 @@ def _artifact_summary(tasks: list[dict[str, Any]]) -> dict[str, Any]:
                 'browser_preparation_completed': output.get(
                     'browser_preparation_completed'
                 ),
+                'apply_session_id': output.get('apply_session_id'),
+                'customer_review_id': output.get('customer_review_id'),
+                'customer_review_digest': output.get(
+                    'customer_review_digest'
+                ),
+                'prepared_package_digest': output.get(
+                    'prepared_package_digest'
+                ),
+                'browser_form_digest': output.get(
+                    'browser_form_digest'
+                ),
             }
 
     return {
@@ -324,6 +335,39 @@ def _artifact_summary(tasks: list[dict[str, Any]]) -> dict[str, Any]:
         'cover_letter': cover,
         'plan': plan,
     }
+
+
+def _customer_review(plan: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    review_id = str((plan or {}).get('customer_review_id') or '')
+    if not review_id:
+        return None
+    try:
+        from app import application_review_v2
+
+        return application_review_v2.get_review(review_id)
+    except (LookupError, PermissionError, RuntimeError, ValueError):
+        return None
+
+
+def _production_receipt(application_id: str | None) -> dict[str, Any] | None:
+    if not application_id:
+        return None
+    connection = get_connection()
+    try:
+        if not _table_exists(connection, 'production_submission_receipts_v1'):
+            return None
+        owner = current_owner(connection)
+        row = connection.execute(
+            """SELECT receipt_id,provider,provider_application_id,target_url,
+                      verification_method,verified_at,receipt_digest
+                 FROM production_submission_receipts_v1
+                WHERE tenant_id=? AND user_id=? AND application_id=?
+                ORDER BY datetime(verified_at) DESC,rowid DESC LIMIT 1""",
+            (owner.tenant_id, owner.user_id, str(application_id)),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        connection.close()
 
 
 def _effective_state(
@@ -347,6 +391,17 @@ def flow_for_job(job_id: int) -> dict[str, Any]:
     lifecycle = _latest_lifecycle(int(job_id))
     state, authority = _effective_state(prepare, lifecycle)
     tasks = list((prepare or {}).get('tasks') or [])
+    artifacts = _artifact_summary(tasks)
+    review = _customer_review(artifacts.get('plan'))
+    application_id = (
+        str((lifecycle or {}).get('application_id') or '')
+        or str((prepare or {}).get('application_id') or '')
+    )
+    production_receipt = _production_receipt(application_id)
+    if production_receipt is not None:
+        state, authority = 'SUBMITTED', 'verified_production_receipt'
+    elif review is not None and review.get('approval_consumed'):
+        state, authority = 'SUBMITTING', 'one_use_submit_authorization'
     progress = _required_progress(tasks)
 
     if state in {
@@ -404,7 +459,9 @@ def flow_for_job(job_id: int) -> dict[str, Any]:
         'lifecycle': lifecycle,
         'tasks': tasks,
         'runtime_questions': _runtime_questions(tasks),
-        'artifacts': _artifact_summary(tasks),
+        'artifacts': artifacts,
+        'customer_review': review,
+        'production_receipt': production_receipt,
         'cta': cta,
         'cta_label': cta_label,
         'submission_authority': False,
@@ -492,6 +549,38 @@ def start_prepare_for_job(
     result = flow_for_job(int(job_id))
     result['replayed'] = False
     return result
+
+
+def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
+    """Consume the sole customer approval and mint exact JIT authority."""
+    from app import application_single_approval_v1
+
+    flow = flow_for_job(int(job_id))
+    review = dict(flow.get('customer_review') or {})
+    plan = dict((flow.get('artifacts') or {}).get('plan') or {})
+    if str(flow.get('state') or '') not in {'READY_FOR_REVIEW', 'READY_TO_SUBMIT'}:
+        raise ValueError('Application is not ready for customer review.')
+    if not review or not str(plan.get('apply_session_id') or ''):
+        raise ValueError('The exact prepared review/session binding is unavailable.')
+    click_identity = (
+        f"{review['review_id']}:{review['review_digest']}:"
+        f"{review['prepared_package_digest']}:approve-and-submit-v1"
+    )
+    click_key = (
+        'customer-approve-submit-'
+        + hashlib.sha256(click_identity.encode('utf-8')).hexdigest()[:40]
+    )
+    return application_single_approval_v1.approve_and_authorize(
+        review_id=str(review['review_id']),
+        session_id=str(plan['apply_session_id']),
+        approval_idempotency_key=click_key,
+        authorization_idempotency_key=click_key,
+        expected_review_digest=str(review['review_digest']),
+        expected_prepared_package_digest=str(
+            review['prepared_package_digest']
+        ),
+        expected_browser_form_digest=str(review['browser_form_digest']),
+    )
 
 
 def pipeline_rows(limit: int = 250) -> list[dict[str, Any]]:
