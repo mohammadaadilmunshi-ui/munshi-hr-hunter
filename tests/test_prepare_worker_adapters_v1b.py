@@ -18,6 +18,11 @@ PROFILE_DIGEST = "c" * 64
 @pytest.fixture()
 def worker_db(hunter_db, monkeypatch):
     monkeypatch.setenv(workers.WORKERS_ENV, "1")
+    monkeypatch.setattr(
+        workers.application_answer_autofill_v1,
+        "prepare_from_candidate_truth",
+        lambda: {"profile_digest": PROFILE_DIGEST},
+    )
     monkeypatch.setattr(orchestrator, "current_owner", lambda _connection: OWNER)
     monkeypatch.setattr(
         orchestrator,
@@ -281,3 +286,71 @@ def test_v1b_disabled_before_claim(worker_db, monkeypatch):
 
 def test_v1b_constants_never_grant_submission(worker_db):
     assert workers.SUBMISSION_AUTHORITY is False
+
+
+def test_answer_refresh_precedes_inventory_and_runs_once(worker_db, monkeypatch):
+    operation = _start("refresh-before-inventory")
+    calls = []
+    monkeypatch.setattr(workers, "current_application_truth_projection", lambda job_id: _truth())
+
+    def refresh():
+        calls.append("refresh")
+        return {"profile_digest": PROFILE_DIGEST}
+
+    def planning():
+        assert calls == ["refresh"]
+        calls.append("inventory")
+        return _planning()
+
+    monkeypatch.setattr(workers.application_answer_autofill_v1, "prepare_from_candidate_truth", refresh)
+    monkeypatch.setattr(workers.answer_brain_v2, "planning_input", planning)
+    result = workers.run_answer_resolution_once(
+        operation_id=operation["operation_id"], worker_id="worker",
+    )
+    replay = workers.run_answer_resolution_once(
+        operation_id=operation["operation_id"], worker_id="worker",
+    )
+    assert result["task_status"] == "SUCCEEDED"
+    assert replay["claimed"] is False
+    assert calls == ["refresh", "inventory"]
+    assert result["output"]["baseline_unresolved_fact_keys"] == [
+        "application_defaults.sponsorship_required"
+    ]
+
+
+@pytest.mark.parametrize("failure", ["digest", "concurrent_edit", "resolver"])
+def test_refresh_failure_does_not_complete_or_block_other_operations(
+    worker_db, monkeypatch, failure,
+):
+    first = _start("refresh-failure-" + failure)
+    second = _start("independent-" + failure)
+    calls = []
+
+    def truth(job_id):
+        if failure == "concurrent_edit" and calls:
+            return _truth(projection_digest="f" * 64)
+        return _truth()
+
+    def refresh():
+        calls.append("refresh")
+        if failure == "resolver":
+            raise RuntimeError("Resolver unavailable")
+        return {"profile_digest": "f" * 64 if failure == "digest" else PROFILE_DIGEST}
+
+    monkeypatch.setattr(workers, "current_application_truth_projection", truth)
+    monkeypatch.setattr(workers.application_answer_autofill_v1, "prepare_from_candidate_truth", refresh)
+    monkeypatch.setattr(workers.answer_brain_v2, "planning_input", lambda: _planning())
+    with pytest.raises(RuntimeError):
+        workers.run_answer_resolution_once(
+            operation_id=first["operation_id"], worker_id="worker",
+        )
+    assert _task(first["operation_id"], orchestrator.TASK_ANSWER_RESOLUTION)["status"] == "PENDING"
+
+    monkeypatch.setattr(workers, "current_application_truth_projection", lambda job_id: _truth())
+    monkeypatch.setattr(
+        workers.application_answer_autofill_v1, "prepare_from_candidate_truth",
+        lambda: {"profile_digest": PROFILE_DIGEST},
+    )
+    assert workers.run_answer_resolution_once(
+        operation_id=second["operation_id"], worker_id="other-worker",
+    )["task_status"] == "SUCCEEDED"

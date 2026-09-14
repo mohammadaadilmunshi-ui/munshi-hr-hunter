@@ -25,6 +25,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app import answer_brain_v2
+from app import application_answer_autofill_v1
 from app import prepare_orchestrator_v1 as orchestrator
 from app.phase67_common import safe_owned_job_snapshot
 from app.phase8_application_truth import current_application_truth_projection
@@ -229,6 +230,16 @@ def run_answer_resolution_once(
         }
 
     try:
+        projection = _current_truth(operation)
+        # Populate reusable NORMAL answers from confirmed evidence before reading
+        # readiness. Missing facts remain unresolved; protected values keep their
+        # existing secure resolver path.
+        refreshed = application_answer_autofill_v1.prepare_from_candidate_truth()
+        if str(refreshed.get("profile_digest") or "") != str(
+            operation["candidate_profile_digest"]
+        ):
+            raise RuntimeError("Candidate Truth changed during answer preparation.")
+        # Detect concurrent edits before accepting the refreshed inventory.
         projection = _current_truth(operation)
         planning = answer_brain_v2.planning_input()
         binding = dict(planning.get("candidate_truth_binding") or {})

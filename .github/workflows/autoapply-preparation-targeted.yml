@@ -1,0 +1,27 @@
+name: AutoApply preparation targeted
+
+on:
+  push:
+    branches: [feat/autoapply-preparation-20260914]
+    paths:
+      - app/prepare_worker_adapters_v1b.py
+      - tests/test_prepare_worker_adapters_v1b.py
+      - .github/workflows/autoapply-preparation-targeted.yml
+
+permissions:
+  contents: read
+
+jobs:
+  answer-preparation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MUNSHI_FINAL_SUBMIT_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.lock.txt
+      - name: Targeted answer preparation and existing autofill regression tests
+        run: python -m pytest -q tests/test_prepare_worker_adapters_v1b.py tests/test_application_smart_autofill_v1.py
