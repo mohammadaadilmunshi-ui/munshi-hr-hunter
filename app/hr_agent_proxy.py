@@ -184,3 +184,11 @@ def score_resume(
             "exitCode": 1,
             "proxy_status": "failed",
         }
+
+
+# Keep inbound mail isolated from the submission-sensitive app/api.py surface.
+# app/api.py already includes this router, so registering the mail router here
+# adds only the new endpoint without changing existing application handlers.
+from app.inbound_mail import router as inbound_mail_router
+
+router.include_router(inbound_mail_router)
