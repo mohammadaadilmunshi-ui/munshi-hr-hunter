@@ -34,6 +34,7 @@ from urllib import error, request
 from urllib.parse import urlsplit
 
 from app import application_plan_delivery_v2
+from app import application_review_v2
 from app import application_plan_v2
 from app import application_preflight_package_v1 as preflight_v1
 from app import opportunity_intelligence_v3
@@ -52,6 +53,7 @@ SUBMISSION_AUTHORITY = False
 _APPLY_SESSION_PATH = "/v1/complete-loop/sessions"
 _APPLY_PREPARE_JOB_PATH = "/v1/complete-loop/preparation-jobs/{job_id}"
 _APPLY_RESOLUTION_TASK_PATH = "/v1/complete-loop/preparation-jobs/{job_id}/resolution-tasks"
+_APPLY_REVIEW_PATH = "/v1/complete-loop/sessions/{session_id}/review"
 _RUNNING_APPLY_STATES = frozenset({"QUEUED", "RUNNING"})
 _TERMINAL_APPLY_STATES = frozenset(
     {"WAITING_INPUT", "READY_FOR_REVIEW", "BLOCKED", "FAILED_SAFELY", "CANCELLED"}
@@ -493,6 +495,17 @@ def _read_apply_resolution_tasks(
     )
 
 
+def _freeze_apply_review(
+    *, session_id: str, tenant_id: str, user_id: str
+) -> dict[str, Any]:
+    base = _apply_base_url()
+    return _json_request(
+        method="POST",
+        url=base + _APPLY_REVIEW_PATH.format(session_id=str(session_id)),
+        headers=_apply_headers(tenant_id=tenant_id, user_id=user_id),
+    )
+
+
 _RUNTIME_TASK_STATUSES = frozenset({"PENDING", "RESOLVING", "WAITING_FOR_USER"})
 _RUNTIME_TASK_SAFE_FIELDS = (
     "schema_version", "task_id", "application_id", "session_id",
@@ -584,6 +597,8 @@ def run_ats_form_preparation_once(
     session_starter: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
     status_reader: Callable[..., Mapping[str, Any]] | None = None,
     resolution_task_reader: Callable[..., Mapping[str, Any]] | None = None,
+    review_builder: Callable[..., Mapping[str, Any]] | None = None,
+    review_recorder: Callable[..., Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Start/poll Apply's pre-submit browser preparation.
 
@@ -669,6 +684,8 @@ def run_ats_form_preparation_once(
     start_session = session_starter or _start_apply_session
     read_status = status_reader or _read_apply_prepare_job
     read_resolutions = resolution_task_reader or _read_apply_resolution_tasks
+    freeze_review = review_builder or _freeze_apply_review
+    record_review = review_recorder or application_review_v2.create_review
 
     try:
         plan = application_plan_v2.prepare_application_plan(
@@ -837,6 +854,53 @@ def run_ats_form_preparation_once(
             }
 
         if state == "READY_FOR_REVIEW":
+            frozen = dict(
+                freeze_review(
+                    session_id=str(session["session_id"]),
+                    tenant_id=str(plan["tenant_id"]),
+                    user_id=str(plan["user_id"]),
+                )
+            )
+            snapshot = dict(frozen.get("review") or {})
+            browser = dict(snapshot.get("browser_verification") or {})
+            application = dict(snapshot.get("application") or {})
+            resume_snapshot = dict(snapshot.get("resume") or {})
+            if (
+                str(snapshot.get("application_id") or "") != str(plan["application_id"])
+                or str(snapshot.get("plan_id") or "") != str(plan["plan_id"])
+                or str(snapshot.get("session_id") or "") != str(session["session_id"])
+                or str(snapshot.get("plan_digest") or "") != str(plan["plan_digest"])
+                or str(snapshot.get("submission_readiness") or "") != "READY_FOR_REVIEW"
+                or str(resume_snapshot.get("sha256") or "")
+                != str(dict(plan["snapshot"]["resume"])["artifact_sha256"])
+            ):
+                raise RuntimeError("Apply frozen review acknowledgement is not correlated.")
+            prepared_package = {
+                "application_id": str(snapshot["application_id"]),
+                "provider": str(snapshot["provider"]),
+                "destination_url": str(snapshot["destination_url"]),
+                "browser_form_digest": str(browser["form_digest"]),
+                "resume_sha256": str(resume_snapshot["sha256"]),
+                "plan_digest": str(snapshot["plan_digest"]),
+                "required_fields": int(application.get("required_fields") or 0),
+                "completed_required_fields": int(application.get("completed") or 0),
+                "unresolved_count": int(application.get("unresolved") or 0),
+                "validation_errors": list(application.get("warnings") or []),
+                "checkpoint_id": str(snapshot["checkpoint_id"]),
+                "review_fields": list(snapshot.get("answers") or []),
+            }
+            frozen_cover = snapshot.get("cover_letter")
+            if isinstance(frozen_cover, Mapping):
+                prepared_package["cover_letter_sha256"] = str(
+                    frozen_cover.get("sha256") or ""
+                )
+            hunter_review = dict(
+                record_review(
+                    plan_id=str(plan["plan_id"]),
+                    prepared_package=prepared_package,
+                    idempotency_key=f"prepare:{operation_id}:customer-review:v1",
+                )
+            )
             output = {
                 "version": WORKER_VERSION,
                 "plan_id": str(plan["plan_id"]),
@@ -861,7 +925,16 @@ def run_ats_form_preparation_once(
                     if cover_letter is not None
                     else None
                 ),
-                "final_review_approved": False,
+                "customer_review_id": str(hunter_review["review_id"]),
+                "customer_review_digest": str(hunter_review["review_digest"]),
+                "prepared_package_digest": str(
+                    hunter_review["prepared_package_digest"]
+                ),
+                "browser_form_digest": str(
+                    hunter_review["browser_form_digest"]
+                ),
+                "customer_review_approved": bool(hunter_review.get("approved")),
+                "additional_customer_approval_required": False,
                 "final_submit_executed": False,
                 "submission_authority": False,
             }
