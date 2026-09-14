@@ -14,7 +14,6 @@ import os
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping
-from uuid import uuid4
 
 from app import application_plan_v2, application_review_v2
 from app.database import get_connection
@@ -194,16 +193,77 @@ def _material(p: Mapping[str, Any], *, authorization_id: str, generation: int, i
     }
 
 
-def issue_authorization(payload: Mapping[str, Any], *, ttl_seconds: int = AUTH_TTL_SECONDS) -> dict[str, Any]:
+def issue_authorization(
+    payload: Mapping[str, Any], *, ttl_seconds: int = AUTH_TTL_SECONDS
+) -> dict[str, Any]:
+    """Issue or replay one exact authority for one canonical user action.
+
+    The deterministic authorization id makes a lost HTTP response retry-safe.
+    Replays return the original envelope in any status; claim remains the sole
+    atomic one-use boundary.
+    """
     ttl = max(30, min(int(ttl_seconds), AUTH_TTL_SECONDS))
+    idempotency_key = _text(
+        payload.get("idempotency_key")
+        or f"{payload.get('approval_id')}:{payload.get('session_id')}",
+        "Submit authorization idempotency key",
+        240,
+    )
+    identity = _canonical(
+        {
+            "tenant_id": payload.get("tenant_id"),
+            "user_id": payload.get("user_id"),
+            "application_id": payload.get("application_id"),
+            "approval_id": payload.get("approval_id"),
+            "session_id": payload.get("session_id"),
+            "idempotency_key": idempotency_key,
+        }
+    )
+    authorization_id = "submit-auth-" + hashlib.sha256(identity).hexdigest()[:40]
+
     connection = get_connection()
     try:
         ensure_schema(connection)
         if connection.in_transaction:
             connection.commit()
         connection.execute("BEGIN IMMEDIATE")
-        row = _bound_rows(connection, payload)
+        _bound_rows(connection, payload)
         session_id = _text(payload["session_id"], "Session id", 240)
+
+        prior = connection.execute(
+            """SELECT * FROM application_submit_authorizations_v1
+               WHERE authorization_id=?""",
+            (authorization_id,),
+        ).fetchone()
+        if prior is not None:
+            expected = {
+                "tenant_id": _text(payload["tenant_id"], "Tenant id", 240),
+                "user_id": _text(payload["user_id"], "User id", 240),
+                "application_id": _text(payload["application_id"], "Application id", 240),
+                "plan_id": _text(payload["plan_id"], "Plan id", 240),
+                "session_id": session_id,
+                "review_id": _text(payload["review_id"], "Review id", 240),
+                "approval_id": _text(payload["approval_id"], "Approval id", 240),
+                "provider": _text(payload["provider"], "Provider", 64).upper(),
+                "target_url": _text(payload["target_url"], "Target URL", 4000),
+                "checkpoint_id": _text(payload["checkpoint_id"], "Checkpoint id", 240),
+                "plan_digest": _digest(payload["plan_digest"], "Plan digest"),
+                "review_digest": _digest(payload["review_digest"], "Review digest"),
+                "approval_digest": _digest(payload["approval_digest"], "Approval digest"),
+                "prepared_package_digest": _digest(
+                    payload["prepared_package_digest"], "Prepared-package digest"
+                ),
+                "browser_form_digest": _digest(
+                    payload["browser_form_digest"], "Browser-form digest"
+                ),
+                "resume_sha256": _digest(payload["resume_sha256"], "Resume digest"),
+            }
+            if any(str(prior[key]) != str(value) for key, value in expected.items()):
+                raise ValueError(
+                    "Submit authorization idempotency key belongs to different bindings."
+                )
+            connection.commit()
+            return json.loads(str(prior["authority_json"]))
 
         # A material review/plan rollover invalidates every still-unused authority
         # for this same logical application/session before a new generation exists.
@@ -213,31 +273,61 @@ def issue_authorization(payload: Mapping[str, Any], *, ttl_seconds: int = AUTH_T
                    revocation_reason='superseded_by_new_authorization_generation'
                WHERE tenant_id=? AND user_id=? AND application_id=? AND session_id=?
                  AND status='ISSUED'""",
-            (str(payload["tenant_id"]), str(payload["user_id"]), str(payload["application_id"]), session_id),
+            (
+                str(payload["tenant_id"]),
+                str(payload["user_id"]),
+                str(payload["application_id"]),
+                session_id,
+            ),
         )
-        generation = int(connection.execute(
-            """SELECT COALESCE(MAX(generation),0)+1 AS n
-               FROM application_submit_authorizations_v1
-               WHERE tenant_id=? AND user_id=? AND application_id=? AND session_id=?""",
-            (str(payload["tenant_id"]), str(payload["user_id"]), str(payload["application_id"]), session_id),
-        ).fetchone()["n"])
-        authorization_id = f"submit-auth-{uuid4()}"
-        if row["consumed_at"] is not None and str(row["consumption_key"] or "") != authorization_id:
-            raise PermissionError("Review approval has already been consumed by another submit authority.")
+        generation = int(
+            connection.execute(
+                """SELECT COALESCE(MAX(generation),0)+1 AS n
+                   FROM application_submit_authorizations_v1
+                   WHERE tenant_id=? AND user_id=? AND application_id=? AND session_id=?""",
+                (
+                    str(payload["tenant_id"]),
+                    str(payload["user_id"]),
+                    str(payload["application_id"]),
+                    session_id,
+                ),
+            ).fetchone()["n"]
+        )
+        row = _bound_rows(connection, payload)
+        if row["consumed_at"] is not None:
+            raise PermissionError(
+                "Review approval has already been consumed by another submit authority."
+            )
         now = _now()
         issued_at = _iso(now)
         expires_at = _iso(now + timedelta(seconds=ttl))
-        material = _material(payload, authorization_id=authorization_id, generation=generation, issued_at=issued_at, expires_at=expires_at)
+        material = _material(
+            payload,
+            authorization_id=authorization_id,
+            generation=generation,
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
         authority_digest = hashlib.sha256(_canonical(material)).hexdigest()
-        signature = hmac.new(_secret(), authority_digest.encode(), hashlib.sha256).hexdigest()
-        envelope = {**material, "authority_digest": authority_digest, "signature": f"sha256={signature}"}
+        signature = hmac.new(
+            _secret(), authority_digest.encode(), hashlib.sha256
+        ).hexdigest()
+        envelope = {
+            **material,
+            "authority_digest": authority_digest,
+            "signature": f"sha256={signature}",
+        }
 
-        connection.execute(
+        changed = connection.execute(
             """UPDATE application_review_approvals_v2
-               SET consumed_at=COALESCE(consumed_at,CURRENT_TIMESTAMP),consumption_key=COALESCE(consumption_key,?)
+               SET consumed_at=CURRENT_TIMESTAMP,consumption_key=?
                WHERE approval_id=? AND consumed_at IS NULL""",
             (authorization_id, str(payload["approval_id"])),
-        )
+        ).rowcount
+        if changed != 1:
+            raise PermissionError(
+                "Review approval was consumed before submit authority issuance."
+            )
         connection.execute(
             """INSERT INTO application_submit_authorizations_v1(
                  authorization_id,tenant_id,user_id,application_id,plan_id,session_id,review_id,approval_id,
@@ -246,13 +336,34 @@ def issue_authorization(payload: Mapping[str, Any], *, ttl_seconds: int = AUTH_T
                  authority_digest,authority_json,status,issued_at,expires_at
                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ISSUED',?,?)""",
             (
-                authorization_id, material["tenant_id"], material["user_id"], material["application_id"],
-                material["plan_id"], session_id, material["review_id"], material["approval_id"],
-                material["provider"], material["target_url"], material["checkpoint_id"], generation,
-                material["plan_digest"], material["review_digest"], material["approval_digest"],
-                material["prepared_package_digest"], material["browser_form_digest"], material["resume_sha256"],
-                material["cover_letter_sha256"], authority_digest,
-                json.dumps(envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=True), issued_at, expires_at,
+                authorization_id,
+                material["tenant_id"],
+                material["user_id"],
+                material["application_id"],
+                material["plan_id"],
+                session_id,
+                material["review_id"],
+                material["approval_id"],
+                material["provider"],
+                material["target_url"],
+                material["checkpoint_id"],
+                generation,
+                material["plan_digest"],
+                material["review_digest"],
+                material["approval_digest"],
+                material["prepared_package_digest"],
+                material["browser_form_digest"],
+                material["resume_sha256"],
+                material["cover_letter_sha256"],
+                authority_digest,
+                json.dumps(
+                    envelope,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ),
+                issued_at,
+                expires_at,
             ),
         )
         connection.commit()
@@ -262,7 +373,6 @@ def issue_authorization(payload: Mapping[str, Any], *, ttl_seconds: int = AUTH_T
         raise
     finally:
         connection.close()
-
 
 def verify_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
     value = dict(envelope)

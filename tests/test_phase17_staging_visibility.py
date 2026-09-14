@@ -56,13 +56,14 @@ def test_product_shell_exposes_candidate_facing_phase17_routes() -> None:
     assert product_shell.PREPARE_APPLICATION_VIEW in product_shell._SPECIAL_VIEWS
 
 
-def test_application_workspace_is_preparation_only_surface() -> None:
+def test_application_workspace_has_one_authority_action_and_no_browser_executor() -> None:
     source = inspect.getsource(application_workspace_page)
     assert "Opportunity intelligence" in source
     assert "Application answers" in source
     assert "People and relationship intelligence" in source
     assert "Application readiness" in source
-    assert "Submission authority: OFF" in source
+    assert "'Approve & Submit'" in source
+    assert "No second review follows" in source
     assert "gmail_integration" not in source
     assert "playwright" not in source.casefold()
     assert "selenium" not in source.casefold()

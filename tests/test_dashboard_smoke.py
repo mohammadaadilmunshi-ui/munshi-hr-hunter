@@ -207,7 +207,8 @@ def test_complete_loop_product_ui_uses_durable_prepare_not_legacy_n8n():
     assert "Application progress" in workspace
     assert "READY_FOR_REVIEW" in workspace
     assert "Submission independently verified" in workspace
-    assert "Final Review and Final Submit remain disabled" in workspace
+    assert "'Approve & Submit'" in workspace
+    assert "No second review follows" in workspace
     assert '(PREPARE_APPLICATION_VIEW, "Applications")' in shell
 
 

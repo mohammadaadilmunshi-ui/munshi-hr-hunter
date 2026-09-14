@@ -1009,6 +1009,15 @@ class ApplicationReviewRevalidateRequest(BaseModel):
     prepared_package: dict[str, Any] | None = None
 
 
+class ApplicationApproveAndSubmitRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=240)
+    approval_idempotency_key: str = Field(min_length=1, max_length=240)
+    authorization_idempotency_key: str = Field(min_length=1, max_length=240)
+    expected_review_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_prepared_package_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_browser_form_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 
 @app.post(
     "/api/application-reviews",
@@ -1077,6 +1086,31 @@ def approve_application_review(
         return application_review_v2.approve_review(
             review_id=review_id,
             idempotency_key=payload.idempotency_key,
+            expected_review_digest=payload.expected_review_digest,
+            expected_prepared_package_digest=payload.expected_prepared_package_digest,
+            expected_browser_form_digest=payload.expected_browser_form_digest,
+        )
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.post(
+    "/api/application-reviews/{review_id}/approve-and-submit",
+    dependencies=[Depends(require_api_secret)],
+)
+def approve_and_submit_application_review(
+    review_id: str,
+    payload: ApplicationApproveAndSubmitRequest,
+) -> dict[str, Any]:
+    """The sole customer approval boundary; no later review is permitted."""
+    from app import application_single_approval_v1
+
+    try:
+        return application_single_approval_v1.approve_and_authorize(
+            review_id=review_id,
+            session_id=payload.session_id,
+            approval_idempotency_key=payload.approval_idempotency_key,
+            authorization_idempotency_key=payload.authorization_idempotency_key,
             expected_review_digest=payload.expected_review_digest,
             expected_prepared_package_digest=payload.expected_prepared_package_digest,
             expected_browser_form_digest=payload.expected_browser_form_digest,

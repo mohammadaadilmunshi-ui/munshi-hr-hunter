@@ -4,8 +4,9 @@ This page exposes durable Prepare progress, structured NEEDS_INPUT,
 READY_FOR_REVIEW artifacts, and lifecycle / verified-receipt history while
 preserving the existing evidence-bound Phase 4–7 intelligence.
 
-Ordinary rendering is read-only. An explicit Prepare click starts preparation
-only. Final Review approval and Final Submit remain outside this UI tranche.
+Ordinary rendering is read-only. An explicit Prepare click starts preparation.
+The single Approve & Submit action authorizes only the exact displayed digest;
+all subsequent claim, submit, verification, and receipt work is automatic.
 """
 from __future__ import annotations
 
@@ -189,7 +190,7 @@ def _render_job_header(snapshot: dict[str, Any]) -> None:
         unsafe_allow_html=True,
     )
     st.caption(
-        "This workspace prepares evidence and decisions only. It cannot submit an application, send outreach, or use ATS credentials."
+        "This workspace prepares the exact application package and provides the one customer review. It never sends outreach or exposes ATS credentials."
     )
 
 
@@ -216,8 +217,8 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
 
     st.markdown('### Application progress')
     st.caption(
-        'The current source of truth across preparation, employer-form '
-        'preparation, submission verification, and CRM.'
+        'The source of truth across preparation, the one customer review, '
+        'submission verification, and CRM.'
     )
 
     if not state:
@@ -263,8 +264,8 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
                 st.rerun()
 
         st.caption(
-            'Preparation only · Final Review OFF · Final Submit OFF · '
-            'No employer action occurs from this button.'
+            'Preparation only · no employer submission occurs until you review '
+            'the completed package and press Approve & Submit.'
         )
         return flow
 
@@ -376,15 +377,16 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
     plan = artifacts.get('plan') or {}
 
     if state in {'READY_FOR_REVIEW', 'READY_TO_SUBMIT'}:
+        review_record = flow.get('customer_review') or {}
+        review = review_record.get('review') or {}
         st.success(
-            'Your application package is prepared. Review the exact '
-            'artifacts and application evidence before any future '
-            'submit authority is granted.'
+            'Your tailored package and employer form are ready. This is the '
+            'only customer-facing review.'
         )
         artifact_cols = st.columns(3)
         pdf = resume.get('pdf') or {}
         artifact_cols[0].metric(
-            'Resume',
+            'Tailored resume',
             'Ready' if pdf.get('artifact_id') else 'Not recorded',
             help=str(pdf.get('filename') or ''),
         )
@@ -393,45 +395,83 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
             (
                 'Ready'
                 if cover.get('cover_letter_id')
-                else str(
-                    cover.get('decision') or 'Not required'
-                ).replace('_', ' ').title()
+                else str(cover.get('decision') or 'Not required')
+                .replace('_', ' ')
+                .title()
             ),
         )
-        artifact_cols[2].metric(
-            'Application form',
-            (
-                'Prepared'
-                if plan.get('browser_preparation_completed')
-                else 'Review'
-            ),
-        )
-        with st.expander('What will be reviewed', expanded=True):
+        artifact_cols[2].metric('ATS form', 'Completed')
+
+        with st.expander('Review application package', expanded=True):
             st.write(
                 {
                     'Resume': (
-                        pdf.get('filename')
+                        (review.get('resume') or {}).get('filename')
+                        or pdf.get('filename')
                         or 'Exact bound PDF artifact'
                     ),
                     'Cover letter': (
-                        '1-page bound artifact'
-                        if cover.get('cover_letter_id')
-                        else str(
-                            cover.get('decision') or 'Not required'
+                        (review.get('cover_letter') or {}).get('filename')
+                        if review.get('cover_letter')
+                        else str(cover.get('decision') or 'Not required')
+                    ),
+                    'Provider': review.get('provider') or plan.get('provider'),
+                    'Application fields completed': (
+                        (review.get('application') or {}).get(
+                            'completed_required_fields'
                         )
                     ),
-                    'Provider': plan.get('provider') or 'Not recorded',
-                    'Application plan': (
-                        plan.get('plan_id') or 'Not recorded'
-                    ),
-                    'Final review approved': False,
-                    'Final submit executed': False,
+                    'Answers': [
+                        {
+                            'Question': item.get('question_key')
+                            or item.get('question_family'),
+                            'Answer': item.get('display_value'),
+                        }
+                        for item in (review.get('answers') or [])
+                    ],
                 }
             )
+            st.caption(
+                'Protected values remain masked. Approval is bound to the '
+                'displayed review, prepared-form, resume, plan, and checkpoint digests.'
+            )
+
+        if not review_record:
+            st.warning(
+                'The immutable review snapshot is still synchronizing. '
+                'Submission remains blocked.'
+            )
+        elif st.button(
+            'Approve & Submit',
+            type='primary',
+            use_container_width=True,
+            key=f'complete_loop_approve_submit_{job_id}',
+        ):
+            try:
+                with st.spinner('Applying now…'):
+                    complete_loop.approve_and_submit_for_job(int(job_id))
+            except Exception as error:
+                st.error('Submission could not start safely: ' + str(error))
+            else:
+                st.toast('Approval recorded. Applying now.', icon='✅')
+                st.rerun()
+        st.caption(
+            'No second review follows. Backend hashing, one-use authority, '
+            'browser continuation, verification, and receipts remain automatic.'
+        )
+
+    if state == 'SUBMITTING':
         st.info(
-            'Final Review and Final Submit remain disabled in this UI '
-            'tranche. They activate only after the canonical synthetic '
-            'staging E2E is accepted.'
+            'Applying now. Your single approval is recorded and the one-use '
+            'canonical authority is being claimed. Do not approve again.'
+        )
+
+    if state == 'SUBMITTED':
+        receipt = flow.get('production_receipt') or {}
+        st.success('Submitted. Verified employer-facing evidence is recorded.')
+        st.caption(
+            f"Receipt {receipt.get('receipt_id') or 'recorded'} · "
+            f"{receipt.get('verified_at') or 'verification time recorded'}"
         )
 
     if state in {'FAILED_SAFELY', 'BLOCKED', 'CANCELLED'}:
@@ -726,7 +766,7 @@ def _render_readiness(
     if blockers:
         for blocker in blockers:
             st.write(f"• {blocker}")
-    st.info("Preparation only · Submission authority: OFF · Automatic external actions: OFF")
+    st.info("Readiness evidence only · the sole Approve & Submit action is shown above when the exact package is ready")
 
 
 def render() -> None:
