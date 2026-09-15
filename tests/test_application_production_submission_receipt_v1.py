@@ -40,6 +40,7 @@ def receipt_db(hunter_db, monkeypatch: pytest.MonkeyPatch):
                 """CREATE TABLE IF NOT EXISTS application_plans_v2 (
                        plan_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL,
                        user_id TEXT NOT NULL, application_id TEXT NOT NULL,
+                       job_id INTEGER NOT NULL,
                        provider TEXT NOT NULL, status TEXT NOT NULL,
                        executable INTEGER NOT NULL, plan_digest TEXT NOT NULL,
                        snapshot_json TEXT NOT NULL)"""
@@ -88,9 +89,9 @@ def receipt_db(hunter_db, monkeypatch: pytest.MonkeyPatch):
 
 
 def _receipt(**overrides) -> dict:
+    requested_receipt_id = overrides.pop("receipt_id", None)
     body = {
         "version": receipts.RECEIPT_VERSION,
-        "receipt_id": "production-receipt-fixture-1",
         "tenant_id": "default",
         "user_id": "local-owner",
         "application_id": "application-1",
@@ -115,6 +116,11 @@ def _receipt(**overrides) -> dict:
     receipt_digest = hashlib.sha256(
         json.dumps(material, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
     ).hexdigest()
+    body["receipt_id"] = (
+        str(requested_receipt_id)
+        if requested_receipt_id is not None
+        else "production-receipt-" + receipt_digest[:32]
+    )
     body["receipt_digest"] = receipt_digest
     body["signature"] = (
         "sha256="
@@ -204,11 +210,19 @@ def test_verified_receipt_consumes_the_claim_exactly_once(receipt_db, monkeypatc
         # The authority ledger declares FKs to plan/review/approval, so the referenced
         # rows must exist for a real insert to succeed.
         connection.execute(
+            """INSERT OR IGNORE INTO jobs(
+                   id,job_fingerprint,source,company_name,title,apply_url
+               ) VALUES (
+                   42,'production-receipt-job-42','test','Example','Analyst',
+                   'https://boards.greenhouse.io/example/jobs/42'
+               )"""
+        )
+        connection.execute(
             """INSERT OR IGNORE INTO application_plans_v2
-                   (plan_id,tenant_id,user_id,application_id,provider,status,executable,
-                    plan_digest,snapshot_json)
+                   (plan_id,tenant_id,user_id,application_id,job_id,provider,status,
+                    executable,plan_digest,snapshot_json)
                VALUES ('application-plan-1','default','local-owner','application-1',
-                       'GREENHOUSE','READY_TO_APPLY',1,:plan_digest,'{}')""",
+                       42,'GREENHOUSE','READY_TO_APPLY',1,:plan_digest,'{}')""",
             {"plan_digest": "1" * 64},
         )
         connection.execute(
@@ -298,6 +312,7 @@ def test_verified_receipt_consumes_the_claim_exactly_once(receipt_db, monkeypatc
     receipt = _receipt(authority_digest=digest)
     result = receipts.ingest_receipt(receipt)
     assert result["status"] == "INGESTED" and result["replayed"] is False
+    assert result["application_state"] == "SUBMITTED"
 
     # Replay of the identical receipt is acknowledged, never re-counted.
     replay = receipts.ingest_receipt(receipt)
@@ -313,13 +328,24 @@ def test_verified_receipt_consumes_the_claim_exactly_once(receipt_db, monkeypatc
             "SELECT status FROM application_submit_authorizations_v1 WHERE authorization_id=?",
             (envelope["authorization_id"],),
         ).fetchone()["status"]
+        lifecycle_state = connection.execute(
+            "SELECT state FROM application_lifecycle_records WHERE application_id=?",
+            ("application-1",),
+        ).fetchone()["state"]
+        already_applied = connection.execute(
+            "SELECT already_applied FROM jobs WHERE id=42"
+        ).fetchone()["already_applied"]
     finally:
         connection.close()
     assert rows == 1
+    assert lifecycle_state == "SUBMITTED"
+    assert already_applied == 1
     # A second, differently-shaped receipt can no longer consume the claim.
     assert status == "CONSUMED"
     with pytest.raises(PermissionError, match="CLAIMED submit authorization"):
-        receipts.ingest_receipt(_receipt(receipt_id="production-receipt-fixture-2"))
+        receipts.ingest_receipt(
+            _receipt(verification_evidence_digest="d" * 64)
+        )
 
 
 def test_receipt_binding_mismatch_is_refused(receipt_db) -> None:
