@@ -40,6 +40,7 @@ jobs:
           python -m pytest \
             tests/test_dashboard_smoke.py \
             tests/test_initial_dashboard_runtime_hotfix_v1.py \
+            tests/test_native_resume_quality_hotfix_v1.py \
             tests/test_product_state.py \
             tests/test_product_n8n_dispatch.py \
             tests/test_product_manual_input.py \
