@@ -101,11 +101,10 @@ jobs:
   deploy-production:
     needs: [resolve-release, deployment-ci]
     runs-on: ubuntu-latest
-    # Remote-first bootstrap policy: the staging GitHub environment currently
-    # holds the shared restricted Netcup SSH transport secrets. It is used only
-    # as the credential envelope; the exact production bundle and server-side
-    # production deployment wrapper remain authoritative.
-    environment: staging
+    # Production releases use the repository's dedicated production environment.
+    # Its protection policy and restricted Netcup SSH secrets remain an additional
+    # boundary around the exact-SHA release request and server-side production wrapper.
+    environment: production
     timeout-minutes: 30
     steps:
       - name: Checkout exact release SHA
@@ -133,7 +132,7 @@ jobs:
           git bundle create "$RUNNER_TEMP/munshi-production-release.bundle" "refs/remotes/origin/$DEPLOY_BRANCH"
           git bundle verify "$RUNNER_TEMP/munshi-production-release.bundle"
 
-      - name: Configure restricted SSH from shared Netcup credential envelope
+      - name: Configure restricted SSH from production credential envelope
         shell: bash
         env:
           NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
@@ -181,7 +180,7 @@ jobs:
             echo "### Remote production deployment verified"
             echo "- exact SHA: \`$DEPLOY_SHA\`"
             echo "- WAL-safe backup and rollback image enforced by hardened wrapper"
-            echo "- staging GitHub environment used only as shared restricted-SSH secret envelope"
+            echo "- production GitHub environment enforced as the restricted-SSH credential boundary"
             echo "- n8n/Ollama preserved unless a future separately authorized workflow changes that contract"
             echo "- no local terminal required"
           } >> "$GITHUB_STEP_SUMMARY"
