@@ -2,8 +2,10 @@
 from __future__ import annotations
 import hashlib, hmac, json, os, sqlite3
 from typing import Any, Mapping
+from app import application_lifecycle_authority_v1 as lifecycle
 from app import application_submit_authorization_v1 as submit_auth
 from app.database import get_connection
+from app.tenant_foundation import current_owner
 
 RECEIPT_VERSION = "munshi-production-submission-receipt-v1"
 SCHEMA_STATEMENTS = (
@@ -77,7 +79,8 @@ def ingest_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
         prior = connection.execute("SELECT * FROM production_submission_receipts_v1 WHERE receipt_id=?", (str(value["receipt_id"]),)).fetchone()
         if prior is not None:
             if str(prior["receipt_digest"]) != str(value["receipt_digest"]): raise PermissionError("Conflicting production-receipt replay.")
-            connection.commit(); return {"receipt_id": str(value["receipt_id"]), "status":"INGESTED", "replayed":True, "verification_status":"VERIFIED"}
+            application_state = _project_submitted(connection, value)
+            connection.commit(); return {"receipt_id": str(value["receipt_id"]), "status":"INGESTED", "replayed":True, "verification_status":"VERIFIED", "application_state": application_state}
         authority = connection.execute("SELECT * FROM application_submit_authorizations_v1 WHERE authorization_id=?", (str(value["authorization_id"]),)).fetchone()
         if authority is None or str(authority["status"]) != "CLAIMED": raise PermissionError("Production receipt requires a currently CLAIMED submit authorization.")
         for key in ("tenant_id","user_id","application_id","authority_digest","claim_digest","plan_id","session_id","review_id","approval_id","provider","target_url"):
@@ -85,7 +88,8 @@ def ingest_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
         connection.execute("""INSERT INTO production_submission_receipts_v1(receipt_id,tenant_id,user_id,application_id,authorization_id,authority_digest,claim_digest,plan_id,session_id,review_id,approval_id,provider,provider_application_id,target_url,verification_method,verification_evidence_digest,receipt_digest,receipt_json,verified_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (str(value["receipt_id"]),str(value["tenant_id"]),str(value["user_id"]),str(value["application_id"]),str(value["authorization_id"]),str(value["authority_digest"]),str(value["claim_digest"]),str(value["plan_id"]),str(value["session_id"]),str(value["review_id"]),str(value["approval_id"]),str(value["provider"]),str(value["provider_application_id"]),str(value["target_url"]),str(value["verification_method"]),str(value["verification_evidence_digest"]),str(value["receipt_digest"]),json.dumps(dict(receipt),sort_keys=True,separators=(",",":"),ensure_ascii=True),str(value["verified_at"])))
         if connection.execute("UPDATE application_submit_authorizations_v1 SET status='CONSUMED',consumed_at=CURRENT_TIMESTAMP WHERE authorization_id=? AND status='CLAIMED' AND claim_digest=?", (str(value["authorization_id"]),str(value["claim_digest"]))).rowcount != 1:
             raise PermissionError("Production receipt lost the atomic authorization-consumption race.")
-        connection.commit(); return {"receipt_id":str(value["receipt_id"]),"status":"INGESTED","replayed":False,"verification_status":"VERIFIED"}
+        application_state = _project_submitted(connection, value)
+        connection.commit(); return {"receipt_id":str(value["receipt_id"]),"status":"INGESTED","replayed":False,"verification_status":"VERIFIED","application_state":application_state}
     except Exception:
         connection.rollback(); raise
     finally:
