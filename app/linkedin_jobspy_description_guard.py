@@ -4,9 +4,19 @@ import functools
 import sys
 import types
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
-VERSION = "linkedin-jobspy-description-guard-v1.1.0"
-MARKER = "AADIL_LINKEDIN_JOBSPY_RUNTIME_DESCRIPTION_GUARD_V1_1"
+VERSION = "linkedin-jobspy-direct-url-guard-v1.2.0"
+MARKER = "AADIL_LINKEDIN_JOBSPY_DIRECT_URL_GUARD_V1_2"
+
+_AGGREGATOR_HOSTS = frozenset(
+    {
+        "linkedin.com",
+        "indeed.com",
+        "glassdoor.com",
+        "ziprecruiter.com",
+    }
+)
 
 
 def _jobspy_module() -> Any:
@@ -17,55 +27,117 @@ def _jobspy_module() -> Any:
     return jobspy
 
 
-def install() -> dict[str, Any]:
-    """Force JobSpy LinkedIn detail fetching without depending on call location.
+def _linkedin_requested(value: Any) -> bool:
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        values = list(value)
+    else:
+        return False
+    return any(str(item or "").strip().casefold() == "linkedin" for item in values)
 
-    The LinkedIn worker may delegate to a shared JobSpy adapter, so patch both
-    ``jobspy.scrape_jobs`` and already-imported module globals that reference the
-    original function.
+
+def _direct_application_url(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = urlsplit(text)
+    except ValueError:
+        return None
+    host = (parsed.hostname or "").casefold().rstrip(".")
+    if parsed.scheme.casefold() not in {"http", "https"} or not host:
+        return None
+    if any(host == item or host.endswith("." + item) for item in _AGGREGATOR_HOSTS):
+        return None
+    return text
+
+
+def _install_board_normalizer_guard() -> bool:
+    """Prevent the shared outer normalizer from restoring LinkedIn as apply_url.
+
+    The dedicated LinkedIn worker imports jobspy_board_common before calling this
+    installer. We replace only that module's normalize_jobspy_row global; all
+    other dedicated JobSpy worker processes remain untouched.
+    """
+    try:
+        from app import jobspy_board_common as board_common
+    except Exception:
+        return False
+
+    original = getattr(board_common, "normalize_jobspy_row", None)
+    if not callable(original):
+        return False
+    if getattr(original, "_aadil_linkedin_direct_url_guard", False):
+        return True
+
+    @functools.wraps(original)
+    def guarded_normalize(record: dict[str, Any], site_name: str) -> dict[str, Any]:
+        result = original(record, site_name)
+        if str(site_name or "").strip().casefold() != "linkedin":
+            return result
+        safe = _direct_application_url(result.get("apply_url"))
+        if safe == result.get("apply_url"):
+            return result
+        protected = dict(result)
+        protected["apply_url"] = safe
+        return protected
+
+    guarded_normalize._aadil_linkedin_direct_url_guard = True  # type: ignore[attr-defined]
+    guarded_normalize._aadil_original_normalizer = original  # type: ignore[attr-defined]
+    board_common.normalize_jobspy_row = guarded_normalize
+    return True
+
+
+def install() -> dict[str, Any]:
+    """Protect LinkedIn detail fetching and direct-application URL semantics.
+
+    This installer runs only in the dedicated LinkedIn worker. It still checks
+    site_name before forcing LinkedIn detail retrieval so shared JobSpy behavior
+    cannot be altered accidentally. It also guards the outer Hunter normalizer so
+    an unresolved LinkedIn listing URL is never restored as ``apply_url``.
     """
     module = _jobspy_module()
     original = getattr(module, "scrape_jobs", None)
     if not callable(original):
         raise RuntimeError("jobspy.scrape_jobs is unavailable")
 
-    if getattr(original, "_aadil_linkedin_description_guard", False):
-        return {
-            "success": True,
-            "already_installed": True,
-            "patched_module_globals": 0,
-            "version": VERSION,
-        }
-
-    @functools.wraps(original)
-    def guarded(*args: Any, **kwargs: Any) -> Any:
-        kwargs["linkedin_fetch_description"] = True
-        return original(*args, **kwargs)
-
-    guarded._aadil_linkedin_description_guard = True  # type: ignore[attr-defined]
-    guarded._aadil_original_scrape_jobs = original  # type: ignore[attr-defined]
-    setattr(module, "scrape_jobs", guarded)
-
+    already_installed = bool(getattr(original, "_aadil_linkedin_description_guard", False))
     patched = 0
-    current_module = sys.modules.get(__name__)
-    for loaded in list(sys.modules.values()):
-        if loaded is None or loaded is current_module:
-            continue
-        namespace = getattr(loaded, "__dict__", None)
-        if not isinstance(namespace, dict):
-            continue
-        for name, value in list(namespace.items()):
-            if value is original:
-                try:
-                    namespace[name] = guarded
-                    patched += 1
-                except Exception:
-                    pass
+
+    if not already_installed:
+        @functools.wraps(original)
+        def guarded(*args: Any, **kwargs: Any) -> Any:
+            if _linkedin_requested(kwargs.get("site_name")):
+                kwargs["linkedin_fetch_description"] = True
+            return original(*args, **kwargs)
+
+        guarded._aadil_linkedin_description_guard = True  # type: ignore[attr-defined]
+        guarded._aadil_original_scrape_jobs = original  # type: ignore[attr-defined]
+        setattr(module, "scrape_jobs", guarded)
+
+        current_module = sys.modules.get(__name__)
+        for loaded in list(sys.modules.values()):
+            if loaded is None or loaded is current_module:
+                continue
+            namespace = getattr(loaded, "__dict__", None)
+            if not isinstance(namespace, dict):
+                continue
+            for name, value in list(namespace.items()):
+                if value is original:
+                    try:
+                        namespace[name] = guarded
+                        patched += 1
+                    except Exception:
+                        pass
+
+    normalizer_guarded = _install_board_normalizer_guard()
 
     return {
         "success": True,
-        "already_installed": False,
+        "already_installed": already_installed,
         "patched_module_globals": patched,
+        "board_normalizer_guarded": normalizer_guarded,
         "version": VERSION,
     }
 
@@ -91,16 +163,19 @@ def self_test() -> dict[str, Any]:
         result = install()
         direct = fake_jobspy.scrape_jobs(site_name=["linkedin"], search_term="HR")  # type: ignore[attr-defined]
         delegated = holder.delegated_scrape(site_name=["linkedin"], search_term="TA")  # type: ignore[attr-defined]
+        non_linkedin = fake_jobspy.scrape_jobs(site_name=["indeed"], search_term="HR")  # type: ignore[attr-defined]
         success = (
             result.get("success") is True
             and direct["kwargs"].get("linkedin_fetch_description") is True
             and delegated["kwargs"].get("linkedin_fetch_description") is True
-            and len(calls) == 2
+            and "linkedin_fetch_description" not in non_linkedin["kwargs"]
+            and len(calls) == 3
         )
         return {
             "success": success,
             "direct_forced": direct["kwargs"].get("linkedin_fetch_description") is True,
             "delegated_forced": delegated["kwargs"].get("linkedin_fetch_description") is True,
+            "non_linkedin_unchanged": "linkedin_fetch_description" not in non_linkedin["kwargs"],
             "calls": len(calls),
             "install": result,
             "version": VERSION,
