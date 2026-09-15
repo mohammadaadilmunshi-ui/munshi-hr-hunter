@@ -17,9 +17,11 @@ from typing import Any
 import streamlit as st
 
 from app import native_resume_service_v3 as resume_v3
+from app.resume_profile_details_v31 import extract_uploaded_source as extract_master_resume_source
 
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 _ALLOWED_SOURCE_KINDS = {"pasted_text", "text_upload", "docx_upload"}
+MASTER_RESUME_EXTRACTOR_PARITY_VERSION = "profile-master-resume-extractor-parity-v1"
 
 
 def _active_source() -> dict[str, Any]:
@@ -65,7 +67,12 @@ def _save_replacement(upload: Any) -> dict[str, Any]:
         raise ValueError("Choose a non-empty resume file.")
     if len(data) > MAX_UPLOAD_BYTES:
         raise ValueError("Master Resume files must be 12 MB or smaller.")
-    text, source_kind = resume_v3.extract_uploaded_source(str(upload.name), data)
+
+    # Keep the Profile -> Master Resume -> Replace path on the exact same local,
+    # coordinate-aware extraction contract used by Resume Studio V3.1. The old
+    # resume_v3 extractor uses plain pypdf text extraction for PDFs and can turn
+    # visually normal resumes into one-token-per-line evidence.
+    text, source_kind = extract_master_resume_source(str(upload.name), data)
     return resume_v3.v2.v1.save_confirmed_source(
         content_text=text,
         label=str(upload.name),
