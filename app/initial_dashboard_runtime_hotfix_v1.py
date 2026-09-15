@@ -1,15 +1,15 @@
 """Initial-dashboard runtime hotfixes that are safe inside Streamlit only.
 
-This module deliberately does not alter API/worker migration authority.  The
+This module deliberately does not alter API/worker migration authority. The
 Hunter supervisor starts FastAPI first and waits for its health endpoint before
 starting Streamlit, so the API remains responsible for authoritative schema
-initialization.  Streamlit then uses read-first schema guards: if the expected
-schema already exists, ordinary page renders avoid CREATE TABLE/INDEX work.  If
+initialization. Streamlit then uses read-first schema guards: if the expected
+schema already exists, ordinary page renders avoid CREATE TABLE/INDEX work. If
 a table is genuinely absent (for example, a standalone development launch), the
 original schema initializer is called as a compatibility fallback.
 
 The module also repairs the Settings Advanced/System renderer so it dynamically
-uses the latest wrapped V2.2 renderer.  This keeps the provider telemetry window
+uses the latest wrapped V2.2 renderer. This keeps the provider telemetry window
 visible after AutoApply Settings replaces the Settings page.
 """
 from __future__ import annotations
@@ -18,11 +18,12 @@ import functools
 import sqlite3
 from typing import Any, Callable, Iterable
 
-VERSION = "initial-dashboard-runtime-hotfix-v1"
-MARKER = "AADIL_INITIAL_DASHBOARD_RUNTIME_HOTFIX_V1"
+VERSION = "initial-dashboard-runtime-hotfix-v1.1"
+MARKER = "AADIL_INITIAL_DASHBOARD_RUNTIME_HOTFIX_V1_1"
 
 
 SchemaReadyProbe = Callable[[sqlite3.Connection], bool]
+ConnectionFactory = Callable[[], sqlite3.Connection]
 
 
 def _tables_ready(connection: sqlite3.Connection, required: Iterable[str]) -> bool:
@@ -55,10 +56,11 @@ def _install_read_first_guard(
     *,
     required_tables: Iterable[str],
     ready_probe: SchemaReadyProbe | None = None,
+    connection_factory: ConnectionFactory | None = None,
 ) -> bool:
     """Wrap ``module.ensure_schema`` so existing schemas stay read-only on render."""
     original = getattr(module, "ensure_schema", None)
-    get_connection = getattr(module, "get_connection", None)
+    get_connection = connection_factory or getattr(module, "get_connection", None)
     if not callable(original) or not callable(get_connection):
         return False
     if getattr(original, "_aadil_read_first_schema_guard", False):
@@ -83,7 +85,7 @@ def _install_read_first_guard(
             if ready:
                 return
 
-            # Compatibility fallback only.  In the production supervisor this
+            # Compatibility fallback only. In the production supervisor this
             # should not execute because FastAPI initializes the schema before
             # Streamlit starts.
             original(active)
@@ -135,6 +137,8 @@ def install() -> dict[str, Any]:
     from app import secure_vault
     from app import tenant_foundation
 
+    db_factory = native_resume_service.get_connection
+
     guards = {
         "tenant_foundation": _install_read_first_guard(
             tenant_foundation,
@@ -185,40 +189,62 @@ def install() -> dict[str, Any]:
         "native_resume_service": _install_read_first_guard(
             native_resume_service,
             required_tables=("native_resume_sources", "native_resume_versions"),
+            connection_factory=db_factory,
         ),
         "native_resume_service_v2": _install_read_first_guard(
             native_resume_service_v2,
-            required_tables=("native_resume_writer_settings",),
+            required_tables=(
+                "native_resume_sources",
+                "native_resume_versions",
+                "native_resume_writer_settings",
+                "credential_secret",
+                "credential_secret_audit",
+            ),
+            connection_factory=db_factory,
         ),
         "native_resume_service_v3": _install_read_first_guard(
             native_resume_service_v3,
-            required_tables=("native_resume_profile_extracts",),
+            required_tables=(
+                "native_resume_sources",
+                "native_resume_versions",
+                "native_resume_writer_settings",
+                "native_resume_profile_extracts",
+            ),
+            connection_factory=db_factory,
         ),
         "phase45_truth_binding": _install_read_first_guard(
             phase45_truth_binding,
             required_tables=(
+                "native_resume_versions",
+                "application_answer_vault",
                 "native_resume_truth_bindings",
                 "application_answer_truth_bindings",
             ),
         ),
         "phase4_job_binding": _install_read_first_guard(
             phase4_job_binding,
-            required_tables=("native_resume_job_bindings",),
+            required_tables=(
+                "native_resume_versions",
+                "native_resume_job_bindings",
+            ),
         ),
         "native_resume_service_v4": _install_read_first_guard(
             native_resume_service_v4,
             required_tables=(
+                "native_resume_versions",
                 "native_resume_truth_bindings",
                 "application_answer_truth_bindings",
                 "native_resume_job_bindings",
             ),
+            connection_factory=db_factory,
         ),
     }
 
+    advanced = _install_dynamic_advanced_renderer()
     return {
-        "success": all(guards.values()) and _install_dynamic_advanced_renderer(),
+        "success": all(guards.values()) and advanced,
         "version": VERSION,
         "marker": MARKER,
         "schema_guards": guards,
-        "dynamic_advanced_renderer": True,
+        "dynamic_advanced_renderer": advanced,
     }
