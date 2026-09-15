@@ -335,11 +335,16 @@ def test_verified_receipt_consumes_the_claim_exactly_once(receipt_db, monkeypatc
         already_applied = connection.execute(
             "SELECT already_applied FROM jobs WHERE id=42"
         ).fetchone()["already_applied"]
+        submitted_events = connection.execute(
+            """SELECT COUNT(*) AS n FROM application_lifecycle_history_v1
+               WHERE application_id='application-1' AND to_state='SUBMITTED'"""
+        ).fetchone()["n"]
     finally:
         connection.close()
     assert rows == 1
     assert lifecycle_state == "SUBMITTED"
     assert already_applied == 1
+    assert submitted_events == 1
     # A second, differently-shaped receipt can no longer consume the claim.
     assert status == "CONSUMED"
     with pytest.raises(PermissionError, match="CLAIMED submit authorization"):
