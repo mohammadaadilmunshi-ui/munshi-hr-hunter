@@ -6,12 +6,18 @@ on:
       - app/application_review_v2.py
       - app/application_single_approval_v1.py
       - app/application_submit_authorization_v1.py
+      - app/application_artifact_transport_v2.py
+      - app/application_production_submission_receipt_v1.py
       - app/application_workspace_page.py
       - app/api.py
       - app/prepare_worker_adapters_v1b.py
       - app/prepare_worker_adapters_v1c.py
       - app/product_application_flow_v2.py
       - tests/test_application_review_v2.py
+      - tests/test_application_submit_authorization_v1.py
+      - tests/test_application_production_submission_receipt_v1.py
+      - tests/test_application_artifact_transport_v2.py
+      - tests/test_single_approval_route_retirement_v1.py
       - tests/test_prepare_worker_adapters_v1b.py
       - tests/test_prepare_worker_adapters_v1c.py
       - tests/test_product_application_flow_v2.py
@@ -46,3 +52,7 @@ jobs:
           tests/test_prepare_worker_adapters_v1c.py
           tests/test_application_review_v2.py
           tests/test_product_application_flow_v2.py
+          tests/test_application_submit_authorization_v1.py
+          tests/test_application_production_submission_receipt_v1.py
+          tests/test_application_artifact_transport_v2.py
+          tests/test_single_approval_route_retirement_v1.py
