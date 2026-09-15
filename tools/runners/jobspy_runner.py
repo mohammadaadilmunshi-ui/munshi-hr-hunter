@@ -7,6 +7,7 @@ import sys
 from contextlib import redirect_stdout
 from importlib.metadata import version
 from typing import Any
+from urllib.parse import urlsplit
 
 import pandas as pd
 from jobspy import scrape_jobs
@@ -19,6 +20,15 @@ SUPPORTED_SITES = [
     "glassdoor",
     "linkedin",
 ]
+
+_LINKEDIN_APPLICATION_AGGREGATOR_HOSTS = frozenset(
+    {
+        "linkedin.com",
+        "indeed.com",
+        "glassdoor.com",
+        "ziprecruiter.com",
+    }
+)
 
 
 def clean(value: Any) -> Any:
@@ -49,6 +59,26 @@ def clean(value: Any) -> Any:
     text = str(value).strip()
 
     return text or None
+
+
+def _linkedin_direct_application_url(value: Any) -> str | None:
+    """Return a non-aggregator HTTP(S) URL suitable as a LinkedIn apply target."""
+    text = clean(value)
+    if not text:
+        return None
+    try:
+        parsed = urlsplit(str(text))
+    except ValueError:
+        return None
+    host = (parsed.hostname or "").casefold().rstrip(".")
+    if parsed.scheme.casefold() not in {"http", "https"} or not host:
+        return None
+    if any(
+        host == candidate or host.endswith("." + candidate)
+        for candidate in _LINKEDIN_APPLICATION_AGGREGATOR_HOSTS
+    ):
+        return None
+    return str(text)
 
 
 def to_float(value: Any) -> float | None:
@@ -232,6 +262,11 @@ def normalize_record(
 
     job_url = clean(row.get("job_url"))
     direct_url = clean(row.get("job_url_direct"))
+    apply_url = (
+        _linkedin_direct_application_url(direct_url)
+        if str(site).casefold() == "linkedin"
+        else direct_url or job_url
+    )
 
     remote_value = clean(row.get("is_remote"))
 
@@ -259,7 +294,7 @@ def normalize_record(
         ),
         "employment_type": clean(row.get("job_type")),
         "job_url": job_url,
-        "apply_url": direct_url or job_url,
+        "apply_url": apply_url,
         "description_raw": (
             clean(row.get("description"))
             or "Not specified"
@@ -334,7 +369,7 @@ def scrape_site(
         arguments["country_indeed"] = "USA"
 
     if site == "linkedin":
-        arguments["linkedin_fetch_description"] = False
+        arguments["linkedin_fetch_description"] = True
 
     if job_type:
         arguments["job_type"] = job_type
@@ -342,8 +377,6 @@ def scrape_site(
     if remote_only:
         arguments["is_remote"] = True
 
-    # Indeed supports either freshness or job-type/remote
-    # filtering in a single request, not both.
     if not (
         site == "indeed"
         and (
@@ -353,8 +386,6 @@ def scrape_site(
     ):
         arguments["hours_old"] = hours_old
 
-    # Keep stdout clean so the parent process receives
-    # only our final JSON result.
     with redirect_stdout(sys.stderr):
         frame = scrape_jobs(**arguments)
 
