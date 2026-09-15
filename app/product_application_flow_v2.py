@@ -570,7 +570,7 @@ def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
         'customer-approve-submit-'
         + hashlib.sha256(click_identity.encode('utf-8')).hexdigest()[:40]
     )
-    return application_single_approval_v1.approve_and_authorize(
+    result = application_single_approval_v1.approve_and_authorize(
         review_id=str(review['review_id']),
         session_id=str(plan['apply_session_id']),
         approval_idempotency_key=click_key,
@@ -581,6 +581,18 @@ def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
         ),
         expected_browser_form_digest=str(review['browser_form_digest']),
     )
+    # Hand the authority to the session that earned it. Best-effort and never
+    # fatal: the approval and the ISSUED authority are already durable, and
+    # Apply can pull the identical envelope over the authenticated bridge if
+    # this fails, so a delivery error must not roll back or re-ask the customer.
+    from app import prepare_worker_adapters_v1c
+
+    result['authority_delivery'] = (
+        prepare_worker_adapters_v1c.deliver_submit_authorization(
+            dict(result.get('submit_authorization') or {})
+        )
+    )
+    return result
 
 
 def pipeline_rows(limit: int = 250) -> list[dict[str, Any]]:

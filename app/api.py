@@ -1076,22 +1076,17 @@ def revalidate_application_review(
     "/api/application-reviews/{review_id}/approve",
     dependencies=[Depends(require_api_secret)],
 )
-def approve_application_review(
-    review_id: str,
-    payload: ApplicationReviewApprovalRequest,
-) -> dict[str, Any]:
-    from app import application_review_v2
-
-    try:
-        return application_review_v2.approve_review(
-            review_id=review_id,
-            idempotency_key=payload.idempotency_key,
-            expected_review_digest=payload.expected_review_digest,
-            expected_prepared_package_digest=payload.expected_prepared_package_digest,
-            expected_browser_form_digest=payload.expected_browser_form_digest,
-        )
-    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+def approve_application_review(review_id: str) -> dict[str, Any]:
+    """Retired second-approval surface; the single boundary is approve-and-submit."""
+    del review_id
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "Separate review approval was retired. Use the single "
+            "POST /api/application-reviews/{review_id}/approve-and-submit action bound "
+            "to the frozen review digest."
+        ),
+    )
 
 
 @app.post(

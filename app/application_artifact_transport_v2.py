@@ -23,8 +23,9 @@ PURPOSE_ARTIFACT_BYTES = "ARTIFACT_BYTES"
 PURPOSE_COVER_LETTER_BYTES = "COVER_LETTER_BYTES"
 PURPOSE_SUBMIT_AUTH_ISSUE = "SUBMIT_AUTHORIZATION_ISSUE"
 PURPOSE_SUBMIT_AUTH_CLAIM = "SUBMIT_AUTHORIZATION_CLAIM"
+PURPOSE_SUBMIT_AUTH_READ = "SUBMIT_AUTHORIZATION_READ"
 PURPOSE_PRODUCTION_RECEIPT_INGEST = "PRODUCTION_RECEIPT_INGEST"
-CONTROL_PURPOSES = frozenset({PURPOSE_SUBMIT_AUTH_ISSUE,PURPOSE_SUBMIT_AUTH_CLAIM,PURPOSE_PRODUCTION_RECEIPT_INGEST})
+CONTROL_PURPOSES = frozenset({PURPOSE_SUBMIT_AUTH_ISSUE,PURPOSE_SUBMIT_AUTH_CLAIM,PURPOSE_SUBMIT_AUTH_READ,PURPOSE_PRODUCTION_RECEIPT_INGEST})
 MAX_SKEW_SECONDS = 120
 REQUIRED = {"version","request_id","purpose","tenant_id","user_id","application_id","plan_id","plan_digest","artifact_id","artifact_reference","artifact_sha256"}
 CONTROL_REQUIRED = {"version","request_id","purpose","tenant_id","user_id","application_id","plan_id","plan_digest","payload"}
@@ -100,6 +101,8 @@ def _control_response(body:bytes,headers:Mapping[str,str],*,now:int|None=None):
         if str(source.get(key) or "")!=str(p[key]): raise PermissionError(f"Execution bridge control binding mismatch: {key}.")
     if purpose==PURPOSE_SUBMIT_AUTH_ISSUE:
         result=application_submit_authorization_v1.issue_authorization(payload)
+    elif purpose==PURPOSE_SUBMIT_AUTH_READ:
+        result=application_submit_authorization_v1.current_authorization(payload)
     elif purpose==PURPOSE_SUBMIT_AUTH_CLAIM:
         result=application_submit_authorization_v1.claim_authorization(dict(payload.get("authorization") or {}),claimant_id=str(payload.get("claimant_id") or ""))
     else:

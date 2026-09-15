@@ -44,6 +44,7 @@ from app import prepare_orchestrator_v1 as orchestrator
 
 WORKERS_ENV = "MUNSHI_PREPARE_WORKER_ADAPTERS_V1C_ENABLED"
 ATS_RUNTIME_ENV = "MUNSHI_PREPARE_ATS_RUNTIME_START_ENABLED"
+AUTHORITY_DELIVERY_ENV = "MUNSHI_APPLY_SUBMIT_AUTHORITY_DELIVERY_ENABLED"
 APPLY_BASE_URL_ENV = "MUNSHI_APPLY_BASE_URL"
 APPLY_COMMAND_SECRET_ENV = "MUNSHI_APPLY_COMMAND_SECRET"
 
@@ -54,6 +55,9 @@ _APPLY_SESSION_PATH = "/v1/complete-loop/sessions"
 _APPLY_PREPARE_JOB_PATH = "/v1/complete-loop/preparation-jobs/{job_id}"
 _APPLY_RESOLUTION_TASK_PATH = "/v1/complete-loop/preparation-jobs/{job_id}/resolution-tasks"
 _APPLY_REVIEW_PATH = "/v1/complete-loop/sessions/{session_id}/review"
+_APPLY_SUBMIT_AUTHORITY_PATH = (
+    "/v1/complete-loop/sessions/{session_id}/submit-authority"
+)
 _RUNNING_APPLY_STATES = frozenset({"QUEUED", "RUNNING"})
 _TERMINAL_APPLY_STATES = frozenset(
     {"WAITING_INPUT", "READY_FOR_REVIEW", "BLOCKED", "FAILED_SAFELY", "CANCELLED"}
@@ -76,6 +80,11 @@ def workers_enabled() -> bool:
 
 def ats_runtime_enabled() -> bool:
     return _truthy(ATS_RUNTIME_ENV)
+
+
+def submit_authority_delivery_enabled() -> bool:
+    """Canonical-authority delivery is separately gated and default-off."""
+    return _truthy(AUTHORITY_DELIVERY_ENV)
 
 
 def _enabled() -> None:
@@ -397,8 +406,9 @@ def _json_request(
     headers: Mapping[str, str],
     body: Mapping[str, Any] | None = None,
     timeout_seconds: float = 5.0,
+    require_ats_runtime: bool = True,
 ) -> dict[str, Any]:
-    if not ats_runtime_enabled():
+    if require_ats_runtime and not ats_runtime_enabled():
         raise RuntimeError("Prepare ATS runtime start is disabled.")
     data = (
         json.dumps(
@@ -984,3 +994,55 @@ def run_ats_form_preparation_once(
         except (LookupError, PermissionError, RuntimeError, ValueError):
             pass
         raise
+
+
+def deliver_submit_authorization(
+    envelope: Mapping[str, Any], *, timeout_seconds: float = 5.0
+) -> dict[str, Any]:
+    """Hand the canonical one-use authority to the Apply session that earned it.
+
+    Best-effort by design. The customer's approval and the minted authority are
+    already durable, and the authority stays ISSUED, so Apply can still pull the
+    identical envelope over the authenticated bridge
+    (``SUBMIT_AUTHORIZATION_READ``) if this call fails or its response is lost.
+    A caller must therefore never roll back the approval because delivery failed.
+    """
+    if not submit_authority_delivery_enabled():
+        return {"attempted": False, "delivered": False, "error": None}
+
+    session_id = str(envelope.get("session_id") or "").strip()
+    if not session_id:
+        return {
+            "attempted": False,
+            "delivered": False,
+            "error": "Submit authority has no Apply session binding.",
+        }
+
+    try:
+        result = _json_request(
+            method="POST",
+            url=_apply_base_url()
+            + _APPLY_SUBMIT_AUTHORITY_PATH.format(session_id=session_id),
+            headers=_apply_headers(
+                tenant_id=str(envelope.get("tenant_id") or ""),
+                user_id=str(envelope.get("user_id") or ""),
+            ),
+            body=dict(envelope),
+            timeout_seconds=timeout_seconds,
+            require_ats_runtime=False,
+        )
+    except (RuntimeError, ValueError) as error:
+        return {"attempted": True, "delivered": False, "error": str(error)}
+
+    if (
+        str(result.get("authorization_id") or "")
+        != str(envelope.get("authorization_id") or "")
+        or result.get("accepted") is not True
+        or str(result.get("session_id") or "") != session_id
+    ):
+        return {
+            "attempted": True,
+            "delivered": False,
+            "error": "Apply submit-authority acknowledgement is not correlated.",
+        }
+    return {"attempted": True, "delivered": True, "error": None}

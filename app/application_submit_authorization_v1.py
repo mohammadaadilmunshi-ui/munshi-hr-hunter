@@ -19,8 +19,8 @@ from app import application_plan_v2, application_review_v2
 from app.database import get_connection
 
 AUTH_VERSION = "munshi-submit-authorization-v1"
+AUTH_CLAIM_VERSION = "munshi-submit-authorization-claim-v1"
 AUTH_TTL_SECONDS = 300
-ACTIVE = ("ISSUED", "CLAIMED")
 
 SCHEMA_STATEMENTS = (
     """CREATE TABLE IF NOT EXISTS application_submit_authorizations_v1 (
@@ -92,6 +92,19 @@ def _secret() -> bytes:
     return value.encode()
 
 
+def _require_enabled() -> None:
+    """Canonical authority honours the same default-off gate as the reviews it binds."""
+    if not application_review_v2.application_review_v2_enabled():
+        raise RuntimeError("Canonical submit authorization is disabled.")
+
+
+def _same(stored: Any, value: Any) -> bool:
+    """Compare replay bindings without letting NULL stringify into a false match."""
+    left = "" if stored is None else str(stored)
+    right = "" if value is None else str(value)
+    return left == right
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -124,7 +137,7 @@ def _bound_rows(connection: sqlite3.Connection, p: Mapping[str, Any]):
              p.plan_id,p.tenant_id,p.user_id,p.application_id,p.provider,p.status AS plan_status,
              p.executable,p.plan_digest,p.snapshot_json,
              r.review_id,r.review_digest,r.prepared_package_digest,r.browser_form_digest,
-             r.resume_artifact_sha256,r.invalidated_at,
+             r.resume_artifact_sha256,r.invalidated_at,r.review_json,
              a.approval_id,a.approval_digest,a.consumed_at,a.consumption_key
            FROM application_plans_v2 AS p
            JOIN application_reviews_v2 AS r ON r.plan_id=p.plan_id
@@ -138,11 +151,23 @@ def _bound_rows(connection: sqlite3.Connection, p: Mapping[str, Any]):
     ).fetchone()
     if row is None:
         raise PermissionError("Submit authorization owner/plan/review/approval binding is invalid.")
+    # The customer approved one destination.  An authenticated caller must not be able to
+    # redirect that approval to another employer by supplying its own target/checkpoint.
+    snapshot = json.loads(str(row["review_json"] or "{}"))
+    if not isinstance(snapshot, dict):
+        raise PermissionError("Submit authorization review snapshot is unreadable.")
+    frozen_bindings = snapshot.get("bindings")
+    if not isinstance(frozen_bindings, dict):
+        raise PermissionError("Submit authorization review bindings are missing.")
     checks = (
         str(row["plan_status"]) == "READY_TO_APPLY",
         int(row["executable"]) == 1,
         row["invalidated_at"] is None,
         str(row["provider"]).upper() == str(p["provider"]).upper(),
+        _text(snapshot.get("destination_url"), "Frozen review destination", 4000)
+        == _text(p["target_url"], "Target URL", 4000),
+        _text(frozen_bindings.get("checkpoint_id"), "Frozen review checkpoint", 240)
+        == _text(p["checkpoint_id"], "Checkpoint id", 240),
         str(row["plan_digest"]) == _digest(p["plan_digest"], "Plan digest"),
         str(row["review_digest"]) == _digest(p["review_digest"], "Review digest"),
         str(row["approval_digest"]) == _digest(p["approval_digest"], "Approval digest"),
@@ -203,6 +228,7 @@ def issue_authorization(
     atomic one-use boundary.
     """
     ttl = max(30, min(int(ttl_seconds), AUTH_TTL_SECONDS))
+    _require_enabled()
     idempotency_key = _text(
         payload.get("idempotency_key")
         or f"{payload.get('approval_id')}:{payload.get('session_id')}",
@@ -227,15 +253,19 @@ def issue_authorization(
         if connection.in_transaction:
             connection.commit()
         connection.execute("BEGIN IMMEDIATE")
-        _bound_rows(connection, payload)
         session_id = _text(payload["session_id"], "Session id", 240)
 
+        # A lost-response retry must converge on the authority the customer already
+        # bought, even if the plan has since rolled over or the review was invalidated.
+        # Binding equality below is what makes that replay safe; live-plan freshness
+        # is only required when minting a brand-new authority.
         prior = connection.execute(
             """SELECT * FROM application_submit_authorizations_v1
                WHERE authorization_id=?""",
             (authorization_id,),
         ).fetchone()
         if prior is not None:
+            requested_cover = payload.get("cover_letter_sha256")
             expected = {
                 "tenant_id": _text(payload["tenant_id"], "Tenant id", 240),
                 "user_id": _text(payload["user_id"], "User id", 240),
@@ -257,13 +287,21 @@ def issue_authorization(
                     payload["browser_form_digest"], "Browser-form digest"
                 ),
                 "resume_sha256": _digest(payload["resume_sha256"], "Resume digest"),
+                "cover_letter_sha256": (
+                    None if requested_cover is None
+                    else _digest(requested_cover, "Cover-letter digest")
+                ),
             }
-            if any(str(prior[key]) != str(value) for key, value in expected.items()):
+            if any(not _same(prior[key], value) for key, value in expected.items()):
                 raise ValueError(
                     "Submit authorization idempotency key belongs to different bindings."
                 )
             connection.commit()
             return json.loads(str(prior["authority_json"]))
+
+        # Validate the live binding before revoking anything, so an unauthorized or
+        # stale request cannot disturb an existing valid authority generation.
+        row = _bound_rows(connection, payload)
 
         # A material review/plan rollover invalidates every still-unused authority
         # for this same logical application/session before a new generation exists.
@@ -280,6 +318,10 @@ def issue_authorization(
                 session_id,
             ),
         )
+        if row["consumed_at"] is not None:
+            raise PermissionError(
+                "Review approval has already been consumed by another submit authority."
+            )
         generation = int(
             connection.execute(
                 """SELECT COALESCE(MAX(generation),0)+1 AS n
@@ -293,11 +335,6 @@ def issue_authorization(
                 ),
             ).fetchone()["n"]
         )
-        row = _bound_rows(connection, payload)
-        if row["consumed_at"] is not None:
-            raise PermissionError(
-                "Review approval has already been consumed by another submit authority."
-            )
         now = _now()
         issued_at = _iso(now)
         expires_at = _iso(now + timedelta(seconds=ttl))
@@ -374,7 +411,9 @@ def issue_authorization(
     finally:
         connection.close()
 
-def verify_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
+def verify_envelope(
+    envelope: Mapping[str, Any], *, require_fresh: bool = True
+) -> dict[str, Any]:
     value = dict(envelope)
     signature = str(value.pop("signature", ""))
     authority_digest = str(value.pop("authority_digest", "")).lower()
@@ -386,13 +425,27 @@ def verify_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
     expected_sig = hmac.new(_secret(), authority_digest.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, f"sha256={expected_sig}"):
         raise PermissionError("Submit authorization signature is invalid.")
-    if _parse_time(str(value["expires_at"])) <= _now():
+    if require_fresh and _parse_time(str(value["expires_at"])) <= _now():
         raise PermissionError("Submit authorization is expired.")
     return {**value, "authority_digest": authority_digest, "signature": signature}
 
 
+def _claim_receipt(verified: Mapping[str, Any], claimant: str) -> str:
+    """Deterministic claim identity, so a claimant can re-prove a claim it already won."""
+    claim_material = {
+        "authorization_id": verified["authorization_id"],
+        "authority_digest": verified["authority_digest"],
+        "claimant_id": claimant,
+        "generation": int(verified["generation"]),
+    }
+    return hashlib.sha256(_canonical(claim_material)).hexdigest()
+
+
 def claim_authorization(envelope: Mapping[str, Any], *, claimant_id: str) -> dict[str, Any]:
-    verified = verify_envelope(envelope)
+    _require_enabled()
+    # Cryptography is always proven; freshness is judged against the stored row so that a
+    # claimant re-presenting an authority it already won can converge after a lost response.
+    verified = verify_envelope(envelope, require_fresh=False)
     claimant = _text(claimant_id, "Claimant id", 240)
     connection = get_connection()
     try:
@@ -406,6 +459,21 @@ def claim_authorization(envelope: Mapping[str, Any], *, claimant_id: str) -> dic
         ).fetchone()
         if row is None:
             raise PermissionError("Submit authorization does not exist.")
+        if str(row["status"]) in ("CLAIMED", "CONSUMED") and _same(row["claimed_by"], claimant):
+            replayed = _claim_receipt(verified, claimant)
+            if not _same(row["claim_digest"], replayed):
+                raise PermissionError("Submit authorization claim record is inconsistent.")
+            connection.commit()
+            return {
+                "version": AUTH_CLAIM_VERSION,
+                "authorization_id": verified["authorization_id"],
+                "authority_digest": verified["authority_digest"],
+                "claim_digest": replayed,
+                "generation": int(verified["generation"]),
+                "status": str(row["status"]),
+                "submission_authority": True,
+                "replayed": True,
+            }
         if str(row["status"]) != "ISSUED":
             raise PermissionError("Submit authorization has already been claimed, revoked, consumed, or expired.")
         if _parse_time(str(row["expires_at"])) <= _now():
@@ -415,17 +483,11 @@ def claim_authorization(envelope: Mapping[str, Any], *, claimant_id: str) -> dic
             )
             connection.commit()
             raise PermissionError("Submit authorization expired before claim.")
-        for key in ("tenant_id","user_id","application_id","plan_id","session_id","review_id","approval_id","provider","target_url","checkpoint_id","plan_digest","review_digest","approval_digest","prepared_package_digest","browser_form_digest","resume_sha256","authority_digest"):
-            if str(row[key]) != str(verified[key]):
+        for key in ("tenant_id","user_id","application_id","plan_id","session_id","review_id","approval_id","provider","target_url","checkpoint_id","plan_digest","review_digest","approval_digest","prepared_package_digest","browser_form_digest","resume_sha256","cover_letter_sha256","authority_digest"):
+            if not _same(row[key], verified[key]):
                 raise PermissionError(f"Submit authorization persisted binding mismatch: {key}.")
         _bound_rows(connection, verified)
-        claim_material = {
-            "authorization_id": verified["authorization_id"],
-            "authority_digest": verified["authority_digest"],
-            "claimant_id": claimant,
-            "generation": int(verified["generation"]),
-        }
-        claim_digest = hashlib.sha256(_canonical(claim_material)).hexdigest()
+        claim_digest = _claim_receipt(verified, claimant)
         changed = connection.execute(
             """UPDATE application_submit_authorizations_v1
                SET status='CLAIMED',claimed_at=CURRENT_TIMESTAMP,claimed_by=?,claim_digest=?
@@ -436,16 +498,63 @@ def claim_authorization(envelope: Mapping[str, Any], *, claimant_id: str) -> dic
             raise PermissionError("Submit authorization one-time claim lost an atomic race.")
         connection.commit()
         return {
-            "version": "munshi-submit-authorization-claim-v1",
+            "version": AUTH_CLAIM_VERSION,
             "authorization_id": verified["authorization_id"],
             "authority_digest": verified["authority_digest"],
             "claim_digest": claim_digest,
             "generation": int(verified["generation"]),
             "status": "CLAIMED",
             "submission_authority": True,
+            "replayed": False,
         }
     except Exception:
         connection.rollback()
         raise
+    finally:
+        connection.close()
+
+
+def current_authorization(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the live issued authority for one exact application/session binding.
+
+    Delivery is pull-based: Apply already authenticates to the Hunter bridge, so it can
+    retrieve the envelope the customer's single approval minted without Hunter pushing
+    a bearer credential over any channel. This never mints, claims, or extends an
+    authority; it only re-reads an already-issued one, and the one-use claim stays the
+    sole irreversible boundary.
+    """
+    _require_enabled()
+    tenant_id = _text(payload.get("tenant_id"), "Tenant id", 240)
+    user_id = _text(payload.get("user_id"), "User id", 240)
+    application_id = _text(payload.get("application_id"), "Application id", 240)
+    plan_id = _text(payload.get("plan_id"), "Plan id", 240)
+    session_id = _text(payload.get("session_id"), "Session id", 240)
+    plan_digest = _digest(payload.get("plan_digest"), "Plan digest")
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        row = connection.execute(
+            """SELECT authority_json,status FROM application_submit_authorizations_v1
+               WHERE tenant_id=? AND user_id=? AND application_id=? AND plan_id=? AND session_id=?
+                 AND status='ISSUED'
+               ORDER BY generation DESC LIMIT 1""",
+            (tenant_id, user_id, application_id, plan_id, session_id),
+        ).fetchone()
+        if row is None:
+            raise LookupError(
+                "No currently issued submit authorization exists for this reviewed application."
+            )
+        envelope = json.loads(str(row["authority_json"]))
+        # Re-verify before release: a stored row must still be a valid, unexpired,
+        # correctly signed authority for exactly these bindings.
+        verified = verify_envelope(envelope)
+        for key in ("tenant_id","user_id","application_id","plan_id","session_id"):
+            if not _same(verified[key], payload.get(key)):
+                raise PermissionError(
+                    f"Submit authorization read binding mismatch: {key}."
+                )
+        if not _same(verified["plan_digest"], plan_digest):
+            raise PermissionError("Submit authorization read binding mismatch: plan_digest.")
+        return verified
     finally:
         connection.close()
