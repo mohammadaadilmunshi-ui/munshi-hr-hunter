@@ -3,14 +3,14 @@
 All existing V4 UI is preserved. Only the internal generation helper is swapped
 for the bounded cross-renderer guard while the page is rendering. The Native
 Resume quality hotfix is installed immediately before every checked generation so
-structured-output reliability and adaptive under-fill/overflow repair also apply
-to V6, which delegates to this page.
+structured-output reliability, transformed PDF geometry, and adaptive one-page
+repair also apply to V6/V7, which delegate to this page.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from app import native_resume_quality_hotfix_v1 as quality_hotfix
+from app import native_resume_quality_hotfix_v2 as quality_hotfix
 from app import resume_one_page_guard_v1 as one_page
 from app import resume_studio_page_v4 as v4
 
