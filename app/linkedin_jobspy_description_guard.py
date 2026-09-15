@@ -3,7 +3,7 @@ from __future__ import annotations
 import functools
 import sys
 import types
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlsplit
 
 VERSION = "linkedin-jobspy-direct-url-guard-v1.2.0"
@@ -146,6 +146,16 @@ def self_test() -> dict[str, Any]:
     original_jobspy = sys.modules.get("jobspy")
     holder_name = "_aadil_linkedin_guard_test_holder"
     original_holder = sys.modules.get(holder_name)
+    board_common = None
+    original_normalizer = None
+    try:
+        from app import jobspy_board_common as board_common_module
+        board_common = board_common_module
+        original_normalizer = getattr(board_common, "normalize_jobspy_row", None)
+    except Exception:
+        board_common = None
+        original_normalizer = None
+
     calls: list[dict[str, Any]] = []
 
     def fake_scrape_jobs(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -189,3 +199,5 @@ def self_test() -> dict[str, Any]:
             sys.modules.pop(holder_name, None)
         else:
             sys.modules[holder_name] = original_holder
+        if board_common is not None and callable(original_normalizer):
+            board_common.normalize_jobspy_row = original_normalizer
