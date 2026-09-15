@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from app import jobspy_board_common
 from app import linkedin_jobspy_description_guard as guard
 from tools.runners import jobspy_runner as runner
 
@@ -16,6 +17,20 @@ def _row(**overrides):
         "job_url_direct": None,
         "description": "Example role",
         "is_remote": False,
+    }
+    row.update(overrides)
+    return row
+
+
+def _outer_row(**overrides):
+    row = {
+        "id": "linkedin-123",
+        "title": "People Analytics Specialist",
+        "company_name": "Example Corp",
+        "location_raw": "New York, NY, US",
+        "job_url": "https://www.linkedin.com/jobs/view/123456789/",
+        "apply_url": None,
+        "description_raw": "Example role",
     }
     row.update(overrides)
     return row
@@ -133,3 +148,49 @@ def test_linkedin_guard_only_identifies_linkedin_requests():
     assert guard._linkedin_requested(["indeed", "linkedin"]) is True
     assert guard._linkedin_requested("indeed") is False
     assert guard._linkedin_requested(["google", "indeed"]) is False
+
+
+def test_outer_linkedin_normalizer_does_not_restore_listing_as_apply_url():
+    original = jobspy_board_common.normalize_jobspy_row
+    try:
+        assert guard._install_board_normalizer_guard() is True
+        normalized = jobspy_board_common.normalize_jobspy_row(
+            _outer_row(),
+            "linkedin",
+        )
+        assert normalized["job_url"] == "https://www.linkedin.com/jobs/view/123456789"
+        assert normalized["apply_url"] is None
+    finally:
+        jobspy_board_common.normalize_jobspy_row = original
+
+
+def test_outer_linkedin_normalizer_preserves_external_direct_url():
+    original = jobspy_board_common.normalize_jobspy_row
+    direct = "https://jobs.ashbyhq.com/example/abc"
+    try:
+        assert guard._install_board_normalizer_guard() is True
+        normalized = jobspy_board_common.normalize_jobspy_row(
+            _outer_row(apply_url=direct),
+            "linkedin",
+        )
+        assert normalized["apply_url"] == direct
+    finally:
+        jobspy_board_common.normalize_jobspy_row = original
+
+
+def test_outer_guard_leaves_non_linkedin_normalization_unchanged():
+    original = jobspy_board_common.normalize_jobspy_row
+    source = "https://www.indeed.com/viewjob?jk=abc123"
+    try:
+        baseline = original(
+            _outer_row(job_url=source, apply_url=None),
+            "indeed",
+        )
+        assert guard._install_board_normalizer_guard() is True
+        normalized = jobspy_board_common.normalize_jobspy_row(
+            _outer_row(job_url=source, apply_url=None),
+            "indeed",
+        )
+        assert normalized == baseline
+    finally:
+        jobspy_board_common.normalize_jobspy_row = original
