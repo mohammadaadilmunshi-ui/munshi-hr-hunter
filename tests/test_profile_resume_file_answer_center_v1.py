@@ -32,6 +32,27 @@ def test_master_resume_ui_does_not_pretend_original_binary_is_available() -> Non
     assert "save_confirmed_source" in resume_ui
 
 
+def test_master_resume_replace_uses_coordinate_aware_local_extractor() -> None:
+    resume_ui = _source("app/master_resume_file_ui_v1.py")
+    extractor = _source("app/resume_profile_details_v31.py")
+
+    assert "MASTER_RESUME_EXTRACTOR_PARITY_VERSION" in resume_ui
+    assert (
+        "from app.resume_profile_details_v31 import extract_uploaded_source as extract_master_resume_source"
+        in resume_ui
+    )
+    replacement = resume_ui.split("def _save_replacement", 1)[1].split("def _save_source_edit", 1)[0]
+    assert "extract_master_resume_source" in replacement
+    assert "resume_v3.extract_uploaded_source" not in replacement
+
+    # The replacement route must inherit the same local, coordinate-aware PDF
+    # extraction used by Resume Studio. No model/API/network parsing is allowed.
+    assert 'extraction_mode="layout"' in extractor
+    assert "normalize_pdf_text(_page_text(page))" in extractor
+    assert "api.openai.com" not in replacement
+    assert "httpx" not in replacement
+
+
 def test_answer_center_supports_batch_protected_and_future_reuse() -> None:
     answer_ui = _source("app/profile_answer_center_ui_v1.py")
     workspace = _source("app/profile_workspace_v4.py")
