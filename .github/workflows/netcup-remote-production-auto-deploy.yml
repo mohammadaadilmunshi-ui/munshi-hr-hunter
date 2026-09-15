@@ -162,7 +162,13 @@ jobs:
           LOG="$RUNNER_TEMP/production-release.log"
           cat "$RUNNER_TEMP/munshi-production-release.bundle" | \
             ssh -i "$HOME/.ssh/netcup_deploy" \
-              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=20 \
+              -o ServerAliveInterval=20 \
+              -o ServerAliveCountMax=15 \
+              -o TCPKeepAlive=yes \
               "$NETCUP_USER@$NETCUP_HOST" \
               "/opt/munshi/bin/deploy-production-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH" | tee "$LOG"
           grep -F "PREVIOUS_SHA=$EXPECTED_PREVIOUS_SHA" "$LOG"
