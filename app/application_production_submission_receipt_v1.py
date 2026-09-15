@@ -55,15 +55,172 @@ def verify_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
     value = dict(receipt)
     signature = str(value.pop("signature", ""))
     receipt_digest = str(value.pop("receipt_digest", "")).lower()
+    receipt_id = str(value.pop("receipt_id", "")).strip()
     if value.get("version") != RECEIPT_VERSION or value.get("synthetic") is not False or value.get("verification_status") != "VERIFIED":
         raise PermissionError("Only non-synthetic VERIFIED production receipts may be ingested.")
+    # receipt_id is deterministically derived from this digest, so it cannot be
+    # included in its own hash input. Both fields remain cryptographically bound.
     expected = hashlib.sha256(_canonical(value)).hexdigest()
     if not hmac.compare_digest(expected, receipt_digest):
         raise PermissionError("Production receipt digest is invalid.")
+    if receipt_id != "production-receipt-" + expected[:32]:
+        raise PermissionError("Production receipt id is not bound to its digest.")
     expected_sig = hmac.new(_secret(), receipt_digest.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, f"sha256={expected_sig}"):
         raise PermissionError("Production receipt signature is invalid.")
-    return {**value, "receipt_digest": receipt_digest, "signature": signature}
+    return {
+        **value,
+        "receipt_id": receipt_id,
+        "receipt_digest": receipt_digest,
+        "signature": signature,
+    }
+
+
+def _project_submitted(
+    connection: sqlite3.Connection, value: Mapping[str, Any]
+) -> str:
+    """Project one VERIFIED production receipt into Hunter's durable CRM."""
+    lifecycle.ensure_schema(connection)
+    owner = current_owner(connection)
+    if (
+        str(owner.tenant_id) != str(value["tenant_id"])
+        or str(owner.user_id) != str(value["user_id"])
+    ):
+        raise PermissionError("Production receipt owner does not match Hunter runtime owner.")
+
+    plan = connection.execute(
+        """SELECT job_id,provider FROM application_plans_v2
+           WHERE plan_id=? AND tenant_id=? AND user_id=? AND application_id=?""",
+        (
+            str(value["plan_id"]),
+            str(value["tenant_id"]),
+            str(value["user_id"]),
+            str(value["application_id"]),
+        ),
+    ).fetchone()
+    if plan is None:
+        raise PermissionError("Production receipt has no owned Application Plan.")
+    if str(plan["provider"]).upper() != str(value["provider"]).upper():
+        raise PermissionError("Production receipt plan provider binding mismatch.")
+
+    application_id = str(value["application_id"])
+    job_id = int(plan["job_id"])
+    provider = str(value["provider"]).upper()
+    provider_application_id = str(value["provider_application_id"])
+    occurred_at = lifecycle._timestamp(value["verified_at"])
+    provenance_json = lifecycle._canonical(
+        {
+            "receipt_id": str(value["receipt_id"]),
+            "receipt_digest": str(value["receipt_digest"]),
+            "authorization_id": str(value["authorization_id"]),
+            "authority_digest": str(value["authority_digest"]),
+            "claim_digest": str(value["claim_digest"]),
+            "verification_status": "VERIFIED",
+            "verification_method": str(value["verification_method"]),
+            "submission_authority": False,
+        }
+    )
+    row = lifecycle._owned_record(
+        connection, owner=owner, application_id=application_id
+    )
+    if row is None:
+        connection.execute(
+            """INSERT INTO application_lifecycle_records(
+                   application_id,tenant_id,user_id,job_id,provider,
+                   provider_application_id,state,state_version,submitted_at
+               ) VALUES (?,?,?,?,?,?,'SUBMITTED',1,?)""",
+            (
+                application_id,
+                owner.tenant_id,
+                owner.user_id,
+                job_id,
+                provider,
+                provider_application_id,
+                str(value["verified_at"]),
+            ),
+        )
+        lifecycle._append_history(
+            connection,
+            owner=owner,
+            application_id=application_id,
+            from_state=None,
+            to_state="SUBMITTED",
+            state_version=1,
+            source="verified_production_receipt",
+            reason="Verified production submission receipt received.",
+            provenance_json=provenance_json,
+            idempotency_key=f"production-receipt:{value['receipt_id']}:SUBMITTED",
+            occurred_at=occurred_at,
+        )
+        state = "SUBMITTED"
+    else:
+        if int(row["job_id"]) != job_id or str(row["provider"]).upper() != provider:
+            raise PermissionError("Production receipt lifecycle binding mismatch.")
+        if row["provider_application_id"] not in (None, provider_application_id):
+            raise PermissionError("Production receipt provider identity changed.")
+        state = str(row["state"])
+        preserved = {
+            "SUBMITTED",
+            "VERIFIED",
+            "AWAITING_RESPONSE",
+            "ASSESSMENT",
+            "INTERVIEW",
+            "OFFER",
+            "REJECTED",
+            "WITHDRAWN",
+        }
+        paths = {
+            "READY_FOR_REVIEW": ("READY_TO_SUBMIT", "SUBMITTING", "SUBMITTED"),
+            "READY_TO_SUBMIT": ("SUBMITTING", "SUBMITTED"),
+            "SUBMITTING": ("SUBMITTED",),
+        }
+        if state not in preserved:
+            steps = paths.get(state)
+            if steps is None:
+                raise PermissionError(
+                    f"Verified production receipt cannot reconcile lifecycle from {state}."
+                )
+            version = int(row["state_version"])
+            for target in steps:
+                transition = lifecycle._transition_with_connection(
+                    connection,
+                    owner=owner,
+                    application_id=application_id,
+                    to_state=target,
+                    expected_state_version=version,
+                    source="verified_production_receipt",
+                    idempotency_key=f"production-receipt:{value['receipt_id']}:{target}",
+                    reason="Verified production submission receipt reconciliation.",
+                    provenance_json=provenance_json,
+                    occurred_at=occurred_at,
+                )
+                version = int(transition["state_version"])
+                state = str(transition["state"])
+        connection.execute(
+            """UPDATE application_lifecycle_records
+                  SET provider_application_id=COALESCE(provider_application_id,?),
+                      submitted_at=COALESCE(submitted_at,?),
+                      updated_at=CURRENT_TIMESTAMP
+                WHERE application_id=? AND tenant_id=? AND user_id=?""",
+            (
+                provider_application_id,
+                str(value["verified_at"]),
+                application_id,
+                owner.tenant_id,
+                owner.user_id,
+            ),
+        )
+
+    if (
+        connection.execute(
+            "UPDATE jobs SET already_applied=1,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (job_id,),
+        ).rowcount
+        != 1
+    ):
+        raise RuntimeError("Production receipt job disappeared during CRM projection.")
+    return state
+
 
 def ingest_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
     value = verify_receipt(receipt)
