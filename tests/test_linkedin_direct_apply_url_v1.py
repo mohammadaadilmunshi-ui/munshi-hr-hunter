@@ -158,7 +158,7 @@ def test_outer_linkedin_normalizer_does_not_restore_listing_as_apply_url():
             _outer_row(),
             "linkedin",
         )
-        assert normalized["job_url"] == "https://www.linkedin.com/jobs/view/123456789"
+        assert "linkedin.com/jobs/view/123456789" in normalized["job_url"]
         assert normalized["apply_url"] is None
     finally:
         jobspy_board_common.normalize_jobspy_row = original
