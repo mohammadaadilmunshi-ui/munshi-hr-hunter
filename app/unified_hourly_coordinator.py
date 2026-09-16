@@ -9,12 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app import autonomous_prepare_v1
 from app.n8n_dispatch import (
     DB_PATH,
     dispatch_pending,
     ensure_schema,
     get_connection,
-    queue_candidates,
 )
 
 
@@ -26,7 +26,7 @@ LOCK_PATH = (
 )
 
 COORDINATOR_VERSION = (
-    "unified_hourly_coordinator_v1"
+    "unified_hourly_coordinator_v2_durable_prepare"
 )
 
 
@@ -140,7 +140,7 @@ def run_coordinator(
     worker_execution_requested = bool(not skip_workers or force_workers)
     # Source discovery belongs exclusively to randomized_source_runner. Keep
     # these legacy parameters parseable for old launch commands, but never let
-    # this queue/downstream coordinator create a competing source lane.
+    # this downstream coordinator create a competing source lane.
     skip_workers = True
     force_workers = False
     active_manual = manual_or_stored_worker_active()
@@ -152,6 +152,8 @@ def run_coordinator(
             "coordinator_version": COORDINATOR_VERSION,
             "worker_results": [],
             "queue_result": {},
+            "autonomous_admission_result": {},
+            "prepare_runtime_result": {},
             "dispatch_result": {
                 "success": True,
                 "dispatch_status": "manual_priority_deferred",
@@ -169,9 +171,29 @@ def run_coordinator(
     worker_results = []
     unsupported_sources = []
 
-    queue_result = queue_candidates(
+    # Explicit/manual n8n work keeps the proven queue/dispatch path. Automatic
+    # eligibility now belongs to durable Prepare and is never inserted into the
+    # legacy auto_top_match queue by this coordinator.
+    queue_result = autonomous_prepare_v1.queue_manual_candidates(
         webhook_mode=webhook_mode,
         dry_run=dry_run,
+    )
+
+    autonomous_admission_result = autonomous_prepare_v1.admit_auto_candidates(
+        dry_run=dry_run,
+    )
+
+    prepare_runtime_result = (
+        {
+            "success": True,
+            "operation_count": 0,
+            "results": [],
+            "errors": [],
+            "dry_run": True,
+            "submission_authority": False,
+        }
+        if dry_run
+        else autonomous_prepare_v1.drive_open_operations()
     )
 
     dispatch_result = dispatch_pending(
@@ -189,9 +211,9 @@ def run_coordinator(
     summary = {
         "success": not bool(
             failed_workers
-            or dispatch_result[
-                "errors"
-            ]
+            or dispatch_result["errors"]
+            or autonomous_admission_result.get("errors")
+            or prepare_runtime_result.get("errors")
         ),
         "coordinator_version": (
             COORDINATOR_VERSION
@@ -201,7 +223,9 @@ def run_coordinator(
         "skip_workers": (
             skip_workers
         ),
-        "queue_only_invariant": True,
+        "queue_only_invariant": False,
+        "durable_prepare_is_auto_owner": True,
+        "legacy_auto_n8n_queue_disabled_here": True,
         "source_worker_execution_requested_but_blocked": worker_execution_requested,
         "force_workers": (
             force_workers
@@ -225,6 +249,8 @@ def run_coordinator(
         "queue_result": (
             queue_result
         ),
+        "autonomous_admission_result": autonomous_admission_result,
+        "prepare_runtime_result": prepare_runtime_result,
         "dispatch_result": (
             dispatch_result
         ),
@@ -253,6 +279,8 @@ def main() -> None:
             "reason": "canonical_orchestration_maintenance_mode",
             "worker_results": [],
             "queue_result": {},
+            "autonomous_admission_result": {},
+            "prepare_runtime_result": {},
             "dispatch_result": {},
             "n8n_calls": 0,
         }, indent=2))
