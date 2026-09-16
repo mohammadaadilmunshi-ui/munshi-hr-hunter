@@ -196,8 +196,13 @@ def test_ordinary_emailed_code_is_one_time_and_not_historical(
         assert artifact["nonce"] is None
         assert artifact["claim_token_hash"] is None
         assert request["state"] == "CONSUMED"
-        # V2 does not pass through the V1 historical body store.
-        assert connection.execute("SELECT COUNT(*) FROM inbound_mail_messages").fetchone()[0] == 0
+        # V2 never routes through the legacy historical body store. A missing
+        # legacy table is the strongest proof; if another test created it, it
+        # must remain empty.
+        if _table_exists(connection, "inbound_mail_messages"):
+            assert connection.execute(
+                "SELECT COUNT(*) FROM inbound_mail_messages"
+            ).fetchone()[0] == 0
     finally:
         connection.close()
 
