@@ -9,14 +9,25 @@ The historical automatic/preparation default is n8n. An account without an
 explicit saved ``prepare_engine`` therefore remains on that proven path. Native
 automatic durable preparation activates only after an explicit NATIVE preference.
 The experimental durable N8N bridge is separately opt-in and default-off.
+
+Compatibility routing also excludes any job that already has durable Prepare
+work before applying the legacy auto quota. Changing engines must never create a
+second preparation lane for the same job.
 """
 from __future__ import annotations
 
 import os
 from typing import Any
 
+from app import autonomous_prepare_v1 as runtime
 from app.database import get_connection
-from app.n8n_dispatch import load_setting
+from app.n8n_dispatch import (
+    _begin_dispatch_transaction,
+    ensure_schema as ensure_n8n_schema,
+    insert_queue_item,
+    load_setting,
+    plan_candidates,
+)
 
 N8N_DURABLE_PREPARE_ENV = "MUNSHI_N8N_DURABLE_PREPARE_ENABLED"
 SUBMISSION_AUTHORITY = False
@@ -64,13 +75,7 @@ def configured_engine() -> str:
 
 
 def routing_mode() -> dict[str, Any]:
-    """Choose automatic ownership without changing eligibility or quotas.
-
-    Explicit NATIVE uses durable Prepare. N8N, including the historical missing
-    preference, remains on the legacy queue unless the experimental durable flag
-    is explicitly enabled. This prevents a source rollout from converting a
-    working n8n auto lane into ISSUE.
-    """
+    """Choose automatic ownership without changing eligibility or quotas."""
     engine = configured_engine()
     durable_n8n = n8n_durable_prepare_enabled()
 
@@ -96,3 +101,114 @@ def routing_mode() -> dict[str, Any]:
         ),
         "submission_authority": False,
     }
+
+
+def queue_legacy_n8n_candidates(
+    *,
+    webhook_mode: str,
+    dry_run: bool,
+) -> dict[str, Any]:
+    """Preserve legacy n8n auto behavior without duplicating durable work.
+
+    The canonical planner remains authoritative for policy-derived thresholds,
+    manual limits and legacy usage. For automatic candidates we rebuild the
+    canonical eligible pool only so existing durable Prepare jobs can be removed
+    *before* quota truncation. Durable admissions from earlier in the same day
+    also consume the user's shared auto volume budget.
+    """
+    from app import autonomous_prepare_admission_v1 as admission
+
+    connection = get_connection()
+    try:
+        ensure_n8n_schema(connection)
+        plan = plan_candidates(connection)
+        existing_prepare = runtime._existing_prepare_job_ids(connection)
+        durable_used = runtime._admissions_today(connection)
+
+        manual_candidates = [
+            job
+            for job in plan["manual_candidates"]
+            if int(job["id"]) not in existing_prepare
+        ]
+        auto_pool = admission._eligible_unprepared_pool(
+            connection,
+            threshold=float(plan["threshold"]),
+        )
+
+        auto_limit = plan["auto_limit"]
+        if auto_limit is None:
+            remaining = None
+            auto_candidates = auto_pool
+        else:
+            remaining = max(
+                0,
+                int(auto_limit)
+                - int(plan["auto_used_today"])
+                - int(durable_used),
+            )
+            auto_candidates = auto_pool[:remaining]
+
+        selected = [
+            *( (job, "telegram_manual") for job in manual_candidates ),
+            *( (job, "auto_top_match") for job in auto_candidates ),
+        ]
+
+        if dry_run:
+            queued = [
+                {
+                    "job_id": int(job["id"]),
+                    "company": job["company_name"],
+                    "title": job["title"],
+                    "hunter_score": job["hunter_score"],
+                    "dispatch_mode": dispatch_mode,
+                    "queue_id": None,
+                    "queue_status": "dry_run",
+                }
+                for job, dispatch_mode in selected
+            ]
+        else:
+            queued = []
+            if selected:
+                _begin_dispatch_transaction(connection)
+                for job, dispatch_mode in selected:
+                    row = insert_queue_item(
+                        connection,
+                        job,
+                        dispatch_mode,
+                        webhook_mode,
+                    )
+                    queued.append(
+                        {
+                            "job_id": int(job["id"]),
+                            "company": job["company_name"],
+                            "title": job["title"],
+                            "hunter_score": job["hunter_score"],
+                            "dispatch_mode": dispatch_mode,
+                            "queue_id": row["id"],
+                            "queue_status": row["queue_status"],
+                        }
+                    )
+                connection.commit()
+
+        return {
+            "success": True,
+            "dry_run": bool(dry_run),
+            "webhook_mode": webhook_mode,
+            "threshold": plan["threshold"],
+            "auto_limit": auto_limit,
+            "manual_limit": plan["manual_limit"],
+            "legacy_auto_used_today": int(plan["auto_used_today"]),
+            "durable_auto_used_today": int(durable_used),
+            "remaining_slots": remaining,
+            "manual_candidate_count": len(manual_candidates),
+            "auto_candidate_count": len(auto_candidates),
+            "selected_count": len(selected),
+            "queued": queued,
+            "n8n_calls": 0,
+            "submission_authority": False,
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
