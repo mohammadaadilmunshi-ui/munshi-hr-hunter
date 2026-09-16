@@ -181,6 +181,7 @@ def render() -> None:
     from app import application_workspace_page
     from app import candidate_profile_authority_v1 as profile_authority
     from app import profile_workspace_v2, profile_workspace_v3, profile_workspace_v4
+    from app.n8n_live_console_v1 import render_n8n_live_console
     from app.resume_engine_selector import (
         install_resume_engine_selector,
         render_resume_engine_selector,
@@ -264,3 +265,7 @@ def render() -> None:
     }
     pages[view]()
     render_resume_engine_selector()
+    # Persistent presentation-only observer for explicit dashboard n8n runs.
+    # It survives navigation, reads durable queue/execution/callback evidence,
+    # and never owns dispatch/retry/submission authority.
+    render_n8n_live_console()
