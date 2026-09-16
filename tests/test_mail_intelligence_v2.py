@@ -87,6 +87,28 @@ def _verification(account: dict[str, object], application_key: str):
     )
 
 
+def _table_exists(connection, table_name: str) -> bool:
+    return (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        ).fetchone()
+        is not None
+    )
+
+
+def _assert_no_artifact_for_request(connection, request_id: str) -> None:
+    if not _table_exists(connection, "mail_one_time_artifacts_v2"):
+        return
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM mail_one_time_artifacts_v2 WHERE verification_request_id=?",
+            (request_id,),
+        ).fetchone()[0]
+        == 0
+    )
+
+
 def test_ordinary_emailed_code_is_one_time_and_not_historical(
     hunter_db,
     monkeypatch,
@@ -276,10 +298,7 @@ def test_totp_sms_passkey_and_identity_challenges_remain_security_intervention(
         ).fetchone()
         assert request["state"] == "SECURITY_CHECKPOINT"
         assert request["reason_code"] == "SECURITY_INTERVENTION"
-        assert connection.execute(
-            "SELECT COUNT(*) FROM mail_one_time_artifacts_v2 WHERE verification_request_id=?",
-            (verification["request_id"],),
-        ).fetchone()[0] == 0
+        _assert_no_artifact_for_request(connection, str(verification["request_id"]))
     finally:
         connection.close()
 
@@ -308,9 +327,6 @@ def test_unexpected_verification_host_fails_closed_without_artifact(
         ).fetchone()
         assert request["state"] == "REJECTED"
         assert request["reason_code"] == "AMBIGUOUS_OR_INVALID_EMAIL_ARTIFACT"
-        assert connection.execute(
-            "SELECT COUNT(*) FROM mail_one_time_artifacts_v2 WHERE verification_request_id=?",
-            (verification["request_id"],),
-        ).fetchone()[0] == 0
+        _assert_no_artifact_for_request(connection, str(verification["request_id"]))
     finally:
         connection.close()
