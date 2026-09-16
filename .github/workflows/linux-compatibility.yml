@@ -46,6 +46,7 @@ jobs:
           tests/test_application_notifications_v1.py
           tests/test_application_notifications_runtime_v2.py
           tests/test_application_confirmation_fixture_v1.py
+          tests/test_mail_notification_upgrade_persistence_v1.py
       - name: Validate container environment contract
         run: python scripts/validate_container_environment_contract.py
       - name: Validate n8n portability contract
@@ -74,6 +75,7 @@ jobs:
           tests/test_application_notifications_v1.py
           tests/test_application_notifications_runtime_v2.py
           tests/test_application_confirmation_fixture_v1.py
+          tests/test_mail_notification_upgrade_persistence_v1.py
       - name: Validate notification worker fail-closed default
         run: python scripts/application_notification_worker.py
       - name: Validate Netcup shell syntax
