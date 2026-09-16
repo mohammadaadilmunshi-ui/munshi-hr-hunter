@@ -5,7 +5,7 @@ from typing import Any, Callable
 
 import streamlit as st
 
-from app import application_notifications_v1 as notifications
+from app import application_notifications_runtime_v2 as notifications
 
 
 def _render_evidence() -> None:
@@ -40,8 +40,10 @@ def _render_settings() -> None:
     st.divider()
     st.markdown("### Application email notifications")
     st.caption(
-        "Optional status notifications use verified Hunter evidence only. Verification links, "
-        "codes, passwords, credential references, and submit authority are never included."
+        "This is your user-facing notification address. MUNSHI sends verified submission "
+        "and employer-confirmation updates here. ATS verification links, emailed codes, "
+        "password-reset links, magic-login links, passwords, credential references, and "
+        "submit authority stay inside MUNSHI and are never forwarded."
     )
     with st.form("application_notification_preferences_v1"):
         destination = st.text_input(
