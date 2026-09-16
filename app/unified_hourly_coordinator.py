@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app import autonomous_prepare_admission_v1
 from app import autonomous_prepare_v1
 from app.n8n_dispatch import (
     DB_PATH,
@@ -179,8 +180,13 @@ def run_coordinator(
         dry_run=dry_run,
     )
 
-    autonomous_admission_result = autonomous_prepare_v1.admit_auto_candidates(
-        dry_run=dry_run,
+    # Durable Prepare rows are removed before the final quota slice. This avoids
+    # historical Prepare work starving newer eligible jobs under a finite daily
+    # automation limit while reusing the canonical eligibility predicates.
+    autonomous_admission_result = (
+        autonomous_prepare_admission_v1.admit_auto_candidates(
+            dry_run=dry_run,
+        )
     )
 
     prepare_runtime_result = (
