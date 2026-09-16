@@ -1,7 +1,10 @@
 const MUNSHI_MAIL_DOMAIN = "@mail.munshi.systems";
+const PROTOCOL_VERSION = "v2";
 const MAX_RAW_BYTES = 10 * 1024 * 1024;
+const MAX_CLASSIFICATION_BYTES = 512 * 1024;
 const MIN_SIGNING_SECRET_BYTES = 32;
 const encoder = new TextEncoder();
+const decoder = new TextDecoder("utf-8", { fatal: false });
 
 function bytesToHex(buffer) {
   return Array.from(new Uint8Array(buffer))
@@ -74,19 +77,74 @@ async function hmacSha256Hex(secret, material) {
   );
 }
 
+function coarseClassification(raw) {
+  const bytes = new Uint8Array(
+    raw,
+    0,
+    Math.min(raw.byteLength, MAX_CLASSIFICATION_BYTES),
+  );
+  const text = decoder.decode(bytes).toLowerCase();
+
+  const security = [
+    /\bcaptcha\b/,
+    /\bsms\b/,
+    /\btext(?:ed)? (?:you|your|the)\b/,
+    /\bauthenticator (?:app|code)\b/,
+    /\btotp\b/,
+    /\bpasskey\b/,
+    /\bsecurity key\b/,
+    /\bgovernment (?:id|identification)\b/,
+    /\bidentity verification\b/,
+    /\bselfie\b/,
+    /\bbiometric\b/,
+    /\bliveness\b/,
+  ];
+  if (security.some((pattern) => pattern.test(text))) {
+    return "SECURITY_INTERVENTION";
+  }
+
+  if (
+    /verify (?:your )?(?:email|account)|activate (?:your )?(?:account|email)|email verification|verification code|reset (?:your )?password|password reset|magic (?:login )?link|passwordless/.test(
+      text,
+    )
+  ) {
+    return "ACCOUNT_VERIFICATION";
+  }
+
+  if (
+    /thank(?:s| you) for (?:your )?(?:application|applying)|application (?:was |has been )?(?:received|submitted)|received your application/.test(
+      text,
+    )
+  ) {
+    return "APPLICATION_CONFIRMATION";
+  }
+
+  if (
+    /\b(recruiter|talent acquisition|interview|assessment|coding test|skills test|offer letter|job offer|unfortunately|not moving forward)\b/.test(
+      text,
+    )
+  ) {
+    return "COMMUNICATION";
+  }
+
+  return "OTHER";
+}
+
 function canonicalMaterial({
   timestamp,
   recipient,
   sender,
   messageId,
+  routerClass,
   bodySha256,
 }) {
   return [
-    "v1",
+    PROTOCOL_VERSION,
     timestamp,
     recipient,
     sender,
     messageId,
+    routerClass,
     bodySha256,
   ].join("\n");
 }
@@ -103,7 +161,7 @@ export default {
       message.headers.get("message-id") || "",
     ).trim();
 
-    // This Worker processes only MUNSHI automation aliases.
+    // This Worker processes only opaque MUNSHI automation aliases.
     // Personal/root-domain mail must never enter this path.
     if (!recipient.endsWith(MUNSHI_MAIL_DOMAIN)) {
       message.setReject(
@@ -169,6 +227,9 @@ export default {
       return;
     }
 
+    // Worker classification is intentionally coarse. Hunter independently
+    // reparses and reclassifies the signed RFC822 body before any automation.
+    const routerClass = coarseClassification(raw);
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const bodySha256 = await sha256Hex(raw);
     const material = canonicalMaterial({
@@ -176,6 +237,7 @@ export default {
       recipient: safeRecipient,
       sender: safeSender,
       messageId: safeMessageId,
+      routerClass,
       bodySha256,
     });
     const signature = await hmacSha256Hex(
@@ -189,12 +251,13 @@ export default {
         method: "POST",
         headers: {
           "Content-Type": "message/rfc822",
-          "X-Munshi-Version": "v1",
+          "X-Munshi-Version": PROTOCOL_VERSION,
           "X-Munshi-Timestamp": timestamp,
           "X-Munshi-Recipient": safeRecipient,
           "X-Munshi-Sender": safeSender,
           "X-Munshi-Message-ID": safeMessageId,
-          "X-Munshi-Signature": `v1=${signature}`,
+          "X-Munshi-Mail-Class": routerClass,
+          "X-Munshi-Signature": `v2=${signature}`,
         },
         body: raw,
       });
