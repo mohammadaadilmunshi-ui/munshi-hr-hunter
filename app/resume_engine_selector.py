@@ -16,6 +16,17 @@ import streamlit as st
 _PAGES: Any = None
 _DIALOG_JOB_KEY = "resume_engine_choice_job_id"
 _NATIVE_V5_ENV = "MUNSHI_NATIVE_RESUME_V5_ENABLED"
+_NATIVE_MODE_KEY_PREFIX = "resume_studio_v4_mode_"
+_NATIVE_MODE_LABELS = {
+    "slight": "Light",
+    "medium": "Balanced",
+    "aggressive": "Strong",
+}
+_NATIVE_MODE_HELP = {
+    "slight": "Keeps the current structure and makes targeted JD-specific improvements.",
+    "medium": "Balances ATS alignment, readability, and preservation of your career story.",
+    "aggressive": "Rebuilds emphasis around the JD while remaining strictly evidence-bound.",
+}
 _DEFAULT_NATIVE_INSTRUCTION = (
     "Create the strongest truthful one-page ATS resume for this job. Prioritize "
     "directly relevant evidence, keep the writing natural and concise, retain "
@@ -129,13 +140,14 @@ def _native_readiness() -> tuple[bool, str]:
     return True, "Ready to generate from your MUNSHI Profile."
 
 
-def _run_native(job_id: int) -> tuple[bool, str]:
-    """Generate and materialize Native V5 immediately from Candidate Truth."""
+def _run_native(job_id: int, *, rewrite_mode: str = "medium") -> tuple[bool, str]:
+    """Generate Native V5 through the same bounded one-page repair path as Studio."""
     if not native_resume_v5_enabled():
         return False, "Native Resume is temporarily unavailable."
 
-    from app import native_resume_artifact_v5 as artifacts
-    from app.native_resume_service_v5 import generate_resume, writer_status
+    from app import native_resume_quality_hotfix_v2 as quality_hotfix
+    from app import resume_one_page_guard_v1 as one_page_guard
+    from app.native_resume_service_v5 import writer_status
     from app.phase45_truth_binding import current_candidate_profile_snapshot
 
     try:
@@ -156,15 +168,22 @@ def _run_native(job_id: int) -> tuple[bool, str]:
             "Open Advanced resume settings to finish Native Resume setup.",
         )
 
-    record = generate_resume(
+    mode = str(rewrite_mode or "medium").strip().casefold()
+    if mode not in _NATIVE_MODE_LABELS:
+        mode = "medium"
+
+    # Browse must use the same actual-render repair path as Resume Studio. Direct
+    # materialization can legitimately discover a second page; the guard makes a
+    # bounded evidence-preserving revision instead of surfacing that as the final UX.
+    quality_hotfix.install()
+    record, bundle = one_page_guard.generate_checked(
         job_id=int(job_id),
         instruction=_DEFAULT_NATIVE_INSTRUCTION,
-        rewrite_mode="medium",
+        rewrite_mode=mode,
     )
     if record.get("stage_b_bound") is not True:
         raise RuntimeError("Native Resume V5 returned an unbound resume version.")
 
-    bundle = artifacts.materialize(str(record["version_id"]))
     verification = bundle.get("page_verification") or {}
     if verification.get("status") != "PASS":
         raise RuntimeError("Native Resume page-fit verification did not pass.")
@@ -213,6 +232,7 @@ def _engine_dialog(job_id: int) -> None:
         key=f"resume_engine_choice_{job_id}",
     )
 
+    native_mode = "medium"
     if choice == "n8n":
         st.info("Uses the existing guarded n8n resume preparation workflow.")
     else:
@@ -221,6 +241,15 @@ def _engine_dialog(job_id: int) -> None:
             "Built into MUNSHI. Uses your permanent Profile and this job to "
             "create a truthful, checked one-page resume."
         )
+        native_mode = st.radio(
+            "Tailoring strength",
+            ["slight", "medium", "aggressive"],
+            index=1,
+            horizontal=True,
+            format_func=lambda value: _NATIVE_MODE_LABELS[value],
+            key=f"{_NATIVE_MODE_KEY_PREFIX}{job_id}",
+        )
+        st.caption(_NATIVE_MODE_HELP[native_mode])
         if ready:
             st.success(message)
         else:
@@ -265,7 +294,10 @@ def _engine_dialog(job_id: int) -> None:
                 with st.spinner(
                     "Creating your tailored Native resume and checking the final page…"
                 ):
-                    generated, message = _run_native(job_id)
+                    generated, message = _run_native(
+                        job_id,
+                        rewrite_mode=native_mode,
+                    )
             except Exception as error:  # noqa: BLE001
                 st.error(str(error))
                 return
