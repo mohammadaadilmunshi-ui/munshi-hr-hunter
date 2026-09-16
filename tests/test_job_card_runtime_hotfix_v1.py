@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import sqlite3
 
 import pytest
@@ -85,6 +86,15 @@ def test_dialog_failure_is_logged_and_forces_clean_rerun(monkeypatch) -> None:
     assert Pages.feedback is not None
     assert Pages.feedback[0] == "error"
     assert "could not open safely" in Pages.feedback[1]
+
+
+def test_local_one_shot_open_consumes_duplicate_job_query() -> None:
+    source = inspect.getsource(hotfix._job_detail_fail_soft)
+    queued_index = source.index("if queued is not None:")
+    consume_index = source.index('if "job" in st.query_params:', queued_index)
+    open_index = source.index("_safe_open_dialog(product_v22, pages, job_id)", consume_index)
+    assert queued_index < consume_index < open_index
+    assert 'del st.query_params["job"]' in source
 
 
 def test_installer_keeps_job_browsing_non_submitting() -> None:
