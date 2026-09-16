@@ -317,14 +317,14 @@ def test_coordinator_preserves_legacy_n8n_auto_path_by_default(monkeypatch):
         _legacy_n8n_routing,
     )
     monkeypatch.setattr(
-        coordinator,
-        "queue_candidates",
+        coordinator.autonomous_prepare_compat_v1,
+        "queue_legacy_n8n_candidates",
         lambda **kwargs: {
             "success": True,
             "queued": [{"job_id": 77, "dispatch_mode": "auto_top_match"}],
             "selected_count": 1,
-            "errors": [],
             "n8n_calls": 0,
+            "submission_authority": False,
         },
     )
 
