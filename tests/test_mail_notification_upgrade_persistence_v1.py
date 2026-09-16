@@ -62,7 +62,6 @@ def test_clean_upgrade_and_restart_preserve_account_mapping_and_notification_sta
     )
 
     account_id = str(account["account_id"])
-    identity_id = str(account["identity_id"])
     expected_ref = f"ats-secret://{account_id}/password"
 
     connection = database.get_connection()
@@ -72,6 +71,7 @@ def test_clean_upgrade_and_restart_preserve_account_mapping_and_notification_sta
                FROM ats_managed_account_bindings WHERE account_id=?""",
             (account_id,),
         ).fetchone()
+        identity_id = str(binding_before["identity_id"])
         identity_before = connection.execute(
             """SELECT email_address,relay_state FROM ats_application_identities
                WHERE identity_id=?""",
@@ -90,9 +90,9 @@ def test_clean_upgrade_and_restart_preserve_account_mapping_and_notification_sta
     finally:
         connection.close()
 
-    assert binding_before["identity_id"] == identity_id
     assert binding_before["secret_ref"] == expected_ref
     assert binding_before["password_mode"] == "MUNSHI_GENERATED_UNIQUE"
+    assert identity_before["email_address"] == account["application_email"]
     assert identity_before["email_address"].startswith("u_")
     assert identity_before["email_address"].endswith("@mail.munshi.systems")
     assert table_names == {
