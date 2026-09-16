@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from app import autonomous_prepare_v1 as autonomous
 from app import unified_hourly_coordinator as coordinator
 
@@ -103,7 +101,6 @@ def test_auto_admission_skips_existing_and_obeys_combined_daily_limit(monkeypatc
     )
 
     result = autonomous.admit_auto_candidates(dry_run=False)
-    # Limit 5 - one legacy auto queue use - two durable admissions = two slots.
     assert admitted == [(11, "NATIVE"), (12, "NATIVE")]
     assert [row["job_id"] for row in result["admitted"]] == [11, 12]
     assert all(row["product_stage"] == "OPTIMIZING" for row in result["admitted"])
@@ -148,19 +145,21 @@ def test_auto_admission_isolates_one_job_failure(monkeypatch):
 
 def test_n8n_url_only_contract_becomes_issue_instead_of_trusted_ready(monkeypatch):
     operation_id = "operation-n8n"
+    running = {
+        "operation_id": operation_id,
+        "engine": "N8N",
+        "status": "RUNNING",
+        "tasks": [
+            {
+                "task_id": "resume-task",
+                "task_kind": "RESUME_PREPARE",
+                "status": "PENDING",
+            }
+        ],
+    }
     states = [
-        {
-            "operation_id": operation_id,
-            "engine": "N8N",
-            "status": "RUNNING",
-            "tasks": [
-                {
-                    "task_id": "resume-task",
-                    "task_kind": "RESUME_PREPARE",
-                    "status": "PENDING",
-                }
-            ],
-        },
+        dict(running),
+        dict(running),
         {
             "operation_id": operation_id,
             "engine": "N8N",
@@ -205,7 +204,7 @@ def test_coordinator_uses_manual_queue_plus_durable_auto_owner(monkeypatch):
         lambda **kwargs: {"success": True, "queued": [], "selected_count": 0},
     )
     monkeypatch.setattr(
-        coordinator.autonomous_prepare_v1,
+        coordinator.autonomous_prepare_admission_v1,
         "admit_auto_candidates",
         lambda **kwargs: {
             "success": True,
