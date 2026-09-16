@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app import autonomous_prepare_compat_v1 as compat
 from app import autonomous_prepare_v1 as autonomous
 from app import unified_hourly_coordinator as coordinator
 
@@ -39,6 +40,28 @@ def _job(job_id: int, *, title="People Analyst"):
     }
 
 
+def _native_routing():
+    return {
+        "engine": "NATIVE",
+        "mode": "DURABLE_PREPARE",
+        "durable_prepare_is_auto_owner": True,
+        "legacy_auto_n8n_queue_enabled": False,
+        "reason": "native_durable_prepare",
+        "submission_authority": False,
+    }
+
+
+def _legacy_n8n_routing():
+    return {
+        "engine": "N8N",
+        "mode": "LEGACY_N8N_COMPAT",
+        "durable_prepare_is_auto_owner": False,
+        "legacy_auto_n8n_queue_enabled": True,
+        "reason": "n8n_durable_resume_binding_not_enabled",
+        "submission_authority": False,
+    }
+
+
 def test_product_stage_contract_maps_prepare_states():
     assert autonomous.product_stage_for_state("QUEUED") == "OPTIMIZING"
     assert autonomous.product_stage_for_state("RUNNING") == "OPTIMIZING"
@@ -46,6 +69,41 @@ def test_product_stage_contract_maps_prepare_states():
     assert autonomous.product_stage_for_state("FAILED_SAFELY") == "ISSUE"
     assert autonomous.product_stage_for_state("READY_FOR_REVIEW") == "NEEDS REVIEW"
     assert autonomous.product_stage_for_state("READY_TO_SUBMIT") == "NEEDS REVIEW"
+
+
+def test_n8n_durable_prepare_is_default_off(monkeypatch):
+    monkeypatch.setattr(compat, "configured_engine", lambda: "N8N")
+    monkeypatch.delenv(compat.N8N_DURABLE_PREPARE_ENV, raising=False)
+
+    routing = compat.routing_mode()
+
+    assert routing["mode"] == "LEGACY_N8N_COMPAT"
+    assert routing["durable_prepare_is_auto_owner"] is False
+    assert routing["legacy_auto_n8n_queue_enabled"] is True
+    assert routing["submission_authority"] is False
+
+
+def test_n8n_durable_prepare_requires_explicit_opt_in(monkeypatch):
+    monkeypatch.setattr(compat, "configured_engine", lambda: "N8N")
+    monkeypatch.setenv(compat.N8N_DURABLE_PREPARE_ENV, "true")
+
+    routing = compat.routing_mode()
+
+    assert routing["mode"] == "DURABLE_PREPARE"
+    assert routing["durable_prepare_is_auto_owner"] is True
+    assert routing["legacy_auto_n8n_queue_enabled"] is False
+    assert routing["submission_authority"] is False
+
+
+def test_native_always_uses_durable_prepare(monkeypatch):
+    monkeypatch.setattr(compat, "configured_engine", lambda: "NATIVE")
+    monkeypatch.delenv(compat.N8N_DURABLE_PREPARE_ENV, raising=False)
+
+    routing = compat.routing_mode()
+
+    assert routing["mode"] == "DURABLE_PREPARE"
+    assert routing["durable_prepare_is_auto_owner"] is True
+    assert routing["legacy_auto_n8n_queue_enabled"] is False
 
 
 def test_manual_queue_never_inserts_auto_candidate(monkeypatch):
@@ -199,6 +257,11 @@ def test_coordinator_uses_manual_queue_plus_durable_auto_owner(monkeypatch):
     monkeypatch.setattr(coordinator, "manual_or_stored_worker_active", lambda: "")
     monkeypatch.setattr(coordinator, "load_enabled_sources", lambda: ["greenhouse"])
     monkeypatch.setattr(
+        coordinator.autonomous_prepare_compat_v1,
+        "routing_mode",
+        _native_routing,
+    )
+    monkeypatch.setattr(
         coordinator.autonomous_prepare_v1,
         "queue_manual_candidates",
         lambda **kwargs: {"success": True, "queued": [], "selected_count": 0},
@@ -240,5 +303,74 @@ def test_coordinator_uses_manual_queue_plus_durable_auto_owner(monkeypatch):
     assert result["success"] is True
     assert result["durable_prepare_is_auto_owner"] is True
     assert result["legacy_auto_n8n_queue_disabled_here"] is True
+    assert result["auto_prepare_routing"]["engine"] == "NATIVE"
     assert result["autonomous_admission_result"]["admitted"][0]["product_stage"] == "OPTIMIZING"
     assert result["prepare_runtime_result"]["results"][0]["product_stage"] == "NEEDS REVIEW"
+
+
+def test_coordinator_preserves_legacy_n8n_auto_path_by_default(monkeypatch):
+    monkeypatch.setattr(coordinator, "manual_or_stored_worker_active", lambda: "")
+    monkeypatch.setattr(coordinator, "load_enabled_sources", lambda: ["greenhouse"])
+    monkeypatch.setattr(
+        coordinator.autonomous_prepare_compat_v1,
+        "routing_mode",
+        _legacy_n8n_routing,
+    )
+    monkeypatch.setattr(
+        coordinator,
+        "queue_candidates",
+        lambda **kwargs: {
+            "success": True,
+            "queued": [{"job_id": 77, "dispatch_mode": "auto_top_match"}],
+            "selected_count": 1,
+            "errors": [],
+            "n8n_calls": 0,
+        },
+    )
+
+    def must_not_admit(**kwargs):
+        raise AssertionError("durable auto admission must not run in N8N compatibility mode")
+
+    monkeypatch.setattr(
+        coordinator.autonomous_prepare_admission_v1,
+        "admit_auto_candidates",
+        must_not_admit,
+    )
+    monkeypatch.setattr(
+        coordinator.autonomous_prepare_v1,
+        "queue_manual_candidates",
+        must_not_admit,
+    )
+    monkeypatch.setattr(
+        coordinator.autonomous_prepare_v1,
+        "drive_open_operations",
+        lambda: {
+            "success": True,
+            "operation_count": 0,
+            "results": [],
+            "errors": [],
+            "submission_authority": False,
+        },
+    )
+    monkeypatch.setattr(
+        coordinator,
+        "dispatch_pending",
+        lambda **kwargs: {"success": True, "errors": [], "n8n_calls": 0, "dispatched": []},
+    )
+    monkeypatch.setattr(coordinator, "record_coordinator_event", lambda summary: None)
+
+    result = coordinator.run_coordinator(
+        skip_workers=True,
+        force_workers=False,
+        dry_run=False,
+        webhook_mode="production",
+        timeout_seconds=900,
+    )
+
+    assert result["success"] is True
+    assert result["durable_prepare_is_auto_owner"] is False
+    assert result["legacy_auto_n8n_queue_disabled_here"] is False
+    assert result["auto_prepare_routing"]["mode"] == "LEGACY_N8N_COMPAT"
+    assert result["queue_result"]["queued"][0]["dispatch_mode"] == "auto_top_match"
+    assert result["autonomous_admission_result"]["skipped"] is True
+    assert result["autonomous_admission_result"]["admitted"] == []
