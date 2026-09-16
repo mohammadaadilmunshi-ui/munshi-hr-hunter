@@ -10,12 +10,14 @@ from pathlib import Path
 from typing import Any
 
 from app import autonomous_prepare_admission_v1
+from app import autonomous_prepare_compat_v1
 from app import autonomous_prepare_v1
 from app.n8n_dispatch import (
     DB_PATH,
     dispatch_pending,
     ensure_schema,
     get_connection,
+    queue_candidates,
 )
 
 
@@ -27,7 +29,7 @@ LOCK_PATH = (
 )
 
 COORDINATOR_VERSION = (
-    "unified_hourly_coordinator_v2_durable_prepare"
+    "unified_hourly_coordinator_v3_safe_engine_routing"
 )
 
 
@@ -153,6 +155,7 @@ def run_coordinator(
             "coordinator_version": COORDINATOR_VERSION,
             "worker_results": [],
             "queue_result": {},
+            "auto_prepare_routing": {},
             "autonomous_admission_result": {},
             "prepare_runtime_result": {},
             "dispatch_result": {
@@ -171,24 +174,50 @@ def run_coordinator(
 
     worker_results = []
     unsupported_sources = []
-
-    # Explicit/manual n8n work keeps the proven queue/dispatch path. Automatic
-    # eligibility now belongs to durable Prepare and is never inserted into the
-    # legacy auto_top_match queue by this coordinator.
-    queue_result = autonomous_prepare_v1.queue_manual_candidates(
-        webhook_mode=webhook_mode,
-        dry_run=dry_run,
+    auto_prepare_routing = autonomous_prepare_compat_v1.routing_mode()
+    legacy_n8n_compat = (
+        str(auto_prepare_routing.get("mode") or "")
+        == "LEGACY_N8N_COMPAT"
     )
 
-    # Durable Prepare rows are removed before the final quota slice. This avoids
-    # historical Prepare work starving newer eligible jobs under a finite daily
-    # automation limit while reusing the canonical eligibility predicates.
-    autonomous_admission_result = (
-        autonomous_prepare_admission_v1.admit_auto_candidates(
+    if legacy_n8n_compat:
+        # Preserve the proven n8n producer until its resume callback emits the
+        # immutable Candidate Truth + job/artifact binding required by durable
+        # Phase 9. This is intentionally not a silent migration to ISSUE.
+        queue_result = queue_candidates(
+            webhook_mode=webhook_mode,
             dry_run=dry_run,
         )
-    )
+        autonomous_admission_result = {
+            "success": True,
+            "skipped": True,
+            "reason": str(auto_prepare_routing.get("reason") or "n8n_compatibility"),
+            "engine": "N8N",
+            "admitted": [],
+            "errors": [],
+            "submission_authority": False,
+        }
+    else:
+        # Explicit/manual n8n work keeps the proven queue/dispatch path. Native
+        # automatic eligibility belongs to durable Prepare. Experimental N8N
+        # durable ownership can only arrive here through an explicit opt-in.
+        queue_result = autonomous_prepare_v1.queue_manual_candidates(
+            webhook_mode=webhook_mode,
+            dry_run=dry_run,
+        )
 
+        # Durable Prepare rows are removed before the final quota slice. This
+        # avoids historical Prepare work starving newer eligible jobs under a
+        # finite daily automation limit while reusing canonical eligibility.
+        autonomous_admission_result = (
+            autonomous_prepare_admission_v1.admit_auto_candidates(
+                dry_run=dry_run,
+            )
+        )
+
+    # Existing durable operations remain independently progressable even when
+    # the saved engine changes. The compatibility router only owns *new auto
+    # admission*; it never abandons already-created durable work.
     prepare_runtime_result = (
         {
             "success": True,
@@ -230,8 +259,13 @@ def run_coordinator(
             skip_workers
         ),
         "queue_only_invariant": False,
-        "durable_prepare_is_auto_owner": True,
-        "legacy_auto_n8n_queue_disabled_here": True,
+        "auto_prepare_routing": auto_prepare_routing,
+        "durable_prepare_is_auto_owner": bool(
+            auto_prepare_routing.get("durable_prepare_is_auto_owner")
+        ),
+        "legacy_auto_n8n_queue_disabled_here": not bool(
+            auto_prepare_routing.get("legacy_auto_n8n_queue_enabled")
+        ),
         "source_worker_execution_requested_but_blocked": worker_execution_requested,
         "force_workers": (
             force_workers
@@ -285,6 +319,7 @@ def main() -> None:
             "reason": "canonical_orchestration_maintenance_mode",
             "worker_results": [],
             "queue_result": {},
+            "auto_prepare_routing": {},
             "autonomous_admission_result": {},
             "prepare_runtime_result": {},
             "dispatch_result": {},
