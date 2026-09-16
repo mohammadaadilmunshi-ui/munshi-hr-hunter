@@ -45,6 +45,7 @@ jobs:
             tests/test_native_resume_stage_b_coverage_v1.py \
             tests/test_job_card_runtime_hotfix_v1.py \
             tests/test_job_card_interaction_hotfix_v2.py \
+            tests/test_n8n_live_console_v1.py \
             tests/test_product_state.py \
             tests/test_product_n8n_dispatch.py \
             tests/test_product_manual_input.py \
