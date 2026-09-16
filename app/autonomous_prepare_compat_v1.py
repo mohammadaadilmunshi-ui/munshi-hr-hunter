@@ -11,8 +11,9 @@ automatic durable preparation activates only after an explicit NATIVE preference
 The experimental durable N8N bridge is separately opt-in and default-off.
 
 Compatibility routing also excludes any job that already has durable Prepare
-work before applying the legacy auto quota. Changing engines must never create a
-second preparation lane for the same job.
+work before applying manual or automatic quota. Changing engines must never
+create a second preparation lane for the same job or let historical durable work
+consume a legacy queue slot.
 """
 from __future__ import annotations
 
@@ -25,7 +26,9 @@ from app.n8n_dispatch import (
     _begin_dispatch_transaction,
     ensure_schema as ensure_n8n_schema,
     insert_queue_item,
+    is_manual_eligible,
     load_setting,
+    load_unqueued_jobs,
     plan_candidates,
 )
 
@@ -108,13 +111,12 @@ def queue_legacy_n8n_candidates(
     webhook_mode: str,
     dry_run: bool,
 ) -> dict[str, Any]:
-    """Preserve legacy n8n auto behavior without duplicating durable work.
+    """Preserve legacy n8n behavior without duplicating durable Prepare work.
 
-    The canonical planner remains authoritative for policy-derived thresholds,
-    manual limits and legacy usage. For automatic candidates we rebuild the
-    canonical eligible pool only so existing durable Prepare jobs can be removed
-    *before* quota truncation. Durable admissions from earlier in the same day
-    also consume the user's shared auto volume budget.
+    Canonical policy/usage values still come from ``plan_candidates``. The raw
+    unqueued pool is re-filtered so durable jobs are removed *before* both manual
+    and auto quota slices. Auto eligibility itself remains owned by the existing
+    canonical predicates through ``_eligible_unprepared_pool``.
     """
     from app import autonomous_prepare_admission_v1 as admission
 
@@ -124,12 +126,19 @@ def queue_legacy_n8n_candidates(
         plan = plan_candidates(connection)
         existing_prepare = runtime._existing_prepare_job_ids(connection)
         durable_used = runtime._admissions_today(connection)
+        unqueued_jobs = load_unqueued_jobs(connection)
 
+        manual_remaining = max(
+            0,
+            int(plan["manual_limit"]) - int(plan["manual_used_today"]),
+        )
         manual_candidates = [
             job
-            for job in plan["manual_candidates"]
+            for job in unqueued_jobs
             if int(job["id"]) not in existing_prepare
-        ]
+            and is_manual_eligible(job)
+        ][:manual_remaining]
+
         auto_pool = admission._eligible_unprepared_pool(
             connection,
             threshold=float(plan["threshold"]),
@@ -149,8 +158,8 @@ def queue_legacy_n8n_candidates(
             auto_candidates = auto_pool[:remaining]
 
         selected = [
-            *( (job, "telegram_manual") for job in manual_candidates ),
-            *( (job, "auto_top_match") for job in auto_candidates ),
+            *((job, "telegram_manual") for job in manual_candidates),
+            *((job, "auto_top_match") for job in auto_candidates),
         ]
 
         if dry_run:
@@ -199,6 +208,8 @@ def queue_legacy_n8n_candidates(
             "manual_limit": plan["manual_limit"],
             "legacy_auto_used_today": int(plan["auto_used_today"]),
             "durable_auto_used_today": int(durable_used),
+            "manual_used_today": int(plan["manual_used_today"]),
+            "manual_remaining_slots": manual_remaining,
             "remaining_slots": remaining,
             "manual_candidate_count": len(manual_candidates),
             "auto_candidate_count": len(auto_candidates),
