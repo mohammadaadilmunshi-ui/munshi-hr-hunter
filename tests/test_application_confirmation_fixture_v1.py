@@ -22,6 +22,10 @@ def test_confirmation_email_fixture_creates_independent_evidence_and_never_submi
 ) -> None:
     monkeypatch.setenv("MUNSHI_APPLICATION_MAIL_DOMAIN", "mail.munshi.systems")
     monkeypatch.setenv("MUNSHI_APPLICATION_MAIL_RELAY_ENABLED", "1")
+    monkeypatch.setenv(
+        "MUNSHI_VAULT_KEY",
+        "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+    )
     monkeypatch.setattr(
         mail_intelligence_v2.production_receipt,
         "ensure_schema",
