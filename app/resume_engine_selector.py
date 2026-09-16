@@ -43,8 +43,21 @@ def native_resume_v5_enabled() -> bool:
     return raw.strip().casefold() in {"1", "true", "yes", "on", "enabled"}
 
 
+def _rerun_app() -> None:
+    """Leave a dialog/fragment rerun and continue on the full product shell."""
+    try:
+        st.rerun(scope="app")
+    except TypeError:
+        # Compatibility with Streamlit versions that predate scoped reruns.
+        st.rerun()
+
+
 def _request_engine_choice(job_id: int) -> None:
     st.session_state[_DIALOG_JOB_KEY] = int(job_id)
+    # Prepare can be invoked from the Opportunity Details st.dialog fragment.
+    # A fragment-only rerun cannot render the selector that lives in product_shell,
+    # so force an application rerun after recording the requested job.
+    _rerun_app()
 
 
 def _job_label(row: dict[str, Any]) -> str:
