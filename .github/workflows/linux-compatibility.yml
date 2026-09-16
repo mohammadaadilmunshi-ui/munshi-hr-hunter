@@ -30,8 +30,10 @@ jobs:
           app/inbound_mail.py
           app/mail_intelligence_v2.py
           app/application_notifications_v1.py
+          app/application_notifications_runtime_v2.py
           app/application_notification_ui_v1.py
           integrations/hr_agent/n8n_hr_score.py
+          scripts/application_notification_worker.py
           scripts/render_n8n_deployment_workflow.py
           scripts/validate_container_environment_contract.py
           scripts/validate_n8n_portability.py
@@ -42,6 +44,7 @@ jobs:
           tests/test_mail_intelligence_v2.py
           tests/test_mail_worker_source_v1.py
           tests/test_application_notifications_v1.py
+          tests/test_application_notifications_runtime_v2.py
           tests/test_application_confirmation_fixture_v1.py
       - name: Validate container environment contract
         run: python scripts/validate_container_environment_contract.py
@@ -69,7 +72,10 @@ jobs:
           tests/test_mail_intelligence_v2.py
           tests/test_mail_worker_source_v1.py
           tests/test_application_notifications_v1.py
+          tests/test_application_notifications_runtime_v2.py
           tests/test_application_confirmation_fixture_v1.py
+      - name: Validate notification worker fail-closed default
+        run: python scripts/application_notification_worker.py
       - name: Validate Netcup shell syntax
         run: bash -n scripts/netcup/*.sh
       - name: Import direct third-party dependencies
