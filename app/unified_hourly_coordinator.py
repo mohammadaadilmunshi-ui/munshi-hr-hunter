@@ -17,7 +17,6 @@ from app.n8n_dispatch import (
     dispatch_pending,
     ensure_schema,
     get_connection,
-    queue_candidates,
 )
 
 
@@ -29,7 +28,7 @@ LOCK_PATH = (
 )
 
 COORDINATOR_VERSION = (
-    "unified_hourly_coordinator_v3_safe_engine_routing"
+    "unified_hourly_coordinator_v4_safe_engine_routing"
 )
 
 
@@ -183,8 +182,9 @@ def run_coordinator(
     if legacy_n8n_compat:
         # Preserve the proven n8n producer until its resume callback emits the
         # immutable Candidate Truth + job/artifact binding required by durable
-        # Phase 9. This is intentionally not a silent migration to ISSUE.
-        queue_result = queue_candidates(
+        # Phase 9. Existing durable jobs are excluded before quota truncation so
+        # switching engines can never create duplicate preparation for one job.
+        queue_result = autonomous_prepare_compat_v1.queue_legacy_n8n_candidates(
             webhook_mode=webhook_mode,
             dry_run=dry_run,
         )
