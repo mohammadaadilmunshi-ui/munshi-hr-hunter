@@ -279,7 +279,10 @@ def _engine_dialog(job_id: int) -> None:
             st.session_state.pop(_DIALOG_JOB_KEY, None)
             if choice == "n8n":
                 try:
+                    from app.n8n_live_console_v1 import activate_live_run
+
                     result = _run_n8n(job_id)
+                    activate_live_run(job_id, result)
                     if _PAGES is not None and hasattr(
                         _PAGES,
                         "_set_action_feedback",
@@ -301,7 +304,10 @@ def _engine_dialog(job_id: int) -> None:
                             "The guarded n8n preparation request could not be started: "
                             + str(error),
                         )
-                st.rerun()
+                # The live console is rendered by product_shell, outside this
+                # dialog fragment, so always return to the full application run.
+                _rerun_app()
+                return
 
             try:
                 with st.spinner(
