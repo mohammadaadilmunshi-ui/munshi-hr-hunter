@@ -4,6 +4,9 @@ Installs the hardened deterministic parser after the existing Career OS quality
 layer and exposes an explicit rebuild action for the current Master Resume.
 Rebuild creates a new reviewable draft only; it never confirms or replaces
 permanent profile authority automatically.
+
+This module is also loaded on every product-shell render, so it installs the
+small fail-soft job-card runtime guard before applying profile-only patches.
 """
 from __future__ import annotations
 
@@ -12,17 +15,23 @@ from typing import Any
 import streamlit as st
 
 from app.deterministic_profile_extractor_v2_1 import extract_profile_from_source
+from app.job_card_runtime_hotfix_v1 import install_job_card_runtime_hotfix
 
 
 def install_profile_runtime_repair_v2() -> None:
     from app import native_resume_service_v3 as service
     from app import profile_workspace_v3 as workspace
 
+    # Product V2.2 is installed earlier in product_shell. Reapply the narrow
+    # fail-soft binding on each shell run before any early-return marker so a
+    # later wrapper cannot leave basic job browsing crash-prone.
+    install_job_card_runtime_hotfix()
+
     if getattr(workspace, "_profile_runtime_repair_v2_installed", False):
         return
 
     # Career OS V1 intentionally replaced the model-backed extractor with a
-    # deterministic parser.  V2.1 keeps that same no-model contract while
+    # deterministic parser. V2.1 keeps that same no-model contract while
     # adding layout repair for wrapped PDF/DOCX text and flattened project
     # boundaries.
     service.extract_profile_from_source = extract_profile_from_source
