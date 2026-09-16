@@ -25,16 +25,16 @@ def _job(job_id: int):
     }
 
 
-def _plan(*, manual=None, auto_limit=4, auto_used=1):
+def _plan(*, auto_limit=4, auto_used=1, manual_limit=2, manual_used=0):
     return {
         "threshold": 95.0,
         "auto_limit": auto_limit,
         "product_volume_mode": "custom_limit",
         "enabled_lane_count": 1,
-        "manual_limit": 25,
+        "manual_limit": manual_limit,
         "auto_used_today": auto_used,
-        "manual_used_today": 0,
-        "manual_candidates": list(manual or []),
+        "manual_used_today": manual_used,
+        "manual_candidates": [],
         "auto_candidates": [],
     }
 
@@ -98,10 +98,11 @@ def test_invalid_saved_engine_fails_closed(monkeypatch):
         raise AssertionError("invalid prepare engine must fail closed")
 
 
-def test_n8n_compat_excludes_durable_jobs_and_shares_auto_quota(monkeypatch):
+def test_n8n_compat_filters_durable_jobs_before_manual_and_auto_quota(monkeypatch):
     connection = FakeConnection()
     manual_existing = _job(1)
     manual_new = _job(2)
+    manual_next = _job(3)
     auto_pool = [_job(11), _job(12), _job(13)]
 
     monkeypatch.setattr(compat, "get_connection", lambda: connection)
@@ -110,10 +111,21 @@ def test_n8n_compat_excludes_durable_jobs_and_shares_auto_quota(monkeypatch):
         compat,
         "plan_candidates",
         lambda _connection: _plan(
-            manual=[manual_existing, manual_new],
             auto_limit=4,
             auto_used=1,
+            manual_limit=2,
+            manual_used=0,
         ),
+    )
+    monkeypatch.setattr(
+        compat,
+        "load_unqueued_jobs",
+        lambda _connection: [manual_existing, manual_new, manual_next],
+    )
+    monkeypatch.setattr(
+        compat,
+        "is_manual_eligible",
+        lambda job: True,
     )
     monkeypatch.setattr(
         compat.runtime,
@@ -136,13 +148,19 @@ def test_n8n_compat_excludes_durable_jobs_and_shares_auto_quota(monkeypatch):
         dry_run=True,
     )
 
+    # Manual quota is applied after the already-durable #1 is removed, so the
+    # next two explicit approvals fill the two manual slots instead of starving.
+    assert result["manual_remaining_slots"] == 2
+    assert result["manual_candidate_count"] == 2
+
     # Four daily auto slots minus one legacy n8n use and one durable admission
-    # leaves two auto slots. The manually approved job already owned by durable
-    # Prepare is also excluded, so no job is prepared twice after an engine switch.
+    # leaves two auto slots. This keeps the shared volume limit stable when the
+    # engine preference changes during the day.
     assert result["remaining_slots"] == 2
     assert result["durable_auto_used_today"] == 1
-    assert [row["job_id"] for row in result["queued"]] == [2, 11, 12]
+    assert [row["job_id"] for row in result["queued"]] == [2, 3, 11, 12]
     assert [row["dispatch_mode"] for row in result["queued"]] == [
+        "telegram_manual",
         "telegram_manual",
         "auto_top_match",
         "auto_top_match",
