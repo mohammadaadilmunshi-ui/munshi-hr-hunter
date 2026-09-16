@@ -11,6 +11,14 @@ from __future__ import annotations
 import os
 import sys
 import time
+from pathlib import Path
+
+# Direct execution (`python scripts/...`) sets sys.path[0] to scripts/. Bootstrap
+# the repository root explicitly so the same command works on Linux, local macOS,
+# and supervised service runners without relying on caller-specific PYTHONPATH.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from app.application_notifications_runtime_v2 import notification_cycle
 
