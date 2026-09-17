@@ -1,0 +1,11 @@
+From: Greenhouse Notifications <no-reply@greenhouse.io>
+To: {{RECIPIENT}}
+Subject: Thanks for applying to Example
+Message-ID: <application-confirmation-fixture@example.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Thanks for your application to Example for the People Analytics Analyst role.
+Your application was received successfully through Greenhouse.
+Reference: gh-555123
