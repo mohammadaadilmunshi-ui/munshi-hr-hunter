@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.application_notifications_runtime_v2 import notification_cycle
+from app.application_notifications_runtime_v3 import notification_cycle
 
 
 def _enabled(name: str) -> bool:

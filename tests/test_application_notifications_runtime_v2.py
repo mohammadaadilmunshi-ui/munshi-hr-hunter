@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import application_notifications_runtime_v2 as notifications
+from app import application_notifications_runtime_v3 as notifications
 from app import database
 
 
@@ -44,6 +44,50 @@ def _seed_receipt() -> None:
         connection.close()
 
 
+def _seed_communications() -> None:
+    connection = database.get_connection()
+    try:
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS mail_events_v2(
+                   mail_event_id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL,user_id TEXT NOT NULL,
+                   correlation_state TEXT NOT NULL)"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS application_communication_events_v2(
+                   communication_id TEXT PRIMARY KEY,mail_event_id TEXT NOT NULL UNIQUE,
+                   application_id TEXT,job_id INTEGER,category TEXT NOT NULL,
+                   sender_domain TEXT,received_at TEXT NOT NULL,
+                   auto_reply_allowed INTEGER NOT NULL DEFAULT 0 CHECK(auto_reply_allowed=0))"""
+        )
+        connection.execute(
+            """INSERT OR IGNORE INTO mail_events_v2
+                   (mail_event_id,tenant_id,user_id,correlation_state)
+               VALUES('mail-interview-v3','default','local-owner','UNIQUE')"""
+        )
+        connection.execute(
+            """INSERT OR IGNORE INTO application_communication_events_v2(
+                   communication_id,mail_event_id,application_id,job_id,category,
+                   sender_domain,received_at,auto_reply_allowed)
+               VALUES('comm-interview-v3','mail-interview-v3','application-v2',43,
+                      'INTERVIEW','recruiting.example.test','2026-09-16T19:00:00+00:00',0)"""
+        )
+        connection.execute(
+            """INSERT OR IGNORE INTO mail_events_v2
+                   (mail_event_id,tenant_id,user_id,correlation_state)
+               VALUES('mail-unmatched-v3','default','local-owner','NONE')"""
+        )
+        connection.execute(
+            """INSERT OR IGNORE INTO application_communication_events_v2(
+                   communication_id,mail_event_id,application_id,job_id,category,
+                   sender_domain,received_at,auto_reply_allowed)
+               VALUES('comm-unmatched-v3','mail-unmatched-v3',NULL,NULL,
+                      'RECRUITER','unknown.example.test','2026-09-16T19:01:00+00:00',0)"""
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def test_preference_and_outbox_write_are_atomic(hunter_db, monkeypatch) -> None:
     _seed_receipt()
 
@@ -56,6 +100,7 @@ def test_preference_and_outbox_write_are_atomic(hunter_db, monkeypatch) -> None:
             destination_email="candidate@example.com",
             submission_email_enabled=True,
             employer_confirmation_email_enabled=False,
+            communication_email_enabled=False,
         )
 
     connection = database.get_connection()
@@ -80,9 +125,9 @@ def test_notification_cycle_projects_after_restart_and_delivery_flag_stays_fail_
         destination_email="candidate@example.com",
         submission_email_enabled=True,
         employer_confirmation_email_enabled=False,
+        communication_email_enabled=False,
     )
 
-    # Simulate a fresh process re-entering idempotent schema + projection.
     notifications.ensure_schema()
     monkeypatch.setenv("MUNSHI_APPLICATION_EMAIL_NOTIFICATIONS_ENABLED", "false")
 
@@ -109,3 +154,50 @@ def test_notification_cycle_projects_after_restart_and_delivery_flag_stays_fail_
     assert row["event_kind"] == "SUBMISSION_VERIFIED"
     assert row["delivery_state"] == "PENDING"
     assert row["destination_email"] == "candidate@example.com"
+
+
+def test_correlated_communication_queues_sanitized_notification_and_unmatched_stays_read_only(
+    hunter_db,
+) -> None:
+    _seed_receipt()
+    _seed_communications()
+    preference = notifications.save_preference(
+        destination_email="candidate@example.com",
+        submission_email_enabled=False,
+        employer_confirmation_email_enabled=False,
+        communication_email_enabled=True,
+    )
+    assert preference["communication_email_enabled"] is True
+
+    connection = database.get_connection()
+    try:
+        rows = connection.execute(
+            """SELECT event_kind,source_id,subject,body_text,delivery_state
+               FROM application_notification_outbox_v1 ORDER BY source_id"""
+        ).fetchall()
+    finally:
+        connection.close()
+
+    assert len(rows) == 1
+    assert rows[0]["event_kind"] == "INTERVIEW"
+    assert rows[0]["source_id"] == "comm-interview-v3"
+    assert rows[0]["delivery_state"] == "PENDING"
+    payload = f"{rows[0]['subject']}\n{rows[0]['body_text']}".lower()
+    assert "482915" not in payload
+    assert "http://" not in payload
+    assert "https://" not in payload
+    assert "recruiting.example.test" not in payload
+    assert "unknown.example.test" not in payload
+
+    communications = notifications.application_communication_rows(limit=10)
+    assert len(communications) == 2
+    matched = next(
+        row for row in communications if row["communication_id"] == "comm-interview-v3"
+    )
+    unmatched = next(
+        row for row in communications if row["communication_id"] == "comm-unmatched-v3"
+    )
+    assert matched["correlation"] == "Matched"
+    assert matched["auto_reply_allowed"] is False
+    assert unmatched["correlation"] == "Unmatched"
+    assert unmatched["auto_reply_allowed"] is False

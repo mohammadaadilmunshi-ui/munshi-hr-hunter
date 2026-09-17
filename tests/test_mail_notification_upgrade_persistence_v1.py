@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-from app import application_notifications_runtime_v2 as notifications
+from app import application_notifications_runtime_v3 as notifications
 from app import database
 from app.ats_managed_identity import prepare_managed_account
 
@@ -13,6 +13,7 @@ MIGRATIONS = (
     "052_inbound_mail_relay_v1.py",
     "053_mail_intelligence_v2.py",
     "054_application_notifications_v1.py",
+    "055_application_communication_notifications_v1.py",
 )
 
 
@@ -46,8 +47,8 @@ def test_clean_upgrade_and_restart_preserve_account_mapping_and_notification_sta
         "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
     )
 
-    # Clean upgrade: all three additive migrations must install on the supported
-    # initialized Hunter database without mutating any production database.
+    # Clean upgrade: all additive mail/notification migrations install on the
+    # supported initialized Hunter database without touching production data.
     _run_mail_upgrade()
 
     account = prepare_managed_account(
@@ -59,6 +60,7 @@ def test_clean_upgrade_and_restart_preserve_account_mapping_and_notification_sta
         destination_email="candidate@example.com",
         submission_email_enabled=True,
         employer_confirmation_email_enabled=True,
+        communication_email_enabled=True,
     )
 
     account_id = str(account["account_id"])
@@ -83,10 +85,23 @@ def test_clean_upgrade_and_restart_preserve_account_mapping_and_notification_sta
                 """SELECT name FROM sqlite_master WHERE type='table' AND name IN (
                      'inbound_mail_messages','mail_events_v2','mail_one_time_artifacts_v2',
                      'application_mail_confirmation_evidence_v2',
+                     'application_communication_events_v2',
                      'application_notification_preferences_v1','application_notification_outbox_v1'
                    )"""
             ).fetchall()
         }
+        preference_columns = {
+            str(row[1])
+            for row in connection.execute(
+                "PRAGMA table_info(application_notification_preferences_v1)"
+            ).fetchall()
+        }
+        outbox_sql = str(
+            connection.execute(
+                """SELECT sql FROM sqlite_master
+                   WHERE type='table' AND name='application_notification_outbox_v1'"""
+            ).fetchone()[0]
+        )
     finally:
         connection.close()
 
@@ -100,13 +115,16 @@ def test_clean_upgrade_and_restart_preserve_account_mapping_and_notification_sta
         "mail_events_v2",
         "mail_one_time_artifacts_v2",
         "application_mail_confirmation_evidence_v2",
+        "application_communication_events_v2",
         "application_notification_preferences_v1",
         "application_notification_outbox_v1",
     }
+    assert "communication_email_enabled" in preference_columns
+    assert "'INTERVIEW'" in outbox_sql.upper()
+    assert "'OFFER'" in outbox_sql.upper()
 
-    # Supported upgrade/restart re-entry: rerun every migration twice. DDL must be
-    # idempotent and durable account/credential references + user preference must
-    # survive unchanged.
+    # Upgrade/restart re-entry: rerun every migration twice. DDL must remain
+    # idempotent and all durable references/preferences must survive unchanged.
     _run_mail_upgrade()
     _run_mail_upgrade()
     assert notifications.get_preference() == preference
