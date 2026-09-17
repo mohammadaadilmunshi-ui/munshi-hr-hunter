@@ -6,6 +6,7 @@ from typing import Callable
 import streamlit as st
 
 from app.autoapply_settings_ui import install_autoapply_settings_ui
+from app.job_card_interaction_hotfix_v2 import inject_job_card_interaction_css
 from app.product_state import valid_view, volume_policy
 from app.product_ui import esc, inject_css
 from app.product_v22 import brand_logo_data_uri, inject_v22_css, install_product_v22
@@ -127,6 +128,7 @@ def render() -> None:
 
     inject_css()
     inject_v22_css()
+    inject_job_card_interaction_css()
 
     view = _query_view()
     st.session_state["product_view"] = view
@@ -179,11 +181,13 @@ def render() -> None:
     from app import application_workspace_page
     from app import candidate_profile_authority_v1 as profile_authority
     from app import profile_workspace_v2, profile_workspace_v3, profile_workspace_v4
+    from app.n8n_live_console_v1 import render_n8n_live_console
     from app.resume_engine_selector import (
         install_resume_engine_selector,
         render_resume_engine_selector,
     )
     from app.career_os_quality_patch_v1 import install_career_os_quality_patch
+    from app.job_card_runtime_hotfix_v1 import install_job_card_runtime_hotfix
     from app.provider_telemetry_window_v1 import install_provider_telemetry_window
     from app.profile_runtime_repair_v2 import install_profile_runtime_repair_v2
     from app.resume_studio_session_state_repair_v1 import (
@@ -210,6 +214,9 @@ def render() -> None:
     product_pages.candidate_facts = profile_authority.candidate_facts
 
     install_product_v22(product_pages)
+    # The dedicated drawer hardening is intentionally layered immediately after
+    # V2.2 so optional legacy history cannot crash Browse before later wrappers.
+    install_job_card_runtime_hotfix()
     # Keep the current AutoApply Settings layer first; the secure vault wrapper
     # is deliberately installed after it so the vault appends to the same
     # Credentials surface instead of replacing the newer AutoApply controls.
@@ -258,3 +265,7 @@ def render() -> None:
     }
     pages[view]()
     render_resume_engine_selector()
+    # Persistent presentation-only observer for explicit dashboard n8n runs.
+    # It survives navigation, reads durable queue/execution/callback evidence,
+    # and never owns dispatch/retry/submission authority.
+    render_n8n_live_console()

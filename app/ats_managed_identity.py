@@ -31,7 +31,7 @@ from app.ats_credentials import (
 )
 from app.tenant_foundation import current_owner
 
-_DEFAULT_MAIL_DOMAIN = "apply.munshi.systems"
+_DEFAULT_MAIL_DOMAIN = "mail.munshi.systems"
 _MAIL_DOMAIN = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 _PASSWORD_SAFE_SYMBOLS = "!@#$%_-+="
 _PASSWORD_LENGTH = 28

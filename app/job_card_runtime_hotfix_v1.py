@@ -180,6 +180,14 @@ def _job_detail_fail_soft(product_v22: Any, pages: Any) -> None:
             job_id = int(queued)
         except (TypeError, ValueError):
             return
+        # A local one-shot open request is already authoritative for this rerun.
+        # Remove a duplicate deep-link value (for example from a completed live
+        # n8n console jump) so closing the drawer cannot reopen it on the next run.
+        try:
+            if "job" in st.query_params:
+                del st.query_params["job"]
+        except Exception:
+            pass
         _safe_open_dialog(product_v22, pages, job_id)
         return
 

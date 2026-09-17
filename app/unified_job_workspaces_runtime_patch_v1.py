@@ -12,6 +12,7 @@ from typing import Any
 import streamlit as st
 
 from app import unified_job_workspaces_v1 as workspaces
+from app.application_notification_ui_v1 import install_application_notification_ui
 
 
 def _card_grid(
@@ -85,3 +86,8 @@ def install_unified_job_workspaces(product_pages: Any, application_workspace_pag
     workspaces._card_grid = _card_grid
     workspaces._pipeline_records = lambda: _pipeline_records(product_pages)
     workspaces.install_unified_job_workspaces(product_pages, application_workspace_page)
+    # V2.2/workspace installers are reapplied on each Streamlit rerun. Reattach the
+    # notification projection to the current final functions rather than wrapping a
+    # stale function from the previous rerun.
+    product_pages._application_notification_ui_v1_installed = False
+    install_application_notification_ui(product_pages)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from app import job_detail
 from app import jobspy_board_common
 from app import linkedin_jobspy_description_guard as guard
 from tools.runners import jobspy_runner as runner
@@ -194,3 +195,47 @@ def test_outer_guard_leaves_non_linkedin_normalization_unchanged():
         assert normalized == baseline
     finally:
         jobspy_board_common.normalize_jobspy_row = original
+
+
+def test_manual_linkedin_text_fails_closed_when_direct_url_is_missing():
+    text = job_detail.build_manual_job_text(
+        _outer_row(source="linkedin", apply_url=None)
+    )
+
+    assert "Application Link:\nDirect application URL unavailable" in text
+    assert "Application Link:\nhttps://www.linkedin.com/" not in text
+
+
+def test_manual_linkedin_text_rejects_stale_linkedin_apply_url():
+    text = job_detail.build_manual_job_text(
+        _outer_row(
+            source="linkedin",
+            apply_url="https://www.linkedin.com/jobs/view/987654321/",
+        )
+    )
+
+    assert "Application Link:\nDirect application URL unavailable" in text
+    assert "987654321" not in text
+
+
+def test_manual_linkedin_text_uses_external_direct_url():
+    direct = "https://boards.greenhouse.io/example/jobs/123"
+    text = job_detail.build_manual_job_text(
+        _outer_row(source="linkedin", apply_url=direct)
+    )
+
+    assert f"Application Link:\n{direct}" in text
+    assert "Direct application URL unavailable" not in text
+
+
+def test_manual_non_linkedin_text_keeps_existing_job_url_fallback():
+    source = "https://www.indeed.com/viewjob?jk=abc123"
+    text = job_detail.build_manual_job_text(
+        _outer_row(
+            source="indeed",
+            job_url=source,
+            apply_url=None,
+        )
+    )
+
+    assert f"Application Link:\n{source}" in text
