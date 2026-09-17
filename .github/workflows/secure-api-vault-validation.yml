@@ -1,0 +1,80 @@
+name: Secure API Vault Validation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secure-api-vault:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install locked dependencies
+        run: python -m pip install -r requirements.lock.txt
+
+      - name: Compile vault and dashboard sources
+        run: |
+          python -m py_compile \
+            app/secure_vault.py \
+            app/secure_api_vault_ui.py \
+            app/product_shell.py \
+            scripts/verify_secure_vault.py
+          bash -n deploy/netcup/provision_secure_vault_key.sh
+
+      - name: Run encrypted-vault tests
+        run: |
+          python -m pytest -q \
+            tests/test_secure_vault.py \
+            tests/test_secure_api_vault.py
+
+      - name: Prove production key-file readiness contract
+        env:
+          DATABASE_PATH: /tmp/munshi-secure-vault-ci.sqlite
+          HUNTER_API_SECRET: synthetic-ci-secret
+          MUNSHI_ENVIRONMENT: production
+          MUNSHI_VAULT_REQUIRE_KEY_FILE: "true"
+          MUNSHI_VAULT_KEY_FILE: /tmp/munshi-vault-ci/vault.key
+        run: |
+          mkdir -p /tmp/munshi-vault-ci
+          python - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+          path = Path('/tmp/munshi-vault-ci/vault.key')
+          path.write_text(base64.urlsafe_b64encode(os.urandom(32)).decode('ascii') + '\n', encoding='ascii')
+          path.chmod(0o600)
+          PY
+          python scripts/verify_secure_vault.py --require-production
+
+      - name: Verify Compose secret-volume contract
+        env:
+          HUNTER_API_SECRET: synthetic-ci-secret
+          MUNSHI_VAULT_KEY_FILE: /run/munshi-secrets/vault.key
+          MUNSHI_VAULT_REQUIRE_KEY_FILE: "true"
+          MUNSHI_ENVIRONMENT: production
+        run: |
+          docker compose -f compose.yaml config -q
+          docker compose -f compose.yaml config > /tmp/compose-rendered.yaml
+          grep -F 'hunter_secrets' /tmp/compose-rendered.yaml
+          grep -F '/run/munshi-secrets' /tmp/compose-rendered.yaml
+          grep -F 'MUNSHI_VAULT_KEY_FILE: /run/munshi-secrets/vault.key' /tmp/compose-rendered.yaml
+
+      - name: Guard write-only dashboard contract
+        run: |
+          set -euo pipefail
+          ! grep -F 'read_secret' app/secure_api_vault_ui.py
+          ! grep -E 'st\.(write|markdown|text|code).*secret' app/secure_api_vault_ui.py
+          grep -F 'type="password"' app/secure_api_vault_ui.py
+          grep -F 'allow_final_submit": False' app/secure_api_vault_ui.py

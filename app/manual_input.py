@@ -10,6 +10,7 @@ from typing import Any
 
 from app.database import ROOT_DIR, get_connection
 from app.job_detail import build_manual_job_text, enrich_job_details
+from app.job_store import save_job
 
 MAX_CAPTURE_CHARACTERS = 120_000
 WORKER_MODULE = "app.manual_input_worker"
@@ -338,6 +339,35 @@ def missing_required_fields(parsed: dict[str, Any]) -> list[str]:
         }:
             missing.append(label)
     return missing
+
+
+def persist_manual_job(raw_text: str, *, actor: str = "product_manual_input") -> dict[str, Any]:
+    """Persist a confirmed manual posting through the canonical job store.
+
+    This is deliberately synchronous and queues nothing.  Preparation remains a
+    separate, explicit action through ``start_stored_job_run``.
+    """
+    parsed = parse_manual_job_text(raw_text)
+    missing = missing_required_fields(parsed)
+    if missing:
+        return {"success": False, "missing_fields": missing, "parsed": parsed}
+    connection = get_connection()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        result = save_job(connection, parsed["job"], actor=actor)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+    return {
+        "success": True,
+        "job_id": int(result["job_id"]),
+        "inserted": bool(result.get("inserted")),
+        "duplicate_reason": result.get("duplicate_reason"),
+        "parsed": parsed,
+    }
 
 
 def _spawn_worker(run_id: int) -> dict[str, Any]:

@@ -1,0 +1,80 @@
+name: Unified Job Workspaces
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unified-job-workspaces:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install locked dependencies
+        run: python -m pip install -r requirements.lock.txt
+
+      - name: Verify packages
+        run: python -m pip check
+
+      - name: Compile unified workspace layer
+        run: |
+          python -m py_compile \
+            app/unified_job_workspaces_v1.py \
+            app/unified_job_workspaces_runtime_patch_v1.py \
+            app/product_shell.py
+
+      - name: Run focused UI and runtime tests
+        run: |
+          python -m pytest -q \
+            tests/test_unified_job_workspaces_v1.py \
+            tests/test_product_ui_v22.py \
+            tests/test_product_typography_job_drawer_v23.py \
+            tests/test_job_card_dialog_scroll_v26.py \
+            tests/test_product_application_flow_v2.py
+
+      - name: Prove one job-card language across surfaces
+        run: |
+          set -euo pipefail
+          grep -F 'product_pages._job_card' app/unified_job_workspaces_v1.py
+          grep -F 'tracker_unified' app/unified_job_workspaces_v1.py
+          grep -F 'research_opportunity' app/unified_job_workspaces_v1.py
+          grep -F 'application_current' app/unified_job_workspaces_v1.py
+          grep -F 'install_unified_job_workspaces(product_pages, application_workspace_page)' app/product_shell.py
+
+      - name: Keep telemetry out of normal Research
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('app/unified_job_workspaces_v1.py').read_text(encoding='utf-8')
+          forbidden = (
+              'Lifetime opportunity funnel',
+              'Opportunities scanned',
+              'Normalized records',
+              'Eligible telemetry',
+              'Source discovery performance',
+              'Query performance',
+              'Source and provider health',
+          )
+          for marker in forbidden:
+              assert marker not in source, marker
+          assert 'Settings → Advanced / System' in source
+          print('RESEARCH_DECISION_SURFACE=PASS')
+          PY
+
+      - name: Guard authority boundaries
+        run: |
+          set -euo pipefail
+          ! grep -E 'submit_application|send_email|playwright|selenium' app/unified_job_workspaces_v1.py
+          grep -F 'Submission authority remains OFF' app/unified_job_workspaces_v1.py
+          grep -F 'product_application_flow_v2' app/unified_job_workspaces_runtime_patch_v1.py

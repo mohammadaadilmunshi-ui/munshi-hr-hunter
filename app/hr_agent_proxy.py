@@ -5,6 +5,7 @@ import binascii
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException
@@ -14,24 +15,17 @@ from pydantic import BaseModel, Field
 ROOT_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT_DIR / ".env"
 
-HR_AGENT_DIR = (
-    Path.home()
-    / "Documents"
-    / "AI-Tools"
-    / "hiring-agent"
-)
+HR_AGENT_PYTHON = Path(sys.executable)
+HR_AGENT_SCRIPT = ROOT_DIR / "integrations" / "hr_agent" / "n8n_hr_score.py"
+HR_AGENT_DIR = HR_AGENT_SCRIPT.parent
 
-HR_AGENT_PYTHON = (
-    HR_AGENT_DIR
-    / ".venv"
-    / "bin"
-    / "python"
-)
 
-HR_AGENT_SCRIPT = (
-    HR_AGENT_DIR
-    / "n8n_hr_score.py"
-)
+def positive_bounded_int(name: str, default: int, maximum: int = 3600) -> int:
+    try:
+        value = int(str(os.getenv(name, "")).strip())
+    except (TypeError, ValueError):
+        return default
+    return value if 0 < value <= maximum else default
 
 router = APIRouter()
 
@@ -164,7 +158,7 @@ def score_resume(
             input=decoded_payload,
             capture_output=True,
             text=True,
-            timeout=240,
+            timeout=positive_bounded_int("HR_AGENT_PROCESS_TIMEOUT_SECONDS", 240),
             check=False,
         )
 

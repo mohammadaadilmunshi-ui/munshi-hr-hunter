@@ -9,7 +9,7 @@
     "node_count": 128,
     "nodes_sha256": "6ed8aafd9994d1aa0a254712781927b1c3c718212ba9f6b3aa919a2695fbdccf",
     "connections_sha256": "e937dc4de8292abd1d563b71e9e5cf847db2a8189c6f15eb62a5ca9aebd38f6c",
-    "rollback_directory": "/Users/aadil/Aadil-HR-Hunter/rollback/n8n_controlled_unfreeze_v12_20260824_150907"
+    "rollback_directory": "rollback/n8n_controlled_unfreeze_v12_20260824_150907"
   },
   "rules": [
     "Do not mutate n8n while canonical executions are running.",

@@ -6,7 +6,7 @@
   <string>com.aadil.hr-hunter.randomized-sources</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/aadil/Aadil-HR-Hunter/.venv/bin/python</string>
+    <string>__PROJECT_ROOT__/.venv/bin/python</string>
     <string>-u</string>
     <string>-m</string>
     <string>app.randomized_source_runner</string>
@@ -14,7 +14,7 @@
     <string>--quiet-start</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/aadil/Aadil-HR-Hunter</string>
+  <string>__PROJECT_ROOT__</string>
   <key>StartInterval</key>
   <integer>300</integer>
   <key>RunAtLoad</key>
@@ -24,8 +24,8 @@
   <key>ThrottleInterval</key>
   <integer>30</integer>
   <key>StandardOutPath</key>
-  <string>/Users/aadil/Aadil-HR-Hunter/logs/randomized_sources_scheduler.log</string>
+  <string>__PROJECT_ROOT__/logs/randomized_sources_scheduler.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/aadil/Aadil-HR-Hunter/logs/randomized_sources_scheduler_error.log</string>
+  <string>__PROJECT_ROOT__/logs/randomized_sources_scheduler_error.log</string>
 </dict>
 </plist>
