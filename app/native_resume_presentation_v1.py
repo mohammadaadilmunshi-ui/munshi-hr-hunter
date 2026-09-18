@@ -16,6 +16,15 @@ TEMPLATES = ("Standard", "Jake")
 FONTS = ("Arial", "Computer Modern", "Georgia")
 ALIGNMENTS = ("Left", "Justified")
 FONT_SIZES = (9.5, 10.0, 10.5, 11.0)
+SECTION_ORDER_PRESETS = ("Experience first", "Education first", "Skills first")
+PRESENTATION_SECTIONS = (
+    "Summary",
+    "Experience",
+    "Education",
+    "Skills",
+    "Projects",
+    "Certifications",
+)
 
 _FONT_STACKS = {
     "Arial": "Arial, Helvetica, sans-serif",
@@ -66,13 +75,108 @@ def normalized_settings(settings: Mapping[str, Any] | None = None) -> dict[str, 
         alignment = "Left"
     if size not in FONT_SIZES:
         size = 10.5
+    section_order = str(raw.get("section_order") or "Experience first")
+    if section_order not in SECTION_ORDER_PRESETS:
+        section_order = "Experience first"
+    raw_visible = raw.get("visible_sections")
+    if isinstance(raw_visible, (list, tuple, set)):
+        visible_sections = [
+            section
+            for section in PRESENTATION_SECTIONS
+            if section in {str(item) for item in raw_visible}
+        ]
+    else:
+        visible_sections = list(PRESENTATION_SECTIONS)
     return {
         "template": template,
         "font": font,
         "font_size": size,
         "alignment": alignment,
         "fit_one_page": bool(raw.get("fit_one_page", True)),
+        "section_order": section_order,
+        "visible_sections": visible_sections,
     }
+
+
+def _ordered_section_keys(preset: str) -> list[str]:
+    if preset == "Education first":
+        return ["Summary", "Education", "Skills", "Experience", "Projects", "Certifications"]
+    if preset == "Skills first":
+        return ["Summary", "Skills", "Experience", "Education", "Projects", "Certifications"]
+    return ["Summary", "Experience", "Education", "Skills", "Projects", "Certifications"]
+
+
+def _presentation_section_key(label: str) -> str | None:
+    normalized = _normalized_heading_key(label)
+    aliases = {
+        "professional summary": "Summary",
+        "summary": "Summary",
+        "work experience": "Experience",
+        "professional experience": "Experience",
+        "experience": "Experience",
+        "education": "Education",
+        "skills": "Skills",
+        "technical skills": "Skills",
+        "projects": "Projects",
+        "project experience": "Projects",
+        "certifications": "Certifications",
+        "certifications & achievements": "Certifications",
+        "certifications and achievements": "Certifications",
+        "achievements": "Certifications",
+    }
+    return aliases.get(normalized)
+
+
+def _reorder_native_resume_html(base: str, settings: Mapping[str, Any]) -> str:
+    """Presentation-only reorder/hide of top-level ATS resume sections."""
+    cfg = normalized_settings(settings)
+    start_marker = '<main class="resume">'
+    end_marker = "</main>"
+    start = base.find(start_marker)
+    end = base.rfind(end_marker)
+    if start < 0 or end <= start:
+        return base
+
+    inner_start = start + len(start_marker)
+    inner = base[inner_start:end]
+    heading_re = re.compile(
+        r'(?=<h2 class="section-heading">)',
+        flags=re.IGNORECASE,
+    )
+    parts = heading_re.split(inner)
+    if len(parts) <= 1:
+        return base
+
+    prefix = parts[0]
+    by_key: dict[str, list[str]] = {}
+    unknown: list[str] = []
+    for part in parts[1:]:
+        match = re.match(
+            r'<h2 class="section-heading">([^<]+)</h2>',
+            part,
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            unknown.append(part)
+            continue
+        key = _presentation_section_key(html.unescape(match.group(1)))
+        if key is None:
+            unknown.append(part)
+            continue
+        by_key.setdefault(key, []).append(part)
+
+    visible = set(cfg["visible_sections"])
+    ordered = [
+        chunk
+        for key in _ordered_section_keys(str(cfg["section_order"]))
+        if key in visible
+        for chunk in by_key.get(key, [])
+    ]
+    # Never drop an unknown future section: visibility controls govern only the
+    # explicitly named presentation sections above.
+    ordered.extend(unknown)
+    rebuilt = prefix + "".join(ordered)
+    return base[:inner_start] + rebuilt + base[end:]
 
 
 def _style_tokens(settings: Mapping[str, Any]) -> dict[str, str | float]:
@@ -161,8 +265,10 @@ def render_document_html(
         if isinstance(document, resume_contract.ResumeDocument)
         else resume_contract.ResumeDocument.model_validate(document)
     )
+    cfg = normalized_settings(settings)
     base = resume_contract.render_ats_html(value)
-    css = _override_css(normalized_settings(settings))
+    base = _reorder_native_resume_html(base, cfg)
+    css = _override_css(cfg)
     if "</head>" in base:
         return base.replace("</head>", css + "</head>", 1)
     return css + base
@@ -254,6 +360,42 @@ def _parse_source(source_text: str) -> tuple[list[str], list[tuple[str, list[str
     return preamble, sections
 
 
+def available_source_sections(source_text: str) -> list[str]:
+    """Return canonical presentation sections found in normalized source text."""
+    _, sections = _parse_source(source_text)
+    found: list[str] = []
+    for title, _ in sections:
+        key = _presentation_section_key(title)
+        if key and key not in found:
+            found.append(key)
+    return found or list(PRESENTATION_SECTIONS)
+
+
+def _ordered_source_sections(
+    sections: list[tuple[str, list[str]]],
+    settings: Mapping[str, Any],
+) -> list[tuple[str, list[str]]]:
+    cfg = normalized_settings(settings)
+    visible = set(cfg["visible_sections"])
+    keyed: dict[str, list[tuple[str, list[str]]]] = {}
+    unknown: list[tuple[str, list[str]]] = []
+    for section in sections:
+        key = _presentation_section_key(section[0])
+        if key is None:
+            unknown.append(section)
+        else:
+            keyed.setdefault(key, []).append(section)
+
+    ordered = [
+        section
+        for key in _ordered_section_keys(str(cfg["section_order"]))
+        if key in visible
+        for section in keyed.get(key, [])
+    ]
+    ordered.extend(unknown)
+    return ordered
+
+
 def _source_section_html(title: str, lines: list[str]) -> str:
     rendered: list[str] = []
     bullets: list[str] = []
@@ -322,7 +464,10 @@ def render_master_source_html(
     body = [f'<h1 class="source-name">{html.escape(name)}</h1>']
     if contact:
         body.append(f'<div class="source-contact">{html.escape(contact)}</div>')
-    body.extend(_source_section_html(title, lines) for title, lines in sections)
+    body.extend(
+        _source_section_html(title, lines)
+        for title, lines in _ordered_source_sections(sections, cfg)
+    )
 
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>
 *{{box-sizing:border-box}}
