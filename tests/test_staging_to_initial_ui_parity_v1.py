@@ -34,15 +34,17 @@ def test_application_email_notifications_are_first_class_advanced_ui() -> None:
     assert "Save notification preferences" in source
 
 
-def test_notification_installer_is_rerun_safe() -> None:
+def test_notification_installer_is_rerun_safe_and_does_not_wrap_settings() -> None:
     pages = _DummyPages()
+    original_settings = pages.settings
     notifications_ui.install_application_notification_ui(pages)
-    first = (pages.dashboard, pages.tracker, pages.settings)
+    first = (pages.dashboard, pages.tracker)
 
     notifications_ui.install_application_notification_ui(pages)
-    second = (pages.dashboard, pages.tracker, pages.settings)
+    second = (pages.dashboard, pages.tracker)
 
     assert first == second
+    assert pages.settings is original_settings
 
 
 def test_targeting_card_uses_canonical_targeting_authority() -> None:
@@ -55,21 +57,12 @@ def test_targeting_card_uses_canonical_targeting_authority() -> None:
     assert 'product_settings_section") == "Advanced / System"' in source
 
 
-def test_targeting_installer_is_rerun_safe() -> None:
-    pages = _DummyPages()
-    targeting_ui.install_targeting_settings_ui(pages)
-    first = pages.settings
+def test_advanced_settings_renders_targeting_and_notifications_directly() -> None:
+    from app import autoapply_settings_ui
 
-    targeting_ui.install_targeting_settings_ui(pages)
-    second = pages.settings
-
-    assert first is second
-
-
-def test_product_shell_wires_targeting_before_notifications() -> None:
-    source = inspect.getsource(product_shell.render)
-    targeting = "install_targeting_settings_ui(product_pages)"
-    notifications = "install_application_notification_ui(product_pages)"
+    source = inspect.getsource(autoapply_settings_ui.settings_v23)
+    targeting = "render_targeting_settings()"
+    notifications = "render_application_notification_settings()"
     assert targeting in source
     assert notifications in source
     assert source.index(targeting) < source.index(notifications)
@@ -108,7 +101,6 @@ def test_product_shell_contains_current_staging_feature_installers() -> None:
         "install_secure_api_vault_ui(product_pages)",
         "install_settings_profile_authority_ui(product_pages)",
         "install_unified_job_workspaces(product_pages, application_workspace_page)",
-        "install_targeting_settings_ui(product_pages)",
         "install_application_notification_ui(product_pages)",
         "install_integration_credentials_ui(product_pages)",
         "install_ats_account_readiness_ui(product_pages)",
@@ -117,3 +109,9 @@ def test_product_shell_contains_current_staging_feature_installers() -> None:
     )
     for marker in required:
         assert marker in source, marker
+
+    advanced_source = (
+        ROOT / "app" / "autoapply_settings_ui.py"
+    ).read_text(encoding="utf-8")
+    assert "render_targeting_settings()" in advanced_source
+    assert "render_application_notification_settings()" in advanced_source
