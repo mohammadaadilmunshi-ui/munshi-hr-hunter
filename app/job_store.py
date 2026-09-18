@@ -444,6 +444,7 @@ def save_job(
             is_linkedin_source(existing["source"])
             or is_linkedin_source(job.get("source"))
         )
+        job["_clear_apply_url"] = 0
         if linked_record:
             existing_links = normalize_linkedin_record(dict(existing))
             incoming_links = normalize_linkedin_record(dict(job))
@@ -454,6 +455,14 @@ def save_job(
             job["job_url"] = choose_preferred_url(
                 existing_links.get("job_url"),
                 incoming_links.get("job_url"),
+            )
+            # If a historical LinkedIn row stored its posting URL (or another
+            # invalid aggregator URL) in apply_url, normalization turns it into
+            # None. SQL must be allowed to clear that legacy value instead of
+            # COALESCE silently reviving it.
+            job["_clear_apply_url"] = int(
+                not job.get("apply_url")
+                and bool(str(existing["apply_url"] or "").strip())
             )
             if not job.get("job_url"):
                 resulting_status = "quarantined"
@@ -563,10 +572,14 @@ def save_job(
                         job_url
                     ),
                 apply_url =
-                    COALESCE(
-                        :apply_url,
-                        apply_url
-                    ),
+                    CASE
+                        WHEN :_clear_apply_url = 1
+                        THEN NULL
+                        ELSE COALESCE(
+                            :apply_url,
+                            apply_url
+                        )
+                    END,
                 description_raw =
                     CASE
                         WHEN
