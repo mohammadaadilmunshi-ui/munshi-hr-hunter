@@ -138,7 +138,7 @@ def main() -> int:
     children.append(
         Lane(
             "application-notifications",
-            [python, "scripts/application_notification_worker.py"],
+            [python, "scripts/application_notification_worker.py", "--supervised"],
             required=False,
             repeat=True,
             interval=max(
