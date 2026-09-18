@@ -59,3 +59,24 @@ def test_hunter_activation_shell_script_parses() -> None:
         ["bash", "-n", str(ROOT / "deploy/netcup/activate_full_autoapply_production.sh")],
         check=True,
     )
+
+def test_production_deploy_uses_storage_safe_rollback_snapshot() -> None:
+    source = (ROOT / "deploy/netcup/deploy_production_release.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "--reuse-backup" in source
+    assert "RAW_IDENTICAL" in source
+    assert "GZIP_V1" in source
+    assert "PRODUCTION_DB_COMPRESSED_BACKUP_VERIFY=PASS" in source
+    assert "MUNSHI_MAX_COMPRESSED_HUNTER_BACKUP_BYTES" in source
+    assert "7516192768" in source
+    assert "source.backup(dest)" not in source
+    assert "PRODUCTION_DB_BACKUP_REUSED=YES" in source
+    assert "ROLLBACK_DB_RAW_SHA256" in source
+
+
+def test_production_deploy_shell_script_parses() -> None:
+    subprocess.run(
+        ["bash", "-n", str(ROOT / "deploy/netcup/deploy_production_release.sh")],
+        check=True,
+    )
