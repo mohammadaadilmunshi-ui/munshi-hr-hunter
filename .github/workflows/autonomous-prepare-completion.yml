@@ -35,6 +35,12 @@ jobs:
           app/autonomous_prepare_compat_v1.py
           app/unified_hourly_coordinator.py
           app/product_application_flow_v2.py
+          app/native_resume_studio.py
+          app/native_resume_service.py
+          app/native_resume_service_v5.py
+          app/native_resume_artifact_v5.py
+          app/answer_brain_v2.py
+          app/application_answer_autofill_v1.py
           app/prepare_orchestrator_v1.py
           app/prepare_runtime_worker.py
           app/prepare_worker_adapters_v1a.py
@@ -56,6 +62,8 @@ jobs:
           tests/test_prepare_worker_adapters_v1b.py
           tests/test_prepare_worker_adapters_v1c.py
           tests/test_application_smart_autofill_v1.py
+          tests/test_native_resume_artifact_v5.py
+          tests/test_profile_resume_answer_unification_v1.py
 
       - name: Guard submission authority and tracked runtime state
         run: |
