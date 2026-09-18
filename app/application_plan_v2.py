@@ -43,7 +43,7 @@ RUNTIME_RESOLUTION_ENV = "MUNSHI_APPLICATION_PLAN_RUNTIME_RESOLUTION_ENABLED"
 RUNTIME_SUPERSESSION_VERSION = "munshi-application-plan-supersession-v1"
 _RUNTIME_REVISION_KIND = "runtime_apply_needs_input_v1"
 SUPPORTED_PROVIDERS = frozenset(
-    {"GREENHOUSE", "LEVER", "ASHBY", "SMARTRECRUITERS", "WORKDAY"}
+    {"GREENHOUSE", "LEVER", "ASHBY", "SMARTRECRUITERS", "WORKDAY", "AGILE_ATS"}
 )
 SENSITIVITY_CLASSES = frozenset(
     {"NORMAL", "PROTECTED", "SELF_ID", "CREDENTIAL", "POST_OFFER"}
@@ -55,6 +55,7 @@ _PROVIDER_HOSTS = {
     "ASHBY": ("ashbyhq.com",),
     "SMARTRECRUITERS": ("smartrecruiters.com",),
     "WORKDAY": ("myworkdayjobs.com", "workdayjobs.com"),
+    "AGILE_ATS": ("agile-ats.com",),
 }
 
 SCHEMA_STATEMENTS = (
