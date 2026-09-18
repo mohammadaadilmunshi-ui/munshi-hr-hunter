@@ -187,11 +187,11 @@ def autoapply_credential_response(body:bytes,headers:Mapping[str,str],*,now:int|
     plan_digest=str(plan["plan_digest"])
     key=hmac.new(
         _secret(),
-        f"autoapply-credential:{request_id}:{plan_digest}".encode("utf-8"),
+        f"autoapply-credential:{request_id}:{plan_digest}".encode(),
         hashlib.sha256,
     ).digest()
     nonce=os.urandom(12)
-    aad=f"{request_id}.{plan_digest}.autoapply_anthropic_api_key".encode("utf-8")
+    aad=f"{request_id}.{plan_digest}.autoapply_anthropic_api_key".encode()
     data=nonce+AESGCM(key).encrypt(nonce,plaintext,aad)
 
     response_headers=_headers(
