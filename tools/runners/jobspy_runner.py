@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 from contextlib import redirect_stdout
 from importlib.metadata import version
@@ -59,6 +60,43 @@ def clean(value: Any) -> Any:
     text = str(value).strip()
 
     return text or None
+
+
+_LINKEDIN_VIEW_RE = re.compile(
+    r"/jobs/view/(?:[^/?#]*?-)?(?P<job_id>\d{5,})(?:[/?#]|$)",
+    re.IGNORECASE,
+)
+_LINKEDIN_ID_RE = re.compile(r"^(?:li-)?(?P<job_id>\d{5,})$", re.IGNORECASE)
+
+
+def _linkedin_job_id(value: Any) -> str | None:
+    text = str(clean(value) or "").strip()
+    if not text:
+        return None
+    direct = _LINKEDIN_ID_RE.fullmatch(text)
+    if direct:
+        return direct.group("job_id")
+    try:
+        parsed = urlsplit(text)
+    except ValueError:
+        return None
+    host = (parsed.hostname or "").casefold().rstrip(".")
+    if not (
+        host == "linkedin.com"
+        or host.endswith(".linkedin.com")
+    ):
+        return None
+    match = _LINKEDIN_VIEW_RE.search(parsed.path or "")
+    return match.group("job_id") if match else None
+
+
+def _linkedin_posting_url(job_url: Any, job_id: Any) -> str | None:
+    resolved = _linkedin_job_id(job_url) or _linkedin_job_id(job_id)
+    return (
+        f"https://www.linkedin.com/jobs/view/{resolved}"
+        if resolved
+        else None
+    )
 
 
 def _linkedin_direct_application_url(value: Any) -> str | None:
@@ -262,11 +300,12 @@ def normalize_record(
 
     job_url = clean(row.get("job_url"))
     direct_url = clean(row.get("job_url_direct"))
-    apply_url = (
-        _linkedin_direct_application_url(direct_url)
-        if str(site).casefold() == "linkedin"
-        else direct_url or job_url
-    )
+    is_linkedin = str(site).casefold() == "linkedin"
+    if is_linkedin:
+        job_url = _linkedin_posting_url(job_url, row.get("id"))
+        apply_url = _linkedin_direct_application_url(direct_url)
+    else:
+        apply_url = direct_url or job_url
 
     remote_value = clean(row.get("is_remote"))
 
@@ -295,6 +334,9 @@ def normalize_record(
         "employment_type": clean(row.get("job_type")),
         "job_url": job_url,
         "apply_url": apply_url,
+        "linkedin_job_url": job_url if is_linkedin else None,
+        "direct_apply_url": apply_url if is_linkedin else None,
+        "_linkedin_link_quarantined": bool(is_linkedin and not job_url),
         "description_raw": (
             clean(row.get("description"))
             or "Not specified"
