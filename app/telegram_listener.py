@@ -5,6 +5,7 @@ import fcntl
 import json
 import os
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, Any
@@ -30,21 +31,17 @@ from app.telegram_client import edit_job_card
 from app.force_remove import force_remove_command, force_remove_callback, maybe_handle_force_remove_callback
 from app.telegram_button_router import install_unified_button_router
 from app.telegram_transport_v3 import configure_application_builder
+from app.integration_credentials_v1 import telegram_credentials
 
 
 load_dotenv(ROOT_DIR / ".env")
 
-BOT_TOKEN = os.getenv(
-    "TELEGRAM_BOT_TOKEN",
-    "",
-).strip()
-
-ALLOWED_CHAT_ID = int(
-    os.getenv(
-        "TELEGRAM_CHAT_ID",
-        "0",
-    )
-)
+_initial_bot_token, _initial_chat_id = telegram_credentials()
+BOT_TOKEN = _initial_bot_token
+try:
+    ALLOWED_CHAT_ID = int(_initial_chat_id or "0")
+except ValueError:
+    ALLOWED_CHAT_ID = 0
 
 DATA_DIR = ROOT_DIR / "data"
 
@@ -1139,15 +1136,27 @@ async def runtime_command(
     )
 
 def main() -> None:
-    if not BOT_TOKEN:
-        raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN is missing from .env"
+    global BOT_TOKEN, ALLOWED_CHAT_ID
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    while True:
+        bot_token, chat_id = telegram_credentials()
+        try:
+            parsed_chat_id = int(chat_id or "0")
+        except ValueError:
+            parsed_chat_id = 0
+        if bot_token and parsed_chat_id:
+            BOT_TOKEN = bot_token
+            ALLOWED_CHAT_ID = parsed_chat_id
+            break
+        write_heartbeat(
+            "waiting_for_credentials",
+            last_error="Telegram credentials are not configured.",
         )
-
-    if not ALLOWED_CHAT_ID:
-        raise RuntimeError(
-            "TELEGRAM_CHAT_ID is missing from .env"
+        print(
+            "Telegram listener waiting for encrypted credentials.",
+            flush=True,
         )
+        time.sleep(15)
 
     lock_handle = acquire_listener_lock()
 

@@ -19,11 +19,12 @@ JOBSPY_PYTHON = (
 )
 
 PROJECT_PYTHON = ROOT_DIR / ".venv" / "bin" / "python"
+CONTAINER_PYTHON = Path("/usr/local/bin/python")
 
 
 def resolve_jobspy_python() -> Path:
-    """Prefer isolated JobSpy Python, then the verified project venv."""
-    candidates = (JOBSPY_PYTHON, PROJECT_PYTHON)
+    """Prefer isolated JobSpy Python, then project venv, then container Python."""
+    candidates = (JOBSPY_PYTHON, PROJECT_PYTHON, CONTAINER_PYTHON)
     for candidate in candidates:
         if candidate.exists() and os.access(candidate, os.X_OK):
             return candidate

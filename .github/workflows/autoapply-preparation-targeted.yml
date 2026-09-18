@@ -1,0 +1,63 @@
+name: AutoApply preparation targeted
+
+on:
+  pull_request:
+    paths:
+      - app/application_review_v2.py
+      - app/application_single_approval_v1.py
+      - app/application_submit_authorization_v1.py
+      - app/application_artifact_transport_v2.py
+      - app/application_production_submission_receipt_v1.py
+      - app/application_workspace_page.py
+      - app/api.py
+      - app/linkedin_jobspy_description_guard.py
+      - app/prepare_worker_adapters_v1b.py
+      - app/prepare_worker_adapters_v1c.py
+      - app/product_application_flow_v2.py
+      - tools/runners/jobspy_runner.py
+      - tests/test_application_review_v2.py
+      - tests/test_application_submit_authorization_v1.py
+      - tests/test_application_production_submission_receipt_v1.py
+      - tests/test_application_artifact_transport_v2.py
+      - tests/test_linkedin_direct_apply_url_v1.py
+      - tests/test_single_approval_route_retirement_v1.py
+      - tests/test_prepare_worker_adapters_v1b.py
+      - tests/test_prepare_worker_adapters_v1c.py
+      - tests/test_product_application_flow_v2.py
+      - .github/workflows/autoapply-preparation-targeted.yml
+  push:
+    branches: [feat/autoapply-preparation-20260914]
+    paths:
+      - app/prepare_worker_adapters_v1b.py
+      - tests/test_prepare_worker_adapters_v1b.py
+      - .github/workflows/autoapply-preparation-targeted.yml
+
+permissions:
+  contents: read
+
+jobs:
+  single-approval-autoapply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MUNSHI_FINAL_SUBMIT_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.lock.txt
+      - name: Targeted preparation, LinkedIn URL, review, authority, and lifecycle tests
+        run: >-
+          python -m pytest -q
+          tests/test_full_autoapply_production_activation.py
+          tests/test_linkedin_direct_apply_url_v1.py
+          tests/test_prepare_worker_adapters_v1b.py
+          tests/test_application_smart_autofill_v1.py
+          tests/test_prepare_worker_adapters_v1c.py
+          tests/test_application_review_v2.py
+          tests/test_product_application_flow_v2.py
+          tests/test_application_submit_authorization_v1.py
+          tests/test_application_production_submission_receipt_v1.py
+          tests/test_application_artifact_transport_v2.py
+          tests/test_single_approval_route_retirement_v1.py
