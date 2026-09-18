@@ -20,6 +20,11 @@ from app.universal_dedupe import (
 )
 from app.job_quality import apply_quality_gate
 from app.dedupe_policy import dedupe_keeper_allowed
+from app.linkedin_url_contract import (
+    LINKEDIN_QUARANTINE_REASON,
+    is_linkedin_source,
+    normalize_linkedin_record,
+)
 
 
 PROTECTED_STATUSES = {
@@ -117,6 +122,9 @@ def prepare_job(job: dict[str, Any]) -> dict[str, Any]:
     for key, value in defaults.items():
         prepared.setdefault(key, value)
 
+    if is_linkedin_source(prepared.get("source")):
+        prepared = normalize_linkedin_record(prepared)
+
     prepared = enrich_job_details(prepared)
 
     prepared.update(
@@ -135,6 +143,14 @@ def prepare_job(job: dict[str, Any]) -> dict[str, Any]:
     quality_overrides = {} if canonical_accepted else apply_quality_gate(prepared)
     if quality_overrides:
         prepared.update(quality_overrides)
+
+    # Persistence is the final backstop: a LinkedIn row without a recoverable
+    # LinkedIn posting URL is retained only as quarantined evidence.
+    if is_linkedin_source(prepared.get("source")):
+        prepared = normalize_linkedin_record(prepared)
+        if not prepared.get("job_url"):
+            prepared["status"] = "quarantined"
+            prepared["hard_rejection_reason"] = LINKEDIN_QUARANTINE_REASON
 
     prepared["job_fingerprint"] = (
         create_universal_job_fingerprint(prepared)
@@ -421,19 +437,40 @@ def save_job(
         )
 
         # UNIVERSAL_DEDUPE_STORAGE_V2
-        job["apply_url"] = (
-            choose_preferred_url(
-                existing["apply_url"],
-                job.get("apply_url"),
-            )
+        # LinkedIn keeps the source posting and the external direct-apply target
+        # as distinct fields. Never revive a legacy LinkedIn listing URL as
+        # apply_url during duplicate enrichment.
+        linked_record = (
+            is_linkedin_source(existing["source"])
+            or is_linkedin_source(job.get("source"))
         )
-
-        job["job_url"] = (
-            choose_preferred_url(
-                existing["job_url"],
-                job.get("job_url"),
+        if linked_record:
+            existing_links = normalize_linkedin_record(dict(existing))
+            incoming_links = normalize_linkedin_record(dict(job))
+            job["apply_url"] = choose_preferred_url(
+                existing_links.get("apply_url"),
+                incoming_links.get("apply_url"),
             )
-        )
+            job["job_url"] = choose_preferred_url(
+                existing_links.get("job_url"),
+                incoming_links.get("job_url"),
+            )
+            if not job.get("job_url"):
+                resulting_status = "quarantined"
+                job["hard_rejection_reason"] = LINKEDIN_QUARANTINE_REASON
+        else:
+            job["apply_url"] = (
+                choose_preferred_url(
+                    existing["apply_url"],
+                    job.get("apply_url"),
+                )
+            )
+            job["job_url"] = (
+                choose_preferred_url(
+                    existing["job_url"],
+                    job.get("job_url"),
+                )
+            )
 
         # Preserve the richest stored detail when a duplicate source returns
         # only a title/snippet. Rebuild the n8n payload from the merged record.
