@@ -27,10 +27,10 @@ _AGGREGATOR_HOSTS = frozenset(
     }
 )
 _LINKEDIN_VIEW_RE = re.compile(
-    r"/jobs/view/(?:[^/?#]*?-)?(?P<job_id>\\d{5,})(?:[/?#]|$)",
+    r"/jobs/view/(?:[^/?#]*?-)?(?P<job_id>\d{5,})(?:[/?#]|$)",
     re.IGNORECASE,
 )
-_NUMERIC_ID_RE = re.compile(r"^(?:li-)?(?P<job_id>\\d{5,})$", re.IGNORECASE)
+_NUMERIC_ID_RE = re.compile(r"^(?:li-)?(?P<job_id>\d{5,})$", re.IGNORECASE)
 
 
 def _text(value: Any) -> str:
