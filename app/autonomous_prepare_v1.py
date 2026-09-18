@@ -382,6 +382,25 @@ def drive_operation_once(operation_id: str) -> dict[str, Any]:
                     {"step": name, "blocked_by_runtime_gate": True, "error": text}
                 )
                 break
+            if name == "recruiter":
+                # Recruiter discovery is advisory/optional. A stale relationship
+                # snapshot must never block resume, answers, or ATS preparation.
+                step_results.append(
+                    {"step": name, "optional_step_error": True, "error": text}
+                )
+                continue
+            raise
+        except Exception as error:
+            if name == "recruiter":
+                step_results.append(
+                    {
+                        "step": name,
+                        "optional_step_error": True,
+                        "error": str(error),
+                        "error_type": type(error).__name__,
+                    }
+                )
+                continue
             raise
 
     final = orchestrator.prepare_operation(str(operation_id))
@@ -395,20 +414,47 @@ def drive_operation_once(operation_id: str) -> dict[str, Any]:
     }
 
 
-def drive_open_operations(*, limit: int = 25) -> dict[str, Any]:
-    """Advance owner-scoped QUEUED/RUNNING Prepare operations independently."""
+def drive_open_operations(
+    *,
+    limit: int = 25,
+    newest_first: bool = False,
+    min_created_at: str | None = None,
+) -> dict[str, Any]:
+    """Advance owner-scoped QUEUED/RUNNING Prepare operations independently.
+
+    Existing coordinator callers keep oldest-first fairness. The low-latency
+    supervised runtime may explicitly request newest-first ordering and a
+    deployment watermark so stale pre-activation work cannot unexpectedly
+    consume model/API resources after a runtime repair.
+    """
     connection = get_connection()
     try:
         orchestrator.ensure_schema()
         owner = current_owner(connection)
+        ordering = (
+            "datetime(created_at) DESC, rowid DESC"
+            if newest_first
+            else "datetime(created_at), rowid"
+        )
+        minimum = str(min_created_at or "").strip()
+        minimum_clause = (
+            " AND datetime(created_at) >= datetime(?)"
+            if minimum
+            else ""
+        )
+        params: list[Any] = [owner.tenant_id, owner.user_id]
+        if minimum:
+            params.append(minimum)
+        params.append(max(1, int(limit)))
         rows = connection.execute(
-            """SELECT operation_id
-                 FROM prepare_operations_v1
-                WHERE tenant_id=? AND user_id=?
-                  AND status IN ('QUEUED','RUNNING')
-                ORDER BY datetime(created_at), rowid
-                LIMIT ?""",
-            (owner.tenant_id, owner.user_id, max(1, int(limit))),
+            f"""SELECT operation_id
+                  FROM prepare_operations_v1
+                 WHERE tenant_id=? AND user_id=?
+                   AND status IN ('QUEUED','RUNNING')
+                   {minimum_clause}
+                 ORDER BY {ordering}
+                 LIMIT ?""",
+            tuple(params),
         ).fetchall()
         operation_ids = [str(row[0]) for row in rows]
     finally:

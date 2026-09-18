@@ -695,3 +695,66 @@ def test_explicit_resolution_does_not_grant_execution_without_autofill_permissio
     assert answer["autofill_allowed"] is False
     assert answer["requires_review"] is True
     assert reason == "normal_answer_autofill_permission_missing"
+
+
+def test_agile_ats_provider_is_exactly_host_bound(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _wire_capture_dependencies(hunter_db, monkeypatch)
+    package = _package()
+    package["snapshot"]["job"]["apply_url"] = (
+        "https://neomax.jobs.agile-ats.com/jobs/details/1119"
+    )
+    monkeypatch.setattr(
+        plans.preflight_v1,
+        "get_preflight_package",
+        lambda _id: package,
+    )
+    monkeypatch.setattr(
+        plans,
+        "safe_owned_job_snapshot",
+        lambda _job_id: {
+            "job": package["snapshot"]["job"],
+            "job_snapshot_sha256": "d" * 64,
+        },
+    )
+
+    result = plans._capture(
+        preflight_package_id="preflight-1",
+        requirements=[],
+        permissions=_permissions(),
+        provider_policy=None,
+        secure_refs={},
+        resume_format="PDF",
+    )
+
+    assert result["provider_policy"]["provider"] == "AGILE_ATS"
+    assert result["provider_policy"]["permitted"] is True
+    assert result["provider_policy"]["allowed_hosts"] == ["agile-ats.com"]
+    assert result["expected_state"] == "READY_TO_APPLY"
+    assert result["executable"] is True
+
+
+def test_agile_ats_provider_does_not_match_unrelated_host(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _wire_capture_dependencies(hunter_db, monkeypatch)
+    package = _package()
+    package["snapshot"]["job"]["apply_url"] = "https://agile-ats.com.evil.test/jobs/1119"
+    monkeypatch.setattr(
+        plans.preflight_v1,
+        "get_preflight_package",
+        lambda _id: package,
+    )
+
+    result = plans._capture(
+        preflight_package_id="preflight-1",
+        requirements=[],
+        permissions=_permissions(),
+        provider_policy=None,
+        secure_refs={},
+        resume_format="PDF",
+    )
+
+    assert result["provider_policy"]["provider"] == "UNSUPPORTED"
+    assert "provider_not_permitted_or_supported" in result["global_blockers"]

@@ -232,7 +232,7 @@ def test_preflight_persistence_is_content_addressed_idempotent_and_non_submittin
     )
 
     assert second["package_id"] == first["package_id"]
-    assert first["package_digest"] == sha256_json(capture)
+    assert first["package_digest"] == sha256_json(phase9.package_digest_payload(capture))
     assert first["status"] == "PREPARED"
     assert first["submission_authority"] is False
     assert first["automatic_actions_executed"] is False
@@ -241,6 +241,28 @@ def test_preflight_persistence_is_content_addressed_idempotent_and_non_submittin
         assert connection.execute("SELECT COUNT(*) FROM application_preflight_packages").fetchone()[0] == 1
     finally:
         connection.close()
+
+
+def test_observational_truth_timestamp_does_not_trigger_false_drift(hunter_db, monkeypatch) -> None:
+    first = _capture()
+    second = copy.deepcopy(first)
+    second["application_truth"]["generated_at"] = "2026-09-06T00:30:01+00:00"
+    # Projection digest stays stable because Phase 8 excludes generated_at.
+    values = iter([first, second])
+    monkeypatch.setattr(phase9, "_capture", lambda **_kwargs: next(values))
+
+    package = phase9.prepare_preflight_package(
+        job_id=42,
+        application_id="application-1",
+        idempotency_key="package-timestamp-key",
+        resume_version_id="resume-1",
+        opportunity_evaluation_id="opportunity-1",
+    )
+
+    assert package["status"] == "PREPARED"
+    assert package["package_digest"] == sha256_json(
+        phase9.package_digest_payload(first)
+    )
 
 
 def test_mid_capture_change_fails_closed_before_any_package_write(hunter_db, monkeypatch) -> None:

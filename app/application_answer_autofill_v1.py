@@ -130,15 +130,12 @@ def prepare_from_candidate_truth() -> dict[str, Any]:
         value = str(answer.get("canonical_answer") or "").strip()
         if not value:
             continue
-        answer_brain_v2.save_answer(
+        answer_brain_v2.save_profile_projection_answer(
             question_family="candidate_fact",
-            canonical_answer=value,
-            source="candidate_truth_projection",
-            user_confirmed=True,
-            confidence=float(answer.get("confidence") or 0.98),
-            autofill_allowed=True,
-            conditions=_binding_conditions(snapshot, projection),
             question_key=question_key,
+            profile_fact_key=fact_key,
+            projection=projection,
+            autofill_allowed=True,
         )
         derived_saved.append(question_key)
 

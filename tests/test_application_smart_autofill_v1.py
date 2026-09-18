@@ -174,7 +174,7 @@ def test_prepare_from_candidate_truth_never_copies_protected_plaintext(monkeypat
     )
     monkeypatch.setattr(
         autofill.answer_brain_v2,
-        "save_answer",
+        "save_profile_projection_answer",
         lambda **kwargs: derived.append(dict(kwargs)) or "derived-id",
     )
 

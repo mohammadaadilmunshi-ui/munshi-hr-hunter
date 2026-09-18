@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import math
 import sqlite3
 from typing import Any
 from zipfile import BadZipFile, ZipFile
@@ -136,6 +137,36 @@ def _page_fit_metrics(
     }
 
 
+def _effective_pdf_text_geometry(
+    *,
+    cm: list[float] | tuple[float, ...],
+    tm: list[float] | tuple[float, ...],
+    font_size: float,
+) -> tuple[float, float]:
+    """Return text baseline Y and font size in PDF page coordinates.
+
+    pypdf's visitor exposes the text matrix (tm) separately from the current
+    transformation matrix (cm). Chromium places CSS pixels in tm and maps them
+    into PDF points through cm. Using tm[5] directly therefore measures CSS
+    coordinates, not page coordinates, and can falsely report content at y=0
+    or below the safe bottom margin.
+
+    PDF affine transform:
+      y' = x * b + y * d + f
+    where b=cm[1], d=cm[3], f=cm[5].
+    """
+    if len(cm) < 6 or len(tm) < 6:
+        raise ValueError("Native Resume V5 PDF text transform is incomplete.")
+    x = float(tm[4])
+    y = float(tm[5])
+    page_y = x * float(cm[1]) + y * float(cm[3]) + float(cm[5])
+    y_scale = math.hypot(float(cm[2]), float(cm[3]))
+    effective_font = abs(float(font_size or 0)) * (y_scale or 1.0)
+    if not math.isfinite(page_y) or not math.isfinite(effective_font):
+        raise ValueError("Native Resume V5 PDF text transform is invalid.")
+    return page_y, effective_font
+
+
 def _validated_pdf_layout(data: bytes) -> dict[str, Any]:
     try:
         reader = PdfReader(io.BytesIO(data), strict=True)
@@ -148,12 +179,15 @@ def _validated_pdf_layout(data: bytes) -> dict[str, Any]:
         page_height = float(page.mediabox.height)
         fragments: list[tuple[float, float]] = []
 
-        def visitor_text(text, _cm, tm, _font_dict, font_size):
+        def visitor_text(text, cm, tm, _font_dict, font_size):
             if not str(text or "").strip():
                 return
             try:
-                y = float(tm[5])
-                size = float(font_size or 0)
+                y, size = _effective_pdf_text_geometry(
+                    cm=cm,
+                    tm=tm,
+                    font_size=float(font_size or 0),
+                )
             except (TypeError, ValueError, IndexError):
                 return
             if 0 <= y <= page_height:
@@ -239,17 +273,122 @@ def list_artifacts(version_id: str) -> list[dict[str, Any]]:
         connection.close()
 
 
-def materialize(version_id: str) -> dict[str, Any]:
-    """Render and persist the exact immutable DOCX and one-page PDF for V5."""
-    record = _current_resume(str(version_id))
-    context = resume_v5.v4.v1.job_context(int(record["job_id"]))
-    docx = resume_v5.v4.v1.version_docx(str(version_id))
-    pdf, _renderer_page_count = resume_v5.v4.v1.version_pdf(str(version_id))
+def _stored_materialization(
+    *,
+    version_id: str,
+    record: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Return and verify an already-persisted immutable artifact pair.
+
+    Chromium PDF bytes are not guaranteed to be byte-for-byte reproducible
+    across separate renders because renderer metadata can vary. Once a V5
+    artifact pair has been persisted for an immutable resume version, that pair
+    is the authority. Revalidate the stored bytes and reuse them instead of
+    rendering the same version again.
+    """
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        owner = current_owner(connection)
+        rows = connection.execute(
+            """SELECT * FROM native_resume_v5_artifacts
+               WHERE tenant_id=? AND user_id=? AND version_id=?
+               ORDER BY CASE artifact_kind WHEN 'DOCX' THEN 1 ELSE 2 END""",
+            (owner.tenant_id, owner.user_id, str(version_id)),
+        ).fetchall()
+    finally:
+        connection.close()
+
+    if not rows:
+        return None
+
+    by_kind_row = {str(row["artifact_kind"]): row for row in rows}
+    if set(by_kind_row) != {"DOCX", "PDF"}:
+        raise RuntimeError("Native Resume V5 artifact pair is incomplete.")
+
+    docx_row = by_kind_row["DOCX"]
+    pdf_row = by_kind_row["PDF"]
+    docx = bytes(docx_row["content"])
+    pdf = bytes(pdf_row["content"])
+
+    for row, content in ((docx_row, docx), (pdf_row, pdf)):
+        digest = _sha(content)
+        if (
+            str(row["sha256"]) != digest
+            or int(row["byte_count"]) != len(content)
+        ):
+            raise RuntimeError(
+                "Immutable Native Resume V5 stored artifact failed integrity validation."
+            )
+
     _validate_docx_bytes(docx)
     if not pdf.startswith(b"%PDF"):
-        raise RuntimeError("Native Resume V5 PDF renderer returned an invalid document.")
+        raise RuntimeError("Native Resume V5 stored PDF artifact is invalid.")
     _validated_pdf_page_count(pdf)
     page_verification = _validated_pdf_layout(pdf)
+    if int(pdf_row["page_count"] or 0) != 1:
+        raise RuntimeError("Native Resume V5 stored PDF page count is invalid.")
+
+    by_kind = {kind: _row_payload(row) for kind, row in by_kind_row.items()}
+    return {
+        "version": ARTIFACT_VERSION,
+        "resume_version_id": str(version_id),
+        "job_id": int(record["job_id"]),
+        "candidate_truth_binding": record["candidate_truth_binding"],
+        "job_snapshot_binding": record["job_snapshot_binding"],
+        "stage_b_binding": record["stage_b_binding"],
+        "docx": by_kind["DOCX"],
+        "pdf": by_kind["PDF"],
+        "page_verification": {
+            **page_verification,
+            "render_density": "stored_immutable",
+        },
+        "render_density": "stored_immutable",
+        "submission_authority": False,
+    }
+
+
+def materialize(version_id: str) -> dict[str, Any]:
+    """Render once, then reuse the immutable DOCX/PDF pair for V5."""
+    record = _current_resume(str(version_id))
+    stored = _stored_materialization(version_id=str(version_id), record=record)
+    if stored is not None:
+        return stored
+    context = resume_v5.v4.v1.job_context(int(record["job_id"]))
+    docx = resume_v5.v4.v1.version_docx(str(version_id))
+    _validate_docx_bytes(docx)
+
+    pdf: bytes | None = None
+    page_verification: dict[str, Any] | None = None
+    last_layout_error: ValueError | None = None
+    render_density = "normal"
+    for candidate_density in ("normal", "compact", "tight"):
+        candidate_pdf, _renderer_page_count = resume_v5.v4.v1.version_pdf(
+            str(version_id),
+            render_density=candidate_density,
+        )
+        if not candidate_pdf.startswith(b"%PDF"):
+            raise RuntimeError(
+                "Native Resume V5 PDF renderer returned an invalid document."
+            )
+        try:
+            _validated_pdf_page_count(candidate_pdf)
+            candidate_verification = _validated_pdf_layout(candidate_pdf)
+        except ValueError as error:
+            last_layout_error = error
+            continue
+        pdf = candidate_pdf
+        page_verification = {
+            **candidate_verification,
+            "render_density": candidate_density,
+        }
+        render_density = candidate_density
+        break
+
+    if pdf is None or page_verification is None:
+        if last_layout_error is not None:
+            raise last_layout_error
+        raise RuntimeError("Native Resume V5 PDF page verification did not complete.")
 
     # Rendering may take time. Revalidate truth/job/Stage B before persistence so
     # an artifact cannot become current merely because generation started earlier.
@@ -347,6 +486,7 @@ def materialize(version_id: str) -> dict[str, Any]:
         "docx": by_kind["DOCX"],
         "pdf": by_kind["PDF"],
         "page_verification": page_verification,
+        "render_density": render_density,
         "submission_authority": False,
     }
 

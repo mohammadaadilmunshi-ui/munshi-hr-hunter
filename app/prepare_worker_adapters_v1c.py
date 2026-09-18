@@ -38,6 +38,7 @@ from app import application_review_v2
 from app import application_plan_v2
 from app import application_preflight_package_v1 as preflight_v1
 from app import opportunity_intelligence_v3
+from app import relationship_intelligence_v3
 from app import native_cover_letter_writer_v1
 from app import prepare_orchestrator_v1 as orchestrator
 
@@ -157,7 +158,19 @@ def _succeeded_output(
     return dict(output)
 
 
-def _optional_relationship_id(operation: Mapping[str, Any]) -> str | None:
+def _optional_relationship_id(
+    operation: Mapping[str, Any],
+    *,
+    opportunity: Mapping[str, Any],
+) -> str | None:
+    """Return only advisory relationship context bound to this exact opportunity.
+
+    Recruiter discovery runs before Phase 6 opportunity evaluation, so an older
+    advisory strategy may legitimately lack the exact evaluation binding needed
+    by the immutable preflight package. Because people context is optional, that
+    stale/mismatched advisory must be omitted rather than blocking the required
+    application path.
+    """
     row = _task(operation, orchestrator.TASK_RECRUITER_DISCOVERY)
     if row is None or str(row.get("status")) != "SUCCEEDED":
         return None
@@ -169,7 +182,31 @@ def _optional_relationship_id(operation: Mapping[str, Any]) -> str | None:
     if output.get("available") is False:
         return None
     value = str(output.get("relationship_strategy_id") or "").strip()
-    return value or None
+    if not value:
+        return None
+    try:
+        strategy = relationship_intelligence_v3.get_strategy(value)
+        freshness = relationship_intelligence_v3.strategy_freshness(value)
+    except (LookupError, RuntimeError, ValueError):
+        return None
+    if freshness.get("fresh") is not True:
+        return None
+    if int(strategy.get("job_id") or 0) != int(operation["job_id"]):
+        return None
+    if str(strategy.get("job_snapshot_sha256") or "") != str(
+        operation["job_snapshot_sha256"]
+    ):
+        return None
+    context = dict(strategy.get("opportunity_context") or {})
+    if str(context.get("evaluation_id") or "") != str(
+        opportunity.get("evaluation_id") or ""
+    ):
+        return None
+    if str(context.get("result_sha256") or "") != str(
+        opportunity.get("result_sha256") or ""
+    ):
+        return None
+    return value
 
 
 def _validate_resume_and_answers(operation: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -267,7 +304,10 @@ def run_application_preflight_once(
             int(operation["job_id"]),
             persist=True,
         )
-        relationship_strategy_id = _optional_relationship_id(operation)
+        relationship_strategy_id = _optional_relationship_id(
+            operation,
+            opportunity=opportunity,
+        )
 
         package = preflight_v1.prepare_preflight_package(
             job_id=int(operation["job_id"]),
@@ -608,6 +648,112 @@ def _plan_permissions(
     }
 
 
+def _application_plan_idempotency_key(
+    *,
+    operation: Mapping[str, Any],
+    pending_task: Mapping[str, Any],
+    preflight: Mapping[str, Any],
+) -> tuple[str, str | None]:
+    """Select the immutable plan key, preserving provider-capability recovery.
+
+    A prior V1C plan may have stopped solely because its ATS family was not yet
+    supported.  Once that exact provider is added, reusing the original
+    idempotency key would correctly detect a different digest.  In that one
+    narrowly-scoped case we create a new immutable plan revision key.  Any
+    answer blocker, stale binding, mixed blocker set, or authority anomaly keeps
+    the original key/fails closed.
+    """
+    base = f"prepare:{operation['operation_id']}:application-plan:v1c"
+    raw_output = pending_task.get("output")
+    if not isinstance(raw_output, Mapping):
+        return base, None
+    prior_plan_id = str(raw_output.get("plan_id") or "").strip()
+    if not prior_plan_id:
+        return base, None
+
+    prior = application_plan_v2.get_application_plan(prior_plan_id)
+    snapshot = dict(prior.get("snapshot") or {})
+    blockers = list(snapshot.get("global_blockers") or [])
+    unresolved = list(snapshot.get("unresolved") or [])
+    policy = dict(snapshot.get("provider_policy") or {})
+    resume = dict(snapshot.get("resume") or {})
+
+    provider_only = (
+        str(prior.get("status") or "") == "NEEDS_INPUT"
+        and prior.get("executable") is False
+        and prior.get("submission_authority") is False
+        and str(snapshot.get("expected_state") or "") == "NEEDS_INPUT"
+        and blockers == ["provider_not_permitted_or_supported"]
+        and unresolved == []
+        and str(prior.get("provider") or "") == "UNSUPPORTED"
+        and str(policy.get("provider") or "") == "UNSUPPORTED"
+        and policy.get("permitted") is False
+    )
+    if not provider_only:
+        return base, None
+
+    exact_binding = (
+        str(prior.get("application_id") or "") == str(operation["application_id"])
+        and int(prior.get("job_id") or 0) == int(operation["job_id"])
+        and str(prior.get("preflight_package_id") or "")
+        == str(preflight["preflight_package_id"])
+        and str(resume.get("version_id") or "")
+        == str(preflight["resume_version_id"])
+        and str(resume.get("artifact_sha256") or "")
+        == str(preflight["resume_pdf_sha256"])
+    )
+    if not exact_binding:
+        raise RuntimeError(
+            "Provider-capability retry refused a mismatched prior Application Plan."
+        )
+    # Re-capture the exact immutable inputs and permit only the semantic
+    # transition caused by newly-supported provider capability.  Any Candidate
+    # Truth, job, preflight, resume, answer, permission, or cover-letter drift
+    # remains a hard stop.
+    inputs = dict(prior.get("inputs") or {})
+    current = application_plan_v2._capture(
+        preflight_package_id=str(inputs["preflight_package_id"]),
+        requirements=list(inputs["answer_requirements"]),
+        permissions=dict(inputs["permissions"]),
+        provider_policy=dict(inputs["provider_policy"]),
+        secure_refs=dict(inputs["secure_resolver_refs"]),
+        resume_format=str(inputs["resume_format"]),
+        cover_letter_id=(
+            str(inputs.get("cover_letter_id") or "").strip() or None
+        ),
+        answer_overrides=dict(inputs.get("answer_overrides") or {}),
+    )
+    old_payload = application_plan_v2.plan_digest_payload(snapshot)
+    new_payload = application_plan_v2.plan_digest_payload(current)
+    changed = {
+        key
+        for key in set(old_payload) | set(new_payload)
+        if old_payload.get(key) != new_payload.get(key)
+    }
+    expected_changed = {
+        "provider_policy",
+        "global_blockers",
+        "expected_state",
+        "executable",
+    }
+    current_policy = dict(current.get("provider_policy") or {})
+    capability_only = (
+        changed == expected_changed
+        and current.get("executable") is True
+        and str(current.get("expected_state") or "") == "READY_TO_APPLY"
+        and list(current.get("global_blockers") or []) == []
+        and list(current.get("unresolved") or []) == []
+        and str(current_policy.get("provider") or "") in application_plan_v2.SUPPORTED_PROVIDERS
+        and str(current_policy.get("provider") or "") != "UNSUPPORTED"
+        and current_policy.get("permitted") is True
+    )
+    if not capability_only:
+        raise RuntimeError(
+            "Provider-capability retry detected non-provider Application Plan drift."
+        )
+    return f"{base}:provider-capability-v2", prior_plan_id
+
+
 def run_ats_form_preparation_once(
     *,
     operation_id: str,
@@ -637,7 +783,10 @@ def run_ats_form_preparation_once(
             "submission_authority": False,
         }
 
-    if _pending_task(operation, orchestrator.TASK_ATS_FORM_PREPARATION) is None:
+    pending_ats_task = _pending_task(
+        operation, orchestrator.TASK_ATS_FORM_PREPARATION
+    )
+    if pending_ats_task is None:
         return {
             "operation_id": str(operation_id),
             "claimed": False,
@@ -710,9 +859,16 @@ def run_ats_form_preparation_once(
     record_review = review_recorder or application_review_v2.create_review
 
     try:
+        plan_key, provider_capability_retry_from_plan_id = (
+            _application_plan_idempotency_key(
+                operation=operation,
+                pending_task=pending_ats_task,
+                preflight=preflight,
+            )
+        )
         plan = application_plan_v2.prepare_application_plan(
             preflight_package_id=str(preflight["preflight_package_id"]),
-            idempotency_key=f"prepare:{operation_id}:application-plan:v1c",
+            idempotency_key=plan_key,
             # Initial plan intentionally contains only currently-known
             # requirements. Runtime-discovered NORMAL questions use the already
             # existing immutable replacement-plan flow.
@@ -744,6 +900,9 @@ def run_ats_form_preparation_once(
                     "version": WORKER_VERSION,
                     "plan_id": plan.get("plan_id"),
                     "plan_status": plan.get("status"),
+                    "provider_capability_retry_from_plan_id": (
+                        provider_capability_retry_from_plan_id
+                    ),
                     "submission_authority": False,
                 },
             )
@@ -928,6 +1087,9 @@ def run_ats_form_preparation_once(
                 "plan_id": str(plan["plan_id"]),
                 "plan_digest": str(plan["plan_digest"]),
                 "provider": str(plan["provider"]),
+                "provider_capability_retry_from_plan_id": (
+                    provider_capability_retry_from_plan_id
+                ),
                 "handoff_id": str(getattr(delivery, "handoff_id", "")),
                 "handoff_state": "PLAN_ACCEPTED",
                 "apply_session_id": str(session["session_id"]),

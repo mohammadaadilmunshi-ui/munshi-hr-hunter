@@ -153,6 +153,73 @@ def test_native_resume_worker_completes_exact_pdf_docx(worker_db, monkeypatch):
     assert task["output"]["pdf"]["artifact_reference"].endswith("/pdf")
 
 
+
+def test_native_retry_reuses_validated_version_without_second_model_call(
+    worker_db, monkeypatch
+):
+    operation = _start(key="workers-native-reuse")
+
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "generate_resume",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("first artifact path failed")),
+    )
+    with pytest.raises(RuntimeError, match="first artifact path failed"):
+        workers.run_native_resume_once(
+            operation_id=operation["operation_id"],
+            worker_id="native-worker-first",
+        )
+
+    task = _task(operation["operation_id"], orchestrator.TASK_RESUME)
+    assert task["status"] == "PENDING"
+    assert task["attempts"] == 1
+    assert task["error_code"] == "NATIVE_RESUME_PREPARE_FAILED"
+
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "list_versions",
+        lambda **kwargs: [
+            {
+                "version_id": "resume-existing",
+                "created_at": "9999-01-01 00:00:00",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "get_version",
+        lambda version_id: {
+            "version_id": version_id,
+            "version_number": 7,
+            "stage_b_bound": True,
+            "candidate_truth_binding": {"profile_digest": PROFILE_DIGEST},
+            "job_snapshot_binding": {"job_snapshot_sha256": JOB_DIGEST},
+        },
+    )
+
+    def must_not_generate(**kwargs):
+        raise AssertionError("retry must reuse the paid validated resume")
+
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "generate_resume",
+        must_not_generate,
+    )
+    monkeypatch.setattr(
+        workers.native_resume_artifact_v5,
+        "materialize",
+        lambda version_id: _bundle(),
+    )
+
+    result = workers.run_native_resume_once(
+        operation_id=operation["operation_id"],
+        worker_id="native-worker-second",
+    )
+
+    assert result["task_status"] == "SUCCEEDED"
+    assert result["reused_generated_version"] is True
+    assert _task(operation["operation_id"], orchestrator.TASK_RESUME)["status"] == "SUCCEEDED"
+
 def test_native_worker_never_claims_n8n_resume(worker_db):
     operation = _start(engine="N8N", key="workers-n8n")
     result = workers.run_native_resume_once(

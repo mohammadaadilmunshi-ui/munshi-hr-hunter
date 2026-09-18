@@ -146,6 +146,24 @@ def main() -> int:
                 ),
             )
         )
+    if enabled("MUNSHI_PREPARE_RUNTIME_WORKER_ENABLED"):
+        children.append(
+            Lane(
+                "prepare-runtime",
+                [python, "-m", "app.prepare_runtime_worker"],
+                required=False,
+                repeat=True,
+                interval=max(
+                    5,
+                    int(
+                        os.getenv(
+                            "MUNSHI_PREPARE_RUNTIME_WORKER_INTERVAL_SECONDS",
+                            "10",
+                        )
+                    ),
+                ),
+            )
+        )
     children.append(
         Lane(
             "application-notifications",

@@ -228,6 +228,63 @@ def test_preflight_worker_passes_v5_resume_and_known_scope(worker_db, monkeypatc
     assert seen["unresolved_question_keys"] == []
 
 
+
+def test_preflight_omits_optional_relationship_not_bound_to_current_opportunity(
+    worker_db, monkeypatch
+):
+    operation = _start("v1c-preflight-optional-relationship")
+    _ready_dependencies(operation["operation_id"])
+    _complete_root(
+        operation["operation_id"],
+        orchestrator.TASK_RECRUITER_DISCOVERY,
+        "recruiter-worker",
+        {
+            "available": True,
+            "relationship_strategy_id": "relationship-old",
+            "submission_authority": False,
+        },
+    )
+
+    opportunity = {
+        "evaluation_id": "opportunity-94",
+        "result_sha256": "f" * 64,
+    }
+    monkeypatch.setattr(
+        workers.opportunity_intelligence_v3,
+        "evaluate_job",
+        lambda job_id, persist=True: dict(opportunity),
+    )
+    monkeypatch.setattr(
+        workers.relationship_intelligence_v3,
+        "get_strategy",
+        lambda strategy_id: {
+            "strategy_id": strategy_id,
+            "job_id": 94,
+            "job_snapshot_sha256": JOB_DIGEST,
+            "opportunity_context": None,
+        },
+    )
+    monkeypatch.setattr(
+        workers.relationship_intelligence_v3,
+        "strategy_freshness",
+        lambda strategy_id: {"fresh": True},
+    )
+
+    seen = {}
+    def capture(**kwargs):
+        seen.update(kwargs)
+        return _fake_ready_package()
+
+    monkeypatch.setattr(workers.preflight_v1, "prepare_preflight_package", capture)
+
+    result = workers.run_application_preflight_once(
+        operation_id=operation["operation_id"],
+        worker_id="preflight-worker",
+    )
+
+    assert result["task_status"] == "SUCCEEDED"
+    assert seen["relationship_strategy_id"] is None
+
 def test_preflight_not_ready_becomes_needs_input(worker_db, monkeypatch):
     operation = _start("v1c-preflight-needs-input")
     _ready_dependencies(operation["operation_id"])
@@ -741,4 +798,266 @@ def test_runtime_sync_rejects_authority_escalation():
         workers._validate_runtime_resolution_sync(
             payload, prepare_job_id="prepare-job-94", session_id="session-94",
             application_id="application-94", plan_id="plan-94",
+        )
+
+
+def test_provider_capability_retry_uses_new_immutable_key_only_for_exact_blocker(
+    monkeypatch,
+) -> None:
+    operation = {
+        "operation_id": "prepare-op-provider-retry",
+        "application_id": "application-94",
+        "job_id": 94,
+    }
+    pending = {"output": {"plan_id": "prior-provider-plan"}}
+    preflight = {
+        "preflight_package_id": "preflight-94",
+        "resume_version_id": "resume-v5-94",
+        "resume_pdf_sha256": "d" * 64,
+    }
+    prior = {
+        "plan_id": "prior-provider-plan",
+        "status": "NEEDS_INPUT",
+        "executable": False,
+        "submission_authority": False,
+        "application_id": "application-94",
+        "job_id": 94,
+        "preflight_package_id": "preflight-94",
+        "provider": "UNSUPPORTED",
+        "inputs": {
+            "preflight_package_id": "preflight-94",
+            "answer_requirements": [],
+            "permissions": {},
+            "provider_policy": {},
+            "secure_resolver_refs": {},
+            "resume_format": "PDF",
+            "answer_overrides": {},
+        },
+        "snapshot": {
+            "expected_state": "NEEDS_INPUT",
+            "executable": False,
+            "global_blockers": ["provider_not_permitted_or_supported"],
+            "unresolved": [],
+            "provider_policy": {
+                "provider": "UNSUPPORTED",
+                "permitted": False,
+            },
+            "resume": {
+                "version_id": "resume-v5-94",
+                "artifact_sha256": "d" * 64,
+            },
+        },
+    }
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "get_application_plan",
+        lambda _plan_id: prior,
+    )
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "_capture",
+        lambda **_kwargs: {
+            **prior["snapshot"],
+            "expected_state": "READY_TO_APPLY",
+            "executable": True,
+            "global_blockers": [],
+            "provider_policy": {
+                "provider": "AGILE_ATS",
+                "permitted": True,
+            },
+        },
+    )
+
+    key, prior_id = workers._application_plan_idempotency_key(
+        operation=operation,
+        pending_task=pending,
+        preflight=preflight,
+    )
+
+    assert key == (
+        "prepare:prepare-op-provider-retry:application-plan:v1c:"
+        "provider-capability-v2"
+    )
+    assert prior_id == "prior-provider-plan"
+
+
+def test_provider_capability_retry_never_bypasses_mixed_or_answer_blockers(
+    monkeypatch,
+) -> None:
+    operation = {
+        "operation_id": "prepare-op-provider-retry",
+        "application_id": "application-94",
+        "job_id": 94,
+    }
+    pending = {"output": {"plan_id": "prior-provider-plan"}}
+    preflight = {
+        "preflight_package_id": "preflight-94",
+        "resume_version_id": "resume-v5-94",
+        "resume_pdf_sha256": "d" * 64,
+    }
+    prior = {
+        "plan_id": "prior-provider-plan",
+        "status": "NEEDS_INPUT",
+        "executable": False,
+        "submission_authority": False,
+        "application_id": "application-94",
+        "job_id": 94,
+        "preflight_package_id": "preflight-94",
+        "provider": "UNSUPPORTED",
+        "snapshot": {
+            "expected_state": "NEEDS_INPUT",
+            "global_blockers": [
+                "provider_not_permitted_or_supported",
+                "resume_upload_permission_missing",
+            ],
+            "unresolved": [{"question_key": "job.custom", "reason": "needs_input"}],
+            "provider_policy": {
+                "provider": "UNSUPPORTED",
+                "permitted": False,
+            },
+            "resume": {
+                "version_id": "resume-v5-94",
+                "artifact_sha256": "d" * 64,
+            },
+        },
+    }
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "get_application_plan",
+        lambda _plan_id: prior,
+    )
+
+    key, prior_id = workers._application_plan_idempotency_key(
+        operation=operation,
+        pending_task=pending,
+        preflight=preflight,
+    )
+
+    assert key == "prepare:prepare-op-provider-retry:application-plan:v1c"
+    assert prior_id is None
+
+
+def test_provider_capability_retry_fails_closed_on_binding_drift(monkeypatch) -> None:
+    operation = {
+        "operation_id": "prepare-op-provider-retry",
+        "application_id": "application-94",
+        "job_id": 94,
+    }
+    pending = {"output": {"plan_id": "prior-provider-plan"}}
+    preflight = {
+        "preflight_package_id": "preflight-94",
+        "resume_version_id": "resume-v5-94",
+        "resume_pdf_sha256": "d" * 64,
+    }
+    prior = {
+        "plan_id": "prior-provider-plan",
+        "status": "NEEDS_INPUT",
+        "executable": False,
+        "submission_authority": False,
+        "application_id": "application-94",
+        "job_id": 94,
+        "preflight_package_id": "preflight-94",
+        "provider": "UNSUPPORTED",
+        "snapshot": {
+            "expected_state": "NEEDS_INPUT",
+            "global_blockers": ["provider_not_permitted_or_supported"],
+            "unresolved": [],
+            "provider_policy": {
+                "provider": "UNSUPPORTED",
+                "permitted": False,
+            },
+            "resume": {
+                "version_id": "resume-v5-94",
+                "artifact_sha256": "e" * 64,
+            },
+        },
+    }
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "get_application_plan",
+        lambda _plan_id: prior,
+    )
+
+    with pytest.raises(RuntimeError, match="mismatched prior Application Plan"):
+        workers._application_plan_idempotency_key(
+            operation=operation,
+            pending_task=pending,
+            preflight=preflight,
+        )
+
+
+def test_provider_capability_retry_fails_closed_on_non_provider_semantic_drift(
+    monkeypatch,
+) -> None:
+    operation = {
+        "operation_id": "prepare-op-provider-retry-drift",
+        "application_id": "application-94",
+        "job_id": 94,
+    }
+    pending = {"output": {"plan_id": "prior-provider-plan"}}
+    preflight = {
+        "preflight_package_id": "preflight-94",
+        "resume_version_id": "resume-v5-94",
+        "resume_pdf_sha256": "d" * 64,
+    }
+    prior = {
+        "plan_id": "prior-provider-plan",
+        "status": "NEEDS_INPUT",
+        "executable": False,
+        "submission_authority": False,
+        "application_id": "application-94",
+        "job_id": 94,
+        "preflight_package_id": "preflight-94",
+        "provider": "UNSUPPORTED",
+        "inputs": {
+            "preflight_package_id": "preflight-94",
+            "answer_requirements": [],
+            "permissions": {},
+            "provider_policy": {},
+            "secure_resolver_refs": {},
+            "resume_format": "PDF",
+            "answer_overrides": {},
+        },
+        "snapshot": {
+            "expected_state": "NEEDS_INPUT",
+            "executable": False,
+            "global_blockers": ["provider_not_permitted_or_supported"],
+            "unresolved": [],
+            "provider_policy": {
+                "provider": "UNSUPPORTED",
+                "permitted": False,
+            },
+            "resume": {
+                "version_id": "resume-v5-94",
+                "artifact_sha256": "d" * 64,
+            },
+            "candidate_truth_binding": {"profile_digest": "a" * 64},
+        },
+    }
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "get_application_plan",
+        lambda _plan_id: prior,
+    )
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "_capture",
+        lambda **_kwargs: {
+            **prior["snapshot"],
+            "expected_state": "READY_TO_APPLY",
+            "executable": True,
+            "global_blockers": [],
+            "provider_policy": {
+                "provider": "AGILE_ATS",
+                "permitted": True,
+            },
+            "candidate_truth_binding": {"profile_digest": "b" * 64},
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="non-provider Application Plan drift"):
+        workers._application_plan_idempotency_key(
+            operation=operation,
+            pending_task=pending,
+            preflight=preflight,
         )

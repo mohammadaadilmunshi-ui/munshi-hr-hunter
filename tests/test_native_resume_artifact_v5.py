@@ -27,7 +27,7 @@ def _renderers(
     monkeypatch.setattr(
         resume_v5.v4.v1,
         "version_pdf",
-        lambda _version_id: (_pdf(pages=pages, suffix=suffix), pages),
+        lambda _version_id, **_kwargs: (_pdf(pages=pages, suffix=suffix), pages),
     )
     if pages == 1:
         monkeypatch.setattr(
@@ -77,6 +77,41 @@ def test_materialize_persists_exact_one_page_pdf_and_docx_idempotently(
         connection.close()
 
 
+
+def test_materialize_uses_compact_local_render_before_failing(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _confirmed_profile(hunter_db, monkeypatch)
+    _fake_writer(monkeypatch)
+    resume = resume_v5.generate_resume(job_id=_job())
+
+    calls: list[str] = []
+
+    def render(_version_id: str, *, render_density: str = "normal"):
+        calls.append(render_density)
+        pages = 2 if render_density == "normal" else 1
+        return _pdf(pages=pages), pages
+
+    monkeypatch.setattr(resume_v5.v4.v1, "version_pdf", render)
+    monkeypatch.setattr(
+        artifacts,
+        "_validated_pdf_layout",
+        lambda _data: {
+            "status": "PASS",
+            "pdf_pages": 1,
+            "occupied_height_ratio": 0.80,
+            "bottom_whitespace_ratio": 0.14,
+            "text_fragment_count": 38,
+        },
+    )
+
+    result = artifacts.materialize(resume["version_id"])
+
+    assert calls[:2] == ["normal", "compact"]
+    assert result["page_verification"]["render_density"] == "compact"
+    assert result["render_density"] == "compact"
+    assert result["pdf"]["page_count"] == 1
+
 def test_materialize_rejects_non_one_page_pdf_before_persistence(
     hunter_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -102,17 +137,50 @@ def test_materialize_rejects_non_one_page_pdf_before_persistence(
         connection.close()
 
 
-def test_immutable_version_cannot_silently_change_artifact_bytes(
+def test_materialize_reuses_persisted_immutable_pair_without_rerender(
     hunter_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _confirmed_profile(hunter_db, monkeypatch)
     _fake_writer(monkeypatch)
     resume = resume_v5.generate_resume(job_id=_job())
     _renderers(monkeypatch)
-    artifacts.materialize(resume["version_id"])
+    first = artifacts.materialize(resume["version_id"])
 
-    _renderers(monkeypatch, suffix=b"-changed")
-    with pytest.raises(RuntimeError, match="Immutable Native Resume V5 artifact content changed"):
+    def must_not_render(*args, **kwargs):
+        raise AssertionError("persisted immutable resume must not be re-rendered")
+
+    monkeypatch.setattr(resume_v5.v4.v1, "version_pdf", must_not_render)
+    monkeypatch.setattr(resume_v5.v4.v1, "version_docx", must_not_render)
+
+    second = artifacts.materialize(resume["version_id"])
+
+    assert second["pdf"]["artifact_id"] == first["pdf"]["artifact_id"]
+    assert second["docx"]["artifact_id"] == first["docx"]["artifact_id"]
+    assert second["pdf"]["sha256"] == first["pdf"]["sha256"]
+    assert second["docx"]["sha256"] == first["docx"]["sha256"]
+    assert second["render_density"] == "stored_immutable"
+
+
+def test_materialize_fails_closed_if_persisted_artifact_bytes_are_corrupt(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _confirmed_profile(hunter_db, monkeypatch)
+    _fake_writer(monkeypatch)
+    resume = resume_v5.generate_resume(job_id=_job())
+    _renderers(monkeypatch)
+    first = artifacts.materialize(resume["version_id"])
+
+    connection = database.get_connection()
+    try:
+        connection.execute(
+            "UPDATE native_resume_v5_artifacts SET content=? WHERE artifact_id=?",
+            (b"%PDF-1.7\ncorrupt", first["pdf"]["artifact_id"]),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(RuntimeError, match="stored artifact failed integrity"):
         artifacts.materialize(resume["version_id"])
 
 
@@ -125,7 +193,7 @@ def test_materialize_rejects_a_corrupt_pdf_even_if_renderer_claims_one_page(
     monkeypatch.setattr(
         resume_v5.v4.v1,
         "version_pdf",
-        lambda _version_id: (b"%PDF-1.7\nnot a parseable PDF", 1),
+        lambda _version_id, **_kwargs: (b"%PDF-1.7\nnot a parseable PDF", 1),
     )
 
     with pytest.raises(RuntimeError, match="invalid document"):
@@ -153,6 +221,46 @@ def test_artifact_materialization_fails_closed_after_job_snapshot_changes(
 
     with pytest.raises(RuntimeError, match="stored job changed"):
         artifacts.materialize(resume["version_id"])
+
+def test_effective_pdf_text_geometry_applies_chromium_page_transform() -> None:
+    # Chromium emits CSS-space text positions and maps them into PDF points via
+    # a 0.75 scale plus a vertical flip/translation.
+    y, font = artifacts._effective_pdf_text_geometry(
+        cm=[0.75, 0.0, 0.0, -0.75, 39.75, 763.5],
+        tm=[1.0, 0.0, 0.0, -1.0, 0.0, 946.0],
+        font_size=12.53,
+    )
+    assert y == pytest.approx(54.0)
+    assert font == pytest.approx(9.3975)
+
+
+def test_effective_pdf_geometry_prevents_false_bottom_edge_failure() -> None:
+    cm = [0.75, 0.0, 0.0, -0.75, 39.75, 763.5]
+    css_fragments = [
+        (24.0, 28.66),
+        (87.0, 14.4),
+        (220.0, 14.53),
+        (430.0, 14.53),
+        (700.0, 12.53),
+        (946.0, 12.53),
+    ]
+    fragments = [
+        artifacts._effective_pdf_text_geometry(
+            cm=cm,
+            tm=[1.0, 0.0, 0.0, -1.0, 0.0, css_y],
+            font_size=font,
+        )
+        for css_y, font in css_fragments
+    ]
+
+    result = artifacts._page_fit_metrics(
+        page_height=792.0,
+        fragments=fragments,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["bottom_whitespace_ratio"] == pytest.approx(54.0 / 792.0, abs=0.001)
+
 
 def test_page_fit_metrics_rejects_sparse_resume() -> None:
     with pytest.raises(ValueError, match="under-filled"):

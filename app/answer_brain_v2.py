@@ -223,6 +223,66 @@ def save_profile_answer(
     )
 
 
+def save_profile_projection_answer(
+    *,
+    question_family: str,
+    question_key: str,
+    profile_fact_key: str,
+    projection: str,
+    autofill_allowed: bool = False,
+) -> str:
+    """Persist a deterministic structural projection of current Candidate Truth.
+
+    The value is recomputed here from the canonical profile instead of trusting
+    a caller-supplied string, then stored as profile_evidence with the same truth
+    sidecar as direct profile answers.
+    """
+    family = str(question_family or "").strip().casefold()
+    if family not in NORMAL_QUESTION_FAMILIES:
+        raise ValueError("Profile-derived memory requires a normal Answer Brain family.")
+    key = truth_binding.canonical_question_key(question_key)
+    snapshot = truth_binding.current_candidate_profile_snapshot()
+    fact = truth_binding.profile_fact(snapshot, profile_fact_key)
+    if fact is None:
+        raise LookupError("Candidate Truth Profile fact was not found.")
+    if fact.get("protected") is True:
+        raise ValueError(
+            "Protected Candidate Truth facts cannot be copied into the normal answer vault."
+        )
+
+    from app import application_field_intelligence_v1 as field_intelligence
+
+    resolved = field_intelligence.resolve_profile_projection(
+        profile_fact_key=str(profile_fact_key),
+        projection=str(projection),
+    )
+    if resolved.get("status") != "ANSWERED":
+        raise LookupError(
+            str(resolved.get("reason") or "Candidate Truth projection is unavailable.")
+        )
+    projected = dict(resolved.get("answer") or {})
+    answer = str(projected.get("canonical_answer") or "").strip()
+    if not answer:
+        raise ValueError("Candidate Truth projection has no usable answer value.")
+
+    conditions = {
+        "profile_projection": str(projection),
+        "candidate_profile_revision": int(snapshot["profile_revision"]),
+        "candidate_profile_digest": str(snapshot["profile_digest"]),
+    }
+    scoped, _ = _scoped_conditions(conditions, key)
+    return _save_profile_answer_atomic(
+        family=family,
+        answer=answer,
+        confidence=_fact_confidence(fact),
+        autofill_allowed=bool(autofill_allowed),
+        scoped_conditions=scoped,
+        question_key=key,
+        profile_fact_key=str(profile_fact_key),
+        snapshot=snapshot,
+    )
+
+
 def _resolved_stored_answer(
     *,
     question_family: str,

@@ -47,3 +47,12 @@ def test_repeating_lane_tracks_independent_restart_deadline() -> None:
     assert lane.next_start_at is None
     lane.next_start_at = 123.0
     assert lane.next_start_at == 123.0
+
+
+def test_prepare_runtime_lane_is_supervised_and_low_latency() -> None:
+    source = (ROOT / "docker" / "hunter-supervisor.py").read_text(encoding="utf-8")
+    assert 'enabled("MUNSHI_PREPARE_RUNTIME_WORKER_ENABLED")' in source
+    assert '"prepare-runtime"' in source
+    assert '"app.prepare_runtime_worker"' in source
+    assert '"MUNSHI_PREPARE_RUNTIME_WORKER_INTERVAL_SECONDS"' in source
+    assert "max(\n                    5," in source

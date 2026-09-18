@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import os
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
@@ -218,16 +219,23 @@ def run_coordinator(
     # Existing durable operations remain independently progressable even when
     # the saved engine changes. The compatibility router only owns *new auto
     # admission*; it never abandons already-created durable work.
+    dedicated_prepare_runtime = (
+        str(os.getenv("MUNSHI_PREPARE_RUNTIME_WORKER_ENABLED") or "")
+        .strip()
+        .casefold()
+        in {"1", "true", "yes", "on", "enabled"}
+    )
     prepare_runtime_result = (
         {
             "success": True,
             "operation_count": 0,
             "results": [],
             "errors": [],
-            "dry_run": True,
+            "dry_run": bool(dry_run),
+            "delegated_to_supervised_runtime": bool(dedicated_prepare_runtime and not dry_run),
             "submission_authority": False,
         }
-        if dry_run
+        if dry_run or dedicated_prepare_runtime
         else autonomous_prepare_v1.drive_open_operations()
     )
 
