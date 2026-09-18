@@ -20,6 +20,10 @@ MIGRATIONS = (
     "migrations.049_application_lifecycle_authority_v1",
     "migrations.050_prepare_orchestrator_v1",
     "migrations.051_native_cover_letter_writer_v1",
+    "migrations.052_inbound_mail_relay_v1",
+    "migrations.053_mail_intelligence_v2",
+    "migrations.054_application_notifications_v1",
+    "migrations.055_application_communication_notifications_v1",
 )
 
 REQUIRED_TABLES = {
@@ -32,8 +36,24 @@ REQUIRED_TABLES = {
     "application_submit_commands_v1",
     "verified_submission_receipts_v1",
     "application_lifecycle_records",
+    "ats_application_identities",
+    "ats_managed_account_bindings",
+    "ats_verification_requests",
+    "inbound_mail_messages",
+    "mail_events_v2",
+    "mail_one_time_artifacts_v2",
+    "application_mail_confirmation_evidence_v2",
+    "application_communication_events_v2",
+    "application_notification_preferences_v1",
+    "application_notification_outbox_v1",
 }
 REQUIRED_CALLBACK_COLUMNS = {"payload_sha256", "execution_artifact_id"}
+REQUIRED_NOTIFICATION_PREFERENCE_COLUMNS = {
+    "destination_email",
+    "submission_email_enabled",
+    "employer_confirmation_email_enabled",
+    "communication_email_enabled",
+}
 PRODUCTION_AUTHORIZATION = "AUTHORIZED_GUARDED_COMPLETE_LOOP_MIGRATION"
 
 
@@ -92,6 +112,21 @@ def _verify_schema(connection: sqlite3.Connection, *, full_quick_check: bool) ->
     if missing_callback:
         raise RuntimeError("Complete Loop callback schema missing: " + ", ".join(missing_callback))
 
+    notification_preference_columns = {
+        str(row[1])
+        for row in connection.execute(
+            "PRAGMA table_info(application_notification_preferences_v1)"
+        ).fetchall()
+    }
+    missing_notification_preferences = sorted(
+        REQUIRED_NOTIFICATION_PREFERENCE_COLUMNS - notification_preference_columns
+    )
+    if missing_notification_preferences:
+        raise RuntimeError(
+            "Application notification preference schema missing: "
+            + ", ".join(missing_notification_preferences)
+        )
+
     foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
     if foreign_keys:
         raise RuntimeError(f"Complete Loop FK check failed: {len(foreign_keys)} violation(s).")
@@ -105,6 +140,9 @@ def _verify_schema(connection: sqlite3.Connection, *, full_quick_check: bool) ->
     return {
         "required_tables": sorted(REQUIRED_TABLES),
         "callback_columns": sorted(REQUIRED_CALLBACK_COLUMNS),
+        "notification_preference_columns": sorted(
+            REQUIRED_NOTIFICATION_PREFERENCE_COLUMNS
+        ),
         "foreign_key_violations": len(foreign_keys),
         "quick_check": quick,
     }
