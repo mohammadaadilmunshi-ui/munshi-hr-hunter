@@ -134,7 +134,35 @@ def main() -> int:
         Lane("streamlit", [python, "-m", "streamlit", "run", "app/dashboard.py", "--server.address", "0.0.0.0", "--server.port", "8501", "--server.headless", "true"]),
     ]
     if enabled("HUNTER_ENABLE_TELEGRAM"):
-        children.append(Lane("telegram", [python, "-m", "app.telegram_listener"]))
+        children.append(
+            Lane(
+                "telegram",
+                [python, "-m", "app.telegram_listener"],
+                required=False,
+                repeat=True,
+                interval=max(
+                    30,
+                    int(os.getenv("HUNTER_TELEGRAM_RETRY_SECONDS", "60")),
+                ),
+            )
+        )
+    children.append(
+        Lane(
+            "application-notifications",
+            [python, "scripts/application_notification_worker.py", "--supervised"],
+            required=False,
+            repeat=True,
+            interval=max(
+                30,
+                int(
+                    os.getenv(
+                        "MUNSHI_APPLICATION_NOTIFICATION_WORKER_INTERVAL_SECONDS",
+                        "60",
+                    )
+                ),
+            ),
+        )
+    )
     discovery = enabled("HUNTER_ENABLE_DISCOVERY_SCHEDULER")
     coordinator = enabled("HUNTER_ENABLE_COORDINATOR")
     if discovery:

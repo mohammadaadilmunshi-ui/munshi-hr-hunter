@@ -26,7 +26,11 @@ jobs:
       - name: Verify installed packages
         run: python -m pip check
       - name: Run focused tests
-        run: python -m pytest tests/test_docker_foundation.py tests/test_netcup_shadow.py
+        run: >-
+          python -m pytest
+          tests/test_docker_foundation.py
+          tests/test_netcup_shadow.py
+          tests/test_complete_loop_deployment_migrations.py
       - name: Validate Compose configuration
         env:
           HUNTER_API_SECRET: ci-placeholder-only

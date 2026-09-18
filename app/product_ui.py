@@ -121,6 +121,79 @@ def product_css() -> str:
         overflow:hidden;
         background:#FFF
     }
+    /* Unified job-card visual language for interactive workspaces. */
+    [data-testid="stVerticalBlockBorderWrapper"]{
+        background:linear-gradient(145deg,#FFFFFF,#F9FBF8)!important;
+        border:1px solid var(--m-border)!important;
+        border-radius:var(--m-radius)!important;
+        box-shadow:0 7px 22px rgba(20,33,41,.045)!important
+    }
+    [class*="st-key-munshi_surface_"]{
+        background:linear-gradient(145deg,#FFFFFF,#F9FBF8)!important;
+        border:1px solid var(--m-border)!important;
+        border-radius:var(--m-radius)!important;
+        padding:1rem!important;
+        box-shadow:0 7px 22px rgba(20,33,41,.045)!important
+    }
+    [class*="st-key-munshi_tint_"]{
+        background:linear-gradient(145deg,#EDF7F1,#F9FBF8)!important;
+        border:1px solid #CFE1D6!important;
+        border-radius:var(--m-radius)!important;
+        padding:1rem!important;
+        box-shadow:0 7px 22px rgba(20,61,49,.05)!important
+    }
+    .st-key-product_auto_split > div > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:first-child{
+        background:linear-gradient(145deg,#FFFFFF,#F9FBF8)!important;
+        border:1px solid var(--m-border)!important;
+        border-radius:var(--m-radius)!important;
+        padding:1rem!important;
+        box-shadow:0 7px 22px rgba(20,33,41,.045)!important
+    }
+
+    /* Keep BaseWeb controls inside the light MUNSHI product theme. */
+    [data-testid="stExpander"]{
+        background:#FFF!important;
+        border:1px solid var(--m-border)!important;
+        border-radius:15px!important;
+        overflow:hidden!important
+    }
+    [data-testid="stExpander"] summary{
+        background:#F7F9F6!important;
+        color:var(--m-forest)!important;
+        min-height:48px!important
+    }
+    [data-testid="stExpander"] summary *{color:var(--m-forest)!important}
+    [data-testid="stNumberInput"] input{
+        background:#FFF!important;
+        color:var(--m-ink)!important;
+        border-color:var(--m-strong)!important
+    }
+    [data-testid="stNumberInput"] button{
+        background:#F7F9F6!important;
+        color:var(--m-secondary)!important;
+        border-color:var(--m-border)!important
+    }
+    [data-baseweb="popover"],
+    [data-baseweb="menu"],
+    [role="listbox"]{
+        background:#FFF!important;
+        color:var(--m-ink)!important;
+        border-color:var(--m-border)!important
+    }
+    [role="option"]{background:#FFF!important;color:var(--m-ink)!important}
+    [role="option"]:hover,[role="option"][aria-selected="true"]{
+        background:var(--m-active)!important;
+        color:var(--m-forest)!important
+    }
+    .stButton>button:disabled,
+    [data-testid="stFormSubmitButton"]>button:disabled,
+    .stDownloadButton>button:disabled{
+        background:#F1F3F1!important;
+        color:#89938E!important;
+        border-color:#E0E5E1!important;
+        opacity:1!important
+    }
+
     .mobile-nav[open] summary{
         background:var(--m-active);
         color:var(--m-forest)

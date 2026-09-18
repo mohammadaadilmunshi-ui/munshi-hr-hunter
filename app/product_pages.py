@@ -75,16 +75,57 @@ def _toggle_job_skipped(job_id: int, currently_skipped: bool) -> None:
     _set_action_feedback("success", "Restored job to results." if currently_skipped else "Passed on job.")
 
 
-def _prepare_job(job_id: int) -> None:
+def _application_flow(job_id: int) -> dict[str, Any]:
     try:
-        from app.stored_job_n8n_worker import start_stored_job_run
-        result = start_stored_job_run(int(job_id), actor="dashboard_product_ui")
-        if result.get("success"):
-            _set_action_feedback("success", str(result.get("message") or "Preparation request processed."))
-        else:
-            _set_action_feedback("warning", str(result.get("message") or "Preparation was not started."))
+        from app import product_application_flow_v2 as complete_loop
+
+        return complete_loop.flow_for_job(int(job_id))
     except Exception:
-        _set_action_feedback("error", "The guarded preparation request could not be started. No submission was claimed.")
+        return {
+            "job_id": int(job_id),
+            "state": "",
+            "display_status": "Not started",
+            "progress_percent": 0,
+            "authority": "none",
+            "cta": "prepare",
+            "cta_label": "Prepare",
+            "submission_authority": False,
+        }
+
+
+def _prepare_job(job_id: int) -> None:
+    """Start/replay preparation and open the canonical Applications workspace."""
+    try:
+        from app import product_application_flow_v2 as complete_loop
+
+        result = complete_loop.start_prepare_for_job(
+            int(job_id),
+            engine="NATIVE",
+        )
+        message = (
+            "Application preparation is already in progress."
+            if result.get("replayed")
+            else "Application preparation started."
+        )
+        _set_action_feedback("success", message)
+        st.session_state["application_workspace_notice"] = {
+            "tone": "success",
+            "message": message,
+        }
+    except Exception as error:
+        message = "Preparation could not start safely: " + str(error)
+        _set_action_feedback("error", message)
+        st.session_state["application_workspace_notice"] = {
+            "tone": "error",
+            "message": message,
+        }
+
+    st.session_state["product_view"] = "prepare-application"
+    try:
+        st.query_params["view"] = "prepare-application"
+        st.query_params["job"] = str(int(job_id))
+    except Exception:
+        pass
 
 
 
@@ -97,8 +138,11 @@ def _open_job_detail(job_id: int) -> None:
 
 def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
     job_id = int(row["id"])
+    flow = _application_flow(job_id)
     tone = pastel_for(job_id)
     tags = [row.get("remote_type"), row.get("employment_type"), row.get("salary_raw")]
+    if flow.get("state"):
+        tags.append(flow.get("display_status"))
     if row.get("saved"):
         tags.append("Saved")
     tags_html = "".join(f'<span class="tag">{esc(tag)}</span>' for tag in tags if str(tag or "").strip())
@@ -128,7 +172,29 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
         with actions[1]:
             st.button("Restore" if skipped else "Pass", key=f"{key_prefix}_skip_{job_id}", use_container_width=True, on_click=_toggle_job_skipped, args=(job_id, skipped))
         with actions[2]:
-            st.button("Prepare", key=f"{key_prefix}_prepare_{job_id}", type="primary", use_container_width=True, on_click=_prepare_job, args=(job_id,))
+            if flow.get("cta") == "prepare":
+                st.button(
+                    str(flow.get("cta_label") or "Prepare"),
+                    key=f"{key_prefix}_prepare_{job_id}",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=_prepare_job,
+                    args=(job_id,),
+                )
+            else:
+                st.link_button(
+                    str(flow.get("cta_label") or "Application"),
+                    f"?view=prepare-application&job={job_id}",
+                    type=(
+                        "primary"
+                        if flow.get("state") in {
+                            "NEEDS_INPUT",
+                            "READY_FOR_REVIEW",
+                        }
+                        else "secondary"
+                    ),
+                    use_container_width=True,
+                )
 
 def _clear_job_query() -> None:
     try:
@@ -156,6 +222,14 @@ def _job_detail_dialog(job_id: int) -> None:
     row["skipped"] = int(state_record["skipped"]) if state_record else 0
     st.markdown(f"## {esc(row.get('title'), 'Untitled role')}", unsafe_allow_html=True)
     st.caption(f"{row.get('company_name') or 'Company not recorded'} · {row.get('location_raw') or 'Location unknown'} · {row.get('source') or 'Source unknown'}")
+    flow = _application_flow(job_id)
+    st.markdown(
+        f"""<div class="product-callout"><div>
+        <strong>Application · {esc(flow.get('display_status'))}</strong>
+        <span>{int(flow.get('progress_percent') or 0)}% of required preparation evidence complete</span>
+        </div><span class="status-chip">{esc(flow.get('authority'), 'Not started')}</span></div>""",
+        unsafe_allow_html=True,
+    )
     left, right = st.columns((1.55, 1), gap="large")
     with left:
         st.markdown("### Role summary")
@@ -183,7 +257,22 @@ def _job_detail_dialog(job_id: int) -> None:
     with action_columns[1]:
         st.button("Restore" if row["skipped"] else "Pass", key=f"dialog_skip_{job_id}", use_container_width=True, on_click=_toggle_job_skipped, args=(job_id, bool(row["skipped"])))
     with action_columns[2]:
-        st.button("Prepare", key=f"dialog_prepare_{job_id}", type="primary", use_container_width=True, on_click=_prepare_job, args=(job_id,))
+        if flow.get("cta") == "prepare":
+            st.button(
+                str(flow.get("cta_label") or "Prepare"),
+                key=f"dialog_prepare_{job_id}",
+                type="primary",
+                use_container_width=True,
+                on_click=_prepare_job,
+                args=(job_id,),
+            )
+        else:
+            st.link_button(
+                str(flow.get("cta_label") or "Application"),
+                f"?view=prepare-application&job={job_id}",
+                type="primary",
+                use_container_width=True,
+            )
     with action_columns[3]:
         if safe_link(row.get("apply_url")):
             st.link_button("Open application", safe_link(row["apply_url"]), use_container_width=True)
@@ -393,12 +482,85 @@ def _manual_add() -> None:
                     st.success(f"Job {saved['job_id']} was persisted through the canonical manual path.")
             job_id = st.session_state.get("product_manual_saved_job_id")
             if job_id and st.button("Prepare persisted job", key="product_manual_prepare"):
-                from app.stored_job_n8n_worker import start_stored_job_run
-                prepared = start_stored_job_run(int(job_id), actor="dashboard_product_manual_input")
-                if prepared.get("success"):
-                    st.success(str(prepared.get("message") or "Preparation request processed."))
-                else:
-                    st.warning(str(prepared.get("message") or "Preparation was not started."))
+                _prepare_job(int(job_id))
+                st.rerun()
+
+
+def _render_auto_prepare_guide(
+    policy: dict[str, Any],
+    *,
+    enabled_count: int,
+    total_lanes: int,
+) -> None:
+    mode = str(policy.get("mode") or "unlimited")
+    if mode == "paused":
+        st.error(
+            "Automation is paused. MUNSHI will not admit new jobs into preparation "
+            "until you change the volume mode."
+        )
+    elif mode == "pause_after_batch":
+        st.warning(
+            "Pausing after the current batch. Work already admitted can finish, "
+            "but a later batch will not start."
+        )
+    elif mode == "custom_limit":
+        st.success(
+            f"Automation is active with a daily preparation target of "
+            f"{int(policy.get('daily_limit') or 1)}."
+        )
+    else:
+        st.success(
+            "Automation is active with no MUNSHI business quota. Canonical "
+            "targeting, work authorization, dedupe, ATS, and provider controls "
+            "still decide what is eligible."
+        )
+
+    st.markdown("### How Auto Prepare works")
+    steps = st.columns(4, gap="small")
+    step_copy = (
+        (
+            "1 · Eligible roles",
+            "Hunter targeting and work-authorization rules decide what can enter.",
+        ),
+        (
+            "2 · Prepare automatically",
+            "MUNSHI builds the truth-bound resume, answers, plan, and employer form.",
+        ),
+        (
+            "3 · You review once",
+            "Only a completed package reaches you for the single final review.",
+        ),
+        (
+            "4 · Submit & verify",
+            "After Approve & Submit, execution and independent verification continue automatically.",
+        ),
+    )
+    for column, (title, body) in zip(steps, step_copy):
+        with column:
+            with st.container(border=True):
+                st.markdown(f"**{title}**")
+                st.caption(body)
+
+    if total_lanes == 0:
+        st.info(
+            "No target lanes are configured. That does not disable automation: "
+            "it simply means no extra lane filter is applied after canonical eligibility."
+        )
+    elif enabled_count == 0:
+        st.info(
+            "All saved lanes are disabled. Automation still uses canonical eligibility "
+            "without an extra lane filter."
+        )
+    else:
+        st.caption(
+            f"{enabled_count} of {total_lanes} lane(s) are adding extra role filters "
+            "after canonical eligibility."
+        )
+
+    st.caption(
+        "The one-review submission gate is mandatory. The review preference below "
+        "changes reminders only; it never removes Approve & Submit."
+    )
 
 
 def auto_prepare() -> None:
@@ -412,6 +574,11 @@ def auto_prepare() -> None:
         f'<div class="product-callout"><div><strong>{esc(mode_label)}</strong><span>The global volume preference is active. Lanes only narrow eligible roles.</span></div><span class="status-chip">{enabled_count} of {len(current_lanes)} lanes enabled</span></div>',
         unsafe_allow_html=True,
     )
+    _render_auto_prepare_guide(
+        policy,
+        enabled_count=enabled_count,
+        total_lanes=len(current_lanes),
+    )
     with st.container(key="product_auto_metrics"):
         counters = st.columns(4, gap="small")
         counters[0].metric("Prepared today", activity["prepared_today"])
@@ -421,8 +588,9 @@ def auto_prepare() -> None:
     with st.container(key="product_auto_split"):
         left, right = st.columns((1.6, 1), gap="large")
     with left:
-        st.markdown("### Target lanes")
-        st.caption("Saved role filters are evaluated only after canonical targeting and work-authorization rules.")
+        with st.container(key="munshi_surface_target_lanes"):
+            st.markdown("### Target lanes")
+            st.caption("Saved role filters are evaluated only after canonical targeting and work-authorization rules.")
         if current_lanes:
             for lane in current_lanes:
                 try:
@@ -487,7 +655,14 @@ def auto_prepare() -> None:
             with st.form("product_volume_form"):
                 mode = st.radio("Mode", ["unlimited", "custom_limit", "pause_after_batch", "paused"], index=["unlimited", "custom_limit", "pause_after_batch", "paused"].index(policy["mode"]), format_func=lambda x: {"unlimited":"Unlimited", "custom_limit":"Custom daily limit", "pause_after_batch":"Pause after current batch", "paused":"Paused"}[x])
                 limit = st.number_input("Custom daily limit", min_value=1, value=max(1, int(policy.get("daily_limit") or 25)), disabled=mode != "custom_limit")
-                review = st.checkbox("Review before action", value=policy["review_first"])
+                review = st.checkbox(
+                    "Prefer review reminders during preparation",
+                    value=policy["review_first"],
+                    help=(
+                        "This preference never removes the mandatory final "
+                        "Approve & Submit review."
+                    ),
+                )
                 if st.form_submit_button("Save preference", type="primary", use_container_width=True):
                     save_volume_policy(mode, limit, review)
                     st.success("Preference saved. Canonical safeguards remain separate.")
@@ -512,8 +687,58 @@ def tracker() -> None:
     tab = st.radio("Tracker view", ["Pipeline", "Inbox"], horizontal=True, label_visibility="collapsed", key="product_tracker_tab", on_change=_sync_subroute, args=("tab", "product_tracker_tab", {"Pipeline": "pipeline", "Inbox": "inbox"}))
     if tab == "Inbox":
         _inbox(); return
-    records = tracker_rows(limit=250)
-    preferred = ["Prepared", "In progress", "Needs review", "Blocked", "Submitted", "Failed", "Skipped", "Queue completed", "Status not recorded"]
+    legacy_records = tracker_rows(limit=250)
+    try:
+        from app import product_application_flow_v2 as complete_loop
+
+        modern_records = complete_loop.pipeline_rows(limit=250)
+    except Exception:
+        modern_records = []
+
+    merged = {
+        int(row["job_id"]): dict(row)
+        for row in legacy_records
+    }
+    for row in modern_records:
+        job_id = int(row["job_id"])
+        combined = dict(merged.get(job_id) or {})
+        combined.update(row)
+        merged[job_id] = combined
+
+    records = list(merged.values())
+    records.sort(
+        key=lambda row: str(
+            row.get("updated_at")
+            or row.get("completed_at")
+            or row.get("queued_at")
+            or ""
+        ),
+        reverse=True,
+    )
+
+    preferred = [
+        "Preparing",
+        "Needs input",
+        "Ready for review",
+        "Ready to submit",
+        "Submitting",
+        "Submitted",
+        "Submission needs verification",
+        "Submission verified",
+        "Awaiting response",
+        "Assessment",
+        "Interview",
+        "Offer",
+        "Prepared",
+        "In progress",
+        "Needs review",
+        "Blocked",
+        "Needs attention",
+        "Failed",
+        "Skipped",
+        "Queue completed",
+        "Status not recorded",
+    ]
     represented = list(dict.fromkeys(str(record.get("display_status") or "Status not recorded") for record in records))
     statuses = ["All"] + [status for status in preferred if status in represented]
     statuses += [status for status in represented if status not in statuses]
@@ -538,6 +763,19 @@ def tracker() -> None:
         facts[1].metric("Hunter match", f"{float(record['hunter_score']):.0f}%" if record.get("hunter_score") is not None else "Not available")
         facts[2].metric("ATS score", record.get("final_ats_score") if record.get("final_ats_score") is not None else "Not available")
         st.caption("Recorded lifecycle evidence · " + str(record.get("status_evidence") or "none"))
+        if record.get("progress_percent") is not None:
+            st.progress(
+                int(record.get("progress_percent") or 0) / 100
+            )
+        if record.get("runtime_question_count"):
+            st.warning(
+                f"{int(record['runtime_question_count'])} employer question(s) need attention."
+            )
+        st.link_button(
+            "Open application workspace",
+            f"?view=prepare-application&job={int(record['job_id'])}",
+            use_container_width=True,
+        )
         artifacts = st.columns(3)
         with artifacts[0]:
             if safe_link(record.get("resume_pdf_url")): st.link_button("Open resume", safe_link(record["resume_pdf_url"]), use_container_width=True)

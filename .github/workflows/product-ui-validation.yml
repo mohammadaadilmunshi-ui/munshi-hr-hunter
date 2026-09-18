@@ -39,14 +39,25 @@ jobs:
         run: |
           python -m pytest \
             tests/test_dashboard_smoke.py \
+            tests/test_initial_dashboard_runtime_hotfix_v1.py \
+            tests/test_native_resume_quality_hotfix_v1.py \
+            tests/test_native_resume_quality_hotfix_v2.py \
+            tests/test_native_resume_stage_b_coverage_v1.py \
+            tests/test_job_card_runtime_hotfix_v1.py \
+            tests/test_job_card_interaction_hotfix_v2.py \
+            tests/test_n8n_live_console_v1.py \
             tests/test_product_state.py \
             tests/test_product_n8n_dispatch.py \
             tests/test_product_manual_input.py \
+            tests/test_linkedin_direct_apply_url_v1.py \
             tests/test_product_schema.py \
             tests/test_secure_vault.py \
             tests/test_gmail_integration.py \
             tests/test_product_ui_sol_remainder.py \
             tests/test_product_ui_v21.py \
             tests/test_product_ui_v22.py \
+            tests/test_autoapply_settings_ui.py \
             tests/test_profile_runtime_repair_v2.py \
+            tests/test_initial_dashboard_ui_parity_v8.py \
+            tests/test_staging_to_initial_ui_parity_v1.py \
             tests/test_production_vault_activation_contract.py

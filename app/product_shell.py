@@ -5,6 +5,8 @@ from typing import Callable
 
 import streamlit as st
 
+from app.autoapply_settings_ui import install_autoapply_settings_ui
+from app.job_card_interaction_hotfix_v2 import inject_job_card_interaction_css
 from app.product_state import valid_view, volume_policy
 from app.product_ui import esc, inject_css
 from app.product_v22 import brand_logo_data_uri, inject_v22_css, install_product_v22
@@ -18,7 +20,7 @@ _SPECIAL_VIEWS = {RESUME_STUDIO_VIEW, PREPARE_APPLICATION_VIEW}
 NAVIGATION = (
     ("dashboard", "Dashboard"),
     ("jobs", "Browse jobs"),
-    (PREPARE_APPLICATION_VIEW, "Prepare Application"),
+    (PREPARE_APPLICATION_VIEW, "Applications"),
     ("auto-prepare", "Auto Prepare"),
     ("tracker", "Tracker"),
     ("profile", "Profile"),
@@ -126,6 +128,7 @@ def render() -> None:
 
     inject_css()
     inject_v22_css()
+    inject_job_card_interaction_css()
 
     view = _query_view()
     st.session_state["product_view"] = view
@@ -176,24 +179,72 @@ def render() -> None:
     # and downstream integrations use it as a compatibility marker.
     from app import product_pages, profile_workspace_v1, resume_studio_page
     from app import application_workspace_page
-    from app import profile_workspace_v2, profile_workspace_v3
+    from app import candidate_profile_authority_v1 as profile_authority
+    from app import profile_workspace_v2, profile_workspace_v3, profile_workspace_v4
+    from app.n8n_live_console_v1 import render_n8n_live_console
     from app.resume_engine_selector import (
         install_resume_engine_selector,
         render_resume_engine_selector,
     )
     from app.career_os_quality_patch_v1 import install_career_os_quality_patch
+    from app.job_card_runtime_hotfix_v1 import install_job_card_runtime_hotfix
     from app.provider_telemetry_window_v1 import install_provider_telemetry_window
     from app.profile_runtime_repair_v2 import install_profile_runtime_repair_v2
     from app.resume_studio_session_state_repair_v1 import (
         install_resume_studio_session_state_repair_v1,
     )
+    from app.secure_api_vault_ui import install_secure_api_vault_ui
+    from app.settings_profile_authority_ui_v1 import (
+        install_settings_profile_authority_ui,
+    )
+    from app.integration_credentials_ui_v1 import (
+        install_integration_credentials_ui,
+    )
+    from app.ats_account_readiness_ui_v1 import (
+        install_ats_account_readiness_ui,
+    )
+    from app.auto_prepare_readiness_ui_v1 import (
+        install_auto_prepare_readiness_ui,
+    )
+    from app.application_notification_ui_v1 import (
+        install_application_notification_ui,
+    )
+    from app.unified_job_workspaces_runtime_patch_v1 import (
+        install_unified_job_workspaces,
+    )
 
-    # Keep the V1 import/route contract stable for existing integrations while
-    # layering V2 preview/promotion and V3 encrypted candidate editing over the
-    # proven V1 visual renderer and public-logo resolver.
+    # Preserve the established V3 route contract first, then layer the V4
+    # unified Profile authority on the same long-lived V1 entrypoint.
     profile_workspace_v1.render = profile_workspace_v3.render
+    profile_workspace_v1.render = profile_workspace_v4.render
+
+    # Product Settings V2.3 historically imported the retired n8n-generated
+    # artifact designation as its Master Resume signal. Point only its read
+    # surface at the same Native Resume/Candidate Truth authority used by Profile
+    # and Resume Studio, without mutating the old artifact history.
+    product_pages.master_resume = profile_authority.master_resume
+    product_pages.candidate_facts = profile_authority.candidate_facts
 
     install_product_v22(product_pages)
+    # The dedicated drawer hardening is intentionally layered immediately after
+    # V2.2 so optional legacy history cannot crash Browse before later wrappers.
+    install_job_card_runtime_hotfix()
+    # Keep the current AutoApply Settings layer first; the secure vault wrapper
+    # is deliberately installed after it so the vault appends to the same
+    # Credentials surface instead of replacing the newer AutoApply controls.
+    install_autoapply_settings_ui(product_pages)
+    # Streamlit reruns this shell on every interaction. AutoApply deliberately
+    # reassigns product_pages.settings above, so an old one-time vault marker
+    # would otherwise prevent the secure-vault wrapper from being reattached.
+    # Clear only that wrapper marker, then install exactly one fresh wrapper over
+    # the current Settings function for this run.
+    product_pages._secure_api_vault_ui_installed = False
+    install_secure_api_vault_ui(product_pages)
+    # The Profile settings adapter is also rerun-safe and intentionally installed
+    # last so Profile & defaults is projected from the same Candidate Truth read
+    # model while every other Settings section keeps the established wrappers.
+    product_pages._settings_profile_authority_ui_installed = False
+    install_settings_profile_authority_ui(product_pages)
     install_resume_engine_selector(product_pages)
     # Additive only: model-free profile parsing and progressive Browse Jobs loading.
     # Existing n8n/legacy operations stay intact.
@@ -208,6 +259,31 @@ def render() -> None:
     # because Streamlit forbids changing a widget-owned key later in the same run.
     # Install the narrow rerun-safe repair before the Resume Studio page renders.
     install_resume_studio_session_state_repair_v1()
+    # Last presentation override: Tracker, Research, and Applications all reuse
+    # the same Dashboard/Browse Jobs card renderer and lazy user-facing sections.
+    # This does not change preparation, targeting, or submission authority.
+    install_unified_job_workspaces(product_pages, application_workspace_page)
+
+    # Restore the staging application activity projection after the final
+    # workspace wrapper. Advanced/System notification preferences render directly
+    # from settings_v23, avoiding persistent Settings wrapper accumulation.
+    install_application_notification_ui(product_pages)
+
+    # AutoApply replaces product_pages.settings on every Streamlit rerun. Reset
+    # only the integration wrapper marker so the final wrapper is reattached to
+    # the current Settings callable instead of silently disappearing.
+    product_pages._integration_credentials_ui_v1_installed = False
+    install_integration_credentials_ui(product_pages)
+
+    # Credentials parity: append non-secret ATS managed-account/application-mail
+    # readiness after the existing API vault and integration controls. Settings
+    # is replaced on every rerun, so this wrapper is deliberately reattached too.
+    product_pages._ats_account_readiness_ui_v1_installed = False
+    install_ats_account_readiness_ui(product_pages)
+
+    # Auto Prepare itself is not replaced on rerun. Install this once so the
+    # canonical-scoring gate is visible before automatic admission is attempted.
+    install_auto_prepare_readiness_ui(product_pages)
 
     pages: dict[str, Callable[[], None]] = {
         "dashboard": product_pages.dashboard,
@@ -222,3 +298,7 @@ def render() -> None:
     }
     pages[view]()
     render_resume_engine_selector()
+    # Persistent presentation-only observer for explicit dashboard n8n runs.
+    # It survives navigation, reads durable queue/execution/callback evidence,
+    # and never owns dispatch/retry/submission authority.
+    render_n8n_live_console()

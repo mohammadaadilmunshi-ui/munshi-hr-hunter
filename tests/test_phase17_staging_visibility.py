@@ -52,17 +52,18 @@ def test_product_shell_exposes_candidate_facing_phase17_routes() -> None:
     navigation = dict(product_shell.NAVIGATION)
     assert navigation["profile"] == "Profile"
     assert navigation["resume-studio"] == "Resume Studio"
-    assert navigation["prepare-application"] == "Prepare Application"
+    assert navigation["prepare-application"] == "Applications"
     assert product_shell.PREPARE_APPLICATION_VIEW in product_shell._SPECIAL_VIEWS
 
 
-def test_application_workspace_is_preparation_only_surface() -> None:
+def test_application_workspace_has_one_authority_action_and_no_browser_executor() -> None:
     source = inspect.getsource(application_workspace_page)
     assert "Opportunity intelligence" in source
     assert "Application answers" in source
     assert "People and relationship intelligence" in source
     assert "Application readiness" in source
-    assert "Submission authority: OFF" in source
+    assert "'Approve & Submit'" in source
+    assert "No second review follows" in source
     assert "gmail_integration" not in source
     assert "playwright" not in source.casefold()
     assert "selenium" not in source.casefold()
@@ -80,7 +81,11 @@ def test_hunter_image_contains_phase17_migration_runner() -> None:
 
 def test_staging_deploy_explicit_failures_route_through_rollback() -> None:
     source = Path("deploy/netcup/deploy_staging_release.sh").read_text(encoding="utf-8")
-    assert 'rc="${1:-$?}"' in source
+    # Capture ERR status before consulting an optional explicit rollback code.
+    # This is safer than expanding $? inside the default expression after other
+    # shell work may have occurred.
+    assert "trapped_rc=$?" in source
+    assert 'rc="${1:-$trapped_rc}"' in source
     protected = source.split("trap rollback ERR", 1)[1].rsplit("trap - ERR", 1)[0]
     for code in (20, 21, 22, 23, 30, 31):
         assert f"rollback {code}" in protected
