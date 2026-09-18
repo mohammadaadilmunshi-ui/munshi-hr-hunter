@@ -80,3 +80,17 @@ def test_production_deploy_shell_script_parses() -> None:
         ["bash", "-n", str(ROOT / "deploy/netcup/deploy_production_release.sh")],
         check=True,
     )
+
+def test_docker_python_heredocs_keep_stdin_open() -> None:
+    # Without -i Docker gives Python EOF and returns success without executing
+    # the health check, queue gate, backup, or restore supplied on stdin.
+    import re
+    import shlex
+    for relative in ("deploy/netcup/activate_full_autoapply_production.sh", "deploy/netcup/deploy_production_release.sh"):
+        source = (ROOT / relative).read_text(encoding="utf-8")
+        logical = source.replace("\\\n", " ")
+        commands = re.findall(r"docker (?:exec|run) [^\n]*<<[^\n]*", logical)
+        assert commands, relative
+        for command in commands:
+            args = shlex.split(command.split("<<", 1)[0])
+            assert "-i" in args or "--interactive" in args, (relative, command)

@@ -138,7 +138,7 @@ smtp_ready=false
 if [[ -n "$smtp_key" && -n "$smtp_sender" ]]; then
   smtp_ready=true
 elif docker inspect "$H" >/dev/null 2>&1; then
-  if docker exec "$H" python - <<'PY' >/dev/null 2>&1
+  if docker exec -i "$H" python - <<'PY' >/dev/null 2>&1
 from app.integration_credentials_v1 import smtp2go_configured
 raise SystemExit(0 if smtp2go_configured() else 1)
 PY
@@ -163,7 +163,7 @@ mail_signing="$(get_env_value MUNSHI_MAIL_SIGNING_SECRET)"
 mail_artifact="$(get_env_value MUNSHI_MAIL_ARTIFACT_HMAC_SECRET)"
 mail_external_sync=false
 if docker inspect "$H" >/dev/null 2>&1; then
-  if docker exec "$H" python - <<'PY' >/dev/null 2>&1
+  if docker exec -i "$H" python - <<'PY' >/dev/null 2>&1
 from app.integration_credentials_v1 import integration_readiness
 ready = integration_readiness().get("mail_router") or {}
 raise SystemExit(0 if ready.get("external_sync_confirmed") else 1)
@@ -204,7 +204,7 @@ else
   grep -qx 'MUNSHI_FINAL_SUBMIT_ENABLED=false' <<<"$envs"
 fi
 
-docker exec "$H" python - <<'PY'
+docker exec -i "$H" python - <<'PY'
 import urllib.request
 with urllib.request.urlopen("http://apply:8000/health", timeout=5) as response:
     if response.status != 200:
