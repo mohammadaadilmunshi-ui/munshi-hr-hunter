@@ -244,12 +244,39 @@ def materialize(version_id: str) -> dict[str, Any]:
     record = _current_resume(str(version_id))
     context = resume_v5.v4.v1.job_context(int(record["job_id"]))
     docx = resume_v5.v4.v1.version_docx(str(version_id))
-    pdf, _renderer_page_count = resume_v5.v4.v1.version_pdf(str(version_id))
     _validate_docx_bytes(docx)
-    if not pdf.startswith(b"%PDF"):
-        raise RuntimeError("Native Resume V5 PDF renderer returned an invalid document.")
-    _validated_pdf_page_count(pdf)
-    page_verification = _validated_pdf_layout(pdf)
+
+    pdf: bytes | None = None
+    page_verification: dict[str, Any] | None = None
+    last_layout_error: ValueError | None = None
+    render_density = "normal"
+    for candidate_density in ("normal", "compact", "tight"):
+        candidate_pdf, _renderer_page_count = resume_v5.v4.v1.version_pdf(
+            str(version_id),
+            render_density=candidate_density,
+        )
+        if not candidate_pdf.startswith(b"%PDF"):
+            raise RuntimeError(
+                "Native Resume V5 PDF renderer returned an invalid document."
+            )
+        try:
+            _validated_pdf_page_count(candidate_pdf)
+            candidate_verification = _validated_pdf_layout(candidate_pdf)
+        except ValueError as error:
+            last_layout_error = error
+            continue
+        pdf = candidate_pdf
+        page_verification = {
+            **candidate_verification,
+            "render_density": candidate_density,
+        }
+        render_density = candidate_density
+        break
+
+    if pdf is None or page_verification is None:
+        if last_layout_error is not None:
+            raise last_layout_error
+        raise RuntimeError("Native Resume V5 PDF page verification did not complete.")
 
     # Rendering may take time. Revalidate truth/job/Stage B before persistence so
     # an artifact cannot become current merely because generation started earlier.
@@ -347,6 +374,7 @@ def materialize(version_id: str) -> dict[str, Any]:
         "docx": by_kind["DOCX"],
         "pdf": by_kind["PDF"],
         "page_verification": page_verification,
+        "render_density": render_density,
         "submission_authority": False,
     }
 
