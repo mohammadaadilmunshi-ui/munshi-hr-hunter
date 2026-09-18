@@ -54,6 +54,15 @@ def test_mail_router_readiness_keeps_external_sync_separate(monkeypatch) -> None
     readiness = integrations.integration_readiness()
     assert readiness["mail_router"]["external_sync_confirmed"] is True
 
+    monkeypatch.setenv("MUNSHI_MAIL_EXTERNAL_SYNC_CONFIRMED", "false")
+    monkeypatch.setattr(
+        integrations,
+        "get_setting",
+        lambda _key, _default: {"confirmed": True},
+    )
+    readiness = integrations.integration_readiness()
+    assert readiness["mail_router"]["external_sync_confirmed"] is True
+
 
 def test_smtp_adapter_accepts_vault_resolver(monkeypatch) -> None:
     monkeypatch.setattr(
