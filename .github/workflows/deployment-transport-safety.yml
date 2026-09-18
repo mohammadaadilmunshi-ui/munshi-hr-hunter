@@ -69,18 +69,26 @@ jobs:
               '[[ "$(git branch --show-current)" == "$branch" ]]',
               'docker tag "$old_hunter_image_id" "$hunter_image_name" || true',
               'ROLLBACK_IMAGE_TAG_RESTORED=YES',
-              '=== PRODUCTION HUNTER DB PREDEPLOY BACKUP ===',
+              '=== PRODUCTION HUNTER DB STORAGE-SAFE ROLLBACK SNAPSHOT ===',
+              '--reuse-backup',
               'from app.database import DB_PATH',
-              'backup_required_bytes=$((db_bytes + 1073741824))',
+              'PRAGMA wal_checkpoint(TRUNCATE)',
+              'PRODUCTION_DB_PREBACKUP_QUICK_CHECK=PASS',
+              'PRODUCTION_DB_RAW_SHA256=',
+              'RAW_IDENTICAL',
+              'GZIP_V1',
+              'MUNSHI_MAX_COMPRESSED_HUNTER_BACKUP_BYTES',
+              '7516192768',
+              'gzip.GzipFile',
+              'compresslevel=1',
+              'PRODUCTION_DB_COMPRESSED_BACKUP_VERIFY=PASS',
+              'PRODUCTION_DB_BACKUP_REUSED=YES',
+              'ROLLBACK_DB_RAW_SHA256',
+              'PRAGMA foreign_key_check',
               '--network none',
               'PRODUCTION_HUNTER_DATA_VOLUME=$hunter_data_volume',
-              '--mount "type=volume,src=$hunter_data_volume,dst=/app/hunter/data"',
-              '--mount "type=bind,src=$backup_dir,dst=/backup"',
-              'sqlite3.connect(f"file:{src}?mode=ro", uri=True, timeout=30)',
-              'source.execute("PRAGMA query_only=ON")',
-              'source.backup(dest)',
-              'PRODUCTION_DB_BACKUP_CONTAINER_QUICK_CHECK=PASS',
-              'PRODUCTION_DB_BACKUP_QUICK_CHECK=PASS',
+              '--mount "type=volume,src=$hunter_data_volume,dst=/app/hunter/data',
+              '--mount "type=bind,src=$backup_dir,dst=/backup',
               'PRODUCTION_DB_BACKUP=$db_backup',
               'GITHUB_BUNDLE_IMPORT=PASS',
               'N8N_RECREATED=NO',
@@ -90,8 +98,10 @@ jobs:
           for token in production_deploy_required:
               assert token in production_deploy, f"production server deployment token missing: {token}"
 
-          assert '/tmp/hunter-predeploy-' not in production_deploy, "production DB backup must not stage the multi-GB database in container writable /tmp"
-          assert '--volumes-from "$H":ro' not in production_deploy, "production SQLite backup helper must not inherit all Hunter volumes read-only"
+          assert '/tmp/hunter-predeploy-' not in production_deploy, "production DB rollback snapshot must not stage the multi-GB database in container writable /tmp"
+          assert '--volumes-from "$H":ro' not in production_deploy, "production SQLite rollback helper must not inherit all Hunter volumes read-only"
+          assert 'source.backup(dest)' not in production_deploy, "production deployment must not create a second raw multi-GB SQLite backup"
+          assert 'backup_required_bytes=$((db_bytes + 1073741824))' not in production_deploy, "production deployment must not reserve another full raw DB backup"
 
           staging_deploy_required = (
               'timeout 120s cat > "$bundle_file"',
