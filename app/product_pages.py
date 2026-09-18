@@ -94,6 +94,7 @@ def _application_flow(job_id: int) -> dict[str, Any]:
 
 
 def _prepare_job(job_id: int) -> None:
+    """Start/replay preparation and open the canonical Applications workspace."""
     try:
         from app import product_application_flow_v2 as complete_loop
 
@@ -101,19 +102,30 @@ def _prepare_job(job_id: int) -> None:
             int(job_id),
             engine="NATIVE",
         )
-        _set_action_feedback(
-            "success",
-            (
-                "Application preparation is already in progress."
-                if result.get("replayed")
-                else "Application preparation started."
-            ),
+        message = (
+            "Application preparation is already in progress."
+            if result.get("replayed")
+            else "Application preparation started."
         )
+        _set_action_feedback("success", message)
+        st.session_state["application_workspace_notice"] = {
+            "tone": "success",
+            "message": message,
+        }
     except Exception as error:
-        _set_action_feedback(
-            "error",
-            "Preparation could not start safely: " + str(error),
-        )
+        message = "Preparation could not start safely: " + str(error)
+        _set_action_feedback("error", message)
+        st.session_state["application_workspace_notice"] = {
+            "tone": "error",
+            "message": message,
+        }
+
+    st.session_state["product_view"] = "prepare-application"
+    try:
+        st.query_params["view"] = "prepare-application"
+        st.query_params["job"] = str(int(job_id))
+    except Exception:
+        pass
 
 
 
