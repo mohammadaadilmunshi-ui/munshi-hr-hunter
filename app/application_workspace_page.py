@@ -469,63 +469,181 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
     plan = artifacts.get('plan') or {}
 
     if state in {'READY_FOR_REVIEW', 'READY_TO_SUBMIT'}:
+        from app import application_review_card_v1 as review_card
+        from app import native_resume_presentation_v1 as resume_presentation
+        import streamlit.components.v1 as components
+
         review_record = flow.get('customer_review') or {}
         review = review_record.get('review') or {}
-        st.success(
-            'Your tailored package and employer form are ready. This is the '
-            'only customer-facing review.'
+        st.markdown('### Review application')
+        st.caption(
+            'Your tailored application is ready. Review it once, then '
+            'Approve & Submit. There is no second approval.'
         )
-        artifact_cols = st.columns(3)
-        pdf = resume.get('pdf') or {}
-        artifact_cols[0].metric(
-            'Tailored resume',
-            'Ready' if pdf.get('artifact_id') else 'Not recorded',
-            help=str(pdf.get('filename') or ''),
-        )
-        artifact_cols[1].metric(
-            'Cover letter',
-            (
-                'Ready'
-                if cover.get('cover_letter_id')
-                else str(cover.get('decision') or 'Not required')
-                .replace('_', ' ')
-                .title()
-            ),
-        )
-        artifact_cols[2].metric('ATS form', 'Completed')
 
-        with st.expander('Review application package', expanded=True):
-            st.write(
-                {
-                    'Resume': (
-                        (review.get('resume') or {}).get('filename')
-                        or pdf.get('filename')
-                        or 'Exact bound PDF artifact'
-                    ),
-                    'Cover letter': (
-                        (review.get('cover_letter') or {}).get('filename')
-                        if review.get('cover_letter')
-                        else str(cover.get('decision') or 'Not required')
-                    ),
-                    'Provider': review.get('provider') or plan.get('provider'),
-                    'Application fields completed': (
-                        (review.get('application') or {}).get(
-                            'completed_required_fields'
-                        )
-                    ),
-                    'Answers': [
-                        {
-                            'Question': item.get('question_key')
-                            or item.get('question_family'),
-                            'Answer': item.get('display_value'),
-                        }
-                        for item in (review.get('answers') or [])
-                    ],
-                }
+        job = safe_owned_job_snapshot(int(job_id))['job']
+        st.markdown(
+            f"**{esc(job.get('title'), 'Untitled role')} · "
+            f"{esc(job.get('company_name'), 'Company')}**",
+            unsafe_allow_html=True,
+        )
+
+        resume_version_id = str(resume.get('resume_version_id') or '')
+        card: dict[str, Any] = {}
+        if resume_version_id:
+            try:
+                card = review_card.load_review_card(
+                    resume_version_id=resume_version_id,
+                    page_verification=resume.get('page_verification') or {},
+                )
+            except (LookupError, RuntimeError, ValueError):
+                card = {}
+
+        if card:
+            score_col, keywords_col = st.columns(2, gap='small')
+            score_col.metric(
+                'JD match',
+                f"{card['coverage_percent']:.0f}% {card['coverage_label']}",
             )
+            if int(card.get('keyword_count') or 0):
+                keywords_col.metric(
+                    'JD terms covered',
+                    f"{int(card['covered_keyword_count'])} of "
+                    f"{int(card['keyword_count'])}",
+                )
+            else:
+                keywords_col.metric(
+                    'Supported requirements covered',
+                    f"{int(card['represented_requirement_count'])} of "
+                    f"{int(card['supportable_requirement_count'])}",
+                )
             st.caption(
-                'Protected values remain masked. Approval is bound to the '
-                'displayed review, prepared-form, resume, plan, and checkpoint digests.'
+                'Match uses truth-supportable Stage B requirements. '
+                'Unsupported claims never inflate this score.'
+            )
+
+            st.markdown('**Required skills**')
+            required_rows = list(card.get('required_skills') or [])
+            if required_rows:
+                for item in required_rows:
+                    icon = '✓' if item.get('covered') else '○'
+                    st.write(f"{icon} {item.get('text')}")
+            else:
+                st.caption(
+                    'No separate truth-supported must-have skill rows were '
+                    'recorded for this job.'
+                )
+
+            st.markdown('**What changed**')
+            changed_col, skills_col = st.columns(2, gap='small')
+            changed_label = (
+                'Bullets improved'
+                if card.get('is_revision')
+                else 'Tailored bullets'
+            )
+            skills_label = (
+                'Skills added'
+                if card.get('is_revision')
+                else 'Job-relevant skills'
+            )
+            changed_col.metric(
+                changed_label,
+                int(card.get('changed_bullet_count') or 0),
+            )
+            skills_col.metric(
+                skills_label,
+                int(card.get('added_skill_count') or 0),
+            )
+
+            additions = list(card.get('added_skills') or [])[:6]
+            if additions:
+                for value in additions:
+                    st.caption(f"+ {value}")
+
+            with st.expander('See rewritten bullets', expanded=False):
+                bullets = list(card.get('changed_bullets') or [])
+                if bullets:
+                    for bullet in bullets:
+                        st.write(f"• {bullet}")
+                else:
+                    st.caption(
+                        'No bullet text changed from the prior tailored version.'
+                    )
+
+            summary_col, edit_col = st.columns([5, 1], gap='small')
+            with summary_col:
+                st.markdown('**Professional summary**')
+                st.write(card.get('summary') or 'No summary recorded.')
+            with edit_col:
+                st.write('')
+                if st.button(
+                    'Edit',
+                    key=f'complete_loop_edit_resume_{job_id}',
+                    use_container_width=True,
+                    help=(
+                        'Open Resume Studio. A saved revision must be '
+                        're-prepared and reviewed again before submission.'
+                    ),
+                ):
+                    st.query_params['view'] = 'resume-studio'
+                    st.query_params['job'] = str(job_id)
+                    st.rerun()
+
+            st.toggle(
+                'Fit to one page',
+                value=bool(card.get('one_page')),
+                disabled=True,
+                key=f'complete_loop_one_page_{job_id}',
+                help='Verified from the immutable PDF artifact.',
+            )
+
+            with st.expander('Resume preview', expanded=True):
+                try:
+                    preview = resume_presentation.render_document_html(
+                        card['document']
+                    )
+                    components.html(preview, height=900, scrolling=True)
+                except (RuntimeError, TypeError, ValueError):
+                    st.caption('Resume preview is temporarily unavailable.')
+        else:
+            artifact_cols = st.columns(3)
+            pdf = resume.get('pdf') or {}
+            artifact_cols[0].metric(
+                'Tailored resume',
+                'Ready' if pdf.get('artifact_id') else 'Not recorded',
+            )
+            artifact_cols[1].metric(
+                'Cover letter',
+                'Ready' if cover.get('cover_letter_id') else 'Not required',
+            )
+            artifact_cols[2].metric('ATS form', 'Completed')
+
+        with st.expander('Application details', expanded=False):
+            st.write(
+                f"Provider: "
+                f"{review.get('provider') or plan.get('provider') or '—'}"
+            )
+            completed_fields = (review.get('application') or {}).get(
+                'completed_required_fields'
+            )
+            if completed_fields is not None:
+                st.write(
+                    'Required application fields completed: '
+                    f'{completed_fields}'
+                )
+            answers = list(review.get('answers') or [])
+            if answers:
+                for item in answers:
+                    question = item.get('question_key') or item.get(
+                        'question_family'
+                    )
+                    st.write(
+                        f"• {question or 'Application question'}: "
+                        f"{item.get('display_value')}"
+                    )
+            st.caption(
+                'Protected values stay masked. Approval remains bound to the '
+                'exact review, form, resume, plan, and checkpoint digests.'
             )
 
         if not review_record:
@@ -533,20 +651,43 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
                 'The immutable review snapshot is still synchronizing. '
                 'Submission remains blocked.'
             )
-        elif st.button(
-            'Approve & Submit',
-            type='primary',
-            use_container_width=True,
-            key=f'complete_loop_approve_submit_{job_id}',
-        ):
-            try:
-                with st.spinner('Applying now…'):
-                    complete_loop.approve_and_submit_for_job(int(job_id))
-            except Exception as error:
-                st.error('Submission could not start safely: ' + str(error))
-            else:
-                st.toast('Approval recorded. Applying now.', icon='✅')
-                st.rerun()
+        else:
+            skip_col, submit_col = st.columns([1, 2], gap='small')
+            with skip_col:
+                if st.button(
+                    'Skip',
+                    key=f'complete_loop_skip_review_{job_id}',
+                    use_container_width=True,
+                ):
+                    st.toast('Review left pending. Nothing was submitted.')
+                    st.query_params['view'] = 'jobs'
+                    try:
+                        del st.query_params['job']
+                    except KeyError:
+                        pass
+                    st.rerun()
+            with submit_col:
+                if st.button(
+                    'Approve & Submit',
+                    type='primary',
+                    use_container_width=True,
+                    key=f'complete_loop_approve_submit_{job_id}',
+                ):
+                    try:
+                        with st.spinner('Applying now…'):
+                            complete_loop.approve_and_submit_for_job(
+                                int(job_id)
+                            )
+                    except Exception as error:
+                        st.error(
+                            'Submission could not start safely: ' + str(error)
+                        )
+                    else:
+                        st.toast(
+                            'Approval recorded. Applying now.',
+                            icon='✅',
+                        )
+                        st.rerun()
         st.caption(
             'No second review follows. Backend hashing, one-use authority, '
             'browser continuation, verification, and receipts remain automatic.'
