@@ -648,6 +648,72 @@ def _plan_permissions(
     }
 
 
+def _application_plan_idempotency_key(
+    *,
+    operation: Mapping[str, Any],
+    pending_task: Mapping[str, Any],
+    preflight: Mapping[str, Any],
+) -> tuple[str, str | None]:
+    """Select the immutable plan key, preserving provider-capability recovery.
+
+    A prior V1C plan may have stopped solely because its ATS family was not yet
+    supported.  Once that exact provider is added, reusing the original
+    idempotency key would correctly detect a different digest.  In that one
+    narrowly-scoped case we create a new immutable plan revision key.  Any
+    answer blocker, stale binding, mixed blocker set, or authority anomaly keeps
+    the original key/fails closed.
+    """
+    base = f"prepare:{operation['operation_id']}:application-plan:v1c"
+    raw_output = pending_task.get("output")
+    if not isinstance(raw_output, Mapping):
+        return base, None
+    prior_plan_id = str(raw_output.get("plan_id") or "").strip()
+    if not prior_plan_id:
+        return base, None
+
+    prior = application_plan_v2.get_application_plan(prior_plan_id)
+    snapshot = dict(prior.get("snapshot") or {})
+    blockers = list(snapshot.get("global_blockers") or [])
+    unresolved = list(snapshot.get("unresolved") or [])
+    policy = dict(snapshot.get("provider_policy") or {})
+    resume = dict(snapshot.get("resume") or {})
+
+    provider_only = (
+        str(prior.get("status") or "") == "NEEDS_INPUT"
+        and prior.get("executable") is False
+        and prior.get("submission_authority") is False
+        and str(snapshot.get("expected_state") or "") == "NEEDS_INPUT"
+        and blockers == ["provider_not_permitted_or_supported"]
+        and unresolved == []
+        and str(prior.get("provider") or "") == "UNSUPPORTED"
+        and str(policy.get("provider") or "") == "UNSUPPORTED"
+        and policy.get("permitted") is False
+    )
+    if not provider_only:
+        return base, None
+
+    exact_binding = (
+        str(prior.get("application_id") or "") == str(operation["application_id"])
+        and int(prior.get("job_id") or 0) == int(operation["job_id"])
+        and str(prior.get("preflight_package_id") or "")
+        == str(preflight["preflight_package_id"])
+        and str(resume.get("version_id") or "")
+        == str(preflight["resume_version_id"])
+        and str(resume.get("artifact_sha256") or "")
+        == str(preflight["resume_pdf_sha256"])
+    )
+    if not exact_binding:
+        raise RuntimeError(
+            "Provider-capability retry refused a mismatched prior Application Plan."
+        )
+    freshness = application_plan_v2.application_plan_freshness(prior_plan_id)
+    if freshness.get("fresh") is not True:
+        raise RuntimeError(
+            "Provider-capability retry refused a stale prior Application Plan."
+        )
+    return f"{base}:provider-capability-v2", prior_plan_id
+
+
 def run_ats_form_preparation_once(
     *,
     operation_id: str,
@@ -677,7 +743,10 @@ def run_ats_form_preparation_once(
             "submission_authority": False,
         }
 
-    if _pending_task(operation, orchestrator.TASK_ATS_FORM_PREPARATION) is None:
+    pending_ats_task = _pending_task(
+        operation, orchestrator.TASK_ATS_FORM_PREPARATION
+    )
+    if pending_ats_task is None:
         return {
             "operation_id": str(operation_id),
             "claimed": False,
@@ -750,9 +819,16 @@ def run_ats_form_preparation_once(
     record_review = review_recorder or application_review_v2.create_review
 
     try:
+        plan_key, provider_capability_retry_from_plan_id = (
+            _application_plan_idempotency_key(
+                operation=operation,
+                pending_task=pending_ats_task,
+                preflight=preflight,
+            )
+        )
         plan = application_plan_v2.prepare_application_plan(
             preflight_package_id=str(preflight["preflight_package_id"]),
-            idempotency_key=f"prepare:{operation_id}:application-plan:v1c",
+            idempotency_key=plan_key,
             # Initial plan intentionally contains only currently-known
             # requirements. Runtime-discovered NORMAL questions use the already
             # existing immutable replacement-plan flow.
@@ -784,6 +860,9 @@ def run_ats_form_preparation_once(
                     "version": WORKER_VERSION,
                     "plan_id": plan.get("plan_id"),
                     "plan_status": plan.get("status"),
+                    "provider_capability_retry_from_plan_id": (
+                        provider_capability_retry_from_plan_id
+                    ),
                     "submission_authority": False,
                 },
             )
@@ -968,6 +1047,9 @@ def run_ats_form_preparation_once(
                 "plan_id": str(plan["plan_id"]),
                 "plan_digest": str(plan["plan_digest"]),
                 "provider": str(plan["provider"]),
+                "provider_capability_retry_from_plan_id": (
+                    provider_capability_retry_from_plan_id
+                ),
                 "handoff_id": str(getattr(delivery, "handoff_id", "")),
                 "handoff_state": "PLAN_ACCEPTED",
                 "apply_session_id": str(session["session_id"]),
