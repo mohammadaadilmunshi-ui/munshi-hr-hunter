@@ -78,7 +78,7 @@ def _delivery_ready() -> bool:
     return enabled or smtp2go_configured()
 
 
-def _render_settings() -> None:
+def render_application_notification_settings() -> None:
     preference = notifications.get_preference()
     st.divider()
     st.markdown(
@@ -149,13 +149,12 @@ def _wrap_once(
     return rendered
 
 
-def _render_advanced_settings() -> None:
-    if st.session_state.get("product_settings_section") == "Advanced / System":
-        _render_settings()
-
-
 def install_application_notification_ui(product_pages: Any) -> None:
-    """Rerun-safe projection after final workspace and Settings replacements."""
+    """Rerun-safe Dashboard/Tracker projection.
+
+    Settings is rendered directly by autoapply_settings_ui.settings_v23 so the
+    canonical Settings function cannot accumulate persistent wrapper layers.
+    """
     product_pages.dashboard = _wrap_once(
         product_pages.dashboard,
         _render_application_activity,
@@ -165,10 +164,5 @@ def install_application_notification_ui(product_pages: Any) -> None:
         product_pages.tracker,
         _render_application_activity,
         "_application_notification_activity_v1",
-    )
-    product_pages.settings = _wrap_once(
-        product_pages.settings,
-        _render_advanced_settings,
-        "_application_notification_settings_v1",
     )
     product_pages._application_notification_ui_v1_installed = True
