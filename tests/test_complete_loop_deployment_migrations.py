@@ -58,8 +58,25 @@ def test_runner_is_transactional_and_production_write_is_explicit() -> None:
     assert 'connection.execute("BEGIN IMMEDIATE")' in source
     assert "connection.in_transaction" in source
     assert "connection.rollback()" in source
+    assert "SEGMENTED_BACKUP_ROLLBACK_GUARDED" in source
     assert "AUTHORIZED_GUARDED_COMPLETE_LOOP_MIGRATION" in source
     assert "--verify-only" in source
+
+
+def test_complete_loop_runner_tolerates_executescript_commit_boundary(
+    hunter_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLOUD_SHADOW_MODE", "false")
+    result = complete_loop_migrate.apply(
+        hunter_db,
+        environment="production",
+        authorization=complete_loop_migrate.PRODUCTION_AUTHORIZATION,
+        full_quick_check=True,
+    )
+    assert len(result["migrations"]) == 15
+    assert "migrations.052_inbound_mail_relay_v1" in result["migrations"]
+    assert result["quick_check"] == "ok"
 
 
 def test_hunter_image_packages_complete_loop_runner() -> None:
