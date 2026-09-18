@@ -474,6 +474,83 @@ def _manual_add() -> None:
                 st.rerun()
 
 
+def _render_auto_prepare_guide(
+    policy: dict[str, Any],
+    *,
+    enabled_count: int,
+    total_lanes: int,
+) -> None:
+    mode = str(policy.get("mode") or "unlimited")
+    if mode == "paused":
+        st.error(
+            "Automation is paused. MUNSHI will not admit new jobs into preparation "
+            "until you change the volume mode."
+        )
+    elif mode == "pause_after_batch":
+        st.warning(
+            "Pausing after the current batch. Work already admitted can finish, "
+            "but a later batch will not start."
+        )
+    elif mode == "custom_limit":
+        st.success(
+            f"Automation is active with a daily preparation target of "
+            f"{int(policy.get('daily_limit') or 1)}."
+        )
+    else:
+        st.success(
+            "Automation is active with no MUNSHI business quota. Canonical "
+            "targeting, work authorization, dedupe, ATS, and provider controls "
+            "still decide what is eligible."
+        )
+
+    st.markdown("### How Auto Prepare works")
+    steps = st.columns(4, gap="small")
+    step_copy = (
+        (
+            "1 · Eligible roles",
+            "Hunter targeting and work-authorization rules decide what can enter.",
+        ),
+        (
+            "2 · Prepare automatically",
+            "MUNSHI builds the truth-bound resume, answers, plan, and employer form.",
+        ),
+        (
+            "3 · You review once",
+            "Only a completed package reaches you for the single final review.",
+        ),
+        (
+            "4 · Submit & verify",
+            "After Approve & Submit, execution and independent verification continue automatically.",
+        ),
+    )
+    for column, (title, body) in zip(steps, step_copy):
+        with column:
+            with st.container(border=True):
+                st.markdown(f"**{title}**")
+                st.caption(body)
+
+    if total_lanes == 0:
+        st.info(
+            "No target lanes are configured. That does not disable automation: "
+            "it simply means no extra lane filter is applied after canonical eligibility."
+        )
+    elif enabled_count == 0:
+        st.info(
+            "All saved lanes are disabled. Automation still uses canonical eligibility "
+            "without an extra lane filter."
+        )
+    else:
+        st.caption(
+            f"{enabled_count} of {total_lanes} lane(s) are adding extra role filters "
+            "after canonical eligibility."
+        )
+
+    st.caption(
+        "The one-review submission gate is mandatory. The review preference below "
+        "changes reminders only; it never removes Approve & Submit."
+    )
+
+
 def auto_prepare() -> None:
     page_intro("AUTOMATION", "Auto Prepare, under your control.", "Choose the global preparation volume and use lanes to narrow role types. Opening this page never creates work.")
     policy = volume_policy()
@@ -484,6 +561,11 @@ def auto_prepare() -> None:
     st.markdown(
         f'<div class="product-callout"><div><strong>{esc(mode_label)}</strong><span>The global volume preference is active. Lanes only narrow eligible roles.</span></div><span class="status-chip">{enabled_count} of {len(current_lanes)} lanes enabled</span></div>',
         unsafe_allow_html=True,
+    )
+    _render_auto_prepare_guide(
+        policy,
+        enabled_count=enabled_count,
+        total_lanes=len(current_lanes),
     )
     with st.container(key="product_auto_metrics"):
         counters = st.columns(4, gap="small")
@@ -560,7 +642,14 @@ def auto_prepare() -> None:
             with st.form("product_volume_form"):
                 mode = st.radio("Mode", ["unlimited", "custom_limit", "pause_after_batch", "paused"], index=["unlimited", "custom_limit", "pause_after_batch", "paused"].index(policy["mode"]), format_func=lambda x: {"unlimited":"Unlimited", "custom_limit":"Custom daily limit", "pause_after_batch":"Pause after current batch", "paused":"Paused"}[x])
                 limit = st.number_input("Custom daily limit", min_value=1, value=max(1, int(policy.get("daily_limit") or 25)), disabled=mode != "custom_limit")
-                review = st.checkbox("Review before action", value=policy["review_first"])
+                review = st.checkbox(
+                    "Prefer review reminders during preparation",
+                    value=policy["review_first"],
+                    help=(
+                        "This preference never removes the mandatory final "
+                        "Approve & Submit review."
+                    ),
+                )
                 if st.form_submit_button("Save preference", type="primary", use_container_width=True):
                     save_volume_policy(mode, limit, review)
                     st.success("Preference saved. Canonical safeguards remain separate.")
