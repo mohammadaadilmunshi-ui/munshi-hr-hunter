@@ -965,7 +965,11 @@ def _pdf_page_count(data: bytes) -> int:
     return max(1, len(re.findall(rb"/Type\s*/Page\b", data)))
 
 
-def render_pdf_bytes(document: ResumeDocument) -> tuple[bytes, int]:
+def render_pdf_bytes(
+    document: ResumeDocument,
+    *,
+    render_density: str = "normal",
+) -> tuple[bytes, int]:
     chromium = next((path for name in (
         "chromium", "chromium-browser", "google-chrome", "google-chrome-stable"
     ) if (path := shutil.which(name))), None)
@@ -974,7 +978,10 @@ def render_pdf_bytes(document: ResumeDocument) -> tuple[bytes, int]:
     with tempfile.TemporaryDirectory(prefix="munshi-resume-") as directory:
         root = Path(directory)
         html_path, pdf_path = root / "resume.html", root / "resume.pdf"
-        html_path.write_text(render_ats_html(document), encoding="utf-8")
+        html_path.write_text(
+            render_ats_html(document, render_density=render_density),
+            encoding="utf-8",
+        )
         completed = subprocess.run(
             [
                 chromium, "--headless", "--no-sandbox", "--disable-gpu",
@@ -994,9 +1001,16 @@ def render_pdf_bytes(document: ResumeDocument) -> tuple[bytes, int]:
     return data, _pdf_page_count(data)
 
 
-def version_pdf(version_id: str) -> tuple[bytes, int]:
+def version_pdf(
+    version_id: str,
+    *,
+    render_density: str = "normal",
+) -> tuple[bytes, int]:
     record = get_version(version_id)
-    return render_pdf_bytes(ResumeDocument.model_validate(record["document"]))
+    return render_pdf_bytes(
+        ResumeDocument.model_validate(record["document"]),
+        render_density=render_density,
+    )
 
 
 def _docx_paragraph(text: str, *, bold: bool = False, style: str | None = None) -> str:
