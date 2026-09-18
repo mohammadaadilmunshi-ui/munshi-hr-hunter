@@ -200,6 +200,12 @@ def render() -> None:
     from app.integration_credentials_ui_v1 import (
         install_integration_credentials_ui,
     )
+    from app.ats_account_readiness_ui_v1 import (
+        install_ats_account_readiness_ui,
+    )
+    from app.auto_prepare_readiness_ui_v1 import (
+        install_auto_prepare_readiness_ui,
+    )
     from app.unified_job_workspaces_runtime_patch_v1 import (
         install_unified_job_workspaces,
     )
@@ -254,9 +260,21 @@ def render() -> None:
     # the same Dashboard/Browse Jobs card renderer and lazy user-facing sections.
     # This does not change preparation, targeting, or submission authority.
     install_unified_job_workspaces(product_pages, application_workspace_page)
-    # Final Settings wrapper: write-only integration setup plus non-secret
-    # readiness status for Telegram, SMTP notifications, and inbound mail.
+    # AutoApply replaces product_pages.settings on every Streamlit rerun. Reset
+    # only the integration wrapper marker so the final wrapper is reattached to
+    # the current Settings callable instead of silently disappearing.
+    product_pages._integration_credentials_ui_v1_installed = False
     install_integration_credentials_ui(product_pages)
+
+    # Credentials parity: append non-secret ATS managed-account/application-mail
+    # readiness after the existing API vault and integration controls. Settings
+    # is replaced on every rerun, so this wrapper is deliberately reattached too.
+    product_pages._ats_account_readiness_ui_v1_installed = False
+    install_ats_account_readiness_ui(product_pages)
+
+    # Auto Prepare itself is not replaced on rerun. Install this once so the
+    # canonical-scoring gate is visible before automatic admission is attempted.
+    install_auto_prepare_readiness_ui(product_pages)
 
     pages: dict[str, Callable[[], None]] = {
         "dashboard": product_pages.dashboard,
