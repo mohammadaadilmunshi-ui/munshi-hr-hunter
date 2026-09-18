@@ -10,7 +10,7 @@ import os
 import re
 from typing import Any
 
-from app.secure_vault import VaultError, read_secret, secret_metadata
+from app.secure_vault import read_secret, secret_metadata
 
 TELEGRAM_BOT_TOKEN_TYPE = "telegram_bot_token"
 TELEGRAM_CHAT_ID_TYPE = "telegram_chat_id"
@@ -23,7 +23,7 @@ _EMAIL = re.compile(r"^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
 def _vault_value(credential_type: str) -> str:
     try:
         return str(read_secret(credential_type) or "").strip()
-    except (VaultError, Exception):
+    except Exception:
         return ""
 
 
