@@ -129,25 +129,55 @@ else
   set_env_value MUNSHI_FINAL_SUBMIT_ENABLED true
 fi
 
-# Optional external notification/mail services are activated only when their
-# already-provisioned runtime credentials exist. The deployment never invents
-# third-party API credentials or Cloudflare signing material.
+# Optional external notification/mail services must never block core AutoApply.
+# SMTP2GO may be configured either in environment variables or in MUNSHI's
+# encrypted vault, so ask the currently deployed Hunter runtime as well.
 smtp_key="$(get_env_value MUNSHI_SMTP2GO_API_KEY)"
 smtp_sender="$(get_env_value MUNSHI_SMTP2GO_SENDER)"
+smtp_ready=false
 if [[ -n "$smtp_key" && -n "$smtp_sender" ]]; then
+  smtp_ready=true
+elif docker inspect "$H" >/dev/null 2>&1; then
+  if docker exec "$H" python - <<'PY' >/dev/null 2>&1
+from app.integration_credentials_v1 import smtp2go_configured
+raise SystemExit(0 if smtp2go_configured() else 1)
+PY
+  then
+    smtp_ready=true
+  fi
+fi
+if [[ "$smtp_ready" == "true" ]]; then
   set_env_value MUNSHI_APPLICATION_EMAIL_NOTIFICATIONS_ENABLED true
   set_env_value MUNSHI_APPLICATION_NOTIFICATION_WORKER_ENABLED true
   echo "APPLICATION_EMAIL_NOTIFICATIONS=ENABLED"
 else
-  echo "APPLICATION_EMAIL_NOTIFICATIONS=EXTERNAL_CREDENTIAL_NOT_CONFIGURED"
+  set_env_value MUNSHI_APPLICATION_EMAIL_NOTIFICATIONS_ENABLED false
+  set_env_value MUNSHI_APPLICATION_NOTIFICATION_WORKER_ENABLED false
+  echo "APPLICATION_EMAIL_NOTIFICATIONS=DEFERRED_EXTERNAL_CREDENTIALS"
 fi
+
+# Inbound mail requires BOTH Hunter-side secrets and proof that the external
+# Cloudflare mail router uses the matching secret. A local secret alone is not
+# end-to-end readiness.
 mail_signing="$(get_env_value MUNSHI_MAIL_SIGNING_SECRET)"
 mail_artifact="$(get_env_value MUNSHI_MAIL_ARTIFACT_HMAC_SECRET)"
-if [[ "${#mail_signing}" -ge 32 && "${#mail_artifact}" -ge 32 ]]; then
+mail_external_sync=false
+if docker inspect "$H" >/dev/null 2>&1; then
+  if docker exec "$H" python - <<'PY' >/dev/null 2>&1
+from app.integration_credentials_v1 import integration_readiness
+ready = integration_readiness().get("mail_router") or {}
+raise SystemExit(0 if ready.get("external_sync_confirmed") else 1)
+PY
+  then
+    mail_external_sync=true
+  fi
+fi
+if [[ "${#mail_signing}" -ge 32 && "${#mail_artifact}" -ge 32 && "$mail_external_sync" == "true" ]]; then
   set_env_value MUNSHI_APPLICATION_MAIL_RELAY_ENABLED true
   echo "APPLICATION_MAIL_RELAY=ENABLED"
 else
-  echo "APPLICATION_MAIL_RELAY=EXTERNAL_ROUTER_SECRET_NOT_CONFIGURED"
+  set_env_value MUNSHI_APPLICATION_MAIL_RELAY_ENABLED false
+  echo "APPLICATION_MAIL_RELAY=DEFERRED_EXTERNAL_ROUTER_CONFIGURATION"
 fi
 
 "${compose[@]}" config -q
