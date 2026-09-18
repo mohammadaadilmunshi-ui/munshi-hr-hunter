@@ -135,6 +135,23 @@ def main() -> int:
     ]
     if enabled("HUNTER_ENABLE_TELEGRAM"):
         children.append(Lane("telegram", [python, "-m", "app.telegram_listener"]))
+    children.append(
+        Lane(
+            "application-notifications",
+            [python, "scripts/application_notification_worker.py"],
+            required=False,
+            repeat=True,
+            interval=max(
+                30,
+                int(
+                    os.getenv(
+                        "MUNSHI_APPLICATION_NOTIFICATION_WORKER_INTERVAL_SECONDS",
+                        "60",
+                    )
+                ),
+            ),
+        )
+    )
     discovery = enabled("HUNTER_ENABLE_DISCOVERY_SCHEDULER")
     coordinator = enabled("HUNTER_ENABLE_COORDINATOR")
     if discovery:
