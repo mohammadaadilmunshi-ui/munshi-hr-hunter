@@ -150,11 +150,30 @@ def test_autoapply_anthropic_secret_is_raw_signed_and_api_mode_only(monkeypatch)
     body, headers = _request(bridge.PURPOSE_AUTOAPPLY_CREDENTIAL)
     response, response_headers = bridge.autoapply_credential_response(body, headers, now=1000)
 
-    assert response == b"dashboard-anthropic-secret"
     assert reads == ["autoapply_anthropic_api_key"]
+    assert b"dashboard-anthropic-secret" not in response
     assert response_headers["X-Munshi-Credential-Type"] == "autoapply_anthropic_api_key"
+    assert response_headers["X-Munshi-Credential-Encryption"] == "aes-gcm-v1"
     assert response_headers["X-Munshi-Submission-Authority"] == "false"
     _verify_response(response, response_headers, bridge.PURPOSE_AUTOAPPLY_CREDENTIAL)
+
+    payload = json.loads(body)
+    nonce, ciphertext = response[:12], response[12:]
+    key = hmac.new(
+        SECRET.encode(),
+        (
+            f"autoapply-credential:{payload['request_id']}:"
+            f"{payload['plan_digest']}"
+        ).encode(),
+        hashlib.sha256,
+    ).digest()
+    aad = (
+        f"{payload['request_id']}.{payload['plan_digest']}."
+        "autoapply_anthropic_api_key"
+    ).encode()
+    assert bridge.AESGCM(key).decrypt(nonce, ciphertext, aad) == (
+        b"dashboard-anthropic-secret"
+    )
 
     monkeypatch.setattr(
         bridge,
