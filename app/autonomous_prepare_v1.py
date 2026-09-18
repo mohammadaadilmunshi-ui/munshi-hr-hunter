@@ -382,6 +382,25 @@ def drive_operation_once(operation_id: str) -> dict[str, Any]:
                     {"step": name, "blocked_by_runtime_gate": True, "error": text}
                 )
                 break
+            if name == "recruiter":
+                # Recruiter discovery is advisory/optional. A stale relationship
+                # snapshot must never block resume, answers, or ATS preparation.
+                step_results.append(
+                    {"step": name, "optional_step_error": True, "error": text}
+                )
+                continue
+            raise
+        except Exception as error:
+            if name == "recruiter":
+                step_results.append(
+                    {
+                        "step": name,
+                        "optional_step_error": True,
+                        "error": str(error),
+                        "error_type": type(error).__name__,
+                    }
+                )
+                continue
             raise
 
     final = orchestrator.prepare_operation(str(operation_id))
