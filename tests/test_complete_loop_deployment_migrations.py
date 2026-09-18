@@ -19,15 +19,37 @@ EXPECTED_MIGRATIONS = (
     "migrations.049_application_lifecycle_authority_v1",
     "migrations.050_prepare_orchestrator_v1",
     "migrations.051_native_cover_letter_writer_v1",
+    "migrations.052_inbound_mail_relay_v1",
+    "migrations.053_mail_intelligence_v2",
+    "migrations.054_application_notifications_v1",
+    "migrations.055_application_communication_notifications_v1",
 )
 
 
 def test_complete_loop_migration_manifest_is_exact() -> None:
     assert complete_loop_migrate.MIGRATIONS == EXPECTED_MIGRATIONS
-    assert len(complete_loop_migrate.MIGRATIONS) == 11
+    assert len(complete_loop_migrate.MIGRATIONS) == 15
     assert complete_loop_migrate.REQUIRED_CALLBACK_COLUMNS == {
         "payload_sha256",
         "execution_artifact_id",
+    }
+    assert {
+        "ats_application_identities",
+        "ats_managed_account_bindings",
+        "ats_verification_requests",
+        "inbound_mail_messages",
+        "mail_events_v2",
+        "mail_one_time_artifacts_v2",
+        "application_mail_confirmation_evidence_v2",
+        "application_communication_events_v2",
+        "application_notification_preferences_v1",
+        "application_notification_outbox_v1",
+    }.issubset(complete_loop_migrate.REQUIRED_TABLES)
+    assert complete_loop_migrate.REQUIRED_NOTIFICATION_PREFERENCE_COLUMNS == {
+        "destination_email",
+        "submission_email_enabled",
+        "employer_confirmation_email_enabled",
+        "communication_email_enabled",
     }
 
 
