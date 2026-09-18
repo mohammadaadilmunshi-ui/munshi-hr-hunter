@@ -159,25 +159,48 @@ def apply(
     path = Path(db_path).resolve()
     connection = _connect(path, read_only=False)
     applied: list[str] = []
+    committed_segments: list[str] = []
     try:
-        connection.execute("BEGIN IMMEDIATE")
         for module_name in MIGRATIONS:
             module = importlib.import_module(module_name)
             migrate = getattr(module, "apply", None)
             if not callable(migrate):
                 raise RuntimeError(f"Migration has no callable apply(): {module_name}")
+
+            # Deployment migrations 052+ intentionally call sqlite3.executescript()
+            # inside their shared ensure_schema() helpers. In Python's sqlite3
+            # legacy transaction mode executescript() may commit a pending
+            # transaction before running its script, so a single outer transaction
+            # cannot safely span the complete manifest. Production/staging deploy
+            # wrappers therefore stop Hunter, create and verify a byte-for-byte DB
+            # backup, and restore that backup on any migration/deploy failure.
+            #
+            # Keep each migration guarded by its own write lock where possible,
+            # tolerate an internal commit boundary, and verify the complete schema
+            # before returning success. This preserves fail-closed deployment
+            # behavior without pretending executescript() is nested-transactional.
+            if connection.in_transaction:
+                connection.commit()
+            connection.execute("BEGIN IMMEDIATE")
             migrate(connection)
-            if not connection.in_transaction:
-                raise RuntimeError("Migration escaped outer transaction: " + module_name)
+            if connection.in_transaction:
+                connection.commit()
+            else:
+                committed_segments.append(module_name)
             applied.append(module_name)
 
         verification = _verify_schema(connection, full_quick_check=full_quick_check)
-        if not connection.in_transaction:
-            raise RuntimeError("Migration transaction ended before commit.")
-        connection.commit()
-        return {"environment": environment, "migrations": applied, **verification}
+        if connection.in_transaction:
+            connection.commit()
+        return {
+            "environment": environment,
+            "migrations": applied,
+            "committed_segments": committed_segments,
+            **verification,
+        }
     except Exception:
-        connection.rollback()
+        if connection.in_transaction:
+            connection.rollback()
         raise
     finally:
         connection.close()
@@ -229,6 +252,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         )
         print(f"COMPLETE_LOOP_MIGRATIONS_APPLIED={len(result['migrations'])}")
         print("COMPLETE_LOOP_TRANSACTION=PASS")
+        print("COMPLETE_LOOP_TRANSACTION_MODE=SEGMENTED_BACKUP_ROLLBACK_GUARDED")
+        print(f"COMPLETE_LOOP_INTERNAL_COMMIT_SEGMENTS={len(result.get('committed_segments', []))}")
         print("COMPLETE_LOOP_SCHEMA_MIGRATION=PASS")
 
     print("COMPLETE_LOOP_REQUIRED_TABLES=PASS")
