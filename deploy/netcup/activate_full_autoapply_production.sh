@@ -116,7 +116,7 @@ rollback_activation() {
 trap rollback_activation ERR
 
 # Reversible AutoApply preparation/runtime capabilities.
-for kv in   MUNSHI_ENVIRONMENT=production   MUNSHI_AUTOAPPLY_ACCEPTANCE_PASSED=true   MUNSHI_APPLICATION_ANSWER_BRAIN_ENABLED=true   MUNSHI_NATIVE_RESUME_V5_ENABLED=true   MUNSHI_APPLICATION_PLAN_V2_ENABLED=true   MUNSHI_APPLICATION_PLAN_RUNTIME_RESOLUTION_ENABLED=true   MUNSHI_APPLY_LIVE_HANDOFF_ENABLED=true   MUNSHI_APPLY_BACKGROUND_PREPARE_ENABLED=true   MUNSHI_FINAL_REVIEW_ENABLED=true   MUNSHI_APPLICATION_REVIEW_V2_ENABLED=true   MUNSHI_PREPARE_WORKER_ADAPTERS_V1C_ENABLED=true   MUNSHI_PREPARE_ATS_RUNTIME_START_ENABLED=true   MUNSHI_APPLY_INTERNAL_HTTP_ENABLED=true   MUNSHI_APPLY_INTERNAL_HTTP_BASE_URL=http://apply:8000   MUNSHI_APPLY_BASE_URL=http://apply:8000
+for kv in   MUNSHI_ENVIRONMENT=production   MUNSHI_AUTOAPPLY_ACCEPTANCE_PASSED=true   MUNSHI_APPLICATION_ANSWER_BRAIN_ENABLED=true   MUNSHI_NATIVE_RESUME_V5_ENABLED=true   MUNSHI_APPLICATION_PLAN_V2_ENABLED=true   MUNSHI_APPLICATION_PLAN_RUNTIME_RESOLUTION_ENABLED=true   MUNSHI_APPLY_LIVE_HANDOFF_ENABLED=true   MUNSHI_APPLY_BACKGROUND_PREPARE_ENABLED=true   MUNSHI_FINAL_REVIEW_ENABLED=true   MUNSHI_APPLICATION_REVIEW_V2_ENABLED=true   MUNSHI_PREPARE_WORKER_ADAPTERS_V1A_ENABLED=true   MUNSHI_PREPARE_WORKER_ADAPTERS_V1B_ENABLED=true   MUNSHI_PREPARE_WORKER_ADAPTERS_V1C_ENABLED=true   MUNSHI_PREPARE_RUNTIME_WORKER_ENABLED=true   MUNSHI_PREPARE_RUNTIME_WORKER_INTERVAL_SECONDS=10   MUNSHI_PREPARE_ATS_RUNTIME_START_ENABLED=true   MUNSHI_APPLY_INTERNAL_HTTP_ENABLED=true   MUNSHI_APPLY_INTERNAL_HTTP_BASE_URL=http://apply:8000   MUNSHI_APPLY_BASE_URL=http://apply:8000
  do
   set_env_value "${kv%%=*}" "${kv#*=}"
 done
@@ -192,7 +192,7 @@ done
 [[ "$healthy" == "1" ]] || { echo "Hunter unhealthy after AutoApply activation" >&2; exit 20; }
 
 envs="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$H")"
-for kv in   'MUNSHI_ENVIRONMENT=production'   'MUNSHI_AUTOAPPLY_ACCEPTANCE_PASSED=true'   'MUNSHI_APPLICATION_ANSWER_BRAIN_ENABLED=true'   'MUNSHI_NATIVE_RESUME_V5_ENABLED=true'   'MUNSHI_APPLICATION_PLAN_V2_ENABLED=true'   'MUNSHI_APPLICATION_PLAN_RUNTIME_RESOLUTION_ENABLED=true'   'MUNSHI_APPLY_LIVE_HANDOFF_ENABLED=true'   'MUNSHI_APPLY_BACKGROUND_PREPARE_ENABLED=true'   'MUNSHI_APPLICATION_REVIEW_V2_ENABLED=true'   'MUNSHI_PREPARE_WORKER_ADAPTERS_V1C_ENABLED=true'   'MUNSHI_PREPARE_ATS_RUNTIME_START_ENABLED=true'   'MUNSHI_APPLY_INTERNAL_HTTP_ENABLED=true'   'MUNSHI_APPLY_INTERNAL_HTTP_BASE_URL=http://apply:8000'   'MUNSHI_APPLY_BASE_URL=http://apply:8000'
+for kv in   'MUNSHI_ENVIRONMENT=production'   'MUNSHI_AUTOAPPLY_ACCEPTANCE_PASSED=true'   'MUNSHI_APPLICATION_ANSWER_BRAIN_ENABLED=true'   'MUNSHI_NATIVE_RESUME_V5_ENABLED=true'   'MUNSHI_APPLICATION_PLAN_V2_ENABLED=true'   'MUNSHI_APPLICATION_PLAN_RUNTIME_RESOLUTION_ENABLED=true'   'MUNSHI_APPLY_LIVE_HANDOFF_ENABLED=true'   'MUNSHI_APPLY_BACKGROUND_PREPARE_ENABLED=true'   'MUNSHI_APPLICATION_REVIEW_V2_ENABLED=true'   'MUNSHI_PREPARE_WORKER_ADAPTERS_V1A_ENABLED=true'   'MUNSHI_PREPARE_WORKER_ADAPTERS_V1B_ENABLED=true'   'MUNSHI_PREPARE_WORKER_ADAPTERS_V1C_ENABLED=true'   'MUNSHI_PREPARE_RUNTIME_WORKER_ENABLED=true'   'MUNSHI_PREPARE_RUNTIME_WORKER_INTERVAL_SECONDS=10'   'MUNSHI_PREPARE_ATS_RUNTIME_START_ENABLED=true'   'MUNSHI_APPLY_INTERNAL_HTTP_ENABLED=true'   'MUNSHI_APPLY_INTERNAL_HTTP_BASE_URL=http://apply:8000'   'MUNSHI_APPLY_BASE_URL=http://apply:8000'
 do
   grep -qx "$kv" <<<"$envs" || { echo "Hunter activation env mismatch: $kv" >&2; exit 21; }
 done
@@ -203,6 +203,27 @@ else
   grep -qx 'MUNSHI_APPLY_SUBMIT_AUTHORITY_DELIVERY_ENABLED=false' <<<"$envs"
   grep -qx 'MUNSHI_FINAL_SUBMIT_ENABLED=false' <<<"$envs"
 fi
+
+docker exec -i "$H" python - <<'PY'
+from app.prepare_worker_adapters_v1a import workers_enabled as v1a_enabled
+from app.prepare_worker_adapters_v1b import workers_enabled as v1b_enabled
+from app.prepare_worker_adapters_v1c import workers_enabled as v1c_enabled
+from app.native_resume_service_v2 import writer_status
+
+status = writer_status()
+if not v1a_enabled():
+    raise SystemExit("Prepare Worker Adapters V1A are not enabled in the running Hunter container.")
+if not v1b_enabled():
+    raise SystemExit("Prepare Worker Adapters V1B are not enabled in the running Hunter container.")
+if not v1c_enabled():
+    raise SystemExit("Prepare Worker Adapters V1C are not enabled in the running Hunter container.")
+if not status.get("configured"):
+    raise SystemExit("Native resume writer is not configured with an OpenAI credential.")
+print(
+    "PREPARE_RUNTIME_PREFLIGHT=PASS "
+    f"writer_source={status.get('key_source')} model={status.get('model')}"
+)
+PY
 
 docker exec -i "$H" python - <<'PY'
 import urllib.request
