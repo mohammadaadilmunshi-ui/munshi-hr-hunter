@@ -148,7 +148,17 @@ def fetch_jobs(
     page_size: int = 16,
 ) -> tuple[list[dict[str, Any]], int]:
     """Parameterized advanced job browser using stored canonical evidence."""
-    conditions = ["COALESCE(s.hidden, 0) = 0"]
+    conditions = [
+        "COALESCE(s.hidden, 0) = 0",
+        "LOWER(COALESCE(j.status,'')) NOT LIKE 'quarantined%'",
+        """(
+            LOWER(COALESCE(j.source,'')) NOT LIKE '%linkedin%'
+            OR LOWER(COALESCE(j.job_url,'')) LIKE 'https://www.linkedin.com/jobs/view/%'
+            OR LOWER(COALESCE(j.job_url,'')) LIKE 'https://linkedin.com/jobs/view/%'
+            OR LOWER(COALESCE(j.job_url,'')) LIKE 'http://www.linkedin.com/jobs/view/%'
+            OR LOWER(COALESCE(j.job_url,'')) LIKE 'http://linkedin.com/jobs/view/%'
+        )""",
+    ]
     params: list[Any] = []
 
     normalized_result_set = str(result_set or "all").strip().casefold()
