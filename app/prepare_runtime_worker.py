@@ -13,8 +13,8 @@ from typing import Any
 from app import autonomous_prepare_v1
 
 
-def run_once(*, limit: int = 5) -> dict[str, Any]:
-    resolved = max(1, min(int(limit), 25))
+def run_once(*, limit: int = 1) -> dict[str, Any]:
+    resolved = max(1, min(int(limit), 5))
     return autonomous_prepare_v1.drive_open_operations(
         limit=resolved,
         newest_first=True,
@@ -23,7 +23,7 @@ def run_once(*, limit: int = 5) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Advance open MUNSHI Prepare operations once.")
-    parser.add_argument("--limit", type=int, default=5)
+    parser.add_argument("--limit", type=int, default=1)
     args = parser.parse_args()
 
     result = run_once(limit=args.limit)
