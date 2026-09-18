@@ -235,3 +235,14 @@ def test_product_routes_use_unified_profile_and_one_page_resume() -> None:
     assert "profile_authority.master_resume" in shell
     assert "profile_authority.candidate_facts" in shell
     assert "resume_studio_page_v5" in resume_entry
+
+
+def test_candidate_truth_projections_use_profile_evidence_path() -> None:
+    root = Path(__file__).resolve().parents[1]
+    autofill = (root / "app" / "application_answer_autofill_v1.py").read_text(
+        encoding="utf-8"
+    )
+    answer_v2 = (root / "app" / "answer_brain_v2.py").read_text(encoding="utf-8")
+    assert 'source="candidate_truth_projection"' not in autofill
+    assert "save_profile_projection_answer" in autofill
+    assert "def save_profile_projection_answer" in answer_v2
