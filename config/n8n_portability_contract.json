@@ -1,0 +1,72 @@
+{
+  "schema_version": 2,
+  "workflow_id": "L1u2xZkgFpi7KEuv",
+  "canonical_workflow": "n8n/workflows/canonical_hr_hunter_workflow.json",
+  "canonical_workflow_sha256": "501f144f35c5ae514a2c96004763232014ae78fa3a266f33a582f780cb22534f",
+  "renderer_policy": "The canonical workflow is immutable source. The deployment renderer verifies its SHA-256 and substitutes endpoint variables in an explicitly named generated copy only.",
+  "canonical_source_policy": {
+    "immutable": true,
+    "cloud_workflow_rewrite_forbidden": true,
+    "renderer_output_must_be_generated": true
+  },
+  "endpoint_variables": {
+    "fastapi_base_url": "FASTAPI_BASE_URL",
+    "n8n_base_url": "N8N_BASE_URL",
+    "ollama_base_url": "OLLAMA_BASE_URL"
+  },
+  "endpoint_mappings": {
+    "hr_agent_score": {
+      "legacy_url": "http://127.0.0.1:8000/api/hr-agent/score",
+      "base_variable": "FASTAPI_BASE_URL",
+      "path": "/api/hr-agent/score",
+      "canonical_occurrences": 2
+    },
+    "status_update": {
+      "legacy_url": "http://127.0.0.1:8000/api/n8n/status-update",
+      "base_variable": "FASTAPI_BASE_URL",
+      "path": "/api/n8n/status-update",
+      "canonical_occurrences": 4
+    },
+    "ollama_generate": {
+      "legacy_url": "http://127.0.0.1:11434/api/generate",
+      "base_variable": "OLLAMA_BASE_URL",
+      "path": "/api/generate",
+      "canonical_occurrences": 1
+    },
+    "n8n_webhook": {
+      "legacy_url": "http://localhost:5678",
+      "base_variable": "N8N_BASE_URL",
+      "replacement": "http://n8n:5678",
+      "canonical_occurrences": 1
+    }
+  },
+  "canonical_localhost_occurrence_count": 8,
+  "known_source_assumptions": [
+    "The workflow contains localhost/127.0.0.1 URLs for the Mac single-host runtime.",
+    "The callback targets the FastAPI status-update route.",
+    "The HR Agent callback targets /api/hr-agent/score.",
+    "The Ollama HTTP node uses /api/generate and is optional in the direct legacy n8n lane."
+  ],
+  "cloud_contract": {
+    "fastapi_callback_path": "/api/n8n/status-update",
+    "hr_agent_score_path": "/api/hr-agent/score",
+    "deployment_endpoint_defaults": {
+      "FASTAPI_BASE_URL": "http://hunter:8000",
+      "OLLAMA_BASE_URL": "http://ollama:11434",
+      "N8N_BASE_URL": "http://n8n:5678"
+    },
+    "required_network_rule": "n8n must reach the internal FastAPI service by service DNS or an explicitly configured private URL.",
+    "secrets_source": "runtime environment or secret manager; never workflow JSON",
+    "ollama_default": {
+      "OLLAMA_ENABLED": false,
+      "OLLAMA_REQUIRED": false,
+      "lane": "optional direct n8n Ollama lane only"
+    },
+    "hr_agent_scoring": {
+      "ollama_required": true,
+      "base_url_variable": "OLLAMA_BASE_URL",
+      "note": "The direct n8n lane flags do not disable or prove availability of the HR Agent adapter dependency."
+    },
+    "generated_copy_only": true
+  }
+}

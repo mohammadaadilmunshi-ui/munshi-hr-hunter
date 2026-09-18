@@ -1,0 +1,272 @@
+name: Repository Safety Guard
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repository-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reject tracked runtime secrets and databases
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib, subprocess
+
+          tracked = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
+          allowed_env_examples = {".env.example", ".env.netcup.shadow.example"}
+          forbidden = []
+
+          for raw in tracked:
+              path = pathlib.PurePosixPath(raw)
+              name = path.name.lower()
+              low = raw.lower()
+
+              if raw in allowed_env_examples:
+                  continue
+              if low.startswith("tests/fixtures/") or low.startswith("test/fixtures/"):
+                  continue
+
+              if name == ".env" or (name.startswith(".env.") and not name.endswith(".example")):
+                  forbidden.append(raw)
+                  continue
+
+              if name.endswith((".db", ".sqlite", ".sqlite3", ".db-wal", ".db-shm", ".sqlite-wal", ".sqlite-shm")):
+                  forbidden.append(raw)
+                  continue
+
+              if name in {"id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"}:
+                  forbidden.append(raw)
+                  continue
+
+              if name.endswith((".pem", ".p12", ".pfx")):
+                  forbidden.append(raw)
+                  continue
+
+              if name.endswith(".key") and "example" not in name and "public" not in name:
+                  forbidden.append(raw)
+                  continue
+
+          if forbidden:
+              print("Forbidden tracked runtime/security files:")
+              for item in forbidden:
+                  print(f" - {item}")
+              raise SystemExit(1)
+
+          print("TRACKED_RUNTIME_SECRET_DB_GUARD=PASS")
+          PY
+
+      - name: Reject embedded private-key material
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib, subprocess
+
+          marker = "-----" + "BEGIN " + "PRIVATE KEY" + "-----"
+          marker_rsa = "-----" + "BEGIN RSA " + "PRIVATE KEY" + "-----"
+          marker_open = "-----" + "BEGIN OPENSSH " + "PRIVATE KEY" + "-----"
+          markers = (marker, marker_rsa, marker_open)
+
+          bad = []
+          tracked = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
+          for raw in tracked:
+              if raw == ".github/workflows/repository-safety.yml":
+                  continue
+              p = pathlib.Path(raw)
+              try:
+                  text = p.read_text(encoding="utf-8")
+              except (UnicodeDecodeError, OSError):
+                  continue
+              if any(m in text for m in markers):
+                  bad.append(raw)
+
+          if bad:
+              print("Private-key material detected:")
+              for item in bad:
+                  print(f" - {item}")
+              raise SystemExit(1)
+
+          print("PRIVATE_KEY_CONTENT_GUARD=PASS")
+          PY
+
+      - name: Verify production workflow stays manual
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib, re
+
+          p = pathlib.Path(".github/workflows/netcup-production-deploy.yml")
+          if not p.is_file():
+              print("Production deployment workflow not present on this branch; manual-deploy guard skipped.")
+              raise SystemExit(0)
+
+          text = p.read_text(encoding="utf-8")
+          assert re.search(r"(?m)^\s{2}workflow_dispatch:\s*$", text), "production workflow must use workflow_dispatch"
+          for trigger in ("push", "pull_request", "schedule"):
+              assert not re.search(rf"(?m)^\s{{2}}{trigger}:\s*$", text), f"forbidden production trigger: {trigger}"
+          assert "cancel-in-progress: false" in text
+          assert "environment: production" in text
+          assert "contents: read" in text
+          assert "ssh-keyscan" not in text, "do not bootstrap SSH host trust inside deployment workflow"
+          print("MANUAL_PRODUCTION_DEPLOY_GUARD=PASS")
+          PY
+
+      - name: Verify production deploy anti-regression contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          deploy = Path("deploy/netcup/deploy_production_release.sh")
+          verify = Path("deploy/netcup/verify_production_runtime_contract.sh")
+          gateway = Path("deploy/netcup/github_deploy_gateway.sh")
+          installer = Path("deploy/netcup/install_github_deploy_key.sh")
+
+          if not any(p.is_file() for p in (deploy, verify, gateway, installer)):
+              print("Deploy-only production scripts not present; contract guard skipped.")
+              raise SystemExit(0)
+
+          for p in (deploy, verify, gateway, installer):
+              assert p.is_file(), f"missing paired deployment file: {p}"
+
+          deploy_text = deploy.read_text(encoding="utf-8")
+          verify_text = verify.read_text(encoding="utf-8")
+          text = deploy_text + "\n" + verify_text
+
+          required = (
+              "compose.yaml",
+              "compose.netcup-shadow.yaml",
+              "stage10-imported.override.yaml",
+              "stage12-production.override.yaml",
+              "stage12-n8n-runtime-repair.override.yaml",
+              "N8N_USER_FOLDER",
+              "N8N_DATABASE_PATH",
+              "/app/n8n-readonly",
+              "--no-deps --force-recreate hunter",
+              "N8N_RECREATED=NO",
+              "OLLAMA_RECREATED=NO",
+          )
+          for token in required:
+              assert token in text, f"missing deployment safety token: {token}"
+
+          assert 'VERIFY="/opt/munshi/bin/verify-production-runtime-contract"' in deploy_text, "deploy must use stable verifier"
+
+          forbidden = (
+              "docker compose down -v",
+              "docker volume rm",
+              "down --volumes",
+              "rm -rf /opt/munshi",
+          )
+          for token in forbidden:
+              assert token not in text, f"destructive production token present: {token}"
+
+          gateway_text = gateway.read_text(encoding="utf-8")
+          for token in (
+              "SSH_ORIGINAL_COMMAND",
+              "/opt/munshi/bin/deploy-production-release",
+              "([0-9a-f]{40})",
+              'exec "$PRODUCTION_DEPLOY" --commit "$commit" --branch "$branch"',
+          ):
+              assert token in gateway_text, f"deployment gateway missing: {token}"
+
+          installer_text = installer.read_text(encoding="utf-8")
+          for token in (
+              "STATE=PASS",
+              'restrict,command=\"/opt/munshi/bin/github-deploy-gateway\"',
+              "PRIVATE_KEY_INSTALLED_ON_SERVER=NO",
+          ):
+              assert token in installer_text, f"deploy-key installer missing: {token}"
+
+          print("PRODUCTION_DEPLOY_ANTI_REGRESSION_GUARD=PASS")
+          PY
+
+      - name: Verify staging deploy isolation contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path(".github/workflows/netcup-staging-deploy.yml")
+          deploy = Path("deploy/netcup/deploy_staging_release.sh")
+          verify = Path("deploy/netcup/verify_staging_runtime_contract.sh")
+          installer = Path("deploy/netcup/install_staging_deploy_gateway_extension.sh")
+
+          if not any(p.is_file() for p in (workflow, deploy, verify, installer)):
+              print("Staging deployment files not present; staging guard skipped.")
+              raise SystemExit(0)
+
+          for p in (workflow, deploy, verify, installer):
+              assert p.is_file(), f"missing paired staging deployment file: {p}"
+
+          workflow_text = workflow.read_text(encoding="utf-8")
+          deploy_text = deploy.read_text(encoding="utf-8")
+          verify_text = verify.read_text(encoding="utf-8")
+          installer_text = installer.read_text(encoding="utf-8")
+          text = deploy_text + "\n" + verify_text + "\n" + installer_text
+
+          assert "environment: staging" in workflow_text
+          assert "environment: production" not in workflow_text
+          assert "workflow_dispatch" in workflow_text
+          for trigger in ("push:", "pull_request:", "schedule:"):
+              assert trigger not in workflow_text, f"staging deployment must remain manual during proof: {trigger}"
+
+          required = (
+              "munshi-netcup-staging",
+              "/home/munshi/munshi-staging-v1",
+              "--no-deps --force-recreate hunter",
+              "STAGING_N8N_RECREATED=NO",
+              "STAGING_OLLAMA_RECREATED=NO",
+              "STAGING_EDGE_RECREATED=NO",
+              "PRODUCTION_CONTAINERS_UNCHANGED=PASS",
+              "PRODUCTION_DEPLOYMENT_PERFORMED=NO",
+              "STAGING_SIDE_EFFECT_FLAGS=PASS",
+              "STAGING_VOLUME_ISOLATION=PASS",
+              "STAGING_RAW_PORTS_LOOPBACK_ONLY=PASS",
+              "STAGING_DASHBOARD_CONFIG=PASS",
+              "AUTHORIZED_KEYS_CHANGED=NO",
+          )
+          for token in required:
+              assert token in text, f"missing staging isolation token: {token}"
+
+          forbidden = (
+              "docker compose down -v",
+              "docker volume rm",
+              "down --volumes",
+              "rm -rf /opt/munshi",
+          )
+          for token in forbidden:
+              assert token not in text, f"destructive staging token present: {token}"
+
+          print("STAGING_DEPLOY_ISOLATION_GUARD=PASS")
+          PY
+
+      - name: Verify dashboard proxy remains authenticated and loopback-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path("deploy/caddy/Caddyfile.dashboard.template")
+          if not p.is_file():
+              print("Dashboard Caddy template not present; guard skipped.")
+              raise SystemExit(0)
+          text = p.read_text(encoding="utf-8")
+          assert "dashboard.munshi.systems" in text
+          assert "basic_auth" in text
+          assert "reverse_proxy 127.0.0.1:8501" in text
+          assert "reverse_proxy 0.0.0.0:8501" not in text
+          print("DASHBOARD_PROXY_GUARD=PASS")
+          PY
