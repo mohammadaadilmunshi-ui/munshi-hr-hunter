@@ -45,7 +45,7 @@ def test_linkedin_preserves_source_url_and_uses_external_direct_url():
     )
 
     assert normalized is not None
-    assert normalized["job_url"] == "https://www.linkedin.com/jobs/view/123456789/"
+    assert normalized["job_url"] == "https://www.linkedin.com/jobs/view/123456789"
     assert normalized["apply_url"] == direct
 
 
