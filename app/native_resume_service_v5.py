@@ -683,6 +683,7 @@ build_evidence_bundle = v4.build_evidence_bundle
 delete_personal_api_key = v4.delete_personal_api_key
 extract_uploaded_source = v4.extract_uploaded_source
 job_context = v4.job_context
+list_versions = v4.v2.list_versions
 resume_job_options = v4.resume_job_options
 safe_filename = v4.safe_filename
 save_confirmed_source = v4.save_confirmed_source
