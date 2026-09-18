@@ -273,9 +273,87 @@ def list_artifacts(version_id: str) -> list[dict[str, Any]]:
         connection.close()
 
 
+def _stored_materialization(
+    *,
+    version_id: str,
+    record: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Return and verify an already-persisted immutable artifact pair.
+
+    Chromium PDF bytes are not guaranteed to be byte-for-byte reproducible
+    across separate renders because renderer metadata can vary. Once a V5
+    artifact pair has been persisted for an immutable resume version, that pair
+    is the authority. Revalidate the stored bytes and reuse them instead of
+    rendering the same version again.
+    """
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        owner = current_owner(connection)
+        rows = connection.execute(
+            """SELECT * FROM native_resume_v5_artifacts
+               WHERE tenant_id=? AND user_id=? AND version_id=?
+               ORDER BY CASE artifact_kind WHEN 'DOCX' THEN 1 ELSE 2 END""",
+            (owner.tenant_id, owner.user_id, str(version_id)),
+        ).fetchall()
+    finally:
+        connection.close()
+
+    if not rows:
+        return None
+
+    by_kind_row = {str(row["artifact_kind"]): row for row in rows}
+    if set(by_kind_row) != {"DOCX", "PDF"}:
+        raise RuntimeError("Native Resume V5 artifact pair is incomplete.")
+
+    docx_row = by_kind_row["DOCX"]
+    pdf_row = by_kind_row["PDF"]
+    docx = bytes(docx_row["content"])
+    pdf = bytes(pdf_row["content"])
+
+    for row, content in ((docx_row, docx), (pdf_row, pdf)):
+        digest = _sha(content)
+        if (
+            str(row["sha256"]) != digest
+            or int(row["byte_count"]) != len(content)
+        ):
+            raise RuntimeError(
+                "Immutable Native Resume V5 stored artifact failed integrity validation."
+            )
+
+    _validate_docx_bytes(docx)
+    if not pdf.startswith(b"%PDF"):
+        raise RuntimeError("Native Resume V5 stored PDF artifact is invalid.")
+    _validated_pdf_page_count(pdf)
+    page_verification = _validated_pdf_layout(pdf)
+    if int(pdf_row["page_count"] or 0) != 1:
+        raise RuntimeError("Native Resume V5 stored PDF page count is invalid.")
+
+    by_kind = {kind: _row_payload(row) for kind, row in by_kind_row.items()}
+    return {
+        "version": ARTIFACT_VERSION,
+        "resume_version_id": str(version_id),
+        "job_id": int(record["job_id"]),
+        "candidate_truth_binding": record["candidate_truth_binding"],
+        "job_snapshot_binding": record["job_snapshot_binding"],
+        "stage_b_binding": record["stage_b_binding"],
+        "docx": by_kind["DOCX"],
+        "pdf": by_kind["PDF"],
+        "page_verification": {
+            **page_verification,
+            "render_density": "stored_immutable",
+        },
+        "render_density": "stored_immutable",
+        "submission_authority": False,
+    }
+
+
 def materialize(version_id: str) -> dict[str, Any]:
-    """Render and persist the exact immutable DOCX and one-page PDF for V5."""
+    """Render once, then reuse the immutable DOCX/PDF pair for V5."""
     record = _current_resume(str(version_id))
+    stored = _stored_materialization(version_id=str(version_id), record=record)
+    if stored is not None:
+        return stored
     context = resume_v5.v4.v1.job_context(int(record["job_id"]))
     docx = resume_v5.v4.v1.version_docx(str(version_id))
     _validate_docx_bytes(docx)
