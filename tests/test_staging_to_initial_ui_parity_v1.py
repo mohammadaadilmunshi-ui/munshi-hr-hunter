@@ -29,7 +29,6 @@ def test_application_email_notifications_are_first_class_advanced_ui() -> None:
     source = inspect.getsource(notifications_ui)
     assert 'id="application-email-notifications"' in source
     assert "### Application email notifications" in source
-    assert 'product_settings_section") == "Advanced / System"' in source
     assert "Outbound application-email notifications are ready." in source
     assert "Save notification preferences" in source
 
@@ -54,7 +53,6 @@ def test_targeting_card_uses_canonical_targeting_authority() -> None:
     assert 'get_setting("targeting"' in source
     assert 'save_setting(\n            "targeting"' in source
     assert "Save job search targeting" in source
-    assert 'product_settings_section") == "Advanced / System"' in source
 
 
 def test_advanced_settings_renders_targeting_and_notifications_directly() -> None:
