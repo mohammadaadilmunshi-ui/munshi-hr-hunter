@@ -38,6 +38,7 @@ from app import application_review_v2
 from app import application_plan_v2
 from app import application_preflight_package_v1 as preflight_v1
 from app import opportunity_intelligence_v3
+from app import relationship_intelligence_v3
 from app import native_cover_letter_writer_v1
 from app import prepare_orchestrator_v1 as orchestrator
 
@@ -157,7 +158,19 @@ def _succeeded_output(
     return dict(output)
 
 
-def _optional_relationship_id(operation: Mapping[str, Any]) -> str | None:
+def _optional_relationship_id(
+    operation: Mapping[str, Any],
+    *,
+    opportunity: Mapping[str, Any],
+) -> str | None:
+    """Return only advisory relationship context bound to this exact opportunity.
+
+    Recruiter discovery runs before Phase 6 opportunity evaluation, so an older
+    advisory strategy may legitimately lack the exact evaluation binding needed
+    by the immutable preflight package. Because people context is optional, that
+    stale/mismatched advisory must be omitted rather than blocking the required
+    application path.
+    """
     row = _task(operation, orchestrator.TASK_RECRUITER_DISCOVERY)
     if row is None or str(row.get("status")) != "SUCCEEDED":
         return None
@@ -169,7 +182,31 @@ def _optional_relationship_id(operation: Mapping[str, Any]) -> str | None:
     if output.get("available") is False:
         return None
     value = str(output.get("relationship_strategy_id") or "").strip()
-    return value or None
+    if not value:
+        return None
+    try:
+        strategy = relationship_intelligence_v3.get_strategy(value)
+        freshness = relationship_intelligence_v3.strategy_freshness(value)
+    except (LookupError, RuntimeError, ValueError):
+        return None
+    if freshness.get("fresh") is not True:
+        return None
+    if int(strategy.get("job_id") or 0) != int(operation["job_id"]):
+        return None
+    if str(strategy.get("job_snapshot_sha256") or "") != str(
+        operation["job_snapshot_sha256"]
+    ):
+        return None
+    context = dict(strategy.get("opportunity_context") or {})
+    if str(context.get("evaluation_id") or "") != str(
+        opportunity.get("evaluation_id") or ""
+    ):
+        return None
+    if str(context.get("result_sha256") or "") != str(
+        opportunity.get("result_sha256") or ""
+    ):
+        return None
+    return value
 
 
 def _validate_resume_and_answers(operation: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -267,7 +304,10 @@ def run_application_preflight_once(
             int(operation["job_id"]),
             persist=True,
         )
-        relationship_strategy_id = _optional_relationship_id(operation)
+        relationship_strategy_id = _optional_relationship_id(
+            operation,
+            opportunity=opportunity,
+        )
 
         package = preflight_v1.prepare_preflight_package(
             job_id=int(operation["job_id"]),
