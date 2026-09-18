@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PROJECT="${AADIL_HR_HUNTER_PROJECT:-$HOME/Aadil-HR-Hunter}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PROJECT="${AADIL_HR_HUNTER_PROJECT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 DATA="$PROJECT/data"
 STOP_SCHEDULER=0
 STOP_OLLAMA=0
@@ -60,10 +61,13 @@ if [ -f "$DATA/telegram_listener.lock" ]; then
 fi
 
 if [ "$STOP_SCHEDULER" -eq 1 ]; then
-  launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 ||
-    launchctl unload "$HOME/Library/LaunchAgents/${LABEL}.plist" >/dev/null 2>&1 ||
-    true
-  echo "Random scheduler: unloaded"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 ||
+      launchctl unload "$HOME/Library/LaunchAgents/${LABEL}.plist" >/dev/null 2>&1 || true
+    echo "Random scheduler: unloaded"
+  else
+    echo "Random scheduler: external process manager owns lifecycle"
+  fi
 fi
 
 if [ "$STOP_OLLAMA" -eq 1 ]; then

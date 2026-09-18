@@ -1,0 +1,39 @@
+name: Netcup Canonical Production Recovery Probe
+
+on:
+  push:
+    branches:
+      - feat/cloud-migration-foundation
+    paths:
+      - '.github/workflows/netcup-canonical-production-recovery-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Probe protected production transport without mutation
+        shell: bash
+        env:
+          KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+          HOST: ${{ secrets.NETCUP_HOST }}
+          USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          [[ -n "$KEY" ]] || { echo 'PROD_ENV_KEY=UNAVAILABLE'; exit 41; }
+          [[ -n "$HOSTS" && -n "$HOST" && -n "$USER" ]] || { echo 'PROD_ENV_TRANSPORT_METADATA=UNAVAILABLE'; exit 42; }
+          echo 'PROD_ENV_TRANSPORT=AVAILABLE'
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$KEY" > "$HOME/.ssh/netcup_key"
+          chmod 600 "$HOME/.ssh/netcup_key"
+          printf '%s\n' "$HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          root_out="$(ssh -i "$HOME/.ssh/netcup_key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 root@"$HOST" 'id -u' 2>&1 || true)"
+          [[ "$root_out" == '0' ]] && echo 'PROD_ENV_DIRECT_ROOT=AVAILABLE' || echo 'PROD_ENV_DIRECT_ROOT=UNAVAILABLE'
+          deploy_out="$(ssh -i "$HOME/.ssh/netcup_key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 "$USER@$HOST" 'id -u' 2>&1 || true)"
+          [[ "$deploy_out" =~ ^[0-9]+$ ]] && echo 'PROD_ENV_DEPLOY_USER_DIRECT_SHELL=AVAILABLE' || echo 'PROD_ENV_DEPLOY_USER_DIRECT_SHELL=RESTRICTED_OR_UNAVAILABLE'

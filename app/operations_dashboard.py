@@ -34,6 +34,7 @@ from app.presentation_analytics import (
     rejection_intelligence,
 )
 from app.runtime_recovery import RuntimeRecovery
+from app.runtime_config import service_endpoint
 from app.ui_time import (
     format_local,
     format_local_clock,
@@ -319,8 +320,8 @@ def _overview() -> None:
         bounds,
     )
     integration = get_setting("integration_health", {}) or {}
-    n8n = dict((integration.get("services") or {}).get("n8n") or {})
-    n8n_up = _service_up(str(n8n.get("host", "127.0.0.1")), int(n8n.get("port", 0)))
+    n8n_host, n8n_port = service_endpoint("n8n")
+    n8n_up = _service_up(n8n_host, n8n_port)
     workflow_id = str((integration.get("n8n_read_only_snapshot") or {}).get("workflow_id") or "")
     n8n_history, _ = n8n_execution_metrics(workflow_id)
     orchestration = get_setting("orchestration", {}) or {}
@@ -2240,10 +2241,22 @@ def _job_rankings() -> None:
                 "rankings_n8n_starting_job_v17"
             )
 
+            n8n_host_v18, n8n_port_v18 = service_endpoint("n8n")
+            fastapi_host_v18, fastapi_port_v18 = service_endpoint("fastapi")
+            prepare_backend_ready_v18 = (
+                _service_up(n8n_host_v18, n8n_port_v18)
+                and _service_up(fastapi_host_v18, fastapi_port_v18)
+            )
+            if not prepare_backend_ready_v18 and starting_job_v17 == job_id:
+                st.session_state.pop("rankings_n8n_starting_job_v17", None)
+                starting_job_v17 = None
+
             if package_ready_v17:
                 n8n_card_state_v17 = "ready"
                 if starting_job_v17 == job_id:
                     st.session_state.pop("rankings_n8n_starting_job_v17", None)
+            elif not prepare_backend_ready_v18:
+                n8n_card_state_v17 = "unavailable"
             elif queue_state_v17 in open_states_v17:
                 n8n_card_state_v17 = "running"
             elif starting_job_v17 == job_id:
@@ -2296,7 +2309,18 @@ def _job_rankings() -> None:
                     )
 
             with actions[3]:
-                if n8n_card_state_v17 == "ready":
+                if n8n_card_state_v17 == "unavailable":
+                    st.link_button(
+                        "Open cloud Prepare",
+                        "https://dashboard.munshi.systems",
+                        help=(
+                            "This dashboard instance does not own the authoritative "
+                            "Hunter + n8n runtime. Prepare must run from the cloud "
+                            "control plane."
+                        ),
+                        use_container_width=True,
+                    )
+                elif n8n_card_state_v17 == "ready":
                     st.button(
                         "✓ Ready",
                         key=f"rankings_n8n_ready_v17_{job_id}",
@@ -2365,8 +2389,16 @@ def _job_rankings() -> None:
                                 st.session_state["rankings_n8n_starting_job_v17"] = job_id
                                 level_v17 = "success"
                             elif bool(start_result.get("success")):
+                                st.session_state.pop(
+                                    "rankings_n8n_starting_job_v17",
+                                    None,
+                                )
                                 level_v17 = "info"
                             else:
+                                st.session_state.pop(
+                                    "rankings_n8n_starting_job_v17",
+                                    None,
+                                )
                                 level_v17 = "warning"
                             st.session_state["rankings_n8n_notice_v17"] = {
                                 "level": level_v17,
@@ -2375,6 +2407,10 @@ def _job_rankings() -> None:
                             }
                             st.rerun()
                         except Exception as error:
+                            st.session_state.pop(
+                                "rankings_n8n_starting_job_v17",
+                                None,
+                            )
                             st.session_state["rankings_n8n_notice_v17"] = {
                                 "level": "error",
                                 "message": "Could not start the guarded n8n worker: " + str(error),
