@@ -142,6 +142,13 @@ def product_css() -> str:
         padding:1rem!important;
         box-shadow:0 7px 22px rgba(20,61,49,.05)!important
     }
+    .st-key-product_auto_split > div > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:first-child{
+        background:linear-gradient(145deg,#FFFFFF,#F9FBF8)!important;
+        border:1px solid var(--m-border)!important;
+        border-radius:var(--m-radius)!important;
+        padding:1rem!important;
+        box-shadow:0 7px 22px rgba(20,33,41,.045)!important
+    }
 
     /* Keep BaseWeb controls inside the light MUNSHI product theme. */
     [data-testid="stExpander"]{
