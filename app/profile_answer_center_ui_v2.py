@@ -257,6 +257,7 @@ def _render_teach() -> None:
         question = st.text_input(
             "Application question",
             placeholder="e.g. Are you able to work weekends?",
+            key="answer_center_v2_teach_question",
         )
         answer = st.text_area(
             "Confirmed reusable answer",
