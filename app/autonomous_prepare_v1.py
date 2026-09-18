@@ -415,13 +415,17 @@ def drive_operation_once(operation_id: str) -> dict[str, Any]:
 
 
 def drive_open_operations(
-    *, limit: int = 25, newest_first: bool = False
+    *,
+    limit: int = 25,
+    newest_first: bool = False,
+    min_created_at: str | None = None,
 ) -> dict[str, Any]:
     """Advance owner-scoped QUEUED/RUNNING Prepare operations independently.
 
     Existing coordinator callers keep oldest-first fairness. The low-latency
-    supervised runtime may explicitly request newest-first ordering so a fresh
-    customer Prepare click is not queued behind stale recovery work.
+    supervised runtime may explicitly request newest-first ordering and a
+    deployment watermark so stale pre-activation work cannot unexpectedly
+    consume model/API resources after a runtime repair.
     """
     connection = get_connection()
     try:
@@ -432,14 +436,25 @@ def drive_open_operations(
             if newest_first
             else "datetime(created_at), rowid"
         )
+        minimum = str(min_created_at or "").strip()
+        minimum_clause = (
+            " AND datetime(created_at) >= datetime(?)"
+            if minimum
+            else ""
+        )
+        params: list[Any] = [owner.tenant_id, owner.user_id]
+        if minimum:
+            params.append(minimum)
+        params.append(max(1, int(limit)))
         rows = connection.execute(
             f"""SELECT operation_id
                   FROM prepare_operations_v1
                  WHERE tenant_id=? AND user_id=?
                    AND status IN ('QUEUED','RUNNING')
+                   {minimum_clause}
                  ORDER BY {ordering}
                  LIMIT ?""",
-            (owner.tenant_id, owner.user_id, max(1, int(limit))),
+            tuple(params),
         ).fetchall()
         operation_ids = [str(row[0]) for row in rows]
     finally:
