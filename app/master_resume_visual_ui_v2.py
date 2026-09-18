@@ -17,9 +17,9 @@ from app import master_resume_file_ui_v1 as legacy
 from app import native_resume_presentation_v1 as presentation
 
 
-def _preview_settings() -> dict[str, Any]:
-    left, font_col, size_col, align_col, fit_col = st.columns(
-        (1.15, 1.45, .9, 1.1, 1.2), gap="small"
+def _preview_settings(source_text: str) -> dict[str, Any]:
+    left, font_col, size_col, align_col, fit_col, order_col = st.columns(
+        (1.05, 1.3, .78, .95, 1.0, 1.2), gap="small"
     )
     with left:
         template = st.segmented_control(
@@ -76,6 +76,26 @@ def _preview_settings() -> dict[str, Any]:
             value=bool(st.session_state.get("master_resume_canvas_fit", True)),
             key="master_resume_canvas_fit",
         )
+    with order_col:
+        section_order = st.selectbox(
+            "Sections",
+            list(presentation.SECTION_ORDER_PRESETS),
+            key="master_resume_canvas_section_order",
+        )
+
+    available = presentation.available_source_sections(source_text)
+    with st.expander("Section visibility & order", expanded=False):
+        visible_sections = st.multiselect(
+            "Visible in preview",
+            available,
+            default=available,
+            key="master_resume_canvas_visible_sections",
+        )
+        st.caption(
+            "These controls change only this visual reconstruction. The "
+            "authoritative Master Resume source and Candidate Truth stay unchanged."
+        )
+
     return presentation.normalized_settings(
         {
             "template": template,
@@ -83,6 +103,8 @@ def _preview_settings() -> dict[str, Any]:
             "font_size": font_size,
             "alignment": alignment,
             "fit_one_page": fit,
+            "section_order": section_order,
+            "visible_sections": visible_sections,
         }
     )
 
@@ -94,9 +116,10 @@ def _render_visual_preview(source: dict[str, Any]) -> None:
             "Rendered from the authoritative normalized Master Resume source using the same Standard/Jake presentation system as Native Resume Studio. "
             "Legacy uploads did not retain original file bytes, so this is a clean reconstruction rather than a pixel-perfect copy."
         )
-        settings = _preview_settings()
+        source_text = str(source.get("content_text") or "")
+        settings = _preview_settings(source_text)
         rendered = presentation.render_master_source_html(
-            str(source.get("content_text") or ""),
+            source_text,
             settings,
         )
         components.html(
