@@ -195,22 +195,3 @@ def render_targeting_settings() -> None:
                 "eligibility controls."
             )
 
-
-def _render_advanced_targeting() -> None:
-    if st.session_state.get("product_settings_section") == "Advanced / System":
-        render_targeting_settings()
-
-
-def install_targeting_settings_ui(product_pages: Any) -> None:
-    base = product_pages.settings
-    marker = "_targeting_settings_ui_v1"
-    if bool(getattr(base, marker, False)):
-        return
-
-    def rendered() -> None:
-        base()
-        _render_advanced_targeting()
-
-    setattr(rendered, marker, True)
-    product_pages.settings = rendered
-    product_pages._targeting_settings_ui_v1_installed = True
