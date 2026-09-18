@@ -76,6 +76,7 @@ def _remaining_meanings(readiness: Mapping[str, Any]) -> list[dict[str, str]]:
 
         remaining.append(
             {
+                "question_key": key,
                 "Meaning": v2._humanize_key(key),
                 "Example application question": str(
                     row.get("example_question") or v2._humanize_key(key)
@@ -86,37 +87,67 @@ def _remaining_meanings(readiness: Mapping[str, Any]) -> list[dict[str, str]]:
     return remaining
 
 
+def _open_reusable_answers() -> None:
+    st.session_state["answer_center_v3_section"] = "Reusable answers"
+
+
+def _prefill_teach_question(question: str) -> None:
+    st.session_state["answer_center_v3_section"] = "Teach MUNSHI"
+    st.session_state["answer_center_v2_teach_question"] = str(question or "").strip()
+
+
 def _render_remaining_meanings(readiness: Mapping[str, Any]) -> None:
     rows = _remaining_meanings(readiness)
     if not rows:
         st.success("Every current application meaning has a confirmed authority path.")
         return
 
-    st.markdown(f"#### The {len(rows)} meanings still behind the coverage count")
+    st.markdown(f"#### Unanswered questions · {len(rows)}")
     st.caption(
-        "These are the actual meanings MUNSHI does not currently know. They are shown here even when there are zero normal reusable gaps. A protected or job-specific meaning is not silently converted into an onboarding question."
+        "These are the actual meanings MUNSHI does not currently know. Each item now has a direct action. "
+        "Protected/self-ID answers stay encrypted; contextual questions are never guessed."
     )
-    st.dataframe(rows, use_container_width=True, hide_index=True)
 
-    protected_count = sum(
-        1 for row in rows if row["Handling"].startswith("Protected/self-ID")
-    )
-    if protected_count:
-        action, note = st.columns(
-            (1.25, 3.2), gap="medium", vertical_alignment="center"
-        )
-        with action:
-            st.button(
-                "Review secure defaults",
-                type="secondary",
-                use_container_width=True,
-                key="answer_center_v3_review_secure_defaults",
-                on_click=v2._open_protected_editor,
-            )
-        with note:
-            st.caption(
-                "Some concepts, including separate sponsorship-now/future meanings, intentionally remain unresolved until Candidate Truth can prove them independently or a real application asks for them."
-            )
+    for index, row in enumerate(rows):
+        handling = str(row["Handling"])
+        question = str(row["Example application question"])
+        with st.container(
+            key=f"munshi_surface_unanswered_{index}",
+        ):
+            left, right = st.columns((3.2, 1.15), gap="medium", vertical_alignment="center")
+            with left:
+                st.markdown(f"**{row['Meaning']}**")
+                st.caption(question)
+                st.write(handling)
+            with right:
+                if handling.startswith("Reusable answer"):
+                    st.button(
+                        "Answer now",
+                        key=f"answer_center_v3_answer_{index}",
+                        type="primary",
+                        use_container_width=True,
+                        on_click=_open_reusable_answers,
+                    )
+                elif handling.startswith("Protected/self-ID"):
+                    st.button(
+                        "Edit secure default",
+                        key=f"answer_center_v3_secure_{index}",
+                        type="primary",
+                        use_container_width=True,
+                        on_click=v2._open_protected_editor,
+                    )
+                else:
+                    st.button(
+                        "Teach if reusable",
+                        key=f"answer_center_v3_teach_{index}",
+                        use_container_width=True,
+                        on_click=_prefill_teach_question,
+                        args=(question,),
+                        help=(
+                            "Prefills Teach MUNSHI. The answer router will still reject "
+                            "protected or unsafe global answers."
+                        ),
+                    )
 
 
 def _selected_section() -> str:
