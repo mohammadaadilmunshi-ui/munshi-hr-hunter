@@ -113,10 +113,15 @@ def test_staging_deploy_runs_migration_offline_and_restores_db_on_rollback() -> 
 def test_production_deploy_runs_migration_offline_and_restores_db_on_rollback() -> None:
     source = Path("deploy/netcup/deploy_production_release.sh").read_text(encoding="utf-8")
     _assert_db_restore_contract(source, "restore_production_db")
-    stop_at = source.index("=== STOP HUNTER FOR COMPLETE-LOOP MIGRATION ===")
+    snapshot_at = source.index("=== PREPARE CURRENT STORAGE-SAFE ROLLBACK SNAPSHOT ===")
     migrate_at = source.index("/app/hunter/scripts/complete_loop_migrate.py")
     restart_at = source.index("=== RECREATE HUNTER ONLY ===")
-    assert stop_at < migrate_at < restart_at
+    assert snapshot_at < migrate_at < restart_at
+    assert "prepare_storage_safe_backup" in source
+    assert '"${compose[@]}" stop hunter' in source
+    assert "hunter_stopped=1" in source
+    assert "PRODUCTION_DB_PREBACKUP_QUICK_CHECK=PASS" in source
+    assert "PRODUCTION_DB_RAW_SHA256=" in source
     assert "--environment production" in source
     assert "AUTHORIZED_GUARDED_COMPLETE_LOOP_MIGRATION" in source
     assert "PRODUCTION_COMPLETE_LOOP_SCHEMA_READY=YES" in source
