@@ -15,12 +15,16 @@ from app import (
     application_submit_authorization_v1,
     application_production_submission_receipt_v1,
 )
+from app.database import get_setting
+from app.secure_vault import read_secret
 
 REQUEST_VERSION = "munshi-application-execution-request-v1"
 RESPONSE_VERSION = "munshi-application-execution-response-v1"
 PURPOSE_PLAN_CURRENT = "PLAN_CURRENT"
 PURPOSE_ARTIFACT_BYTES = "ARTIFACT_BYTES"
 PURPOSE_COVER_LETTER_BYTES = "COVER_LETTER_BYTES"
+PURPOSE_AUTOAPPLY_CONFIG = "AUTOAPPLY_CONFIG"
+PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET = "AUTOAPPLY_ANTHROPIC_SECRET"
 PURPOSE_SUBMIT_AUTH_ISSUE = "SUBMIT_AUTHORIZATION_ISSUE"
 PURPOSE_SUBMIT_AUTH_CLAIM = "SUBMIT_AUTHORIZATION_CLAIM"
 PURPOSE_SUBMIT_AUTH_READ = "SUBMIT_AUTHORIZATION_READ"
@@ -60,7 +64,13 @@ def _decode(body:bytes)->dict[str,Any]:
     return p
 
 def _verify(body:bytes,headers:Mapping[str,str],*,purpose:str,now:int|None=None)->dict[str,Any]:
-    if purpose not in {PURPOSE_PLAN_CURRENT,PURPOSE_ARTIFACT_BYTES,PURPOSE_COVER_LETTER_BYTES}: raise ValueError("Unsupported execution bridge purpose.")
+    if purpose not in {
+        PURPOSE_PLAN_CURRENT,
+        PURPOSE_ARTIFACT_BYTES,
+        PURPOSE_COVER_LETTER_BYTES,
+        PURPOSE_AUTOAPPLY_CONFIG,
+        PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET,
+    }: raise ValueError("Unsupported execution bridge purpose.")
     eid=_verify_signature(body,headers,now=now); p=_decode(body)
     if set(p)!=REQUIRED: raise ValueError("Execution bridge request shape is invalid.")
     if p.get("version")!=REQUEST_VERSION or p.get("purpose")!=purpose: raise ValueError("Execution bridge request version/purpose is invalid.")
@@ -109,6 +119,78 @@ def _control_response(body:bytes,headers:Mapping[str,str],*,now:int|None=None):
         result=application_production_submission_receipt_v1.ingest_receipt(dict(payload.get("receipt") or {}))
     out=_canonical({"version":RESPONSE_VERSION,"request_id":str(p["request_id"]),"purpose":purpose,"plan_id":str(p["plan_id"]),"plan_digest":str(p["plan_digest"]),"result":result})
     return out,_headers(request_id=str(p["request_id"]),purpose=purpose,body=out,plan_digest=str(p["plan_digest"]))
+
+def _autoapply_preferences()->dict[str,Any]:
+    raw=dict(get_setting("product_autoapply_preferences_v1", {}) or {})
+    auth_mode=str(raw.get("auth_mode") or "subscription").strip().casefold()
+    if auth_mode not in {"subscription","api"}:
+        auth_mode="subscription"
+    model=str(raw.get("model") or "sonnet").strip().casefold()
+    if not model or len(model)>120:
+        model="sonnet"
+    try:
+        max_turns=max(1,min(int(raw.get("max_turns",40)),200))
+    except (TypeError,ValueError):
+        max_turns=40
+    try:
+        max_cost=max(0.0,min(float(raw.get("max_cost_per_application_usd",1.0)),100.0))
+    except (TypeError,ValueError):
+        max_cost=1.0
+    return {
+        "enabled":bool(raw.get("enabled",False)),
+        "authMode":auth_mode,
+        "model":model,
+        "headless":bool(raw.get("headless",True)),
+        "maxTurns":max_turns,
+        "maxCostPerApplicationUsd":round(max_cost,2),
+        # Model recovery never carries final-submit authority. That remains
+        # exclusively in Hunter's one-use submit authorization contract.
+        "allowFinalSubmit":False,
+        "challengeServiceEnabled":False,
+    }
+
+def autoapply_config_response(body:bytes,headers:Mapping[str,str],*,now:int|None=None):
+    p=_verify(body,headers,purpose=PURPOSE_AUTOAPPLY_CONFIG,now=now)
+    plan,_,_=_authorized(p,purpose=PURPOSE_AUTOAPPLY_CONFIG)
+    config=_autoapply_preferences()
+    out=_canonical({
+        "version":RESPONSE_VERSION,
+        "request_id":str(p["request_id"]),
+        "purpose":PURPOSE_AUTOAPPLY_CONFIG,
+        "plan_id":str(plan["plan_id"]),
+        "plan_digest":str(plan["plan_digest"]),
+        "config":config,
+    })
+    return out,_headers(
+        request_id=str(p["request_id"]),
+        purpose=PURPOSE_AUTOAPPLY_CONFIG,
+        body=out,
+        plan_digest=str(plan["plan_digest"]),
+    )
+
+def autoapply_credential_response(body:bytes,headers:Mapping[str,str],*,now:int|None=None):
+    p=_verify(body,headers,purpose=PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET,now=now)
+    plan,_,_=_authorized(p,purpose=PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET)
+    config=_autoapply_preferences()
+    if config["enabled"] is not True or config["authMode"]!="api":
+        raise PermissionError("Dashboard AutoApply API authentication is not enabled.")
+    value=read_secret("autoapply_anthropic_api_key")
+    if not value:
+        raise LookupError("Dashboard Anthropic API credential is unavailable.")
+    data=value.encode("utf-8")
+    if len(data)>16384:
+        raise RuntimeError("Dashboard Anthropic API credential is invalid.")
+    response_headers=_headers(
+        request_id=str(p["request_id"]),
+        purpose=PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET,
+        body=data,
+        plan_digest=str(plan["plan_digest"]),
+    )
+    response_headers.update({
+        "X-Munshi-Credential-Type":"autoapply_anthropic_api_key",
+        "X-Munshi-Submission-Authority":"false",
+    })
+    return data,response_headers
 
 def current_plan_response(body:bytes,headers:Mapping[str,str],*,now:int|None=None):
     peek=_decode(body)
