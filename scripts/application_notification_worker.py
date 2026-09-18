@@ -42,6 +42,13 @@ def run_once() -> dict[str, int]:
 
 def main() -> int:
     once = "--once" in sys.argv[1:]
+    supervised = "--supervised" in sys.argv[1:]
+    if not once and not supervised and not _enabled(
+        "MUNSHI_APPLICATION_NOTIFICATION_WORKER_ENABLED"
+    ):
+        print("application_notification_worker=disabled")
+        return 0
+
     while True:
         result = run_once()
         print(
