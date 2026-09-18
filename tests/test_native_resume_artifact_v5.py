@@ -189,6 +189,46 @@ def test_artifact_materialization_fails_closed_after_job_snapshot_changes(
     with pytest.raises(RuntimeError, match="stored job changed"):
         artifacts.materialize(resume["version_id"])
 
+def test_effective_pdf_text_geometry_applies_chromium_page_transform() -> None:
+    # Chromium emits CSS-space text positions and maps them into PDF points via
+    # a 0.75 scale plus a vertical flip/translation.
+    y, font = artifacts._effective_pdf_text_geometry(
+        cm=[0.75, 0.0, 0.0, -0.75, 39.75, 763.5],
+        tm=[1.0, 0.0, 0.0, -1.0, 0.0, 946.0],
+        font_size=12.53,
+    )
+    assert y == pytest.approx(54.0)
+    assert font == pytest.approx(9.3975)
+
+
+def test_effective_pdf_geometry_prevents_false_bottom_edge_failure() -> None:
+    cm = [0.75, 0.0, 0.0, -0.75, 39.75, 763.5]
+    css_fragments = [
+        (24.0, 28.66),
+        (87.0, 14.4),
+        (220.0, 14.53),
+        (430.0, 14.53),
+        (700.0, 12.53),
+        (946.0, 12.53),
+    ]
+    fragments = [
+        artifacts._effective_pdf_text_geometry(
+            cm=cm,
+            tm=[1.0, 0.0, 0.0, -1.0, 0.0, css_y],
+            font_size=font,
+        )
+        for css_y, font in css_fragments
+    ]
+
+    result = artifacts._page_fit_metrics(
+        page_height=792.0,
+        fragments=fragments,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["bottom_whitespace_ratio"] == pytest.approx(54.0 / 792.0, abs=0.001)
+
+
 def test_page_fit_metrics_rejects_sparse_resume() -> None:
     with pytest.raises(ValueError, match="under-filled"):
         artifacts._page_fit_metrics(
