@@ -695,3 +695,43 @@ def test_explicit_resolution_does_not_grant_execution_without_autofill_permissio
     assert answer["autofill_allowed"] is False
     assert answer["requires_review"] is True
     assert reason == "normal_answer_autofill_permission_missing"
+
+
+def test_agile_ats_provider_is_exactly_host_bound(plan_db, monkeypatch):
+    package = _preflight(plan_db, monkeypatch)
+    connection = database.get_connection()
+    try:
+        connection.execute(
+            "UPDATE jobs SET apply_url=? WHERE id=?",
+            ("https://neomax.jobs.agile-ats.com/jobs/details/1119", package["job_id"]),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    # Rebuild the preflight because changing the exact application destination
+    # intentionally invalidates its job snapshot binding.
+    package = _preflight(plan_db, monkeypatch, application_id="application-agile-ats")
+
+    plan = application_plan_v2.prepare_application_plan(
+        preflight_package_id=package["package_id"],
+        idempotency_key="agile-ats-provider-plan",
+        answer_requirements=[],
+        permissions={
+            "background_prepare": True,
+            "resume_upload": True,
+            "normal_answer_autofill": True,
+            "cover_letter_upload": False,
+            "final_review": False,
+            "final_submit": False,
+            "protected_fact_execution": False,
+            "self_id_execution": False,
+        },
+        provider_policy=None,
+        secure_resolver_refs={},
+        resume_format="PDF",
+    )
+
+    assert plan["provider"] == "AGILE_ATS"
+    assert plan["snapshot"]["provider_policy"]["permitted"] is True
+    assert plan["snapshot"]["provider_policy"]["allowed_hosts"] == ["agile-ats.com"]
