@@ -8,6 +8,7 @@ telemetry. No discovery, targeting, queue, n8n, or submission state is mutated.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import streamlit as st
@@ -66,6 +67,49 @@ def provider_window_metrics(hours: int) -> dict[str, int]:
             return {key: int(row[index] or 0) for index, key in enumerate(keys)}
     finally:
         connection.close()
+
+
+def linkedin_link_health_snapshot() -> dict[str, Any]:
+    """Read the latest durable LinkedIn working-link integrity measurement."""
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """SELECT health_status, filter_summary_json, updated_at
+                 FROM source_health
+                WHERE LOWER(COALESCE(source_name,'')) LIKE '%linkedin%'
+                ORDER BY datetime(updated_at) DESC
+                LIMIT 1"""
+        ).fetchone()
+    finally:
+        connection.close()
+
+    if row is None:
+        return {
+            "percentage": None,
+            "total": 0,
+            "working": 0,
+            "quarantined": 0,
+            "threshold": 99.9,
+            "degraded": False,
+            "health_status": "not_recorded",
+        }
+
+    try:
+        summary = json.loads(str(row["filter_summary_json"] or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        summary = {}
+    percentage = summary.get("linkedin_working_link_pct")
+    threshold = float(summary.get("linkedin_link_health_threshold_pct") or 99.9)
+    degraded = bool(summary.get("linkedin_link_health_degraded"))
+    return {
+        "percentage": float(percentage) if percentage is not None else None,
+        "total": int(summary.get("linkedin_link_records_total") or 0),
+        "working": int(summary.get("linkedin_working_link_count") or 0),
+        "quarantined": int(summary.get("linkedin_quarantined_linkless_count") or 0),
+        "threshold": threshold,
+        "degraded": degraded,
+        "health_status": str(row["health_status"] or ""),
+    }
 
 
 def _window_phrase(hours: int) -> str:
@@ -150,6 +194,24 @@ def install_provider_telemetry_window(pages_module: Any) -> None:
         hours = _WINDOW_OPTIONS[selected]
         metrics = provider_window_metrics(hours)
         _render_metric_cards(product_v22, metrics, hours)
+
+        linkedin_health = linkedin_link_health_snapshot()
+        percentage = linkedin_health["percentage"]
+        product_v22._stat_card(
+            "LinkedIn working links",
+            "Not recorded" if percentage is None else f"{percentage:.1f}%",
+            (
+                "Latest LinkedIn source run with a usable canonical posting link. "
+                f"Threshold: {linkedin_health['threshold']:.1f}%. "
+                f"Quarantined linkless records: {linkedin_health['quarantined']:,}."
+            ),
+        )
+        if linkedin_health["degraded"]:
+            st.warning(
+                "LinkedIn source degraded: only "
+                f"{percentage:.1f}% of the latest fetched LinkedIn records had "
+                "a usable or reconstructable posting link."
+            )
         st.caption(
             "Jobs fetched is intentionally allowed to be much larger than Jobs stored because providers can return the same or overlapping opportunities across runs."
         )
