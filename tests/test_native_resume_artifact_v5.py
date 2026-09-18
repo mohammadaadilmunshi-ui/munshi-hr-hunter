@@ -137,17 +137,50 @@ def test_materialize_rejects_non_one_page_pdf_before_persistence(
         connection.close()
 
 
-def test_immutable_version_cannot_silently_change_artifact_bytes(
+def test_materialize_reuses_persisted_immutable_pair_without_rerender(
     hunter_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _confirmed_profile(hunter_db, monkeypatch)
     _fake_writer(monkeypatch)
     resume = resume_v5.generate_resume(job_id=_job())
     _renderers(monkeypatch)
-    artifacts.materialize(resume["version_id"])
+    first = artifacts.materialize(resume["version_id"])
 
-    _renderers(monkeypatch, suffix=b"-changed")
-    with pytest.raises(RuntimeError, match="Immutable Native Resume V5 artifact content changed"):
+    def must_not_render(*args, **kwargs):
+        raise AssertionError("persisted immutable resume must not be re-rendered")
+
+    monkeypatch.setattr(resume_v5.v4.v1, "version_pdf", must_not_render)
+    monkeypatch.setattr(resume_v5.v4.v1, "version_docx", must_not_render)
+
+    second = artifacts.materialize(resume["version_id"])
+
+    assert second["pdf"]["artifact_id"] == first["pdf"]["artifact_id"]
+    assert second["docx"]["artifact_id"] == first["docx"]["artifact_id"]
+    assert second["pdf"]["sha256"] == first["pdf"]["sha256"]
+    assert second["docx"]["sha256"] == first["docx"]["sha256"]
+    assert second["render_density"] == "stored_immutable"
+
+
+def test_materialize_fails_closed_if_persisted_artifact_bytes_are_corrupt(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _confirmed_profile(hunter_db, monkeypatch)
+    _fake_writer(monkeypatch)
+    resume = resume_v5.generate_resume(job_id=_job())
+    _renderers(monkeypatch)
+    first = artifacts.materialize(resume["version_id"])
+
+    connection = database.get_connection()
+    try:
+        connection.execute(
+            "UPDATE native_resume_v5_artifacts SET content=? WHERE artifact_id=?",
+            (b"%PDF-1.7\ncorrupt", first["pdf"]["artifact_id"]),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(RuntimeError, match="stored artifact failed integrity"):
         artifacts.materialize(resume["version_id"])
 
 
