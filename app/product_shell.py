@@ -206,6 +206,9 @@ def render() -> None:
     from app.auto_prepare_readiness_ui_v1 import (
         install_auto_prepare_readiness_ui,
     )
+    from app.targeting_settings_ui_v1 import (
+        install_targeting_settings_ui,
+    )
     from app.application_notification_ui_v1 import (
         install_application_notification_ui,
     )
@@ -263,6 +266,11 @@ def render() -> None:
     # the same Dashboard/Browse Jobs card renderer and lazy user-facing sections.
     # This does not change preparation, targeting, or submission authority.
     install_unified_job_workspaces(product_pages, application_workspace_page)
+
+    # Promote canonical job-search targeting out of the buried engineering
+    # selector and into the customer-facing Advanced/System settings surface.
+    # This wrapper edits the same versioned "targeting" setting used everywhere.
+    install_targeting_settings_ui(product_pages)
 
     # Restore the staging application-notification projection after the final
     # workspace wrapper. Its installer is function-marker based and therefore
