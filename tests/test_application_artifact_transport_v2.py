@@ -98,3 +98,68 @@ def test_artifact_digest_mismatch_fails_closed(monkeypatch):
     body, headers = _request(bridge.PURPOSE_ARTIFACT_BYTES)
     with pytest.raises(RuntimeError, match="digest"):
         bridge.artifact_response(body, headers, now=1000)
+
+
+def test_autoapply_config_is_plan_bound_and_never_contains_secret(monkeypatch):
+    monkeypatch.setattr(
+        bridge,
+        "get_setting",
+        lambda _key, _default: {
+            "enabled": True,
+            "auth_mode": "api",
+            "model": "sonnet",
+            "headless": True,
+            "max_turns": 40,
+            "max_cost_per_application_usd": 1.0,
+            "allow_final_submit": True,
+        },
+    )
+    body, headers = _request(bridge.PURPOSE_AUTOAPPLY_CONFIG)
+    response, response_headers = bridge.autoapply_config_response(body, headers, now=1000)
+    payload = json.loads(response)
+
+    assert payload["config"]["enabled"] is True
+    assert payload["config"]["authMode"] == "api"
+    assert payload["config"]["model"] == "sonnet"
+    assert payload["config"]["maxTurns"] == 40
+    # Model recovery never inherits final-submit authority from Settings.
+    assert payload["config"]["allowFinalSubmit"] is False
+    assert "api_key" not in json.dumps(payload).lower()
+    assert "anthropic_api_key" not in json.dumps(payload).lower()
+    _verify_response(response, response_headers, bridge.PURPOSE_AUTOAPPLY_CONFIG)
+
+
+def test_autoapply_anthropic_secret_is_raw_signed_and_api_mode_only(monkeypatch):
+    monkeypatch.setattr(
+        bridge,
+        "get_setting",
+        lambda _key, _default: {
+            "enabled": True,
+            "auth_mode": "api",
+            "model": "sonnet",
+            "max_cost_per_application_usd": 1.0,
+        },
+    )
+    reads = []
+    monkeypatch.setattr(
+        bridge,
+        "read_secret",
+        lambda credential_type: reads.append(credential_type) or "dashboard-anthropic-secret",
+    )
+
+    body, headers = _request(bridge.PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET)
+    response, response_headers = bridge.autoapply_credential_response(body, headers, now=1000)
+
+    assert response == b"dashboard-anthropic-secret"
+    assert reads == ["autoapply_anthropic_api_key"]
+    assert response_headers["X-Munshi-Credential-Type"] == "autoapply_anthropic_api_key"
+    assert response_headers["X-Munshi-Submission-Authority"] == "false"
+    _verify_response(response, response_headers, bridge.PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET)
+
+    monkeypatch.setattr(
+        bridge,
+        "get_setting",
+        lambda _key, _default: {"enabled": True, "auth_mode": "subscription"},
+    )
+    with pytest.raises(PermissionError, match="API authentication"):
+        bridge.autoapply_credential_response(body, headers, now=1000)
