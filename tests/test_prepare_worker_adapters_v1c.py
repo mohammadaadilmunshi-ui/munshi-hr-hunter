@@ -799,3 +799,169 @@ def test_runtime_sync_rejects_authority_escalation():
             payload, prepare_job_id="prepare-job-94", session_id="session-94",
             application_id="application-94", plan_id="plan-94",
         )
+
+
+def test_provider_capability_retry_uses_new_immutable_key_only_for_exact_blocker(
+    monkeypatch,
+) -> None:
+    operation = {
+        "operation_id": "prepare-op-provider-retry",
+        "application_id": "application-94",
+        "job_id": 94,
+    }
+    pending = {"output": {"plan_id": "prior-provider-plan"}}
+    preflight = {
+        "preflight_package_id": "preflight-94",
+        "resume_version_id": "resume-v5-94",
+        "resume_pdf_sha256": "d" * 64,
+    }
+    prior = {
+        "plan_id": "prior-provider-plan",
+        "status": "NEEDS_INPUT",
+        "executable": False,
+        "submission_authority": False,
+        "application_id": "application-94",
+        "job_id": 94,
+        "preflight_package_id": "preflight-94",
+        "provider": "UNSUPPORTED",
+        "snapshot": {
+            "expected_state": "NEEDS_INPUT",
+            "global_blockers": ["provider_not_permitted_or_supported"],
+            "unresolved": [],
+            "provider_policy": {
+                "provider": "UNSUPPORTED",
+                "permitted": False,
+            },
+            "resume": {
+                "version_id": "resume-v5-94",
+                "artifact_sha256": "d" * 64,
+            },
+        },
+    }
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "get_application_plan",
+        lambda _plan_id: prior,
+    )
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "application_plan_freshness",
+        lambda _plan_id: {"fresh": True},
+    )
+
+    key, prior_id = workers._application_plan_idempotency_key(
+        operation=operation,
+        pending_task=pending,
+        preflight=preflight,
+    )
+
+    assert key == (
+        "prepare:prepare-op-provider-retry:application-plan:v1c:"
+        "provider-capability-v2"
+    )
+    assert prior_id == "prior-provider-plan"
+
+
+def test_provider_capability_retry_never_bypasses_mixed_or_answer_blockers(
+    monkeypatch,
+) -> None:
+    operation = {
+        "operation_id": "prepare-op-provider-retry",
+        "application_id": "application-94",
+        "job_id": 94,
+    }
+    pending = {"output": {"plan_id": "prior-provider-plan"}}
+    preflight = {
+        "preflight_package_id": "preflight-94",
+        "resume_version_id": "resume-v5-94",
+        "resume_pdf_sha256": "d" * 64,
+    }
+    prior = {
+        "plan_id": "prior-provider-plan",
+        "status": "NEEDS_INPUT",
+        "executable": False,
+        "submission_authority": False,
+        "application_id": "application-94",
+        "job_id": 94,
+        "preflight_package_id": "preflight-94",
+        "provider": "UNSUPPORTED",
+        "snapshot": {
+            "expected_state": "NEEDS_INPUT",
+            "global_blockers": [
+                "provider_not_permitted_or_supported",
+                "resume_upload_permission_missing",
+            ],
+            "unresolved": [{"question_key": "job.custom", "reason": "needs_input"}],
+            "provider_policy": {
+                "provider": "UNSUPPORTED",
+                "permitted": False,
+            },
+            "resume": {
+                "version_id": "resume-v5-94",
+                "artifact_sha256": "d" * 64,
+            },
+        },
+    }
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "get_application_plan",
+        lambda _plan_id: prior,
+    )
+
+    key, prior_id = workers._application_plan_idempotency_key(
+        operation=operation,
+        pending_task=pending,
+        preflight=preflight,
+    )
+
+    assert key == "prepare:prepare-op-provider-retry:application-plan:v1c"
+    assert prior_id is None
+
+
+def test_provider_capability_retry_fails_closed_on_binding_drift(monkeypatch) -> None:
+    operation = {
+        "operation_id": "prepare-op-provider-retry",
+        "application_id": "application-94",
+        "job_id": 94,
+    }
+    pending = {"output": {"plan_id": "prior-provider-plan"}}
+    preflight = {
+        "preflight_package_id": "preflight-94",
+        "resume_version_id": "resume-v5-94",
+        "resume_pdf_sha256": "d" * 64,
+    }
+    prior = {
+        "plan_id": "prior-provider-plan",
+        "status": "NEEDS_INPUT",
+        "executable": False,
+        "submission_authority": False,
+        "application_id": "application-94",
+        "job_id": 94,
+        "preflight_package_id": "preflight-94",
+        "provider": "UNSUPPORTED",
+        "snapshot": {
+            "expected_state": "NEEDS_INPUT",
+            "global_blockers": ["provider_not_permitted_or_supported"],
+            "unresolved": [],
+            "provider_policy": {
+                "provider": "UNSUPPORTED",
+                "permitted": False,
+            },
+            "resume": {
+                "version_id": "resume-v5-94",
+                "artifact_sha256": "e" * 64,
+            },
+        },
+    }
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "get_application_plan",
+        lambda _plan_id: prior,
+    )
+
+    with pytest.raises(RuntimeError, match="mismatched prior Application Plan"):
+        workers._application_plan_idempotency_key(
+            operation=operation,
+            pending_task=pending,
+            preflight=preflight,
+        )
