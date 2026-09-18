@@ -46,12 +46,26 @@ n8n_started="$(docker inspect -f '{{.State.StartedAt}}' "$N")"
 ollama_id="$(docker inspect -f '{{.Id}}' "$O")"
 ollama_started="$(docker inspect -f '{{.State.StartedAt}}' "$O")"
 
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
+get_env_value() {
+  local key="$1"
+  python3 - "$key" "$ENV_FILE" <<'PY'
+import sys
+key,path=sys.argv[1:]
+value=""
+with open(path,"r",encoding="utf-8") as fh:
+    for raw in fh:
+        line=raw.rstrip("\n")
+        if not line or line.lstrip().startswith("#") or "=" not in line:
+            continue
+        k,v=line.split("=",1)
+        if k==key:
+            value=v
+print(value)
+PY
+}
+
 for key in MUNSHI_APPLY_COMMAND_SECRET MUNSHI_APPLY_HANDOFF_HMAC_SECRET MUNSHI_PRODUCTION_SUBMIT_AUTH_HMAC_SECRET MUNSHI_PRODUCTION_RECEIPT_HMAC_SECRET; do
-  value="${!key:-}"
+  value="$(get_env_value "$key")"
   [[ "${#value}" -ge 32 ]] || { echo "required shared AutoApply secret missing/too short: $key" >&2; exit 14; }
 done
 
@@ -118,17 +132,18 @@ fi
 # Optional external notification/mail services are activated only when their
 # already-provisioned runtime credentials exist. The deployment never invents
 # third-party API credentials or Cloudflare signing material.
-set -a
-source "$ENV_FILE"
-set +a
-if [[ -n "${MUNSHI_SMTP2GO_API_KEY:-}" && -n "${MUNSHI_SMTP2GO_SENDER:-}" ]]; then
+smtp_key="$(get_env_value MUNSHI_SMTP2GO_API_KEY)"
+smtp_sender="$(get_env_value MUNSHI_SMTP2GO_SENDER)"
+if [[ -n "$smtp_key" && -n "$smtp_sender" ]]; then
   set_env_value MUNSHI_APPLICATION_EMAIL_NOTIFICATIONS_ENABLED true
   set_env_value MUNSHI_APPLICATION_NOTIFICATION_WORKER_ENABLED true
   echo "APPLICATION_EMAIL_NOTIFICATIONS=ENABLED"
 else
   echo "APPLICATION_EMAIL_NOTIFICATIONS=EXTERNAL_CREDENTIAL_NOT_CONFIGURED"
 fi
-if [[ "${#MUNSHI_MAIL_SIGNING_SECRET:-0}" -ge 32 && "${#MUNSHI_MAIL_ARTIFACT_HMAC_SECRET:-0}" -ge 32 ]]; then
+mail_signing="$(get_env_value MUNSHI_MAIL_SIGNING_SECRET)"
+mail_artifact="$(get_env_value MUNSHI_MAIL_ARTIFACT_HMAC_SECRET)"
+if [[ "${#mail_signing}" -ge 32 && "${#mail_artifact}" -ge 32 ]]; then
   set_env_value MUNSHI_APPLICATION_MAIL_RELAY_ENABLED true
   echo "APPLICATION_MAIL_RELAY=ENABLED"
 else
