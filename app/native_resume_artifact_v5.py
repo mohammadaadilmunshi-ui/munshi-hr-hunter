@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import math
 import sqlite3
 from typing import Any
 from zipfile import BadZipFile, ZipFile
@@ -136,6 +137,36 @@ def _page_fit_metrics(
     }
 
 
+def _effective_pdf_text_geometry(
+    *,
+    cm: list[float] | tuple[float, ...],
+    tm: list[float] | tuple[float, ...],
+    font_size: float,
+) -> tuple[float, float]:
+    """Return text baseline Y and font size in PDF page coordinates.
+
+    pypdf's visitor exposes the text matrix (tm) separately from the current
+    transformation matrix (cm). Chromium places CSS pixels in tm and maps them
+    into PDF points through cm. Using tm[5] directly therefore measures CSS
+    coordinates, not page coordinates, and can falsely report content at y=0
+    or below the safe bottom margin.
+
+    PDF affine transform:
+      y' = x * b + y * d + f
+    where b=cm[1], d=cm[3], f=cm[5].
+    """
+    if len(cm) < 6 or len(tm) < 6:
+        raise ValueError("Native Resume V5 PDF text transform is incomplete.")
+    x = float(tm[4])
+    y = float(tm[5])
+    page_y = x * float(cm[1]) + y * float(cm[3]) + float(cm[5])
+    y_scale = math.hypot(float(cm[2]), float(cm[3]))
+    effective_font = abs(float(font_size or 0)) * (y_scale or 1.0)
+    if not math.isfinite(page_y) or not math.isfinite(effective_font):
+        raise ValueError("Native Resume V5 PDF text transform is invalid.")
+    return page_y, effective_font
+
+
 def _validated_pdf_layout(data: bytes) -> dict[str, Any]:
     try:
         reader = PdfReader(io.BytesIO(data), strict=True)
@@ -148,12 +179,15 @@ def _validated_pdf_layout(data: bytes) -> dict[str, Any]:
         page_height = float(page.mediabox.height)
         fragments: list[tuple[float, float]] = []
 
-        def visitor_text(text, _cm, tm, _font_dict, font_size):
+        def visitor_text(text, cm, tm, _font_dict, font_size):
             if not str(text or "").strip():
                 return
             try:
-                y = float(tm[5])
-                size = float(font_size or 0)
+                y, size = _effective_pdf_text_geometry(
+                    cm=cm,
+                    tm=tm,
+                    font_size=float(font_size or 0),
+                )
             except (TypeError, ValueError, IndexError):
                 return
             if 0 <= y <= page_height:
