@@ -824,8 +824,18 @@ def test_provider_capability_retry_uses_new_immutable_key_only_for_exact_blocker
         "job_id": 94,
         "preflight_package_id": "preflight-94",
         "provider": "UNSUPPORTED",
+        "inputs": {
+            "preflight_package_id": "preflight-94",
+            "answer_requirements": [],
+            "permissions": {},
+            "provider_policy": {},
+            "secure_resolver_refs": {},
+            "resume_format": "PDF",
+            "answer_overrides": {},
+        },
         "snapshot": {
             "expected_state": "NEEDS_INPUT",
+            "executable": False,
             "global_blockers": ["provider_not_permitted_or_supported"],
             "unresolved": [],
             "provider_policy": {
@@ -845,8 +855,17 @@ def test_provider_capability_retry_uses_new_immutable_key_only_for_exact_blocker
     )
     monkeypatch.setattr(
         workers.application_plan_v2,
-        "application_plan_freshness",
-        lambda _plan_id: {"fresh": True},
+        "_capture",
+        lambda **_kwargs: {
+            **prior["snapshot"],
+            "expected_state": "READY_TO_APPLY",
+            "executable": True,
+            "global_blockers": [],
+            "provider_policy": {
+                "provider": "AGILE_ATS",
+                "permitted": True,
+            },
+        },
     )
 
     key, prior_id = workers._application_plan_idempotency_key(
@@ -960,6 +979,83 @@ def test_provider_capability_retry_fails_closed_on_binding_drift(monkeypatch) ->
     )
 
     with pytest.raises(RuntimeError, match="mismatched prior Application Plan"):
+        workers._application_plan_idempotency_key(
+            operation=operation,
+            pending_task=pending,
+            preflight=preflight,
+        )
+
+
+def test_provider_capability_retry_fails_closed_on_non_provider_semantic_drift(
+    monkeypatch,
+) -> None:
+    operation = {
+        "operation_id": "prepare-op-provider-retry-drift",
+        "application_id": "application-94",
+        "job_id": 94,
+    }
+    pending = {"output": {"plan_id": "prior-provider-plan"}}
+    preflight = {
+        "preflight_package_id": "preflight-94",
+        "resume_version_id": "resume-v5-94",
+        "resume_pdf_sha256": "d" * 64,
+    }
+    prior = {
+        "plan_id": "prior-provider-plan",
+        "status": "NEEDS_INPUT",
+        "executable": False,
+        "submission_authority": False,
+        "application_id": "application-94",
+        "job_id": 94,
+        "preflight_package_id": "preflight-94",
+        "provider": "UNSUPPORTED",
+        "inputs": {
+            "preflight_package_id": "preflight-94",
+            "answer_requirements": [],
+            "permissions": {},
+            "provider_policy": {},
+            "secure_resolver_refs": {},
+            "resume_format": "PDF",
+            "answer_overrides": {},
+        },
+        "snapshot": {
+            "expected_state": "NEEDS_INPUT",
+            "executable": False,
+            "global_blockers": ["provider_not_permitted_or_supported"],
+            "unresolved": [],
+            "provider_policy": {
+                "provider": "UNSUPPORTED",
+                "permitted": False,
+            },
+            "resume": {
+                "version_id": "resume-v5-94",
+                "artifact_sha256": "d" * 64,
+            },
+            "candidate_truth_binding": {"profile_digest": "a" * 64},
+        },
+    }
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "get_application_plan",
+        lambda _plan_id: prior,
+    )
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "_capture",
+        lambda **_kwargs: {
+            **prior["snapshot"],
+            "expected_state": "READY_TO_APPLY",
+            "executable": True,
+            "global_blockers": [],
+            "provider_policy": {
+                "provider": "AGILE_ATS",
+                "permitted": True,
+            },
+            "candidate_truth_binding": {"profile_digest": "b" * 64},
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="non-provider Application Plan drift"):
         workers._application_plan_idempotency_key(
             operation=operation,
             pending_task=pending,
