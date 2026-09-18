@@ -195,6 +195,97 @@ def _render_job_header(snapshot: dict[str, Any]) -> None:
 
 
 
+def _render_application_lifecycle_guide() -> None:
+    st.markdown("### What happens to every application")
+    steps = st.columns(5, gap="small")
+    step_copy = (
+        (
+            "1 · Prepare",
+            "MUNSHI builds the application package in the background.",
+        ),
+        (
+            "2 · Resolve gaps",
+            "You are asked only for information Candidate Truth cannot safely supply.",
+        ),
+        (
+            "3 · Review once",
+            "You review the complete package once, not the application step-by-step.",
+        ),
+        (
+            "4 · Apply",
+            "Approve & Submit grants one-use authority for the exact reviewed package.",
+        ),
+        (
+            "5 · Verify",
+            "MUNSHI records independent submission evidence and a durable receipt.",
+        ),
+    )
+    for column, (title, body) in zip(steps, step_copy):
+        with column:
+            with st.container(border=True):
+                st.markdown(f"**{title}**")
+                st.caption(body)
+    st.info(
+        "You only need to intervene when MUNSHI shows **Needs input**, "
+        "**Ready for review**, or a security checkpoint. Everything else is background work."
+    )
+
+
+def _render_current_action(state: str) -> None:
+    normalized = str(state or "").strip().upper()
+    if not normalized:
+        st.info(
+            "**Your action now:** none required unless you want to start this job manually. "
+            "Auto Prepare may also admit an eligible job automatically."
+        )
+        return
+
+    if normalized in {
+        "OPTIMIZING",
+        "PREPARING",
+        "PLAN_ACCEPTED",
+        "PREPARING_ATS",
+        "READY_TO_APPLY",
+    }:
+        st.info(
+            "**Your action now:** none. MUNSHI is preparing the package in the background."
+        )
+    elif normalized == "NEEDS_INPUT":
+        st.warning(
+            "**Your action now:** answer only the genuine missing employer question(s) shown below. "
+            "MUNSHI will not guess."
+        )
+    elif normalized in {"READY_FOR_REVIEW", "READY_TO_SUBMIT"}:
+        st.warning(
+            "**Your action now:** review the complete package once, then press **Approve & Submit** "
+            "if it is correct. There is no second approval step."
+        )
+    elif normalized == "SUBMITTING":
+        st.info(
+            "**Your action now:** none. Your single approval is already recorded and MUNSHI is applying."
+        )
+    elif normalized in {"SUBMITTED", "VERIFIED", "AWAITING_RESPONSE"}:
+        st.success(
+            "**Your action now:** none. Submission/verification evidence is recorded; "
+            "MUNSHI is tracking the response lifecycle."
+        )
+    elif normalized in {"ISSUE", "FAILED_SAFELY", "BLOCKED", "SUBMISSION_UNVERIFIED"}:
+        st.error(
+            "**Your action now:** review the recorded issue before retrying. "
+            "Do not submit again unless MUNSHI explicitly makes retry available."
+        )
+    elif normalized == "CANCELLED":
+        st.warning(
+            "**Your action now:** this application flow is cancelled. Start a new preparation "
+            "only if you still want to pursue the role."
+        )
+    else:
+        st.info(
+            f"**Current lifecycle:** {normalized.replace('_', ' ').title()}. "
+            "Follow the recorded application timeline below."
+        )
+
+
 def _human_unresolved(value: str) -> str:
     text = str(value or '').strip()
     if text.startswith('apply.runtime_question:'):
@@ -215,6 +306,7 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
     flow = complete_loop.flow_for_job(int(job_id))
     state = str(flow.get('state') or '')
 
+    _render_current_action(state)
     st.markdown('### Application progress')
     st.caption(
         'The source of truth across preparation, the one customer review, '
@@ -775,6 +867,7 @@ def render() -> None:
         "Prepare, resolve, review, and track one application",
         "MUNSHI builds the package in the background, surfaces only genuine missing information, and keeps submission verification separate from preparation.",
     )
+    _render_application_lifecycle_guide()
     jobs = _job_options()
     if not jobs:
         st.info("No owned jobs are available yet. Add or discover a job first.")
