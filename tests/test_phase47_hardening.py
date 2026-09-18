@@ -408,6 +408,97 @@ def test_phase47_integrity_requires_one_current_truth_and_job_snapshot(
     assert "opportunity_evaluation_stale" in stale["blockers"]
 
 
+
+def test_phase47_advisory_opportunity_unknowns_do_not_block_preflight(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _confirmed_profile(hunter_db, monkeypatch)
+    monkeypatch.setenv("MUNSHI_APPLICATION_ANSWER_BRAIN_ENABLED", "1")
+    monkeypatch.setenv("MUNSHI_CAREER_POLICY_ENABLED", "1")
+    career_policy.save_preferences({"target_roles": ["People Analytics Analyst"]})
+    career_policy.save_autopilot_policy({})
+    snapshot = phase45_truth_binding.current_candidate_profile_snapshot()
+    _fake_resume_writer(monkeypatch, snapshot)
+    job_id = _job()
+    resume = resume_v4.generate_resume(job_id=job_id)
+    opportunity = opportunity_v3.evaluate_job(job_id)
+
+    advisory = {
+        **opportunity,
+        "status": "NEEDS_INPUT",
+        "hard_failures": [],
+        "unknowns": ["work_authorization_match", "career_direction_fit"],
+        "pursuit_strategy": {
+            **dict(opportunity.get("pursuit_strategy") or {}),
+            "pursuit_state": "WATCH",
+        },
+    }
+    monkeypatch.setattr(
+        opportunity_v3,
+        "get_evaluation",
+        lambda evaluation_id: advisory,
+    )
+    monkeypatch.setattr(
+        opportunity_v3,
+        "evaluation_freshness",
+        lambda evaluation_id: {"fresh": True},
+    )
+
+    ready = phase47_integrity.application_preparation_readiness(
+        job_id=job_id,
+        resume_version_id=resume["version_id"],
+        opportunity_evaluation_id=opportunity["evaluation_id"],
+    )
+
+    assert ready["status"] == "READY"
+    assert ready["blockers"] == []
+    assert "opportunity_advisory_needs_input" in ready["advisories"]
+    assert "opportunity_unknown:work_authorization_match" in ready["advisories"]
+
+
+def test_phase47_real_opportunity_hard_failure_still_blocks(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _confirmed_profile(hunter_db, monkeypatch)
+    monkeypatch.setenv("MUNSHI_APPLICATION_ANSWER_BRAIN_ENABLED", "1")
+    monkeypatch.setenv("MUNSHI_CAREER_POLICY_ENABLED", "1")
+    career_policy.save_preferences({"target_roles": ["People Analytics Analyst"]})
+    career_policy.save_autopilot_policy({})
+    snapshot = phase45_truth_binding.current_candidate_profile_snapshot()
+    _fake_resume_writer(monkeypatch, snapshot)
+    job_id = _job()
+    resume = resume_v4.generate_resume(job_id=job_id)
+    opportunity = opportunity_v3.evaluate_job(job_id)
+
+    blocked = {
+        **opportunity,
+        "status": "NEEDS_INPUT",
+        "hard_failures": ["citizenship_requirement_mismatch"],
+        "unknowns": [],
+    }
+    monkeypatch.setattr(
+        opportunity_v3,
+        "get_evaluation",
+        lambda evaluation_id: blocked,
+    )
+    monkeypatch.setattr(
+        opportunity_v3,
+        "evaluation_freshness",
+        lambda evaluation_id: {"fresh": True},
+    )
+
+    hold = phase47_integrity.application_preparation_readiness(
+        job_id=job_id,
+        resume_version_id=resume["version_id"],
+        opportunity_evaluation_id=opportunity["evaluation_id"],
+    )
+
+    assert hold["status"] == "HOLD"
+    assert (
+        "opportunity_hard_failure:citizenship_requirement_mismatch"
+        in hold["blockers"]
+    )
+
 def test_migration_033_is_additive(hunter_db) -> None:
     job_id = _job()
     connection = database.get_connection()
