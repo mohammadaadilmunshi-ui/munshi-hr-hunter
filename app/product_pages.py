@@ -20,6 +20,11 @@ from app.product_state import (
     update_lane, volume_policy,
 )
 from app.product_ui import esc, page_intro, pastel_for, safe_link, score_ring
+from app.linkedin_url_contract import (
+    canonical_linkedin_job_url,
+    direct_application_url,
+    is_linkedin_source,
+)
 
 
 def _sync_subroute(parameter: str, state_key: str, values: dict[str, str]) -> None:
@@ -164,6 +169,30 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
             on_click=_open_job_detail,
             args=(job_id,),
         )
+        if is_linkedin_source(row.get("source")):
+            linkedin_url = canonical_linkedin_job_url(
+                row.get("job_url"),
+                job_id=row.get("ats_job_id"),
+            )
+            direct_url = direct_application_url(
+                row.get("apply_url"),
+                linkedin_url=linkedin_url,
+            )
+            external_actions = st.columns(2 if direct_url else 1, gap="small")
+            with external_actions[0]:
+                st.link_button(
+                    "Open LinkedIn job",
+                    linkedin_url,
+                    use_container_width=True,
+                )
+            if direct_url:
+                with external_actions[1]:
+                    st.link_button(
+                        "Apply",
+                        direct_url,
+                        type="primary",
+                        use_container_width=True,
+                    )
         actions = st.columns(3, gap="small")
         saved = bool(row.get("saved"))
         skipped = bool(row.get("skipped"))
