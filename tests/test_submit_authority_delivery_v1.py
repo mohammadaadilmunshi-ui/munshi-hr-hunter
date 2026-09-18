@@ -159,6 +159,23 @@ def test_missing_session_binding_is_refused(monkeypatch: pytest.MonkeyPatch) -> 
     assert "session" in str(result["error"]).lower()
 
 
+def test_explicit_private_apply_bridge_allows_internal_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(v1c.AUTHORITY_DELIVERY_ENV, "true")
+    monkeypatch.setenv(v1c.APPLY_COMMAND_SECRET_ENV, "test-command-secret")
+    monkeypatch.setenv(v1c.APPLY_INTERNAL_HTTP_ENABLED_ENV, "true")
+    monkeypatch.setenv(v1c.APPLY_INTERNAL_HTTP_BASE_URL_ENV, "http://apply:8000")
+    monkeypatch.setenv(v1c.APPLY_BASE_URL_ENV, "http://apply:8000")
+    monkeypatch.setattr(v1c, "_json_request", lambda **kwargs: _ack(kwargs["body"]))
+    assert v1c.deliver_submit_authorization(_envelope())["delivered"] is True
+
+    monkeypatch.setenv(v1c.APPLY_BASE_URL_ENV, "http://not-apply:8000")
+    result = v1c.deliver_submit_authorization(_envelope())
+    assert result["delivered"] is False
+    assert "allowlisted private Docker bridge" in str(result["error"])
+
+
 def test_non_loopback_delivery_requires_https(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(v1c.AUTHORITY_DELIVERY_ENV, "true")
     monkeypatch.setenv(v1c.APPLY_COMMAND_SECRET_ENV, "test-command-secret")
