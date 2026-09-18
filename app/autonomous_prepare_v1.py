@@ -395,19 +395,31 @@ def drive_operation_once(operation_id: str) -> dict[str, Any]:
     }
 
 
-def drive_open_operations(*, limit: int = 25) -> dict[str, Any]:
-    """Advance owner-scoped QUEUED/RUNNING Prepare operations independently."""
+def drive_open_operations(
+    *, limit: int = 25, newest_first: bool = False
+) -> dict[str, Any]:
+    """Advance owner-scoped QUEUED/RUNNING Prepare operations independently.
+
+    Existing coordinator callers keep oldest-first fairness. The low-latency
+    supervised runtime may explicitly request newest-first ordering so a fresh
+    customer Prepare click is not queued behind stale recovery work.
+    """
     connection = get_connection()
     try:
         orchestrator.ensure_schema()
         owner = current_owner(connection)
+        ordering = (
+            "datetime(created_at) DESC, rowid DESC"
+            if newest_first
+            else "datetime(created_at), rowid"
+        )
         rows = connection.execute(
-            """SELECT operation_id
-                 FROM prepare_operations_v1
-                WHERE tenant_id=? AND user_id=?
-                  AND status IN ('QUEUED','RUNNING')
-                ORDER BY datetime(created_at), rowid
-                LIMIT ?""",
+            f"""SELECT operation_id
+                  FROM prepare_operations_v1
+                 WHERE tenant_id=? AND user_id=?
+                   AND status IN ('QUEUED','RUNNING')
+                 ORDER BY {ordering}
+                 LIMIT ?""",
             (owner.tenant_id, owner.user_id, max(1, int(limit))),
         ).fetchall()
         operation_ids = [str(row[0]) for row in rows]
