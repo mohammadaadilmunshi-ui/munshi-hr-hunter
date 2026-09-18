@@ -27,7 +27,7 @@ def _renderers(
     monkeypatch.setattr(
         resume_v5.v4.v1,
         "version_pdf",
-        lambda _version_id: (_pdf(pages=pages, suffix=suffix), pages),
+        lambda _version_id, **_kwargs: (_pdf(pages=pages, suffix=suffix), pages),
     )
     if pages == 1:
         monkeypatch.setattr(
@@ -77,6 +77,41 @@ def test_materialize_persists_exact_one_page_pdf_and_docx_idempotently(
         connection.close()
 
 
+
+def test_materialize_uses_compact_local_render_before_failing(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _confirmed_profile(hunter_db, monkeypatch)
+    _fake_writer(monkeypatch)
+    resume = resume_v5.generate_resume(job_id=_job())
+
+    calls: list[str] = []
+
+    def render(_version_id: str, *, render_density: str = "normal"):
+        calls.append(render_density)
+        pages = 2 if render_density == "normal" else 1
+        return _pdf(pages=pages), pages
+
+    monkeypatch.setattr(resume_v5.v4.v1, "version_pdf", render)
+    monkeypatch.setattr(
+        artifacts,
+        "_validated_pdf_layout",
+        lambda _data: {
+            "status": "PASS",
+            "pdf_pages": 1,
+            "occupied_height_ratio": 0.80,
+            "bottom_whitespace_ratio": 0.14,
+            "text_fragment_count": 38,
+        },
+    )
+
+    result = artifacts.materialize(resume["version_id"])
+
+    assert calls[:2] == ["normal", "compact"]
+    assert result["page_verification"]["render_density"] == "compact"
+    assert result["render_density"] == "compact"
+    assert result["pdf"]["page_count"] == 1
+
 def test_materialize_rejects_non_one_page_pdf_before_persistence(
     hunter_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -125,7 +160,7 @@ def test_materialize_rejects_a_corrupt_pdf_even_if_renderer_claims_one_page(
     monkeypatch.setattr(
         resume_v5.v4.v1,
         "version_pdf",
-        lambda _version_id: (b"%PDF-1.7\nnot a parseable PDF", 1),
+        lambda _version_id, **_kwargs: (b"%PDF-1.7\nnot a parseable PDF", 1),
     )
 
     with pytest.raises(RuntimeError, match="invalid document"):
