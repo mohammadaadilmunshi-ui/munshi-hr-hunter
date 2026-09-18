@@ -910,3 +910,151 @@ def run_ats_form_preparation_once(
                 "validation_errors": list(application.get("warnings") or []),
                 "checkpoint_id": str(snapshot["checkpoint_id"]),
                 "review_fields": list(snapshot.get("answers") or []),
+            }
+            frozen_cover = snapshot.get("cover_letter")
+            if isinstance(frozen_cover, Mapping):
+                prepared_package["cover_letter_sha256"] = str(
+                    frozen_cover.get("sha256") or ""
+                )
+            hunter_review = dict(
+                record_review(
+                    plan_id=str(plan["plan_id"]),
+                    prepared_package=prepared_package,
+                    idempotency_key=f"prepare:{operation_id}:customer-review:v1",
+                )
+            )
+            output = {
+                "version": WORKER_VERSION,
+                "plan_id": str(plan["plan_id"]),
+                "plan_digest": str(plan["plan_digest"]),
+                "provider": str(plan["provider"]),
+                "handoff_id": str(getattr(delivery, "handoff_id", "")),
+                "handoff_state": "PLAN_ACCEPTED",
+                "apply_session_id": str(session["session_id"]),
+                "apply_session_state_at_start": str(session["state"]),
+                "apply_prepare_job_id": prepare_job_id,
+                "apply_prepare_state": "READY_FOR_REVIEW",
+                "browser_preparation_completed": True,
+                "cover_letter_decision": str(cover.get("decision") or ""),
+                "cover_letter_id": cover_letter_id,
+                "cover_letter_artifact_sha256": (
+                    str(cover_letter.get("artifact_sha256") or "")
+                    if cover_letter is not None
+                    else None
+                ),
+                "cover_letter_page_count": (
+                    int(cover_letter.get("page_count") or 0)
+                    if cover_letter is not None
+                    else None
+                ),
+                "customer_review_id": str(hunter_review["review_id"]),
+                "customer_review_digest": str(hunter_review["review_digest"]),
+                "prepared_package_digest": str(
+                    hunter_review["prepared_package_digest"]
+                ),
+                "browser_form_digest": str(
+                    hunter_review["browser_form_digest"]
+                ),
+                "customer_review_approved": bool(hunter_review.get("approved")),
+                "additional_customer_approval_required": False,
+                "final_submit_executed": False,
+                "submission_authority": False,
+            }
+            result = orchestrator.complete_task(
+                task_id=str(task["task_id"]),
+                worker_id=str(worker_id),
+                output=output,
+            )
+            return {
+                **result,
+                "claimed": True,
+                "output": output,
+                "submission_authority": False,
+            }
+
+        if state in {"BLOCKED", "FAILED_SAFELY", "CANCELLED"}:
+            orchestrator.fail_task(
+                task_id=str(task["task_id"]),
+                worker_id=str(worker_id),
+                error_code=f"APPLY_PREPARE_{state}",
+                error_message=f"Apply background preparation ended in {state}.",
+                retryable=False,
+            )
+            return {
+                "operation_id": str(operation_id),
+                "claimed": True,
+                "task_status": "FAILED",
+                "operation_status": "FAILED_SAFELY",
+                "apply_prepare_job_id": prepare_job_id,
+                "apply_prepare_state": state,
+                "submission_authority": False,
+            }
+
+        raise RuntimeError(f"Unexpected Apply preparation state: {state or 'EMPTY'}")
+    except Exception:
+        # If the task is still RUNNING and owned by this worker, return it to the
+        # orchestrator retry budget. If a branch above already completed/paused/
+        # failed it, fail_task itself will reject and we preserve the original.
+        try:
+            orchestrator.fail_task(
+                task_id=str(task["task_id"]),
+                worker_id=str(worker_id),
+                error_code="ATS_FORM_PREPARATION_FAILED",
+                error_message="ATS form preparation failed closed.",
+                retryable=True,
+            )
+        except (LookupError, PermissionError, RuntimeError, ValueError):
+            pass
+        raise
+
+
+def deliver_submit_authorization(
+    envelope: Mapping[str, Any], *, timeout_seconds: float = 5.0
+) -> dict[str, Any]:
+    """Hand the canonical one-use authority to the Apply session that earned it.
+
+    Best-effort by design. The customer's approval and the minted authority are
+    already durable, and the authority stays ISSUED, so Apply can still pull the
+    identical envelope over the authenticated bridge
+    (``SUBMIT_AUTHORIZATION_READ``) if this call fails or its response is lost.
+    A caller must therefore never roll back the approval because delivery failed.
+    """
+    if not submit_authority_delivery_enabled():
+        return {"attempted": False, "delivered": False, "error": None}
+
+    session_id = str(envelope.get("session_id") or "").strip()
+    if not session_id:
+        return {
+            "attempted": False,
+            "delivered": False,
+            "error": "Submit authority has no Apply session binding.",
+        }
+
+    try:
+        result = _json_request(
+            method="POST",
+            url=_apply_base_url()
+            + _APPLY_SUBMIT_AUTHORITY_PATH.format(session_id=session_id),
+            headers=_apply_headers(
+                tenant_id=str(envelope.get("tenant_id") or ""),
+                user_id=str(envelope.get("user_id") or ""),
+            ),
+            body=dict(envelope),
+            timeout_seconds=timeout_seconds,
+            require_ats_runtime=False,
+        )
+    except (RuntimeError, ValueError) as error:
+        return {"attempted": True, "delivered": False, "error": str(error)}
+
+    if (
+        str(result.get("authorization_id") or "")
+        != str(envelope.get("authorization_id") or "")
+        or result.get("accepted") is not True
+        or str(result.get("session_id") or "") != session_id
+    ):
+        return {
+            "attempted": True,
+            "delivered": False,
+            "error": "Apply submit-authority acknowledgement is not correlated.",
+        }
+    return {"attempted": True, "delivered": True, "error": None}
