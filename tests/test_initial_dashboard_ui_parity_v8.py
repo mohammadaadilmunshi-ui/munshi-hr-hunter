@@ -62,7 +62,7 @@ def test_resume_studio_v7_controls_are_presentation_only() -> None:
     assert "SECTION_ORDER_PRESETS" in source
     assert "visible_sections" in source
     assert "Section visibility & order" in source
-    assert "immutable V5 artifact" in source
+    assert "immutable Standard V5 artifact" in source
 
     renderer = inspect.getsource(presentation.render_document_html)
     assert "_reorder_native_resume_html" in renderer
