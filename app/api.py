@@ -1009,6 +1009,15 @@ class ApplicationReviewRevalidateRequest(BaseModel):
     prepared_package: dict[str, Any] | None = None
 
 
+class ApplicationApproveAndSubmitRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=240)
+    approval_idempotency_key: str = Field(min_length=1, max_length=240)
+    authorization_idempotency_key: str = Field(min_length=1, max_length=240)
+    expected_review_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_prepared_package_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_browser_form_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 
 @app.post(
     "/api/application-reviews",
@@ -1067,16 +1076,36 @@ def revalidate_application_review(
     "/api/application-reviews/{review_id}/approve",
     dependencies=[Depends(require_api_secret)],
 )
-def approve_application_review(
+def approve_application_review(review_id: str) -> dict[str, Any]:
+    """Retired second-approval surface; the single boundary is approve-and-submit."""
+    del review_id
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "Separate review approval was retired. Use the single "
+            "POST /api/application-reviews/{review_id}/approve-and-submit action bound "
+            "to the frozen review digest."
+        ),
+    )
+
+
+@app.post(
+    "/api/application-reviews/{review_id}/approve-and-submit",
+    dependencies=[Depends(require_api_secret)],
+)
+def approve_and_submit_application_review(
     review_id: str,
-    payload: ApplicationReviewApprovalRequest,
+    payload: ApplicationApproveAndSubmitRequest,
 ) -> dict[str, Any]:
-    from app import application_review_v2
+    """The sole customer approval boundary; no later review is permitted."""
+    from app import application_single_approval_v1
 
     try:
-        return application_review_v2.approve_review(
+        return application_single_approval_v1.approve_and_authorize(
             review_id=review_id,
-            idempotency_key=payload.idempotency_key,
+            session_id=payload.session_id,
+            approval_idempotency_key=payload.approval_idempotency_key,
+            authorization_idempotency_key=payload.authorization_idempotency_key,
             expected_review_digest=payload.expected_review_digest,
             expected_prepared_package_digest=payload.expected_prepared_package_digest,
             expected_browser_form_digest=payload.expected_browser_form_digest,
@@ -1115,6 +1144,36 @@ async def application_execution_cover_letter(request: Request) -> Response:
     try:
         body, headers = application_artifact_transport_v2.cover_letter_response(await request.body(), request.headers)
         return Response(content=body, media_type="application/pdf", headers=headers)
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+    except (LookupError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.post("/api/application-execution/autoapply-config")
+async def application_execution_autoapply_config(request: Request) -> Response:
+    from app import application_artifact_transport_v2
+    try:
+        body, headers = application_artifact_transport_v2.autoapply_config_response(
+            await request.body(), request.headers
+        )
+        return Response(content=body, media_type="application/json", headers=headers)
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+    except (LookupError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.post("/api/application-execution/autoapply-credential")
+async def application_execution_autoapply_credential(request: Request) -> Response:
+    from app import application_artifact_transport_v2
+    try:
+        body, headers = application_artifact_transport_v2.autoapply_credential_response(
+            await request.body(), request.headers
+        )
+        # Secret bytes are returned only across the authenticated execution bridge
+        # to the Apply service process. They are never represented as JSON.
+        return Response(content=body, media_type="application/octet-stream", headers=headers)
     except PermissionError as error:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
     except (LookupError, RuntimeError, ValueError) as error:

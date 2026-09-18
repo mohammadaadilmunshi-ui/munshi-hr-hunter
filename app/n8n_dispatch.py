@@ -775,6 +775,14 @@ def insert_queue_item(
     return result
 
 
+def _begin_dispatch_transaction(connection) -> None:
+    # Schema/tenant preparation may open an implicit SQLite transaction.
+    # Commit that setup work before acquiring the dispatch write transaction.
+    if connection.in_transaction:
+        connection.commit()
+    connection.execute("BEGIN IMMEDIATE")
+
+
 def queue_candidates(
     *,
     webhook_mode: str,
@@ -819,9 +827,7 @@ def queue_candidates(
         queued = []
 
         if not dry_run:
-            connection.execute(
-                "BEGIN IMMEDIATE"
-            )
+            _begin_dispatch_transaction(connection)
 
             for job, dispatch_mode in selected:
                 queue_row = insert_queue_item(

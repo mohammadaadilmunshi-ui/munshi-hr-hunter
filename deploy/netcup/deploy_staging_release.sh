@@ -93,11 +93,31 @@ prod_snapshot_before="$(
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 rollback_tag="${hunter_image_name%:*}:staging-rollback-$stamp"
 recreated=0
+migration_attempted=0
+hunter_stopped=0
+db_restore_completed=0
 
 backup_dir="$STAGING_ROOT/backups"
 mkdir -p "$backup_dir"
 chmod 700 "$backup_dir"
 db_backup="$backup_dir/hunter-predeploy-$stamp.db"
+backup_name="$(basename "$db_backup")"
+
+db_path="$(docker exec "$H" python -c 'from app.database import DB_PATH; print(DB_PATH)')"
+[[ -n "$db_path" ]] || { echo "staging DB path unresolved" >&2; exit 11; }
+
+hunter_data_volume="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/hunter/data"}}{{.Name}}{{end}}{{end}}' "$H")"
+[[ -n "$hunter_data_volume" ]] || { echo "staging Hunter data volume unresolved" >&2; exit 12; }
+
+db_meta="$(docker exec "$H" stat -c '%u:%g:%a' "$db_path")"
+IFS=: read -r db_uid db_gid db_mode <<< "$db_meta"
+[[ "$db_uid" =~ ^[0-9]+$ && "$db_gid" =~ ^[0-9]+$ && "$db_mode" =~ ^[0-7]+$ ]] || {
+  echo "staging DB ownership/mode unresolved" >&2
+  exit 13
+}
+echo "STAGING_DB_PATH=$db_path"
+echo "STAGING_HUNTER_DATA_VOLUME=$hunter_data_volume"
+echo "STAGING_DB_UID_GID_MODE=$db_uid:$db_gid:$db_mode"
 
 docker exec -i "$H" python - "$stamp" <<'PY'
 import sqlite3
@@ -146,11 +166,82 @@ print("STAGING_DB_BACKUP_QUICK_CHECK=PASS")
 PY
 echo "STAGING_DB_BACKUP=$db_backup"
 
+restore_staging_db() {
+  echo "=== RESTORE STAGING DB BACKUP ===" >&2
+  "${compose[@]}" stop hunter >/dev/null 2>&1 || docker stop "$H" >/dev/null 2>&1 || true
+  hunter_stopped=1
+
+  timeout 600s docker run --rm -i \
+    --network none \
+    --user 0:0 \
+    --mount "type=volume,src=$hunter_data_volume,dst=/app/hunter/data" \
+    --mount "type=bind,src=$backup_dir,dst=/backup,readonly" \
+    --entrypoint python \
+    "$old_hunter_image_id" \
+    - "$db_path" "/backup/$backup_name" "$db_uid" "$db_gid" "$db_mode" <<'PYRESTORE'
+import os
+import shutil
+import sqlite3
+import sys
+from pathlib import Path
+
+live = Path(sys.argv[1])
+backup = Path(sys.argv[2])
+uid = int(sys.argv[3])
+gid = int(sys.argv[4])
+mode = int(sys.argv[5], 8)
+tmp = Path(str(live) + ".rollback.tmp")
+
+if not backup.is_file():
+    raise SystemExit(f"staging rollback backup missing: {backup}")
+
+for candidate in (
+    tmp,
+    Path(str(live) + "-wal"),
+    Path(str(live) + "-shm"),
+    Path(str(live) + "-journal"),
+):
+    try:
+        candidate.unlink()
+    except FileNotFoundError:
+        pass
+
+shutil.copyfile(backup, tmp)
+os.chown(tmp, uid, gid)
+os.chmod(tmp, mode)
+os.replace(tmp, live)
+os.chown(live, uid, gid)
+os.chmod(live, mode)
+
+db = sqlite3.connect(f"file:{live}?mode=ro", uri=True, timeout=60)
+try:
+    db.execute("PRAGMA query_only=ON")
+    quick = str(db.execute("PRAGMA quick_check").fetchone()[0])
+    fk = db.execute("PRAGMA foreign_key_check").fetchall()
+finally:
+    db.close()
+
+if quick != "ok":
+    raise SystemExit(f"restored staging DB quick_check failed: {quick}")
+if fk:
+    raise SystemExit(f"restored staging DB FK violations: {len(fk)}")
+print("ROLLBACK_DB_RESTORE=PASS")
+PYRESTORE
+  db_restore_completed=1
+}
+
 rollback() {
   trapped_rc=$?
   rc="${1:-$trapped_rc}"
   trap - ERR
   echo "=== AUTOMATIC STAGING DEPLOYMENT ROLLBACK rc=$rc ===" >&2
+
+  if (( migration_attempted )); then
+    if ! restore_staging_db; then
+      echo "CRITICAL: staging DB rollback restore failed; Hunter remains stopped." >&2
+      exit 99
+    fi
+  fi
 
   if [[ -n "$old_branch" ]]; then
     git checkout -q -B "$old_branch" "$old_head" || true
@@ -161,7 +252,7 @@ rollback() {
   docker tag "$old_hunter_image_id" "$hunter_image_name" || true
   echo "ROLLBACK_IMAGE_TAG_RESTORED=YES" >&2
 
-  if (( recreated )); then
+  if (( recreated || hunter_stopped || migration_attempted )); then
     "${compose[@]}" up -d --no-deps --force-recreate hunter || true
     for _ in $(seq 1 48); do
       health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$H" 2>/dev/null || true)"
@@ -238,10 +329,23 @@ echo "STAGING_CONFIG_SAFETY=PASS"
 
 echo "=== BUILD STAGING HUNTER ONLY ==="
 "${compose[@]}" build hunter
+new_hunter_image_id="$(docker image inspect -f '{{.Id}}' "$hunter_image_name")"
+[[ -n "$new_hunter_image_id" ]] || rollback 29
+echo "new_hunter_image_id=$new_hunter_image_id"
+
+echo "=== STOP STAGING HUNTER FOR COMPLETE-LOOP MIGRATION ==="
+migration_attempted=1
+"${compose[@]}" stop hunter
+hunter_stopped=1
+
+echo "=== APPLY COMPLETE-LOOP MIGRATIONS 041-055 TO STAGING DB ==="
+timeout 600s docker run --rm -i   --network none   --read-only   --tmpfs /tmp:rw,nosuid,nodev,size=256m   --mount "type=volume,src=$hunter_data_volume,dst=/app/hunter/data"   --entrypoint python   -e CLOUD_SHADOW_MODE=true   -e PRODUCTION_STATE_IMPORTED=false   -e PRODUCTION_CALLBACKS_ENABLED=false   "$new_hunter_image_id"   /app/hunter/scripts/complete_loop_migrate.py   --db-path "$db_path"   --environment staging   --full-quick-check
+echo "STAGING_COMPLETE_LOOP_MIGRATION=PASS"
 
 echo "=== RECREATE STAGING HUNTER ONLY ==="
 "${compose[@]}" up -d --no-deps --force-recreate hunter
 recreated=1
+hunter_stopped=0
 
 healthy=0
 for _ in $(seq 1 48); do
@@ -287,6 +391,10 @@ echo "PRODUCTION_CONTAINERS_UNCHANGED=PASS"
 
 echo "=== POSTDEPLOY STAGING CONTRACT ==="
 "$VERIFY"
+
+echo "=== VERIFY STAGING COMPLETE-LOOP SCHEMA ==="
+docker exec "$H" python /app/hunter/scripts/complete_loop_migrate.py   --db-path "$db_path"   --environment staging   --verify-only   --full-quick-check
+echo "STAGING_COMPLETE_LOOP_SCHEMA_READY=YES"
 
 echo "=== POSTDEPLOY PRODUCTION NON-REGRESSION CONTRACT ==="
 "$VERIFY_PROD"

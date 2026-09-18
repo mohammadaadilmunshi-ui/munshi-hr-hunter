@@ -657,39 +657,123 @@ def _downloads(version_id: str, by_kind: dict[str, Any]) -> None:
         )
 
 
+_ONE_PAGE_REPAIR_PREFIX = (
+    "Create a new compact revision of this exact resume. The current version "
+    "failed the strict one-page guard"
+)
+
+
+def _is_internal_one_page_repair(row: dict[str, Any]) -> bool:
+    return str(row.get("instruction") or "").startswith(_ONE_PAGE_REPAIR_PREFIX)
+
+
+def _user_facing_versions(
+    versions: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Hide superseded internal repair passes while preserving immutable history."""
+    repair_parent_ids = {
+        str(row.get("parent_version_id") or "")
+        for row in versions
+        if _is_internal_one_page_repair(row) and row.get("parent_version_id")
+    }
+    visible = [
+        row
+        for row in versions
+        if str(row.get("version_id") or "") not in repair_parent_ids
+    ]
+    return visible, max(0, len(versions) - len(visible))
+
+
+def _version_label(row: dict[str, Any]) -> str:
+    diagnostics = row.get("diagnostics") or {}
+    mode = STYLE_LABELS.get(diagnostics.get("rewrite_mode"), "Tailored")
+    return f"v{row['version_number']} · {mode}"
+
+
 def _version_workspace(job_id: int, context: dict[str, Any], writer_ready: bool) -> None:
-    versions = [
+    all_versions = [
         row
         for row in resume_v5.list_versions(job_id=job_id, limit=100)
         if row.get("stage_b_bound") is True
     ]
-    if not versions:
+    if not all_versions:
         return
 
+    versions, hidden_repairs = _user_facing_versions(all_versions)
+    if not versions:
+        versions = [all_versions[0]]
+        hidden_repairs = max(0, len(all_versions) - 1)
+
     st.divider()
-    st.markdown("### Resume preview")
+    st.markdown("### Current resume")
 
     ids = [str(row["version_id"]) for row in versions]
-    selected = st.session_state.get("native_resume_selected_version")
+    current_id = ids[0]
+    selected = str(st.session_state.get("native_resume_selected_version") or "")
     if selected not in ids:
-        st.session_state["native_resume_selected_version"] = ids[0]
+        selected = current_id
+        st.session_state["native_resume_selected_version"] = current_id
 
     by_id = {str(row["version_id"]): row for row in versions}
-    selected_id = st.selectbox(
-        "Version",
-        ids,
-        format_func=lambda value: (
-            f"v{by_id[value]['version_number']} · "
-            f"{STYLE_LABELS.get((by_id[value].get('diagnostics') or {}).get('rewrite_mode'), 'Tailored')}"
-        ),
-        key="native_resume_selected_version",
-    )
+    selected_id = selected
+    viewing_prior = selected_id != current_id
+
+    if viewing_prior:
+        with st.container(key="munshi_tint_resume_prior"):
+            st.warning(
+                f"Viewing prior revision {_version_label(by_id[selected_id])}. "
+                "Downloads and refinement below apply to this revision."
+            )
+            if st.button(
+                "Back to current resume",
+                key="resume_studio_v4_back_to_current",
+                type="primary",
+                use_container_width=False,
+            ):
+                st.session_state["native_resume_selected_version"] = current_id
+                st.rerun()
+    else:
+        st.caption(
+            f"{_version_label(by_id[current_id])} is the current user-facing resume."
+        )
+
+    prior_versions = versions[1:]
+    if prior_versions or hidden_repairs:
+        with st.expander(
+            f"Revision history · {len(prior_versions)} prior"
+            + (f" · {hidden_repairs} internal repair pass(es)" if hidden_repairs else ""),
+            expanded=False,
+        ):
+            if prior_versions:
+                prior_ids = [str(row["version_id"]) for row in prior_versions]
+                history_id = st.selectbox(
+                    "Prior revision",
+                    prior_ids,
+                    format_func=lambda value: _version_label(by_id[value]),
+                    key="resume_studio_v4_history_version",
+                )
+                if st.button(
+                    "View selected revision",
+                    key="resume_studio_v4_view_history",
+                    use_container_width=True,
+                ):
+                    st.session_state["native_resume_selected_version"] = history_id
+                    st.rerun()
+            else:
+                st.caption("No prior user-facing revisions.")
+
+            if hidden_repairs:
+                st.caption(
+                    f"{hidden_repairs} intermediate one-page repair pass(es) are hidden "
+                    "from the normal resume list. They remain in the immutable audit trail."
+                )
+
     record = resume_v5.get_version(selected_id)
     diagnostics = record.get("diagnostics") or {}
     artifact_rows, quality = _artifact_bundle(selected_id)
 
     metrics = st.columns(4, gap="small")
-    metrics[0].metric("Version", f"v{record['version_number']}")
+    metrics[0].metric("Revision", f"v{record['version_number']}")
     metrics[1].metric(
         "Truth check",
         str((diagnostics.get("truth_audit") or {}).get("status") or "PASS"),
@@ -758,16 +842,24 @@ def _version_workspace(job_id: int, context: dict[str, Any], writer_ready: bool)
                 ] = bundle["page_verification"]
                 st.rerun()
 
-    with st.expander("Advanced diagnostics", expanded=False):
-        st.write(
-            {
-                "ats_readiness": diagnostics.get("ats_readiness_estimate"),
-                "matched_jd_terms": diagnostics.get("matched_jd_terms") or [],
-                "missing_jd_terms": diagnostics.get("missing_jd_terms") or [],
-                "writer_model": diagnostics.get("writer_model"),
-                "writer_reasoning": diagnostics.get("writer_reasoning_effort"),
-                "writer_calls": diagnostics.get("writer_api_calls"),
-            }
+    with st.expander("JD match details", expanded=False):
+        matched = [str(value) for value in diagnostics.get("matched_jd_terms") or []]
+        missing = [str(value) for value in diagnostics.get("missing_jd_terms") or []]
+        st.markdown("**Matched terms**")
+        st.write(", ".join(matched) if matched else "No matched-term list recorded.")
+        st.markdown("**Terms still missing**")
+        st.write(", ".join(missing) if missing else "No missing JD terms recorded.")
+        ats = diagnostics.get("ats_readiness_estimate")
+        if ats is not None:
+            st.caption(f"ATS readiness estimate: {ats}")
+        st.caption(
+            "Writer model IDs, reasoning metadata and API-call telemetry are engineering "
+            "diagnostics and are kept out of the normal Resume Studio workflow."
+        )
+        st.link_button(
+            "Open system diagnostics",
+            "?view=settings&section=advanced",
+            use_container_width=False,
         )
 
 

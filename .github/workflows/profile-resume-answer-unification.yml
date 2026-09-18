@@ -1,0 +1,120 @@
+name: Profile Resume Answer Unification
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  profile-resume-answer-unification:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install locked dependencies
+        run: python -m pip install -r requirements.lock.txt
+
+      - name: Verify packages
+        run: python -m pip check
+
+      - name: Compile unified profile/resume/answer sources
+        run: |
+          python -m py_compile \
+            app/candidate_profile_authority_v1.py \
+            app/application_question_catalog_v1.py \
+            app/application_answer_router_v1.py \
+            app/application_field_intelligence_v1.py \
+            app/application_answer_autofill_v1.py \
+            app/application_plan_question_bridge_v1.py \
+            app/master_resume_file_ui_v1.py \
+            app/profile_answer_center_ui_v1.py \
+            app/profile_answer_center_ui_v2.py \
+            app/profile_answer_center_ui_v3.py \
+            app/profile_workspace_v4.py \
+            app/settings_profile_authority_ui_v1.py \
+            app/resume_one_page_guard_v1.py \
+            app/resume_studio_page_v5.py \
+            app/product_shell.py
+
+      - name: Run focused unification and runtime tests
+        run: |
+          python -m pytest -q \
+            tests/test_profile_resume_answer_unification_v1.py \
+            tests/test_application_smart_autofill_v1.py \
+            tests/test_apply_semantic_field_bridge_v1.py \
+            tests/test_settings_profile_authority_ui_v1.py \
+            tests/test_profile_answer_vault_ux_v1.py \
+            tests/test_profile_resume_file_answer_center_v1.py \
+            tests/test_profile_runtime_regression_v2.py
+
+      - name: Guard shared-answer and final-submit boundaries
+        run: |
+          set -euo pipefail
+          grep -F 'application_plan_v2.prepare_application_plan' app/application_plan_question_bridge_v1.py
+          grep -F 'answer_brain_v2.resolve_answer' app/application_answer_router_v1.py
+          grep -F 'MUNSHI Apply and AutoApply' app/application_answer_router_v1.py
+          grep -F 'Prepare / refresh answers from Candidate Truth' app/profile_answer_center_ui_v2.py
+          grep -F 'Open encrypted protected defaults editor' app/profile_answer_center_ui_v2.py
+          grep -F 'profile_v4_detail_section' app/profile_answer_center_ui_v2.py
+          ! grep -F 'profile_v3._edit_application_defaults' app/profile_answer_center_ui_v2.py
+          grep -F '_TRUTH_SAFE_PROTECTED_DETAIL_FIELDS' app/profile_answer_center_ui_v3.py
+          ! grep -F '"eligibility.sponsorship_now"' app/profile_answer_center_ui_v3.py
+          ! grep -F '"eligibility.sponsorship_future"' app/profile_answer_center_ui_v3.py
+          grep -F 'Edit in Resume Studio' app/master_resume_file_ui_v1.py
+          grep -F 'field_intelligence.requirement_from_field' app/application_plan_question_bridge_v1.py
+          grep -F 'semanticType' app/application_field_intelligence_v1.py
+          grep -F 'profile_authority.authority_snapshot()' app/settings_profile_authority_ui_v1.py
+          grep -F 'allow_final_submit": False' app/secure_api_vault_ui.py
+          ! grep -E 'captcha.*(solver|bypass)|security.*bypass' \
+            app/application_question_catalog_v1.py \
+            app/application_answer_router_v1.py \
+            app/application_field_intelligence_v1.py \
+            app/application_answer_autofill_v1.py \
+            app/application_plan_question_bridge_v1.py \
+            app/profile_answer_center_ui_v2.py \
+            app/profile_answer_center_ui_v3.py
+
+      - name: Prove heavy Profile panels are lazy and Master Resume mounts once
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          workspace = Path('app/profile_workspace_v4.py').read_text(encoding='utf-8')
+          answer_center = Path('app/profile_answer_center_ui_v2.py').read_text(encoding='utf-8')
+          assert workspace.count('master_resume_ui.render_compact(authority)') == 1, workspace
+          assert 'master_resume_ui.render_detail(authority)' not in workspace, workspace
+          assert 'st.tabs(' not in workspace, workspace
+          assert 'st.tabs(' not in answer_center, answer_center
+          assert 'profile_v4_detail_section' in workspace, workspace
+          assert 'answer_center_v2_section' in answer_center, answer_center
+          print('PROFILE_LAZY_ROUTING=PASS')
+          print('MASTER_RESUME_SINGLE_MOUNT=PASS')
+          PY
+
+      - name: Prove recognition catalog stays internal
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from app.application_question_catalog_v1 import catalog_metrics
+          metrics = catalog_metrics()
+          assert metrics['common_question_count'] == 100, metrics
+          assert metrics['concept_count'] == 50, metrics
+          source = '\n'.join([
+              Path('app/profile_workspace_v4.py').read_text(encoding='utf-8'),
+              Path('app/profile_answer_center_ui_v2.py').read_text(encoding='utf-8'),
+              Path('app/profile_answer_center_ui_v3.py').read_text(encoding='utf-8'),
+          ])
+          assert 'Advanced: view the 100-phrase recognition catalog' not in source
+          assert 'Recognition phrasings' not in source
+          assert 'Common phrasings' not in source
+          print(metrics)
+          PY

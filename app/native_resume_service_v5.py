@@ -36,6 +36,24 @@ _FORBIDDEN_EXACT_TYPES = frozenset(
     }
 )
 
+# These are tailoring targets, not score inflation. The denominator contains only
+# Stage B requirements that Candidate Truth can support and the writer is allowed
+# to represent. Unsupported/do-not-claim requirements never count against coverage.
+_COVERAGE_TARGETS = {
+    "slight": 55.0,
+    "medium": 70.0,
+    "aggressive": 85.0,
+}
+_PRIORITY_WEIGHTS = {
+    "MUST_HAVE": 4.0,
+    "CORE_RESPONSIBILITY": 3.0,
+    "PREFERRED": 2.0,
+    "BONUS": 1.0,
+    "CONTEXT": 1.0,
+    "UNKNOWN": 1.0,
+}
+_SUPPORTED_MATCH_STATUSES = frozenset({"DIRECT", "STRONG_TRANSFERABLE", "PARTIAL"})
+
 
 def ensure_schema(connection=None) -> None:
     v4.ensure_schema(connection)
@@ -129,6 +147,93 @@ def _stage_b_claim_guard(
         "claims_checked": len(claims),
         "violations": [],
     }
+
+
+def _coverage_target(mode: str) -> float:
+    return float(_COVERAGE_TARGETS.get(str(mode or "medium").casefold(), 70.0))
+
+
+def _supportable_requirement_coverage(
+    *,
+    plan: Mapping[str, Any],
+    document: Any,
+    rewrite_mode: str,
+) -> dict[str, Any]:
+    """Measure evidence-linked coverage of only truth-supportable Stage B requirements."""
+    writer_context = planner.writer_context(plan)
+    selected_ids = {
+        str(item.get("requirement_id") or "")
+        for item in writer_context.get("supported_requirements") or []
+        if isinstance(item, Mapping) and str(item.get("requirement_id") or "")
+    }
+    refs = {
+        str(ref.get("requirement_id") or ""): ref
+        for ref in plan.get("requirement_refs") or []
+        if isinstance(ref, Mapping)
+        and str(ref.get("requirement_id") or "") in selected_ids
+        and str(ref.get("match_status") or "") in _SUPPORTED_MATCH_STATUSES
+    }
+    claims = claim_trace._resume_claims({"document": document.model_dump()})
+    represented: set[str] = set()
+    for claim in claims:
+        claim_evidence = {
+            str(value).strip()
+            for value in claim.get("evidence_ids") or []
+            if str(value).strip()
+        }
+        if not claim_evidence:
+            continue
+        for requirement_id, ref in refs.items():
+            requirement_evidence = {
+                str(value).strip()
+                for value in ref.get("evidence_ids") or []
+                if str(value).strip()
+            }
+            if claim_evidence.intersection(requirement_evidence):
+                represented.add(requirement_id)
+
+    def weight(requirement_id: str) -> float:
+        return float(
+            _PRIORITY_WEIGHTS.get(
+                str(refs[requirement_id].get("priority") or "UNKNOWN"),
+                1.0,
+            )
+        )
+
+    denominator = sum(weight(requirement_id) for requirement_id in refs)
+    numerator = sum(weight(requirement_id) for requirement_id in represented if requirement_id in refs)
+    percent = 0.0 if denominator <= 0 else round((numerator / denominator) * 100.0, 1)
+    target = _coverage_target(rewrite_mode)
+    missing = sorted(
+        (set(refs) - represented),
+        key=lambda requirement_id: (
+            -weight(requirement_id),
+            requirement_id,
+        ),
+    )
+    return {
+        "metric": "truth_supportable_stage_b_requirement_coverage_v1",
+        "percent": percent,
+        "target_percent": target,
+        "target_met": bool(refs) and percent >= target,
+        "supportable_requirement_count": len(refs),
+        "represented_requirement_count": len(represented),
+        "represented_requirement_ids": sorted(represented),
+        "missing_supportable_requirement_ids": missing,
+        "unsupported_requirements_in_denominator": 0,
+    }
+
+
+def _coverage_direction(*, mode: str, coverage_target: float) -> str:
+    return (
+        f"For {mode} tailoring, target at least {coverage_target:.0f}% weighted coverage of "
+        "stage_b_resume_plan.supported_requirements when the supplied evidence and one-page "
+        "budget allow it. Prioritize MUST_HAVE and CORE_RESPONSIBILITY requirements first, "
+        "then PREFERRED/BONUS requirements. A requirement counts only when the resume claim "
+        "uses its supplied candidate evidence IDs. Never add a requirement from do_not_claim, "
+        "never invent evidence, and never sacrifice truth or one-page readability just to hit "
+        "the target."
+    )
 
 
 def _insert_claim_trace(connection, trace: Mapping[str, Any]) -> None:
@@ -260,6 +365,13 @@ def generate_resume(
     writer_context = planner.writer_context(plan)
     writer_context_sha256 = sha256_json(writer_context)
     config = v4.v2._resolve_writer_config()
+    coverage_target = _coverage_target(mode)
+    user_or_default_instruction = instruction_text or (
+        "Tailor this resume to the selected job using the Stage B supported requirements and retention order. "
+        "Never claim anything listed in stage_b_resume_plan.do_not_claim. "
+        "Use only supplied candidate evidence IDs. Retain enough relevant supported evidence to create a "
+        "visually complete one-page professional resume; never pad the page with unsupported content."
+    )
     prompt_payload: dict[str, Any] = {
         "task": "revise_resume" if parent_document else "generate_resume",
         "rewrite_mode": mode,
@@ -267,6 +379,11 @@ def generate_resume(
         "job": context,
         "job_snapshot_sha256": job_snapshot_sha256,
         "stage_b_resume_plan": writer_context,
+        "jd_coverage_policy": {
+            "metric": "truth_supportable_stage_b_requirement_coverage_v1",
+            "target_percent": coverage_target,
+            "unsupported_requirements_in_denominator": 0,
+        },
         "candidate_truth_profile": v4._profile_prompt_context(snapshot),
         "evidence_bundle": {
             "source_id": bundle["source_id"],
@@ -274,12 +391,10 @@ def generate_resume(
             "evidence_digest": bundle["evidence_digest"],
             "items": bundle["items"],
         },
-        "instruction": instruction_text
-        or (
-            "Tailor this resume to the selected job using the Stage B supported requirements and retention order. "
-            "Never claim anything listed in stage_b_resume_plan.do_not_claim. "
-            "Use only supplied candidate evidence IDs. Retain enough relevant supported evidence to create a "
-            "visually complete one-page professional resume; never pad the page with unsupported content."
+        "instruction": (
+            user_or_default_instruction
+            + "\n\n"
+            + _coverage_direction(mode=mode, coverage_target=coverage_target)
         ),
         "locked_sections": locks,
         "current_resume": parent_document.model_dump() if parent_document else None,
@@ -309,8 +424,10 @@ def generate_resume(
         repair_payload["current_resume"] = proposed.model_dump()
         repair_payload["instruction"] = (
             "Repair only these content-budget issues while preserving facts, evidence references, Stage B priorities, "
-            "and all do-not-claim restrictions. Do not add new facts: "
+            "all do-not-claim restrictions, and as much supportable JD coverage as possible. Do not add new facts: "
             + ", ".join(diagnostics["content_budget_issues"])
+            + "\n\n"
+            + _coverage_direction(mode=mode, coverage_target=coverage_target)
         )
         candidate_payload, repair_response_id, model = v4.v2._call_openai_v2(
             prompt_payload=repair_payload,
@@ -328,6 +445,82 @@ def generate_resume(
                 "Generated resume still exceeds the ATS content budget after one repair pass."
             )
         response_id = repair_response_id or response_id
+
+    coverage = _supportable_requirement_coverage(
+        plan=plan,
+        document=proposed,
+        rewrite_mode=mode,
+    )
+
+    # Use one remaining writer call, when available, to improve *truth-supportable*
+    # coverage. A failed/non-improving optional quality repair never replaces an
+    # already valid resume.
+    if (
+        coverage["supportable_requirement_count"] > 0
+        and coverage["percent"] < coverage["target_percent"]
+        and calls_used < int(config["max_calls_per_generation"])
+    ):
+        coverage_repair = dict(prompt_payload)
+        coverage_repair["task"] = "repair_resume_stage_b_coverage"
+        coverage_repair["current_resume"] = proposed.model_dump()
+        coverage_repair["instruction"] = (
+            f"Increase truth-supportable Stage B JD coverage toward {coverage['target_percent']:.0f}% while keeping "
+            "the resume within the existing one-page content budget. Prioritize these currently missing supported "
+            f"requirement IDs: {', '.join(coverage['missing_supportable_requirement_ids'][:12])}. "
+            "Use only their supplied candidate evidence IDs. Do not invent facts, metrics, skills, tools, dates, "
+            "or experience, and do not use any do_not_claim requirement."
+        )
+        try:
+            repaired_payload, repaired_response_id, repaired_model = v4.v2._call_openai_v2(
+                prompt_payload=coverage_repair,
+                config=config,
+                rewrite_mode=mode,
+            )
+            repaired_document = v4.v1._apply_locks(
+                v4.v1.ResumeDocument.model_validate(repaired_payload), parent_document, locks
+            )
+            repaired_diagnostics = v4.v1.analyze_document(repaired_document, context, bundle)
+            repaired_guard = _stage_b_claim_guard(
+                document=repaired_document,
+                bundle=bundle,
+                plan=plan,
+            )
+            repaired_coverage = _supportable_requirement_coverage(
+                plan=plan,
+                document=repaired_document,
+                rewrite_mode=mode,
+            )
+        except Exception:  # noqa: BLE001
+            repaired_document = None
+        else:
+            calls_used += 1
+            if (
+                not repaired_diagnostics["content_budget_issues"]
+                and repaired_coverage["percent"] > coverage["percent"]
+            ):
+                proposed = repaired_document
+                diagnostics = repaired_diagnostics
+                stage_b_guard = repaired_guard
+                coverage = repaired_coverage
+                repair_payload = coverage_repair
+                response_id = repaired_response_id or response_id
+                model = repaired_model or model
+
+    raw_term_coverage = float(diagnostics.get("jd_term_coverage_percent") or 0.0)
+    diagnostics["jd_raw_term_coverage_percent"] = raw_term_coverage
+    # Backward-compatible UI field now reflects the correct Stage B denominator.
+    diagnostics["jd_term_coverage_percent"] = float(coverage["percent"])
+    diagnostics["jd_supported_requirement_coverage_percent"] = float(coverage["percent"])
+    diagnostics["jd_supported_requirement_coverage_target_percent"] = float(
+        coverage["target_percent"]
+    )
+    diagnostics["jd_supported_requirement_coverage_met"] = bool(coverage["target_met"])
+    diagnostics["jd_supported_requirement_count"] = int(
+        coverage["supportable_requirement_count"]
+    )
+    diagnostics["jd_supported_requirement_represented_count"] = int(
+        coverage["represented_requirement_count"]
+    )
 
     generation_input_sha256 = v4.job_binding.generation_input_digest(
         {
@@ -385,6 +578,7 @@ def generate_resume(
                 "match_digest": plan["match_digest"],
                 "writer_context_sha256": writer_context_sha256,
                 "evidence_coverage_score": plan["diagnostics"].get("evidence_coverage_score"),
+                "supported_requirement_coverage": coverage,
                 "unsupported_must_have_requirement_ids": plan.get(
                     "unsupported_must_have_requirement_ids"
                 ),

@@ -46,8 +46,13 @@ def test_product_shell_preserves_n8n_and_installs_selector() -> None:
     assert "pages_module._prepare_job = _request_engine_choice" in selector
     assert "_run_n8n(job_id)" in selector
 
-    assert "from app.native_resume_service_v5 import" in selector
-    assert "artifacts.materialize" in selector
+    assert "from app.native_resume_service_v5 import writer_status" in selector
+    assert "from app import resume_one_page_guard_v1 as one_page_guard" in selector
+    assert "from app import native_resume_quality_hotfix_v2 as quality_hotfix" in selector
+    assert "quality_hotfix.install()" in selector
+    assert "one_page_guard.generate_checked(" in selector
+    assert "rewrite_mode=native_mode" in selector
+    assert "artifacts.materialize" not in selector
     assert "current_candidate_profile_snapshot" in selector
     assert "record.get(\"stage_b_bound\") is not True" in selector
     assert "status.get('model')" not in selector

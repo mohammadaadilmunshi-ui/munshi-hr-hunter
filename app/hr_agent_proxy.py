@@ -184,3 +184,30 @@ def score_resume(
             "exitCode": 1,
             "proxy_status": "failed",
         }
+
+
+# Keep application mail isolated from the submission-sensitive app/api.py surface.
+# The v1 receiver remains in-source for rollback/migration tests, but the active
+# route uses the sanitized V2 broker. Neither inbound mail nor artifact delivery
+# has review, browser, or application-submit authority.
+from app.mail_intelligence_v2 import (
+    claim_mail_artifact_v2,
+    consume_mail_artifact_v2,
+    inbound_mail_v2,
+)
+
+router.add_api_route(
+    "/api/mail/inbound",
+    inbound_mail_v2,
+    methods=["POST"],
+)
+router.add_api_route(
+    "/api/mail/artifacts/claim",
+    claim_mail_artifact_v2,
+    methods=["POST"],
+)
+router.add_api_route(
+    "/api/mail/artifacts/consume",
+    consume_mail_artifact_v2,
+    methods=["POST"],
+)
