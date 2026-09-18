@@ -10,6 +10,7 @@ import os
 import re
 from typing import Any
 
+from app.database import get_setting
 from app.secure_vault import read_secret, secret_metadata
 
 TELEGRAM_BOT_TOKEN_TYPE = "telegram_bot_token"
@@ -86,6 +87,16 @@ def integration_readiness() -> dict[str, Any]:
         .casefold()
         in {"1", "true", "yes", "on"}
     )
+    if not external_mail_sync:
+        try:
+            saved_sync = get_setting("mail_external_sync_confirmed_v1", {}) or {}
+            external_mail_sync = bool(
+                saved_sync.get("confirmed")
+                if isinstance(saved_sync, dict)
+                else saved_sync
+            )
+        except Exception:
+            external_mail_sync = False
     return {
         "telegram": {
             "configured": bool(
