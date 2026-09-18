@@ -25,7 +25,10 @@ from app import relationship_intelligence_v3 as relationship_v3
 from app.database import get_connection
 from app.phase47_integrity import application_preparation_readiness
 from app.phase67_common import safe_owned_job_snapshot, sha256_json
-from app.phase8_application_truth import current_application_truth_projection
+from app.phase8_application_truth import (
+    current_application_truth_projection,
+    projection_digest_payload,
+)
 from app.tenant_foundation import current_owner, ensure_schema as ensure_tenant_schema
 
 PREFLIGHT_PACKAGE_VERSION = "munshi-application-preflight-package-v1"
@@ -278,7 +281,19 @@ def _capture(
 
 
 def package_digest_payload(snapshot: Mapping[str, Any]) -> dict[str, Any]:
-    return dict(snapshot)
+    """Return stable preflight package inputs for optimistic revalidation.
+
+    Phase 8 truth projections include generated_at as observational metadata.
+    That timestamp is deliberately excluded from the Phase 8 projection digest,
+    so preflight must not re-introduce it into its own stability comparison.
+    Real Candidate Truth/job/resume/answer/opportunity/relationship drift remains
+    fully represented and still fails closed.
+    """
+    payload = dict(snapshot)
+    application_truth = payload.get("application_truth")
+    if isinstance(application_truth, Mapping):
+        payload["application_truth"] = projection_digest_payload(application_truth)
+    return payload
 
 
 def prepare_preflight_package(
