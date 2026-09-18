@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 
 from app.database import get_connection
+from app.integration_credentials_v1 import smtp2go_configured, smtp2go_credentials
 from app.tenant_foundation import OwnerContext, current_owner, ensure_schema as ensure_owner_schema
 
 SMTP2GO_API_URL = "https://api.smtp2go.com/v3/email/send"
@@ -401,11 +402,10 @@ def application_evidence_rows(*, limit: int = 100) -> list[dict[str, Any]]:
 
 
 class SMTP2GOAdapter:
-    """Minimal SMTP2GO HTTPS adapter. API credentials are environment-only."""
+    """Minimal SMTP2GO HTTPS adapter with env-first encrypted-vault fallback."""
 
     def __init__(self, *, client: Any | None = None) -> None:
-        self.api_key = str(os.getenv("MUNSHI_SMTP2GO_API_KEY") or "").strip()
-        self.sender = str(os.getenv("MUNSHI_SMTP2GO_SENDER") or "").strip()
+        self.api_key, self.sender = smtp2go_credentials()
         self.api_url = str(os.getenv("MUNSHI_SMTP2GO_API_URL") or SMTP2GO_API_URL).strip()
         self.client = client
         if len(self.api_key) < 16:
@@ -456,7 +456,7 @@ def _recover_stale_claims(connection: sqlite3.Connection, *, now: datetime) -> i
 
 
 def drain_notification_outbox(*, limit: int = 20, adapter: Any | None = None) -> dict[str, int]:
-    if not _enabled("MUNSHI_APPLICATION_EMAIL_NOTIFICATIONS_ENABLED"):
+    if not (_enabled("MUNSHI_APPLICATION_EMAIL_NOTIFICATIONS_ENABLED") or smtp2go_configured()):
         return {"sent": 0, "ambiguous": 0, "pending": 0}
     adapter = adapter or SMTP2GOAdapter()
     sent = 0
