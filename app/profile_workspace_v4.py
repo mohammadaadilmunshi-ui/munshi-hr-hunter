@@ -38,7 +38,10 @@ def _status_cards(authority: dict[str, Any], answers: dict[str, Any]) -> None:
     with cards[1]:
         st.metric("Answer coverage", f"{summary['known']}/{summary['total']}")
         st.caption(
-            f"{remaining} unanswered question meaning{'s' if remaining != 1 else ''} still need a secure or application-time path"
+            (
+                f"{remaining} unanswered question meaning{'s' if remaining != 1 else ''} "
+                "still need a secure or application-time path; they are not mandatory onboarding questions"
+            )
             if remaining
             else "Every current semantic meaning has an authority path"
         )
