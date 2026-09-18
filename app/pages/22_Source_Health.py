@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pandas as pd
 import streamlit as st
 
@@ -142,6 +144,7 @@ try:
         "duplicate_jobs_last_run",
         "rejected_jobs_last_run",
         "provider_used_last_run",
+        "filter_summary_json",
         "last_run_at",
         "last_success_at",
         "last_failure_at",
@@ -230,6 +233,22 @@ for row in health_rows:
         {},
     )
     record = dict(row)
+    try:
+        filter_summary = json.loads(
+            str(row.get("filter_summary_json") or "{}")
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        filter_summary = {}
+    if "linkedin" in str(row.get("source_name") or "").casefold():
+        record["linkedin_working_link_pct"] = filter_summary.get(
+            "linkedin_working_link_pct"
+        )
+        record["linkedin_quarantined_linkless_count"] = filter_summary.get(
+            "linkedin_quarantined_linkless_count"
+        )
+    else:
+        record["linkedin_working_link_pct"] = None
+        record["linkedin_quarantined_linkless_count"] = None
     record["category"] = classify(
         str(row.get("health_status") or ""),
         int(row.get("consecutive_failures") or 0),
@@ -318,6 +337,8 @@ for category in (
             "inserted_jobs_last_run",
             "duplicate_jobs_last_run",
             "provider_used_last_run",
+            "linkedin_working_link_pct",
+            "linkedin_quarantined_linkless_count",
             "last_run_at",
             "next_run_at",
             "schedule_state",
