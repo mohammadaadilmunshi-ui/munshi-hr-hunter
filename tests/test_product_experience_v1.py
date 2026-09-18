@@ -64,3 +64,44 @@ def test_shared_theme_keeps_baseweb_controls_light() -> None:
     assert '[data-testid="stNumberInput"] input' in ui
     assert '[role="listbox"]' in ui
     assert '[class*="st-key-munshi_surface_"]' in ui
+
+
+
+def test_resume_repair_lineage_keeps_genuine_user_revisions_visible() -> None:
+    from app.resume_studio_page_v4 import _user_facing_versions
+
+    repair_prefix = (
+        "Create a new compact revision of this exact resume. The current version "
+        "failed the strict one-page guard"
+    )
+    rows = [
+        {
+            "version_id": "v4",
+            "parent_version_id": "v3",
+            "version_number": 4,
+            "instruction": "Move Power BI earlier.",
+        },
+        {
+            "version_id": "v3",
+            "parent_version_id": "v2",
+            "version_number": 3,
+            "instruction": repair_prefix + " (renderer overflow)",
+        },
+        {
+            "version_id": "v2",
+            "parent_version_id": "v1",
+            "version_number": 2,
+            "instruction": repair_prefix + " (density)",
+        },
+        {
+            "version_id": "v1",
+            "parent_version_id": None,
+            "version_number": 1,
+            "instruction": "Initial tailored generation",
+        },
+    ]
+
+    visible, hidden = _user_facing_versions(rows)
+
+    assert [row["version_id"] for row in visible] == ["v4", "v3"]
+    assert hidden == 2
