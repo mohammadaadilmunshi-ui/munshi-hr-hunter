@@ -24,7 +24,7 @@ PURPOSE_PLAN_CURRENT = "PLAN_CURRENT"
 PURPOSE_ARTIFACT_BYTES = "ARTIFACT_BYTES"
 PURPOSE_COVER_LETTER_BYTES = "COVER_LETTER_BYTES"
 PURPOSE_AUTOAPPLY_CONFIG = "AUTOAPPLY_CONFIG"
-PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET = "AUTOAPPLY_ANTHROPIC_SECRET"
+PURPOSE_AUTOAPPLY_CREDENTIAL = "AUTOAPPLY_CREDENTIAL"
 PURPOSE_SUBMIT_AUTH_ISSUE = "SUBMIT_AUTHORIZATION_ISSUE"
 PURPOSE_SUBMIT_AUTH_CLAIM = "SUBMIT_AUTHORIZATION_CLAIM"
 PURPOSE_SUBMIT_AUTH_READ = "SUBMIT_AUTHORIZATION_READ"
@@ -69,7 +69,7 @@ def _verify(body:bytes,headers:Mapping[str,str],*,purpose:str,now:int|None=None)
         PURPOSE_ARTIFACT_BYTES,
         PURPOSE_COVER_LETTER_BYTES,
         PURPOSE_AUTOAPPLY_CONFIG,
-        PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET,
+        PURPOSE_AUTOAPPLY_CREDENTIAL,
     }: raise ValueError("Unsupported execution bridge purpose.")
     eid=_verify_signature(body,headers,now=now); p=_decode(body)
     if set(p)!=REQUIRED: raise ValueError("Execution bridge request shape is invalid.")
@@ -169,8 +169,8 @@ def autoapply_config_response(body:bytes,headers:Mapping[str,str],*,now:int|None
     )
 
 def autoapply_credential_response(body:bytes,headers:Mapping[str,str],*,now:int|None=None):
-    p=_verify(body,headers,purpose=PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET,now=now)
-    plan,_,_=_authorized(p,purpose=PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET)
+    p=_verify(body,headers,purpose=PURPOSE_AUTOAPPLY_CREDENTIAL,now=now)
+    plan,_,_=_authorized(p,purpose=PURPOSE_AUTOAPPLY_CREDENTIAL)
     config=_autoapply_preferences()
     if config["enabled"] is not True or config["authMode"]!="api":
         raise PermissionError("Dashboard AutoApply API authentication is not enabled.")
@@ -182,7 +182,7 @@ def autoapply_credential_response(body:bytes,headers:Mapping[str,str],*,now:int|
         raise RuntimeError("Dashboard Anthropic API credential is invalid.")
     response_headers=_headers(
         request_id=str(p["request_id"]),
-        purpose=PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET,
+        purpose=PURPOSE_AUTOAPPLY_CREDENTIAL,
         body=data,
         plan_digest=str(plan["plan_digest"]),
     )
