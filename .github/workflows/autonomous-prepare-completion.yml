@@ -36,6 +36,7 @@ jobs:
           app/unified_hourly_coordinator.py
           app/product_application_flow_v2.py
           app/prepare_orchestrator_v1.py
+          app/prepare_runtime_worker.py
           app/prepare_worker_adapters_v1a.py
           app/prepare_worker_adapters_v1b.py
           app/prepare_worker_adapters_v1c.py
@@ -49,6 +50,7 @@ jobs:
           tests/test_autonomous_prepare_v1.py
           tests/test_autonomous_prepare_admission_v1.py
           tests/test_autonomous_prepare_compat_v1.py
+          tests/test_prepare_runtime_worker.py
           tests/test_product_application_flow_v2.py
           tests/test_prepare_worker_adapters_v1a.py
           tests/test_prepare_worker_adapters_v1b.py
