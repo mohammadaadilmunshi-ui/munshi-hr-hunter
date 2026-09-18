@@ -60,14 +60,19 @@ def readiness_snapshot() -> dict[str, Any]:
             if row is not None:
                 identity = dict(row)
 
-        if _table_exists(connection, "ats_managed_account_bindings"):
+        if (
+            _table_exists(connection, "ats_managed_account_bindings")
+            and _table_exists(connection, "ats_credential_accounts")
+        ):
             managed_ids = {
                 str(row[0])
                 for row in connection.execute(
                     """
-                    SELECT account_id
-                    FROM ats_managed_account_bindings
-                    WHERE tenant_id=? AND user_id=?
+                    SELECT b.account_id
+                    FROM ats_managed_account_bindings AS b
+                    JOIN ats_credential_accounts AS a
+                      ON a.account_id = b.account_id
+                    WHERE a.tenant_id=? AND a.user_id=?
                     """,
                     (owner.tenant_id, owner.user_id),
                 ).fetchall()
