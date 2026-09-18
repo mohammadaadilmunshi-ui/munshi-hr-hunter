@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,3 +52,9 @@ def test_migration_runner_uses_backup_rollback_guarded_segmented_mode() -> None:
     assert "SEGMENTED_BACKUP_ROLLBACK_GUARDED" in source
     assert "committed_segments" in source
     assert "Migration escaped outer transaction" not in source
+
+def test_hunter_activation_shell_script_parses() -> None:
+    subprocess.run(
+        ["bash", "-n", str(ROOT / "deploy/netcup/activate_full_autoapply_production.sh")],
+        check=True,
+    )
