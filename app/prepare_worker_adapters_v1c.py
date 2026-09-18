@@ -706,10 +706,50 @@ def _application_plan_idempotency_key(
         raise RuntimeError(
             "Provider-capability retry refused a mismatched prior Application Plan."
         )
-    freshness = application_plan_v2.application_plan_freshness(prior_plan_id)
-    if freshness.get("fresh") is not True:
+    # Re-capture the exact immutable inputs and permit only the semantic
+    # transition caused by newly-supported provider capability.  Any Candidate
+    # Truth, job, preflight, resume, answer, permission, or cover-letter drift
+    # remains a hard stop.
+    inputs = dict(prior.get("inputs") or {})
+    current = application_plan_v2._capture(
+        preflight_package_id=str(inputs["preflight_package_id"]),
+        requirements=list(inputs["answer_requirements"]),
+        permissions=dict(inputs["permissions"]),
+        provider_policy=dict(inputs["provider_policy"]),
+        secure_refs=dict(inputs["secure_resolver_refs"]),
+        resume_format=str(inputs["resume_format"]),
+        cover_letter_id=(
+            str(inputs.get("cover_letter_id") or "").strip() or None
+        ),
+        answer_overrides=dict(inputs.get("answer_overrides") or {}),
+    )
+    old_payload = application_plan_v2.plan_digest_payload(snapshot)
+    new_payload = application_plan_v2.plan_digest_payload(current)
+    changed = {
+        key
+        for key in set(old_payload) | set(new_payload)
+        if old_payload.get(key) != new_payload.get(key)
+    }
+    expected_changed = {
+        "provider_policy",
+        "global_blockers",
+        "expected_state",
+        "executable",
+    }
+    current_policy = dict(current.get("provider_policy") or {})
+    capability_only = (
+        changed == expected_changed
+        and current.get("executable") is True
+        and str(current.get("expected_state") or "") == "READY_TO_APPLY"
+        and list(current.get("global_blockers") or []) == []
+        and list(current.get("unresolved") or []) == []
+        and str(current_policy.get("provider") or "") in application_plan_v2.SUPPORTED_PROVIDERS
+        and str(current_policy.get("provider") or "") != "UNSUPPORTED"
+        and current_policy.get("permitted") is True
+    )
+    if not capability_only:
         raise RuntimeError(
-            "Provider-capability retry refused a stale prior Application Plan."
+            "Provider-capability retry detected non-provider Application Plan drift."
         )
     return f"{base}:provider-capability-v2", prior_plan_id
 
