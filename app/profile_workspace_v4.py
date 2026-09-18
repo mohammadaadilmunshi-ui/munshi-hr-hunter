@@ -21,6 +21,11 @@ from app import profile_workspace_v3 as v3
 _DETAIL_SECTIONS = ("Candidate Truth", "Application Answers", "Master Resume")
 
 
+def _open_unanswered_answers() -> None:
+    st.session_state["profile_v4_detail_section"] = "Application Answers"
+    st.session_state["answer_center_v3_section"] = "Coverage details"
+
+
 def _status_cards(authority: dict[str, Any], answers: dict[str, Any]) -> None:
     cards = st.columns(4, gap="small")
     profile = authority["profile"]
@@ -33,10 +38,18 @@ def _status_cards(authority: dict[str, Any], answers: dict[str, Any]) -> None:
     with cards[1]:
         st.metric("Answer coverage", f"{summary['known']}/{summary['total']}")
         st.caption(
-            f"{remaining} meaning{'s' if remaining != 1 else ''} still need a secure or application-time path; they are not mandatory onboarding questions"
+            f"{remaining} unanswered question meaning{'s' if remaining != 1 else ''} still need a secure or application-time path"
             if remaining
             else "Every current semantic meaning has an authority path"
         )
+        if remaining:
+            st.button(
+                f"Review {remaining} unanswered",
+                key="profile_v4_review_unanswered",
+                type="primary",
+                use_container_width=True,
+                on_click=_open_unanswered_answers,
+            )
     with cards[2]:
         st.metric("Autofill ready", summary["autofill_ready"])
         st.caption(
