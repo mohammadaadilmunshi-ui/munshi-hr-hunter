@@ -197,6 +197,9 @@ def render() -> None:
     from app.settings_profile_authority_ui_v1 import (
         install_settings_profile_authority_ui,
     )
+    from app.integration_credentials_ui_v1 import (
+        install_integration_credentials_ui,
+    )
     from app.unified_job_workspaces_runtime_patch_v1 import (
         install_unified_job_workspaces,
     )
@@ -251,6 +254,9 @@ def render() -> None:
     # the same Dashboard/Browse Jobs card renderer and lazy user-facing sections.
     # This does not change preparation, targeting, or submission authority.
     install_unified_job_workspaces(product_pages, application_workspace_page)
+    # Final Settings wrapper: write-only integration setup plus non-secret
+    # readiness status for Telegram, SMTP notifications, and inbound mail.
+    install_integration_credentials_ui(product_pages)
 
     pages: dict[str, Callable[[], None]] = {
         "dashboard": product_pages.dashboard,
