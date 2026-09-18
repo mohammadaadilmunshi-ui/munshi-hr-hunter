@@ -8,6 +8,8 @@ from __future__ import annotations
 import hashlib, hmac, json, os, time
 from collections.abc import Callable, Mapping
 from typing import Any
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from app import (
     application_plan_v2,
     cover_letter_artifact_v1,
@@ -177,17 +179,30 @@ def autoapply_credential_response(body:bytes,headers:Mapping[str,str],*,now:int|
     value=read_secret("autoapply_anthropic_api_key")
     if not value:
         raise LookupError("Dashboard Anthropic API credential is unavailable.")
-    data=value.encode("utf-8")
-    if len(data)>16384:
+    plaintext=value.encode("utf-8")
+    if len(plaintext)>16384:
         raise RuntimeError("Dashboard Anthropic API credential is invalid.")
+
+    request_id=str(p["request_id"])
+    plan_digest=str(plan["plan_digest"])
+    key=hmac.new(
+        _secret(),
+        f"autoapply-credential:{request_id}:{plan_digest}".encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    nonce=os.urandom(12)
+    aad=f"{request_id}.{plan_digest}.autoapply_anthropic_api_key".encode("utf-8")
+    data=nonce+AESGCM(key).encrypt(nonce,plaintext,aad)
+
     response_headers=_headers(
-        request_id=str(p["request_id"]),
+        request_id=request_id,
         purpose=PURPOSE_AUTOAPPLY_CREDENTIAL,
         body=data,
-        plan_digest=str(plan["plan_digest"]),
+        plan_digest=plan_digest,
     )
     response_headers.update({
         "X-Munshi-Credential-Type":"autoapply_anthropic_api_key",
+        "X-Munshi-Credential-Encryption":"aes-gcm-v1",
         "X-Munshi-Submission-Authority":"false",
     })
     return data,response_headers
