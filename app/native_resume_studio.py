@@ -281,8 +281,21 @@ def _section_heading(label: str) -> str:
     return f'<h2 class="section-heading">{escape(label.upper())}</h2>'
 
 
-def render_ats_html(document: ResumeDocument) -> str:
-    """Render a polished, single-column, ATS-safe one-page resume."""
+def render_ats_html(
+    document: ResumeDocument,
+    *,
+    render_density: str = "normal",
+) -> str:
+    """Render a polished, single-column, ATS-safe one-page resume.
+
+    render_density changes only typography/layout scale, never resume text.
+    It gives artifact materialization a deterministic local fallback when the
+    same validated content lands a few lines onto page two in Chromium.
+    """
+    density = str(render_density or "normal").strip().casefold()
+    zoom = {"normal": 1.0, "compact": 0.96, "tight": 0.92}.get(density)
+    if zoom is None:
+        raise ValueError("Unsupported resume render density.")
 
     word_count = document_word_count(document)
     if word_count < 360:
@@ -401,6 +414,7 @@ def render_ats_html(document: ResumeDocument) -> str:
 * {{ box-sizing: border-box; }}
 body {{
   margin: 0;
+  zoom: {zoom};
   background: #fff;
   color: #17212b;
   font-family: Arial, Helvetica, sans-serif;
