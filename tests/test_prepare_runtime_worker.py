@@ -24,7 +24,7 @@ def test_run_once_delegates_only_to_open_prepare_runtime(monkeypatch) -> None:
 
     result = prepare_runtime_worker.run_once(limit=7)
 
-    assert calls == [(7, True)]
+    assert calls == [(5, True)]
     assert result["success"] is True
     assert result["submission_authority"] is False
 
@@ -47,4 +47,4 @@ def test_run_once_bounds_operation_batch(monkeypatch) -> None:
     prepare_runtime_worker.run_once(limit=0)
     prepare_runtime_worker.run_once(limit=999)
 
-    assert limits == [(1, True), (25, True)]
+    assert limits == [(1, True), (5, True)]
