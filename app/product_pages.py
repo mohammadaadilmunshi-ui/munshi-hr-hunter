@@ -588,8 +588,9 @@ def auto_prepare() -> None:
     with st.container(key="product_auto_split"):
         left, right = st.columns((1.6, 1), gap="large")
     with left:
-        st.markdown("### Target lanes")
-        st.caption("Saved role filters are evaluated only after canonical targeting and work-authorization rules.")
+        with st.container(key="munshi_surface_target_lanes"):
+            st.markdown("### Target lanes")
+            st.caption("Saved role filters are evaluated only after canonical targeting and work-authorization rules.")
         if current_lanes:
             for lane in current_lanes:
                 try:
