@@ -117,6 +117,9 @@ def test_notification_worker_preserves_default_off_and_supervisor_opt_in() -> No
     assert '"--supervised" in sys.argv[1:]' in worker
     assert "MUNSHI_APPLICATION_NOTIFICATION_WORKER_ENABLED" in worker
     assert 'scripts/application_notification_worker.py", "--supervised"' in supervisor
+    assert '"telegram",' in supervisor
+    assert "required=False" in supervisor
+    assert "HUNTER_TELEGRAM_RETRY_SECONDS" in supervisor
 
 
 def test_auto_prepare_and_application_pages_explain_the_real_lifecycle() -> None:
