@@ -477,6 +477,16 @@ def settings_v23() -> None:
 
         elif section == "Advanced / System":
             advanced_v22()
+            # First-class product controls promoted from staging. Keep them
+            # direct in the canonical Settings renderer so Streamlit reruns
+            # cannot accumulate duplicate wrapper/form layers.
+            from app.targeting_settings_ui_v1 import render_targeting_settings
+            from app.application_notification_ui_v1 import (
+                render_application_notification_settings,
+            )
+
+            render_targeting_settings()
+            render_application_notification_settings()
 
 
 def install_autoapply_settings_ui(product_pages: Any) -> None:
