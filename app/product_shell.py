@@ -206,6 +206,9 @@ def render() -> None:
     from app.auto_prepare_readiness_ui_v1 import (
         install_auto_prepare_readiness_ui,
     )
+    from app.application_notification_ui_v1 import (
+        install_application_notification_ui,
+    )
     from app.unified_job_workspaces_runtime_patch_v1 import (
         install_unified_job_workspaces,
     )
@@ -260,6 +263,12 @@ def render() -> None:
     # the same Dashboard/Browse Jobs card renderer and lazy user-facing sections.
     # This does not change preparation, targeting, or submission authority.
     install_unified_job_workspaces(product_pages, application_workspace_page)
+
+    # Restore the staging application activity projection after the final
+    # workspace wrapper. Advanced/System notification preferences render directly
+    # from settings_v23, avoiding persistent Settings wrapper accumulation.
+    install_application_notification_ui(product_pages)
+
     # AutoApply replaces product_pages.settings on every Streamlit rerun. Reset
     # only the integration wrapper marker so the final wrapper is reattached to
     # the current Settings callable instead of silently disappearing.

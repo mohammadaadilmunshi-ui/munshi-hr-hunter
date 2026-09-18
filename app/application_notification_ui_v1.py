@@ -1,11 +1,13 @@
 """Additive Streamlit projection for application evidence and email preferences."""
 from __future__ import annotations
 
+import os
 from typing import Any, Callable
 
 import streamlit as st
 
 from app import application_notifications_runtime_v3 as notifications
+from app.integration_credentials_v1 import smtp2go_configured
 
 
 def _render_evidence() -> None:
@@ -69,9 +71,20 @@ def _render_application_activity() -> None:
     _render_communications()
 
 
-def _render_settings() -> None:
+def _delivery_ready() -> bool:
+    enabled = str(
+        os.getenv("MUNSHI_APPLICATION_EMAIL_NOTIFICATIONS_ENABLED") or ""
+    ).strip().casefold() in {"1", "true", "yes", "on"}
+    return enabled or smtp2go_configured()
+
+
+def render_application_notification_settings() -> None:
     preference = notifications.get_preference()
     st.divider()
+    st.markdown(
+        '<div id="application-email-notifications"></div>',
+        unsafe_allow_html=True,
+    )
     st.markdown("### Application email notifications")
     st.caption(
         "This is your user-facing notification address. MUNSHI sends verified submission, "
@@ -80,6 +93,14 @@ def _render_settings() -> None:
         "references, raw inbound mail, and submit authority stay inside MUNSHI and are never "
         "forwarded."
     )
+    if _delivery_ready():
+        st.success("Outbound application-email notifications are ready.")
+    else:
+        st.warning(
+            "Notification preferences can be saved, but outbound delivery is not "
+            "configured yet. Configure SMTP2GO under Integrations before relying "
+            "on email delivery."
+        )
     with st.form("application_notification_preferences_v1"):
         destination = st.text_input(
             "Notification email",
@@ -112,19 +133,36 @@ def _render_settings() -> None:
                 st.success("Notification preferences saved.")
 
 
-def _wrap(base: Callable[[], None], suffix: Callable[[], None]) -> Callable[[], None]:
+def _wrap_once(
+    base: Callable[[], None],
+    suffix: Callable[[], None],
+    marker: str,
+) -> Callable[[], None]:
+    if bool(getattr(base, marker, False)):
+        return base
+
     def rendered() -> None:
         base()
         suffix()
 
+    setattr(rendered, marker, True)
     return rendered
 
 
 def install_application_notification_ui(product_pages: Any) -> None:
-    """Install after the final workspace wrapper so reruns keep the projection."""
-    if bool(getattr(product_pages, "_application_notification_ui_v1_installed", False)):
-        return
-    product_pages.dashboard = _wrap(product_pages.dashboard, _render_application_activity)
-    product_pages.tracker = _wrap(product_pages.tracker, _render_application_activity)
-    product_pages.settings = _wrap(product_pages.settings, _render_settings)
+    """Rerun-safe Dashboard/Tracker projection.
+
+    Settings is rendered directly by autoapply_settings_ui.settings_v23 so the
+    canonical Settings function cannot accumulate persistent wrapper layers.
+    """
+    product_pages.dashboard = _wrap_once(
+        product_pages.dashboard,
+        _render_application_activity,
+        "_application_notification_activity_v1",
+    )
+    product_pages.tracker = _wrap_once(
+        product_pages.tracker,
+        _render_application_activity,
+        "_application_notification_activity_v1",
+    )
     product_pages._application_notification_ui_v1_installed = True

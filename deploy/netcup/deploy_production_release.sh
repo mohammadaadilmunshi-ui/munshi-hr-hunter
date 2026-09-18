@@ -376,7 +376,7 @@ migration_attempted=1
 "${compose[@]}" stop hunter
 hunter_stopped=1
 
-echo "=== APPLY COMPLETE-LOOP MIGRATIONS 041-051 TO PRODUCTION DB ==="
+echo "=== APPLY COMPLETE-LOOP MIGRATIONS 041-055 TO PRODUCTION DB ==="
 timeout 1800s docker run --rm -i   --network none   --read-only   --tmpfs /tmp:rw,nosuid,nodev,size=256m   --mount "type=volume,src=$hunter_data_volume,dst=/app/hunter/data"   --entrypoint python   -e CLOUD_SHADOW_MODE=false   "$new_hunter_image_id"   /app/hunter/scripts/complete_loop_migrate.py   --db-path "$db_path"   --environment production   --authorization AUTHORIZED_GUARDED_COMPLETE_LOOP_MIGRATION   --full-quick-check
 echo "PRODUCTION_COMPLETE_LOOP_MIGRATION=PASS"
 

@@ -59,4 +59,5 @@ jobs:
             tests/test_autoapply_settings_ui.py \
             tests/test_profile_runtime_repair_v2.py \
             tests/test_initial_dashboard_ui_parity_v8.py \
+            tests/test_staging_to_initial_ui_parity_v1.py \
             tests/test_production_vault_activation_contract.py
