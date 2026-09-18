@@ -783,6 +783,7 @@ def _opportunity_dialog(job_id: int) -> None:
     latest = row["latest_result"]
     artifact = row["artifact_result"]
     queue = row["queue"]
+    application_flow = _PAGES._application_flow(int(job_id))
 
     resume_url = (
         _PAGES.safe_link(artifact.get("resume_pdf_url"))
@@ -945,14 +946,27 @@ def _opportunity_dialog(job_id: int) -> None:
                 args=(job_id, bool(row["skipped"])),
             )
         with action_columns[2]:
-            st.button(
-                "Prepare",
-                key=f"v22_dialog_prepare_{job_id}",
-                type="primary",
-                use_container_width=True,
-                on_click=_PAGES._prepare_job,
-                args=(job_id,),
-            )
+            if application_flow.get("cta") == "prepare":
+                st.button(
+                    str(application_flow.get("cta_label") or "Prepare"),
+                    key=f"v22_dialog_prepare_{job_id}",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=_PAGES._prepare_job,
+                    args=(job_id,),
+                )
+            else:
+                st.link_button(
+                    str(application_flow.get("cta_label") or "Open application"),
+                    f"?view=prepare-application&job={job_id}",
+                    type=(
+                        "primary"
+                        if application_flow.get("state")
+                        in {"NEEDS_INPUT", "READY_FOR_REVIEW"}
+                        else "secondary"
+                    ),
+                    use_container_width=True,
+                )
         with action_columns[3]:
             if apply_url:
                 st.link_button(
