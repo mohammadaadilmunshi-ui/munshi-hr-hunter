@@ -21,9 +21,9 @@ done
 [[ "$PHASE" == "prepare" || "$PHASE" == "full" ]] || { echo "--phase must be prepare|full" >&2; exit 3; }
 [[ -f "$ENV_FILE" ]] || { echo "production Hunter env missing: $ENV_FILE" >&2; exit 10; }
 [[ -d "$REPO/.git" ]] || { echo "production Hunter repo missing" >&2; exit 11; }
-if [[ -z "$EXPECTED_SHA" ]]; then EXPECTED_SHA="$(git -C "$REPO" rev-parse HEAD)"; fi
+if [[ -z "$EXPECTED_SHA" ]]; then EXPECTED_SHA="$(git -c "safe.directory=$REPO" -C "$REPO" rev-parse HEAD)"; fi
 [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "expected SHA invalid" >&2; exit 12; }
-[[ "$(git -C "$REPO" rev-parse HEAD)" == "$EXPECTED_SHA" ]] || { echo "Hunter production SHA mismatch" >&2; exit 13; }
+[[ "$(git -c "safe.directory=$REPO" -C "$REPO" rev-parse HEAD)" == "$EXPECTED_SHA" ]] || { echo "Hunter production SHA mismatch" >&2; exit 13; }
 
 compose=(
   docker compose
