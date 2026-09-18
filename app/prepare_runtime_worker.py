@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from typing import Any
 
 from app import autonomous_prepare_v1
@@ -15,9 +16,13 @@ from app import autonomous_prepare_v1
 
 def run_once(*, limit: int = 1) -> dict[str, Any]:
     resolved = max(1, min(int(limit), 5))
+    minimum = str(
+        os.getenv("MUNSHI_PREPARE_RUNTIME_MIN_CREATED_AT") or ""
+    ).strip()
     return autonomous_prepare_v1.drive_open_operations(
         limit=resolved,
         newest_first=True,
+        min_created_at=minimum or None,
     )
 
 
