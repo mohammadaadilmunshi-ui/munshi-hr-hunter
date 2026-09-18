@@ -177,6 +177,49 @@ def _native_output(
     }
 
 
+def _reusable_generated_resume(
+    *,
+    operation: Mapping[str, Any],
+    task: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Reuse a validated post-generation resume after a retryable artifact failure.
+
+    The first attempt may already have paid for and persisted a fully validated,
+    truth/job/Stage-B-bound resume before local PDF/DOCX materialization fails.
+    A retry must not spend another model call for identical durable inputs.
+    """
+    if int(task.get("attempts") or 0) < 2:
+        return None
+    if str(task.get("error_code") or "") != "NATIVE_RESUME_PREPARE_FAILED":
+        return None
+
+    operation_created = str(operation.get("created_at") or "")
+    for summary in native_resume_service_v5.list_versions(
+        job_id=int(operation["job_id"]),
+        limit=12,
+    ):
+        if operation_created and str(summary.get("created_at") or "") < operation_created:
+            continue
+        try:
+            record = native_resume_service_v5.get_version(str(summary["version_id"]))
+        except (LookupError, RuntimeError, ValueError):
+            continue
+        if record.get("stage_b_bound") is not True:
+            continue
+        truth = dict(record.get("candidate_truth_binding") or {})
+        job = dict(record.get("job_snapshot_binding") or {})
+        if str(truth.get("profile_digest") or "") != str(
+            operation.get("candidate_profile_digest") or ""
+        ):
+            continue
+        if str(job.get("job_snapshot_sha256") or "") != str(
+            operation.get("job_snapshot_sha256") or ""
+        ):
+            continue
+        return record
+    return None
+
+
 def run_native_resume_once(
     *,
     operation_id: str,
@@ -224,11 +267,14 @@ def run_native_resume_once(
         }
 
     try:
-        record = native_resume_service_v5.generate_resume(
-            job_id=int(operation["job_id"]),
-            instruction=str(instruction or "").strip(),
-            rewrite_mode=str(rewrite_mode or "medium"),
-        )
+        record = _reusable_generated_resume(operation=operation, task=task)
+        reused_generated_version = record is not None
+        if record is None:
+            record = native_resume_service_v5.generate_resume(
+                job_id=int(operation["job_id"]),
+                instruction=str(instruction or "").strip(),
+                rewrite_mode=str(rewrite_mode or "medium"),
+            )
         bundle = native_resume_artifact_v5.materialize(str(record["version_id"]))
         output = _native_output(
             operation=operation,
@@ -244,6 +290,7 @@ def run_native_resume_once(
             **result,
             "claimed": True,
             "output": output,
+            "reused_generated_version": reused_generated_version,
             "submission_authority": False,
         }
     except Exception:
