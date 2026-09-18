@@ -25,6 +25,13 @@ from app.runtime_config import (
 from app.job_duplicate_guard import canonical_url, store_with_global_dedupe
 from app.google_jobs_provider import provider_status, serpapi_google_jobs
 from app.jobspy_pipeline import collect_jobspy_jobs
+from app.linkedin_url_contract import (
+    LINKEDIN_LINK_HEALTH_THRESHOLD_PCT,
+    LINKEDIN_QUARANTINE_REASON,
+    linkedin_link_health_degraded,
+    linkedin_working_link_percentage,
+    normalize_linkedin_record,
+)
 from app.telegram_auto_dispatch import dispatch_unsent_jobs
 
 ROOT = ROOT_DIR
@@ -513,7 +520,7 @@ def normalize_jobspy_row(record: dict[str, Any], site_name: str) -> dict[str, An
     salary_raw = " ".join(_clean_text(value) for value in salary_values if value not in (None, "")) or None
     is_remote = record.get("is_remote")
     remote_type = "Remote" if is_remote is True else "Not specified"
-    return {
+    normalized = {
         "source": f"JobSpy/{site_name}",
         "source_tier": 2,
         "ats_job_id": _clean_text(_value(record, "id", "job_id", "ats_job_id", "job_url")),
@@ -525,12 +532,22 @@ def normalize_jobspy_row(record: dict[str, Any], site_name: str) -> dict[str, An
         "country": _clean_text(record.get("country")) or "",
         "remote_type": remote_type,
         "employment_type": _clean_text(_value(record, "job_type", "employment_type"), "Not specified"),
-        "job_url": job_url or direct_url,
-        "apply_url": direct_url or job_url,
+        "job_url": job_url if str(site_name).casefold() == "linkedin" else (job_url or direct_url),
+        "apply_url": direct_url if str(site_name).casefold() == "linkedin" else (direct_url or job_url),
         "description_raw": _clean_text(_value(record, "description", "description_raw"), "Not specified"),
         "salary_raw": salary_raw,
         "date_posted": _clean_text(_value(record, "date_posted", "posted_at")) or None,
     }
+    if str(site_name).casefold() == "linkedin":
+        normalized.update(
+            {
+                "linkedin_job_url": job_url or None,
+                "direct_apply_url": direct_url or None,
+                "linkedin_job_id": _value(record, "id", "job_id", "ats_job_id"),
+            }
+        )
+        normalized = normalize_linkedin_record(normalized)
+    return normalized
 
 
 def _load_dashboard_targeting() -> tuple[list[str], list[dict[str, Any]]]:
@@ -898,6 +915,94 @@ def collect_google_jobs(
         summary,
     )
 
+def _merge_linkedin_link_quarantine(
+    summary: dict[str, Any],
+    quarantined: list[dict[str, Any]],
+    *,
+    total_records: int,
+    working_records: int,
+) -> None:
+    """Persist linkless LinkedIn observations as targeting quarantine evidence."""
+    from app.targeting import within_run_identity
+
+    count = len(quarantined)
+    percentage = linkedin_working_link_percentage(
+        total=total_records,
+        working=working_records,
+    )
+    degraded = linkedin_link_health_degraded(
+        total=total_records,
+        working=working_records,
+    )
+    summary["linkedin_link_records_total"] = int(total_records)
+    summary["linkedin_working_link_count"] = int(working_records)
+    summary["linkedin_quarantined_linkless_count"] = int(count)
+    summary["linkedin_working_link_pct"] = percentage
+    summary["linkedin_link_health_threshold_pct"] = LINKEDIN_LINK_HEALTH_THRESHOLD_PCT
+    summary["linkedin_link_health_degraded"] = degraded
+
+    if not quarantined:
+        return
+
+    summary["raw_jobs_found"] = int(summary.get("raw_jobs_found") or 0) + count
+    summary["raw_normalized"] = int(summary.get("raw_normalized") or 0) + count
+    summary["excluded_by_other_targeting"] = int(
+        summary.get("excluded_by_other_targeting") or 0
+    ) + count
+    summary["reject_other_targeting"] = int(
+        summary.get("reject_other_targeting") or 0
+    ) + count
+    summary["rejected_jobs"] = int(summary.get("rejected_jobs") or 0) + count
+
+    primary_counts = dict(summary.get("primary_counts") or {})
+    primary_counts["REJECT_OTHER_TARGETING"] = int(
+        primary_counts.get("REJECT_OTHER_TARGETING") or 0
+    ) + count
+    summary["primary_counts"] = primary_counts
+
+    run_id = str(summary.get("run_id") or "")
+    rules_version = summary.get("targeting_rules_version")
+    rules_hash = summary.get("targeting_rules_hash")
+    decision_rows = list(summary.get("_decision_rows") or [])
+    rejection_samples = list(summary.get("rejection_samples") or [])
+    for job in quarantined:
+        decision_rows.append(
+            {
+                "run_id": run_id,
+                "source_name": str(job.get("source") or "JobSpy/linkedin"),
+                "external_id": str(job.get("ats_job_id") or "")[:300],
+                "job_identity": within_run_identity(job),
+                "title": str(job.get("title") or "")[:500],
+                "company_name": str(job.get("company_name") or "")[:500],
+                "location_raw": str(job.get("location_raw") or "")[:1000],
+                "primary_category": "REJECT_OTHER_TARGETING",
+                "secondary_reasons": [LINKEDIN_QUARANTINE_REASON],
+                "evidence": {
+                    "reason": LINKEDIN_QUARANTINE_REASON,
+                    "linkedin_job_url": None,
+                    "direct_apply_url_present": bool(job.get("direct_apply_url")),
+                    "quarantined": True,
+                },
+                "rules_version": rules_version,
+                "rules_hash": rules_hash,
+                "query_name": str(job.get("_query_name") or ""),
+                "role_family": str(job.get("_role_family") or ""),
+            }
+        )
+        if len(rejection_samples) < 25:
+            rejection_samples.append(
+                {
+                    "title": str(job.get("title") or ""),
+                    "company": str(job.get("company_name") or ""),
+                    "primary_category": "REJECT_OTHER_TARGETING",
+                    "reason": LINKEDIN_QUARANTINE_REASON,
+                    "evidence": {"quarantined": True},
+                }
+            )
+    summary["_decision_rows"] = decision_rows
+    summary["rejection_samples"] = rejection_samples
+
+
 def collect_linkedin_jobs(cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     roles, plans = _load_dashboard_targeting()
     if not roles or not plans:
@@ -986,7 +1091,15 @@ def collect_linkedin_jobs(cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], di
                 "duration_ms": duration_ms,
                 "selection_mode": "configured_cursor_rotation",
             })
-    filtered, summary = filter_dashboard_jobs(raw, roles=roles, plans=plans)
+    linked = [job for job in raw if not job.get("_linkedin_link_quarantined")]
+    quarantined = [job for job in raw if job.get("_linkedin_link_quarantined")]
+    filtered, summary = filter_dashboard_jobs(linked, roles=roles, plans=plans)
+    _merge_linkedin_link_quarantine(
+        summary,
+        quarantined,
+        total_records=len(raw),
+        working_records=len(linked),
+    )
     summary.update({
         "search_strategy": "conservative_linkedin_rotation",
         "linkedin_fetch_description": True,
@@ -1316,6 +1429,17 @@ def run_board(
                 blocked_until = None
                 next_run = next_phase_time(cadence, int(cfg["phase_minute"]))
 
+                link_degraded = bool(
+                    summary.get("linkedin_link_health_degraded")
+                )
+                link_error = None
+                if link_degraded:
+                    link_error = (
+                        "LinkedIn working-link health degraded: "
+                        f"{summary.get('linkedin_working_link_pct')}% "
+                        f"(threshold {summary.get('linkedin_link_health_threshold_pct')}%)"
+                    )
+
                 if source_errors and raw_jobs_found <= 0:
                     consecutive += 1
                     status = "error"
@@ -1323,19 +1447,27 @@ def run_board(
                     result["success"] = False
                 else:
                     consecutive = 0
-                    status = "degraded" if source_errors else "healthy"
+                    if link_degraded:
+                        status = "degraded_link_integrity"
+                    else:
+                        status = "degraded" if source_errors else "healthy"
                     source_success = True
 
+                health_errors = [*source_errors]
+                if link_error:
+                    health_errors.append(link_error)
                 result["health_status"] = status
-                result["partial_success"] = bool(source_errors and raw_jobs_found > 0)
+                result["partial_success"] = bool(
+                    (source_errors and raw_jobs_found > 0) or link_degraded
+                )
                 update_source_health(
                     state_connection,
                     cfg["display_name"],
                     status=status,
                     jobs_found=raw_jobs_found,
                     error=(
-                        "; ".join(source_errors)[:2000]
-                        if source_errors
+                        "; ".join(health_errors)[:2000]
+                        if health_errors
                         else None
                     ),
                     success=source_success,
