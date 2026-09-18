@@ -22,8 +22,8 @@ def _presentation_settings() -> dict[str, Any]:
     st.caption(
         "Choose how Native resumes look while editing. Standard is a crisp ATS-safe sans-serif layout; Jake uses a distinct Computer-Modern-inspired editorial layout. Truth, ATS checks, JD coverage and one-page generation remain unchanged."
     )
-    template_col, font_col, size_col, align_col, fit_col = st.columns(
-        (1.2, 1.45, .9, 1.1, 1.2), gap="small"
+    template_col, font_col, size_col, align_col, fit_col, order_col = st.columns(
+        (1.1, 1.3, .78, .95, 1.05, 1.25), gap="small"
     )
     with template_col:
         template = st.segmented_control(
@@ -80,6 +80,25 @@ def _presentation_settings() -> dict[str, Any]:
             value=bool(st.session_state.get("native_resume_canvas_fit", True)),
             key="native_resume_canvas_fit",
         )
+    with order_col:
+        section_order = st.selectbox(
+            "Sections",
+            list(presentation.SECTION_ORDER_PRESETS),
+            key="native_resume_canvas_section_order",
+        )
+
+    with st.expander("Section visibility & order", expanded=False):
+        visible_sections = st.multiselect(
+            "Visible in preview",
+            list(presentation.PRESENTATION_SECTIONS),
+            default=list(presentation.PRESENTATION_SECTIONS),
+            key="native_resume_canvas_visible_sections",
+        )
+        st.caption(
+            "Preview-only controls from the staging V7 workspace. They do not "
+            "change Candidate Truth, the immutable V5 artifact, JD coverage, or "
+            "submission authority."
+        )
 
     settings = presentation.normalized_settings(
         {
@@ -88,10 +107,12 @@ def _presentation_settings() -> dict[str, Any]:
             "font_size": font_size,
             "alignment": alignment,
             "fit_one_page": fit,
+            "section_order": section_order,
+            "visible_sections": visible_sections,
         }
     )
     st.caption(
-        "Preview styling is presentation-only in this tranche. The checked PDF/DOCX download remains the immutable Standard V5 artifact until presentation settings are versioned into the artifact digest."
+        "Preview styling and section layout are presentation-only. The checked PDF/DOCX download remains the immutable Standard V5 artifact until presentation settings are versioned into the artifact digest."
     )
     return settings
 
