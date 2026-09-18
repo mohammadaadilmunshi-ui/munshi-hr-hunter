@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Supervised projection/delivery worker for MUNSHI application notifications.
 
-The worker is deliberately default-off. It never creates submission authority and
+The worker is always safe to supervise. It never creates submission authority and
 never reads ATS verification artifacts. Each cycle projects only verified Hunter
-receipt/mail evidence into the durable notification outbox, then asks the outbox
-adapter to deliver user-facing status notifications when outbound delivery is enabled.
+receipt/mail evidence into the durable notification outbox. Delivery remains default-off
+unless valid credentials plus explicit user notification preferences are present.
 """
 from __future__ import annotations
 
@@ -42,10 +42,6 @@ def run_once() -> dict[str, int]:
 
 def main() -> int:
     once = "--once" in sys.argv[1:]
-    if not once and not _enabled("MUNSHI_APPLICATION_NOTIFICATION_WORKER_ENABLED"):
-        print("application_notification_worker=disabled")
-        return 0
-
     while True:
         result = run_once()
         print(
