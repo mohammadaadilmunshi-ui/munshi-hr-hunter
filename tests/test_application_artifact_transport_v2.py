@@ -147,14 +147,14 @@ def test_autoapply_anthropic_secret_is_raw_signed_and_api_mode_only(monkeypatch)
         lambda credential_type: reads.append(credential_type) or "dashboard-anthropic-secret",
     )
 
-    body, headers = _request(bridge.PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET)
+    body, headers = _request(bridge.PURPOSE_AUTOAPPLY_CREDENTIAL)
     response, response_headers = bridge.autoapply_credential_response(body, headers, now=1000)
 
     assert response == b"dashboard-anthropic-secret"
     assert reads == ["autoapply_anthropic_api_key"]
     assert response_headers["X-Munshi-Credential-Type"] == "autoapply_anthropic_api_key"
     assert response_headers["X-Munshi-Submission-Authority"] == "false"
-    _verify_response(response, response_headers, bridge.PURPOSE_AUTOAPPLY_ANTHROPIC_SECRET)
+    _verify_response(response, response_headers, bridge.PURPOSE_AUTOAPPLY_CREDENTIAL)
 
     monkeypatch.setattr(
         bridge,
