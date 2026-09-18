@@ -228,6 +228,63 @@ def test_preflight_worker_passes_v5_resume_and_known_scope(worker_db, monkeypatc
     assert seen["unresolved_question_keys"] == []
 
 
+
+def test_preflight_omits_optional_relationship_not_bound_to_current_opportunity(
+    worker_db, monkeypatch
+):
+    operation = _start("v1c-preflight-optional-relationship")
+    _ready_dependencies(operation["operation_id"])
+    _complete_root(
+        operation["operation_id"],
+        orchestrator.TASK_RECRUITER_DISCOVERY,
+        "recruiter-worker",
+        {
+            "available": True,
+            "relationship_strategy_id": "relationship-old",
+            "submission_authority": False,
+        },
+    )
+
+    opportunity = {
+        "evaluation_id": "opportunity-94",
+        "result_sha256": "f" * 64,
+    }
+    monkeypatch.setattr(
+        workers.opportunity_intelligence_v3,
+        "evaluate_job",
+        lambda job_id, persist=True: dict(opportunity),
+    )
+    monkeypatch.setattr(
+        workers.relationship_intelligence_v3,
+        "get_strategy",
+        lambda strategy_id: {
+            "strategy_id": strategy_id,
+            "job_id": 94,
+            "job_snapshot_sha256": JOB_DIGEST,
+            "opportunity_context": None,
+        },
+    )
+    monkeypatch.setattr(
+        workers.relationship_intelligence_v3,
+        "strategy_freshness",
+        lambda strategy_id: {"fresh": True},
+    )
+
+    seen = {}
+    def capture(**kwargs):
+        seen.update(kwargs)
+        return _fake_ready_package()
+
+    monkeypatch.setattr(workers.preflight_v1, "prepare_preflight_package", capture)
+
+    result = workers.run_application_preflight_once(
+        operation_id=operation["operation_id"],
+        worker_id="preflight-worker",
+    )
+
+    assert result["task_status"] == "SUCCEEDED"
+    assert seen["relationship_strategy_id"] is None
+
 def test_preflight_not_ready_becomes_needs_input(worker_db, monkeypatch):
     operation = _start("v1c-preflight-needs-input")
     _ready_dependencies(operation["operation_id"])
