@@ -206,9 +206,6 @@ def render() -> None:
     from app.auto_prepare_readiness_ui_v1 import (
         install_auto_prepare_readiness_ui,
     )
-    from app.targeting_settings_ui_v1 import (
-        install_targeting_settings_ui,
-    )
     from app.application_notification_ui_v1 import (
         install_application_notification_ui,
     )
@@ -267,15 +264,9 @@ def render() -> None:
     # This does not change preparation, targeting, or submission authority.
     install_unified_job_workspaces(product_pages, application_workspace_page)
 
-    # Promote canonical job-search targeting out of the buried engineering
-    # selector and into the customer-facing Advanced/System settings surface.
-    # This wrapper edits the same versioned "targeting" setting used everywhere.
-    install_targeting_settings_ui(product_pages)
-
-    # Restore the staging application-notification projection after the final
-    # workspace wrapper. Its installer is function-marker based and therefore
-    # safely reattaches Settings after AutoApply replaces it on each rerun,
-    # without duplicating Dashboard/Tracker activity.
+    # Restore the staging application activity projection after the final
+    # workspace wrapper. Advanced/System notification preferences render directly
+    # from settings_v23, avoiding persistent Settings wrapper accumulation.
     install_application_notification_ui(product_pages)
 
     # AutoApply replaces product_pages.settings on every Streamlit rerun. Reset
