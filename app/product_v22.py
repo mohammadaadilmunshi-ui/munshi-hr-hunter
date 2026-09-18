@@ -15,6 +15,12 @@ from urllib.parse import urlparse
 
 import streamlit as st
 
+from app.linkedin_url_contract import (
+    canonical_linkedin_job_url,
+    direct_application_url,
+    is_linkedin_source,
+)
+
 _PAGES: Any = None
 
 
@@ -790,7 +796,29 @@ def _opportunity_dialog(job_id: int) -> None:
         or _PAGES.safe_link(artifact.get("resume_doc_url"))
     )
     cover_url = _PAGES.safe_link(artifact.get("cover_letter_doc_url"))
-    apply_url = _PAGES.safe_link(row.get("apply_url"))
+    linked_source = is_linkedin_source(row.get("source"))
+    linkedin_url = (
+        canonical_linkedin_job_url(
+            row.get("job_url"),
+            job_id=row.get("ats_job_id"),
+        )
+        if linked_source
+        else None
+    )
+    if linked_source and not linkedin_url:
+        st.warning(
+            "This LinkedIn record is quarantined because its original posting "
+            "link cannot be recovered."
+        )
+        return
+    apply_url = (
+        direct_application_url(
+            row.get("apply_url"),
+            linkedin_url=linkedin_url,
+        )
+        if linked_source
+        else _PAGES.safe_link(row.get("apply_url"))
+    )
     has_artifact = bool(resume_url or cover_url)
 
     status = _friendly_status(
@@ -968,7 +996,20 @@ def _opportunity_dialog(job_id: int) -> None:
                     use_container_width=True,
                 )
         with action_columns[3]:
-            if apply_url:
+            if linked_source:
+                st.link_button(
+                    "Open LinkedIn job",
+                    linkedin_url,
+                    use_container_width=True,
+                )
+                if apply_url:
+                    st.link_button(
+                        "Apply",
+                        apply_url,
+                        type="primary",
+                        use_container_width=True,
+                    )
+            elif apply_url:
                 st.link_button(
                     "Open original job",
                     apply_url,
