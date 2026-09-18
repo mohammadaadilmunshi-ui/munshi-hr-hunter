@@ -44,6 +44,7 @@ def test_hunter_activation_is_phased_and_preserves_n8n_ollama() -> None:
     assert "N8N_RECREATED=NO" in source
     assert "OLLAMA_RECREATED=NO" in source
     assert "HUNTER_TO_APPLY_PRIVATE_BRIDGE_HEALTH=PASS" in source
+    assert 'safe.directory=$REPO' in source
     assert "source \"$ENV_FILE\"" not in source
 
 
