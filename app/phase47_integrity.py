@@ -38,6 +38,7 @@ def application_preparation_readiness(
     """Fail closed when any Phase 4-7 binding is missing, stale, or mismatched."""
     resolved_job_id = int(job_id)
     blockers: list[str] = []
+    advisories: list[str] = []
     checks: dict[str, Any] = {}
 
     current_job = safe_owned_job_snapshot(resolved_job_id)
@@ -98,14 +99,46 @@ def application_preparation_readiness(
         blockers.append("resume_opportunity_truth_mismatch")
     if resume_job and str(resume_job.get("job_snapshot_sha256")) != str(opportunity.get("job_snapshot_sha256")):
         blockers.append("resume_opportunity_job_snapshot_mismatch")
-    if str(opportunity.get("status")) != "PASS":
-        blockers.append(f"opportunity_status_{str(opportunity.get('status') or 'unknown').casefold()}")
+    opportunity_status = str(opportunity.get("status") or "UNKNOWN").upper()
+    opportunity_hard_failures = sorted(
+        {
+            str(value).strip()
+            for value in (opportunity.get("hard_failures") or [])
+            if str(value).strip()
+        }
+    )
+    opportunity_unknowns = sorted(
+        {
+            str(value).strip()
+            for value in (opportunity.get("unknowns") or [])
+            if str(value).strip()
+        }
+    )
+    if opportunity_hard_failures:
+        blockers.extend(
+            f"opportunity_hard_failure:{value}"
+            for value in opportunity_hard_failures
+        )
+    if opportunity_status not in {"PASS", "NEEDS_INPUT"}:
+        blockers.append(f"opportunity_status_{opportunity_status.casefold()}")
+    elif opportunity_status == "NEEDS_INPUT" and not opportunity_hard_failures:
+        # Opportunity Intelligence is advisory once deterministic targeting has
+        # admitted the job. Unknown fit/work-auth evidence must be resolved by
+        # the real ATS/Candidate Truth path, not converted into a second user
+        # review before the browser ever opens.
+        advisories.append("opportunity_advisory_needs_input")
+        advisories.extend(
+            f"opportunity_unknown:{value}" for value in opportunity_unknowns
+        )
     checks["phase6_opportunity"] = {
         "evaluation_id": str(opportunity_evaluation_id),
         "fresh": bool(freshness["fresh"]),
         "status": opportunity.get("status"),
         "pursuit_state": (opportunity.get("pursuit_strategy") or {}).get("pursuit_state"),
         "score_confidence": opportunity.get("score_confidence"),
+        "hard_failures": opportunity_hard_failures,
+        "unknowns": opportunity_unknowns,
+        "advisory_only": opportunity_status == "NEEDS_INPUT" and not opportunity_hard_failures,
     }
 
     if relationship_strategy_id is None:
@@ -135,6 +168,7 @@ def application_preparation_readiness(
         "job_id": resolved_job_id,
         "status": "READY" if not blockers else "HOLD",
         "blockers": blockers,
+        "advisories": sorted(set(advisories)),
         "checks": checks,
         "candidate_truth_binding": current_truth_public,
         "job_snapshot_sha256": current_job["job_snapshot_sha256"],
