@@ -1148,3 +1148,33 @@ async def application_execution_cover_letter(request: Request) -> Response:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
     except (LookupError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.post("/api/application-execution/autoapply-config")
+async def application_execution_autoapply_config(request: Request) -> Response:
+    from app import application_artifact_transport_v2
+    try:
+        body, headers = application_artifact_transport_v2.autoapply_config_response(
+            await request.body(), request.headers
+        )
+        return Response(content=body, media_type="application/json", headers=headers)
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+    except (LookupError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.post("/api/application-execution/autoapply-credential")
+async def application_execution_autoapply_credential(request: Request) -> Response:
+    from app import application_artifact_transport_v2
+    try:
+        body, headers = application_artifact_transport_v2.autoapply_credential_response(
+            await request.body(), request.headers
+        )
+        # Secret bytes are returned only across the authenticated execution bridge
+        # to the Apply service process. They are never represented as JSON.
+        return Response(content=body, media_type="application/octet-stream", headers=headers)
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+    except (LookupError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
