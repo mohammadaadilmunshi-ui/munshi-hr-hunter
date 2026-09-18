@@ -885,6 +885,18 @@ def render() -> None:
         key="phase17_application_job",
     )
     job_id = labels[chosen_label]
+
+    notice = st.session_state.pop("application_workspace_notice", None)
+    if isinstance(notice, dict) and str(notice.get("message") or "").strip():
+        tone = str(notice.get("tone") or "info")
+        renderer = {
+            "success": st.success,
+            "warning": st.warning,
+            "error": st.error,
+            "info": st.info,
+        }.get(tone, st.info)
+        renderer(str(notice["message"]))
+
     try:
         st.query_params["view"] = "prepare-application"
         st.query_params["job"] = str(job_id)
