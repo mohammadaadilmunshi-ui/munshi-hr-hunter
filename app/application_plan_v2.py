@@ -42,9 +42,11 @@ PLAN_ENV = "MUNSHI_APPLICATION_PLAN_V2_ENABLED"
 RUNTIME_RESOLUTION_ENV = "MUNSHI_APPLICATION_PLAN_RUNTIME_RESOLUTION_ENABLED"
 RUNTIME_SUPERSESSION_VERSION = "munshi-application-plan-supersession-v1"
 _RUNTIME_REVISION_KIND = "runtime_apply_needs_input_v1"
-SUPPORTED_PROVIDERS = frozenset(
+KNOWN_PROVIDER_RECIPES = frozenset(
     {"GREENHOUSE", "LEVER", "ASHBY", "SMARTRECRUITERS", "WORKDAY", "AGILE_ATS"}
 )
+# Backward-compatible export: this is now a recipe catalog, not an eligibility gate.
+SUPPORTED_PROVIDERS = KNOWN_PROVIDER_RECIPES
 SENSITIVITY_CLASSES = frozenset(
     {"NORMAL", "PROTECTED", "SELF_ID", "CREDENTIAL", "POST_OFFER"}
 )
@@ -354,33 +356,57 @@ def _scoped_secure_refs(
     return dict(refs)
 
 
-def _provider_from_job(job: Mapping[str, Any]) -> str:
+def _application_target_host(job: Mapping[str, Any]) -> str:
     for field in ("apply_url", "job_url"):
         value = str(job.get(field) or "").strip()
         if not value:
             continue
         parsed = urlsplit(value)
-        if parsed.scheme.casefold() != "https" or parsed.username or parsed.password:
+        if (
+            parsed.scheme.casefold() != "https"
+            or parsed.username
+            or parsed.password
+            or parsed.fragment
+        ):
             continue
         host = (parsed.hostname or "").casefold().rstrip(".")
-        for provider, suffixes in _PROVIDER_HOSTS.items():
-            if any(
-                host == suffix or host.endswith("." + suffix) for suffix in suffixes
-            ):
-                return provider
-    return "UNSUPPORTED"
+        if host:
+            return host
+    return ""
+
+
+def _provider_from_job(job: Mapping[str, Any]) -> str:
+    host = _application_target_host(job)
+    if not host:
+        return "GENERIC"
+    for provider, suffixes in _PROVIDER_HOSTS.items():
+        if any(host == suffix or host.endswith("." + suffix) for suffix in suffixes):
+            return provider
+    return "GENERIC"
 
 
 def _normalize_provider_policy(
     value: Mapping[str, Any] | None,
     *,
     provider: str,
+    allowed_hosts: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     raw = dict(value or {})
     unknown = sorted(set(raw) - {"permitted", "authentication_mode", "captcha_policy"})
     if unknown:
         raise ValueError("Unsupported provider policy fields: " + ", ".join(unknown))
-    permitted = raw.get("permitted", provider in SUPPORTED_PROVIDERS)
+    effective_hosts = tuple(
+        dict.fromkeys(
+            str(host).casefold().rstrip(".")
+            for host in (
+                _PROVIDER_HOSTS.get(provider, ())
+                if provider in KNOWN_PROVIDER_RECIPES
+                else allowed_hosts
+            )
+            if str(host).strip()
+        )
+    )
+    permitted = raw.get("permitted", bool(effective_hosts))
     if not isinstance(permitted, bool):
         raise ValueError("Provider policy permitted must be boolean.")
     authentication_mode = (
@@ -395,12 +421,13 @@ def _normalize_provider_policy(
         )
     return {
         "provider": provider,
+        "provider_recipe": provider if provider in KNOWN_PROVIDER_RECIPES else None,
         "permitted": permitted,
         "authentication_mode": authentication_mode,
         "captcha_policy": "PAUSE",
         "mfa_policy": "PAUSE",
         "credentials_authority": False,
-        "allowed_hosts": list(_PROVIDER_HOSTS.get(provider, ())),
+        "allowed_hosts": list(effective_hosts),
     }
 
 
@@ -741,7 +768,12 @@ def _capture(
         }
 
     provider = _provider_from_job(job)
-    policy = _normalize_provider_policy(provider_policy, provider=provider)
+    target_host = _application_target_host(job)
+    policy = _normalize_provider_policy(
+        provider_policy,
+        provider=provider,
+        allowed_hosts=((target_host,) if target_host else ()),
+    )
     answers: list[dict[str, Any]] = []
     unresolved: list[dict[str, str]] = []
     for requirement in requirements:
@@ -764,8 +796,8 @@ def _capture(
         global_blockers.append("resume_upload_permission_missing")
     if cover_letter is not None and not permissions.get("cover_letter_upload"):
         global_blockers.append("cover_letter_upload_permission_missing")
-    if provider not in SUPPORTED_PROVIDERS or not policy["permitted"]:
-        global_blockers.append("provider_not_permitted_or_supported")
+    if not policy["permitted"] or not policy["allowed_hosts"]:
+        global_blockers.append("provider_not_permitted_or_target_invalid")
 
     connection = get_connection()
     try:
