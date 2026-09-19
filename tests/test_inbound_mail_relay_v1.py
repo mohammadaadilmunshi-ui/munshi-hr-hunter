@@ -10,7 +10,7 @@ from email.message import EmailMessage
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app import database, inbound_mail
+from app import database, inbound_mail, mail_intelligence_v2
 from app.ats_managed_identity import prepare_managed_account
 from app.ats_verification_orchestrator import begin_verification
 
@@ -501,3 +501,61 @@ def test_main_api_mounts_signed_inbound_mail_router(monkeypatch):
 
     routes = {(route.path, ",".join(sorted(route.methods or []))) for route in app.routes}
     assert any(path == "/api/mail/inbound" and "POST" in methods for path, methods in routes)
+
+
+def test_signed_v2_router_message_reaches_mail_intelligence(
+    hunter_db,
+    monkeypatch,
+):
+    account = _setup_active_identity(monkeypatch)
+    monkeypatch.setenv(
+        "MUNSHI_MAIL_ARTIFACT_HMAC_SECRET",
+        "test-mail-artifact-secret-" + ("z" * 40),
+    )
+    recipient = str(account["application_email"])
+    sender = "no-reply@example.test"
+    message_id = "<munshi-mail-v2-route@example.test>"
+    raw = _raw_email(
+        recipient=recipient,
+        sender=sender,
+        message_id=message_id,
+        subject="Application update",
+        body="This is an ordinary application mailbox message.",
+    )
+    timestamp_value = str(int(time.time()))
+    router_class = "OTHER"
+    digest = hashlib.sha256(raw).hexdigest()
+    material = mail_intelligence_v2.canonical_signature_material_v2(
+        timestamp_value=timestamp_value,
+        recipient=recipient,
+        sender=sender,
+        message_id=message_id,
+        router_class=router_class,
+        raw_sha256=digest,
+    )
+    signature = hmac.new(
+        MAIL_SECRET.encode("utf-8"),
+        material,
+        hashlib.sha256,
+    ).hexdigest()
+
+    response = _client().post(
+        "/api/mail/inbound",
+        content=raw,
+        headers={
+            "Content-Type": "message/rfc822",
+            "X-Munshi-Version": "v2",
+            "X-Munshi-Timestamp": timestamp_value,
+            "X-Munshi-Recipient": recipient,
+            "X-Munshi-Sender": sender,
+            "X-Munshi-Message-ID": message_id,
+            "X-Munshi-Mail-Class": router_class,
+            "X-Munshi-Signature": f"v2={signature}",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["classification"] == "OTHER"
+    assert payload["submission_triggered"] is False
