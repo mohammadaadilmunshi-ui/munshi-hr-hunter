@@ -495,22 +495,30 @@ def test_inbound_route_is_registered_through_existing_proxy_router():
     assert "/api/mail/inbound" in paths
 
 
-def test_main_api_mounts_signed_inbound_mail_router(monkeypatch):
+def test_main_api_mounts_signed_inbound_mail_router(
+    hunter_db,
+    monkeypatch,
+):
     monkeypatch.setenv("HUNTER_API_SECRET", "test-hunter-api-secret")
+
+    # Test the actual ASGI surface instead of FastAPI's internal route
+    # representation. Newer FastAPI versions may retain included routers as
+    # _IncludedRouter objects, which is an implementation detail and not
+    # evidence that the endpoint is missing.
     from app.api import app
 
-    routes = {
-        (
-            getattr(route, "path", None),
-            ",".join(sorted(getattr(route, "methods", None) or [])),
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/mail/inbound",
+            content=b"",
+            headers={"Content-Type": "message/rfc822"},
         )
-        for route in app.routes
-        if getattr(route, "path", None)
-    }
-    assert any(
-        path == "/api/mail/inbound" and "POST" in methods
-        for path, methods in routes
-    )
+
+    # The mounted route is reached and rejects the deliberately unsigned,
+    # empty probe at the mail-validation boundary. A missing/mis-mounted route
+    # would instead return 404/405.
+    assert response.status_code == 400
+    assert "protocol version" in response.json()["detail"].lower()
 
 
 def test_signed_v2_router_message_reaches_mail_intelligence(
