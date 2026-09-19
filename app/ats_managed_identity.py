@@ -321,6 +321,8 @@ def prepare_managed_account(
         "account_scope": status["account_scope"],
         "credential_state": status["state"],
         "application_email": identity["email_address"],
+        "login_identifier": identity["email_address"],
+        "username_policy": "MANAGED_APPLICATION_EMAIL",
         "email_relay_state": identity["relay_state"],
         "password_policy": mode,
         "password_managed": mode == _PASSWORD_MODE_MANAGED,
