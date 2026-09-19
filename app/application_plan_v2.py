@@ -42,6 +42,7 @@ PLAN_ENV = "MUNSHI_APPLICATION_PLAN_V2_ENABLED"
 RUNTIME_RESOLUTION_ENV = "MUNSHI_APPLICATION_PLAN_RUNTIME_RESOLUTION_ENABLED"
 RUNTIME_SUPERSESSION_VERSION = "munshi-application-plan-supersession-v1"
 _RUNTIME_REVISION_KIND = "runtime_apply_needs_input_v1"
+MAILBOX_POLICY_ENV = "MUNSHI_ATS_MAILBOX_POLICY_JSON"
 SUPPORTED_PROVIDERS = frozenset(
     {"GREENHOUSE", "LEVER", "ASHBY", "SMARTRECRUITERS", "WORKDAY", "AGILE_ATS"}
 )
@@ -371,13 +372,92 @@ def _provider_from_job(job: Mapping[str, Any]) -> str:
     return "UNSUPPORTED"
 
 
+def _normalize_mailbox_domains(values: object, *, field: str) -> list[str]:
+    if values is None:
+        return []
+    if not isinstance(values, (list, tuple, set, frozenset)):
+        raise ValueError(f"Mailbox {field} must be a list of exact domains.")
+    normalized: set[str] = set()
+    for raw in values:
+        candidate = str(raw or "").strip().casefold().rstrip(".")
+        if "://" in candidate:
+            candidate = (urlsplit(candidate).hostname or "").casefold().rstrip(".")
+        if (
+            not candidate
+            or len(candidate) > 253
+            or "/" in candidate
+            or "@" in candidate
+            or "*" in candidate
+            or not re.fullmatch(r"[a-z0-9.-]+", candidate)
+        ):
+            raise ValueError(f"Mailbox {field} contains an invalid exact domain.")
+        normalized.add(candidate)
+    return sorted(normalized)
+
+
+def _configured_mailbox_policy(provider: str) -> Mapping[str, Any] | None:
+    raw = str(os.getenv(MAILBOX_POLICY_ENV) or "").strip()
+    if not raw:
+        return None
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ValueError("MUNSHI ATS mailbox policy JSON is invalid.") from error
+    if not isinstance(decoded, Mapping):
+        raise ValueError("MUNSHI ATS mailbox policy JSON must be an object.")
+    candidate = decoded.get(provider)
+    if candidate is None:
+        return None
+    if not isinstance(candidate, Mapping):
+        raise ValueError("Configured provider mailbox policy must be an object.")
+    return candidate
+
+
+def _normalize_mailbox_policy(
+    value: object,
+    *,
+    provider: str,
+) -> dict[str, Any] | None:
+    candidate = value
+    if candidate is None:
+        candidate = _configured_mailbox_policy(provider)
+    if candidate is None:
+        return None
+    if not isinstance(candidate, Mapping):
+        raise ValueError("Provider mailbox_verification policy must be an object.")
+    raw = dict(candidate)
+    unknown = sorted(set(raw) - {"sender_domains", "link_hosts"})
+    if unknown:
+        raise ValueError(
+            "Unsupported mailbox verification policy fields: " + ", ".join(unknown)
+        )
+    senders = _normalize_mailbox_domains(
+        raw.get("sender_domains"), field="sender_domains"
+    )
+    links = _normalize_mailbox_domains(raw.get("link_hosts"), field="link_hosts")
+    if not senders:
+        raise ValueError("Mailbox sender_domains must contain at least one exact trusted domain.")
+    if not links:
+        links = sorted(_PROVIDER_HOSTS.get(provider, ()))
+    if not links:
+        raise ValueError("Mailbox link_hosts must contain at least one exact trusted domain.")
+    return {
+        "sender_domains": senders,
+        "link_hosts": links,
+        "mandatory": True,
+    }
+
+
 def _normalize_provider_policy(
     value: Mapping[str, Any] | None,
     *,
     provider: str,
 ) -> dict[str, Any]:
     raw = dict(value or {})
-    unknown = sorted(set(raw) - {"permitted", "authentication_mode", "captcha_policy"})
+    unknown = sorted(
+        set(raw)
+        - {"permitted", "authentication_mode", "captcha_policy", "mailbox_verification"}
+    )
     if unknown:
         raise ValueError("Unsupported provider policy fields: " + ", ".join(unknown))
     permitted = raw.get("permitted", provider in SUPPORTED_PROVIDERS)
@@ -393,7 +473,7 @@ def _normalize_provider_policy(
         raise ValueError(
             "Application Plan V2 never permits automatic CAPTCHA handling."
         )
-    return {
+    result = {
         "provider": provider,
         "permitted": permitted,
         "authentication_mode": authentication_mode,
@@ -402,6 +482,13 @@ def _normalize_provider_policy(
         "credentials_authority": False,
         "allowed_hosts": list(_PROVIDER_HOSTS.get(provider, ())),
     }
+    mailbox_policy = _normalize_mailbox_policy(
+        raw.get("mailbox_verification"),
+        provider=provider,
+    )
+    if mailbox_policy is not None:
+        result["mailbox_verification"] = mailbox_policy
+    return result
 
 
 def _owner_binding(package_snapshot: Mapping[str, Any]) -> dict[str, str]:
