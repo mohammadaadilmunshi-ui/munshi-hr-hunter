@@ -21,7 +21,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from app.database import get_connection
-from app.mailbox_crypto import decrypt_content, encrypt_content, runtime_ready as crypto_ready
+from app.mailbox_crypto import decrypt_content, derive_subkey, runtime_ready as crypto_ready
 
 ARTIFACT_TTL_SECONDS = 120
 _ALLOWED_KINDS = {
@@ -314,10 +314,7 @@ def _artifact_aad(row: sqlite3.Row) -> bytes:
 
 
 def _artifact_key() -> bytes:
-    # mailbox_crypto derives its own domain-separated key from MUNSHI_VAULT_KEY.
-    # Derive a second independent subkey for one-time artifacts.
-    from app.mailbox_crypto import _key as mailbox_content_key
-    return hmac.new(mailbox_content_key(), b"munshi-mailbox-artifact-v1", hashlib.sha256).digest()
+    return derive_subkey("verification-artifact-v1")
 
 
 def _encrypt_artifact(metadata: dict[str, str], artifact: str) -> tuple[bytes, bytes]:
