@@ -109,8 +109,11 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         ON inbound_mail_messages(verification_request_id,received_at DESC);
         """
     )
+    # PRAGMA table_info always exposes the column name at index 1. Numeric
+    # indexing works for both sqlite3.Row and the default tuple row shape used
+    # by deployment migration runners.
     columns = {
-        str(row["name"])
+        str(row[1])
         for row in connection.execute("PRAGMA table_info(inbound_mail_messages)").fetchall()
     }
     if "content_ciphertext" not in columns:
