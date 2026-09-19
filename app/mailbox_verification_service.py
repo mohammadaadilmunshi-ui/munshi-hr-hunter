@@ -461,6 +461,7 @@ def claim_artifact(
         return {
             "artifact_id": str(row["artifact_id"]),
             "request_id": request_id,
+            "inbound_id": str(message["inbound_id"]),
             "artifact_kind": kind,
             "artifact_digest": digest,
             "artifact": artifact_value,
