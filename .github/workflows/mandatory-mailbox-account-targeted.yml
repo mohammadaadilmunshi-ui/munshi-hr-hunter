@@ -1,0 +1,28 @@
+name: Mandatory Mailbox Account Targeted
+
+on:
+  push:
+    branches:
+      - feat/mandatory-mailbox-account-orchestrator-finalize-20260918
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install locked production dependencies
+        run: python -m pip install -r requirements.lock.txt
+      - name: Compile mailbox and account execution surface
+        run: |
+          python -m py_compile             app/mailbox_crypto.py             app/mailbox_verification_service.py             app/inbound_mail.py             app/ats_credentials.py             app/ats_managed_identity.py             app/ats_verification_orchestrator.py             app/application_account_transport_v1.py             app/api.py             migrations/056_mandatory_mailbox_verification_v1.py             tests/test_mailbox_verification_service_v1.py             tests/test_inbound_mail_relay_v1.py
+      - name: Run focused mailbox and ATS credential tests
+        run: |
+          python -m pytest -q             tests/test_mailbox_verification_service_v1.py             tests/test_inbound_mail_relay_v1.py             tests/test_ats_credentials.py             tests/test_ats_managed_identity.py             tests/test_ats_verification_orchestrator.py
