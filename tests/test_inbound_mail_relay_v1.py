@@ -499,8 +499,18 @@ def test_main_api_mounts_signed_inbound_mail_router(monkeypatch):
     monkeypatch.setenv("HUNTER_API_SECRET", "test-hunter-api-secret")
     from app.api import app
 
-    routes = {(route.path, ",".join(sorted(route.methods or []))) for route in app.routes}
-    assert any(path == "/api/mail/inbound" and "POST" in methods for path, methods in routes)
+    routes = {
+        (
+            getattr(route, "path", None),
+            ",".join(sorted(getattr(route, "methods", None) or [])),
+        )
+        for route in app.routes
+        if getattr(route, "path", None)
+    }
+    assert any(
+        path == "/api/mail/inbound" and "POST" in methods
+        for path, methods in routes
+    )
 
 
 def test_signed_v2_router_message_reaches_mail_intelligence(
