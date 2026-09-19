@@ -24,6 +24,7 @@ from app.application_artifact_transport_v2 import (
 from app.ats_credentials import resolve_secret_for_execution
 from app.ats_managed_identity import managed_secret_ref, prepare_managed_account
 from app.ats_verification_orchestrator import begin_verification
+from app.tenant_foundation import owner_context
 from app.mailbox_verification_service import (
     cancel_request,
     claim_artifact,
@@ -225,12 +226,16 @@ def account_prepare_response(
     provider = _required_text(payload, "provider", maximum=80).upper()
     if provider != _provider(snapshot):
         raise PermissionError("Managed account provider conflicts with Application Plan.")
-    account = prepare_managed_account(
-        provider=provider,
-        account_scope=_required_text(payload, "account_scope", maximum=240),
-        label=_required_text(payload, "label", maximum=120),
-        consent_version=str(payload.get("consent_version") or "managed-ats-v1")[:80],
-    )
+    with owner_context(
+        tenant_id=str(request["tenant_id"]),
+        user_id=str(request["user_id"]),
+    ):
+        account = prepare_managed_account(
+            provider=provider,
+            account_scope=_required_text(payload, "account_scope", maximum=240),
+            label=_required_text(payload, "label", maximum=120),
+            consent_version=str(payload.get("consent_version") or "managed-ats-v1")[:80],
+        )
     return _response(request, purpose=PURPOSE_ACCOUNT_PREPARE, result=account)
 
 
@@ -244,13 +249,17 @@ def account_credential_response(
     secret_ref = _required_text(payload, "secret_ref", maximum=256)
     if not hmac.compare_digest(secret_ref, managed_secret_ref(account_id)):
         raise PermissionError("Managed account credential reference is invalid.")
-    password = resolve_secret_for_execution(
-        account_id=account_id,
+    with owner_context(
         tenant_id=str(request["tenant_id"]),
         user_id=str(request["user_id"]),
-        secret_kind="password",
-        purpose="application-execution",
-    )
+    ):
+        password = resolve_secret_for_execution(
+            account_id=account_id,
+            tenant_id=str(request["tenant_id"]),
+            user_id=str(request["user_id"]),
+            secret_kind="password",
+            purpose="application-execution",
+        )
     try:
         sealed = _seal(
             {"password": password, "account_id": account_id, "secret_ref": secret_ref},
@@ -282,14 +291,18 @@ def mailbox_begin_response(
     application_key = _required_text(payload, "application_key", maximum=256)
     if application_key != str(request["application_id"]):
         raise PermissionError("Mailbox application binding is invalid.")
-    result = begin_verification(
-        account_id=_required_text(payload, "account_id", maximum=128),
-        provider=provider,
-        expected_link_hosts=list(payload.get("expected_link_hosts") or []),
-        expected_sender_domains=list(payload.get("expected_sender_domains") or []),
-        application_key=application_key,
-        ttl_minutes=int(payload.get("ttl_minutes") or 30),
-    )
+    with owner_context(
+        tenant_id=str(request["tenant_id"]),
+        user_id=str(request["user_id"]),
+    ):
+        result = begin_verification(
+            account_id=_required_text(payload, "account_id", maximum=128),
+            provider=provider,
+            expected_link_hosts=list(payload.get("expected_link_hosts") or []),
+            expected_sender_domains=list(payload.get("expected_sender_domains") or []),
+            application_key=application_key,
+            ttl_minutes=int(payload.get("ttl_minutes") or 30),
+        )
     if result.get("mail_relay_ready") is not True:
         raise ApplicationAccountTransportError("Mandatory mailbox runtime is unavailable.")
     return _response(request, purpose=PURPOSE_MAILBOX_BEGIN, result=result)
