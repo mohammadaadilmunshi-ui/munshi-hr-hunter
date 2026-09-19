@@ -549,3 +549,61 @@ def consume_artifact(
         raise
     finally:
         connection.close()
+
+
+def cancel_request(
+    *,
+    tenant_id: str,
+    user_id: str,
+    request_id: str,
+    application_key: str,
+    account_id: str,
+    reason_code: str = "VERIFICATION_NOT_REQUIRED",
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    current = _now(now)
+    reason = str(reason_code or "").strip().upper()
+    if reason not in {"VERIFICATION_NOT_REQUIRED", "ACCOUNT_FLOW_ABORTED"}:
+        raise MailboxVerificationError("Mailbox cancellation reason is invalid.")
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """
+            SELECT state FROM ats_verification_requests
+            WHERE request_id=? AND tenant_id=? AND user_id=?
+              AND application_key=? AND account_id=?
+            """,
+            (request_id, tenant_id, user_id, application_key, account_id),
+        ).fetchone()
+        if row is None:
+            raise LookupError("Mailbox verification request is unavailable.")
+        state = str(row["state"])
+        if state == "WAITING":
+            connection.execute(
+                """
+                UPDATE ats_verification_requests
+                SET state='REJECTED',reason_code=?,updated_at=?
+                WHERE request_id=? AND state='WAITING'
+                """,
+                (reason, _iso(current), request_id),
+            )
+            _audit(
+                connection,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                request_id=request_id,
+                application_key=application_key,
+                account_id=account_id,
+                event_type="REQUEST_CANCELLED",
+                reason_code=reason,
+                now=current,
+            )
+        connection.commit()
+        return {"request_id": request_id, "state": "REJECTED" if state == "WAITING" else state}
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
