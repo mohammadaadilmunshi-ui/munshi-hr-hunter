@@ -28,17 +28,21 @@ def _vault_key() -> bytes:
     return raw
 
 
+def _key() -> bytes:
+    # Preserve the original content-encryption derivation for compatibility.
+    return hmac.new(_vault_key(), _CONTEXT, hashlib.sha256).digest()
+
+
 def derive_subkey(label: str) -> bytes:
-    """Derive a domain-separated mailbox subkey from the Hunter vault key."""
+    """Derive a domain-separated mailbox subkey from the content root."""
     normalized = str(label or "").strip().encode("utf-8")
     if not normalized or len(normalized) > 128:
         raise MailboxCryptoError("Mailbox encryption subkey label is invalid.")
-    root = hmac.new(_vault_key(), _CONTEXT, hashlib.sha256).digest()
-    return hmac.new(root, b"munshi-mailbox-subkey:" + normalized, hashlib.sha256).digest()
-
-
-def _key() -> bytes:
-    return derive_subkey("content-v1")
+    return hmac.new(
+        _key(),
+        b"munshi-mailbox-subkey:" + normalized,
+        hashlib.sha256,
+    ).digest()
 
 
 def _aad(*, identity_id: str, inbound_id: str, raw_sha256: str) -> bytes:
