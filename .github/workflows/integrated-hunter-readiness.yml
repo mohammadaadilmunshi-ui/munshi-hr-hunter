@@ -1,0 +1,64 @@
+name: Integrated Hunter Readiness
+
+on:
+  push:
+    branches:
+      - feat/provider-neutral-submission-receipt-v1-20260919
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integrated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.lock.txt
+
+      - name: Compile integrated Hunter surface
+        run: |
+          python -m py_compile \
+            app/mailbox_crypto.py \
+            app/mailbox_verification_service.py \
+            app/inbound_mail.py \
+            app/ats_credentials.py \
+            app/ats_managed_identity.py \
+            app/ats_verification_orchestrator.py \
+            app/application_account_transport_v1.py \
+            app/application_production_submission_receipt_v1.py \
+            app/job_store.py \
+            app/jobspy_board_common.py \
+            app/linkedin_url_contract.py \
+            app/provider_telemetry_window_v1.py \
+            app/product_pages.py \
+            app/product_state.py \
+            app/product_v22.py \
+            tools/runners/jobspy_runner.py
+
+      - name: Mailbox identity encryption correlation and audit
+        run: |
+          python -m pytest -q \
+            tests/test_mailbox_verification_service_v1.py \
+            tests/test_inbound_mail_relay_v1.py \
+            tests/test_ats_credentials.py \
+            tests/test_ats_managed_identity.py \
+            tests/test_ats_verification_orchestrator.py
+
+      - name: Provider-neutral receipt verification
+        run: |
+          python -m pytest -q \
+            tests/test_application_production_submission_receipt_v1.py \
+            tests/test_verified_submission_receipt_v1.py
+
+      - name: LinkedIn ingestion persistence UI contract
+        run: |
+          python -m pytest -q \
+            tests/test_linkedin_direct_apply_url_v1.py \
+            tests/test_linkedin_link_contract_v2.py
