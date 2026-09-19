@@ -493,3 +493,11 @@ def test_inbound_route_is_registered_through_existing_proxy_router():
         for route in application_router.routes
     }
     assert "/api/mail/inbound" in paths
+
+
+def test_main_api_mounts_signed_inbound_mail_router(monkeypatch):
+    monkeypatch.setenv("HUNTER_API_SECRET", "test-hunter-api-secret")
+    from app.api import app
+
+    routes = {(route.path, ",".join(sorted(route.methods or []))) for route in app.routes}
+    assert any(path == "/api/mail/inbound" and "POST" in methods for path, methods in routes)
