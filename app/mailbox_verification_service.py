@@ -39,7 +39,7 @@ _URL_RE = re.compile(r"https://[^\s<>\"']+", re.IGNORECASE)
 _CODE_PATTERNS = (
     re.compile(
         r"(?i)(?:verification\s+code|security\s+code|email\s+code|passcode|one[- ]time\s+(?:code|password)|otp)"
-        r"[^A-Z0-9]{0,32}([A-Z0-9](?:[A-Z0-9 -]{2,14}[A-Z0-9]))"
+        r"(?:\\s+is)?\\s*[:#-]?\\s*([A-Z0-9](?:[A-Z0-9-]{2,14}[A-Z0-9]))"
     ),
     re.compile(
         r"(?i)(?:enter|use|code\s+is)[^A-Z0-9]{0,20}([0-9]{4,10})(?![0-9])"
