@@ -31,6 +31,7 @@ from fastapi import APIRouter, Header, HTTPException, Request, status
 from app.ats_managed_identity import ensure_schema as ensure_identity_schema
 from app.ats_verification_orchestrator import ensure_schema as ensure_verification_schema
 from app.database import get_connection
+from app.mailbox_crypto import encrypt_content
 
 
 router = APIRouter()
@@ -108,6 +109,16 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         ON inbound_mail_messages(verification_request_id,received_at DESC);
         """
     )
+    columns = {
+        str(row["name"])
+        for row in connection.execute("PRAGMA table_info(inbound_mail_messages)").fetchall()
+    }
+    if "content_ciphertext" not in columns:
+        connection.execute("ALTER TABLE inbound_mail_messages ADD COLUMN content_ciphertext BLOB")
+    if "content_nonce" not in columns:
+        connection.execute("ALTER TABLE inbound_mail_messages ADD COLUMN content_nonce BLOB")
+    if "content_algorithm" not in columns:
+        connection.execute("ALTER TABLE inbound_mail_messages ADD COLUMN content_algorithm TEXT")
 
 
 def _safe_metadata(
@@ -527,6 +538,15 @@ def store_verified_message(
             correlation_state = "NONE"
 
         inbound_id = str(uuid4())
+        content_ciphertext, content_nonce, content_algorithm = encrypt_content(
+            identity_id=str(identity["identity_id"]),
+            inbound_id=inbound_id,
+            raw_sha256=raw_sha256,
+            subject=parsed["subject"],
+            headers=parsed["headers"],
+            text_body=parsed["text_body"],
+            html_body=parsed["html_body"],
+        )
         connection.execute(
             """
             INSERT INTO inbound_mail_messages(
@@ -552,8 +572,11 @@ def store_verified_message(
               html_body,
               attachment_count,
               attachments_json,
-              router_version
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              router_version,
+              content_ciphertext,
+              content_nonce,
+              content_algorithm
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 inbound_id,
@@ -567,19 +590,15 @@ def store_verified_message(
                 sender,
                 recipient,
                 sender_domain,
-                parsed["subject"],
+                "[encrypted]",
                 parsed["source_date"],
                 signed_at,
                 received.isoformat(),
                 raw_sha256,
                 len(raw),
-                json.dumps(
-                    parsed["headers"],
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
-                parsed["text_body"],
-                parsed["html_body"],
+                "[]",
+                None,
+                None,
                 len(parsed["attachments"]),
                 json.dumps(
                     parsed["attachments"],
@@ -587,6 +606,9 @@ def store_verified_message(
                     separators=(",", ":"),
                 ),
                 router_version,
+                content_ciphertext,
+                content_nonce,
+                content_algorithm,
             ),
         )
         connection.commit()
