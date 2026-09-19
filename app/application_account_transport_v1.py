@@ -25,6 +25,7 @@ from app.ats_credentials import resolve_secret_for_execution
 from app.ats_managed_identity import managed_secret_ref, prepare_managed_account
 from app.ats_verification_orchestrator import begin_verification
 from app.mailbox_verification_service import (
+    cancel_request,
     claim_artifact,
     consume_artifact,
     runtime_health,
@@ -36,6 +37,7 @@ PURPOSE_MAILBOX_HEALTH = "MAILBOX_HEALTH"
 PURPOSE_MAILBOX_BEGIN = "MAILBOX_VERIFICATION_BEGIN"
 PURPOSE_MAILBOX_CLAIM = "MAILBOX_VERIFICATION_CLAIM"
 PURPOSE_MAILBOX_CONSUME = "MAILBOX_VERIFICATION_CONSUME"
+PURPOSE_MAILBOX_CANCEL = "MAILBOX_VERIFICATION_CANCEL"
 
 PURPOSES = frozenset(
     {
@@ -45,6 +47,7 @@ PURPOSES = frozenset(
         PURPOSE_MAILBOX_BEGIN,
         PURPOSE_MAILBOX_CLAIM,
         PURPOSE_MAILBOX_CONSUME,
+        PURPOSE_MAILBOX_CANCEL,
     }
 )
 _REQUIRED = {
@@ -341,3 +344,23 @@ def mailbox_consume_response(
         lease_token=_required_text(opened, "lease_token", maximum=512),
     )
     return _response(request, purpose=PURPOSE_MAILBOX_CONSUME, result=result)
+
+
+def mailbox_cancel_response(
+    body: bytes, headers: Mapping[str, str], *, now: int | None = None
+) -> tuple[bytes, dict[str, str]]:
+    request = _verify_request(body, headers, purpose=PURPOSE_MAILBOX_CANCEL, now=now)
+    _authorized_plan(request)
+    payload = dict(request["payload"])
+    application_key = _required_text(payload, "application_key", maximum=256)
+    if application_key != str(request["application_id"]):
+        raise PermissionError("Mailbox cancellation application binding is invalid.")
+    result = cancel_request(
+        tenant_id=str(request["tenant_id"]),
+        user_id=str(request["user_id"]),
+        request_id=_required_text(payload, "request_id", maximum=128),
+        application_key=application_key,
+        account_id=_required_text(payload, "account_id", maximum=128),
+        reason_code=str(payload.get("reason_code") or "VERIFICATION_NOT_REQUIRED"),
+    )
+    return _response(request, purpose=PURPOSE_MAILBOX_CANCEL, result=result)
