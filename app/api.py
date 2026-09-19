@@ -1244,3 +1244,13 @@ async def application_execution_mailbox_consume(request: Request) -> Response:
         return Response(content=body, media_type="application/json", headers=headers)
     except (LookupError, PermissionError, RuntimeError, ValueError) as error:
         raise _account_execution_response_error(error) from error
+
+
+@app.post("/api/application-execution/mailbox/cancel")
+async def application_execution_mailbox_cancel(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.mailbox_cancel_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error
