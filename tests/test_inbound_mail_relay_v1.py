@@ -197,7 +197,14 @@ def test_signed_known_alias_is_stored_and_uniquely_correlated(
         assert stored["application_key"] == "application-mail-1"
         assert stored["verification_request_id"] == verification["request_id"]
         assert stored["correlation_state"] == "UNIQUE"
-        assert "secure verification link" in stored["text_body"]
+        assert stored["subject"] == "[encrypted]"
+        assert stored["headers_json"] == "[]"
+        assert stored["text_body"] is None
+        assert stored["html_body"] is None
+        assert stored["content_ciphertext"] is not None
+        assert stored["content_nonce"] is not None
+        assert stored["content_algorithm"] == "aes-gcm-v1"
+        assert b"secure verification link" not in bytes(stored["content_ciphertext"])
         assert stored["attachment_count"] == 0
 
         assert request is not None
