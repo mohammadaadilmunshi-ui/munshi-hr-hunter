@@ -1178,3 +1178,69 @@ async def application_execution_autoapply_credential(request: Request) -> Respon
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
     except (LookupError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+def _account_execution_response_error(error: Exception) -> HTTPException:
+    if isinstance(error, PermissionError):
+        return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error))
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
+
+
+@app.post("/api/application-execution/account/prepare")
+async def application_execution_account_prepare(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.account_prepare_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error
+
+
+@app.post("/api/application-execution/account/credential")
+async def application_execution_account_credential(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.account_credential_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error
+
+
+@app.post("/api/application-execution/mailbox/health")
+async def application_execution_mailbox_health(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.mailbox_health_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error
+
+
+@app.post("/api/application-execution/mailbox/begin")
+async def application_execution_mailbox_begin(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.mailbox_begin_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error
+
+
+@app.post("/api/application-execution/mailbox/claim")
+async def application_execution_mailbox_claim(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.mailbox_claim_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error
+
+
+@app.post("/api/application-execution/mailbox/consume")
+async def application_execution_mailbox_consume(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.mailbox_consume_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error
