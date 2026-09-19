@@ -31,6 +31,7 @@ from app import relationship_intelligence_v3
 
 
 WORKERS_ENV = "MUNSHI_PREPARE_WORKER_ADAPTERS_V1A_ENABLED"
+PINNED_RESUME_ENV = "MUNSHI_PREPARE_PIN_RESUME_VERSION_ID"
 WORKER_VERSION = "munshi-prepare-worker-adapters-v1a"
 SUBMISSION_AUTHORITY = False
 
@@ -220,6 +221,41 @@ def _reusable_generated_resume(
     return None
 
 
+def _pinned_existing_resume(
+    *,
+    operation: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve one explicitly pinned immutable resume for this exact operation.
+
+    This is an opt-in terminal/deployment contract. It never selects a resume
+    by filename or recency. The pinned version must still be Stage-B bound to
+    the operation's Candidate Truth digest and immutable job snapshot.
+    """
+    version_id = str(os.getenv(PINNED_RESUME_ENV) or "").strip()
+    if not version_id:
+        return None
+
+    record = native_resume_service_v5.get_version(version_id)
+    if record.get("stage_b_bound") is not True:
+        raise RuntimeError("Pinned existing resume is not Stage-B bound.")
+
+    truth = dict(record.get("candidate_truth_binding") or {})
+    if str(truth.get("profile_digest") or "") != str(
+        operation.get("candidate_profile_digest") or ""
+    ):
+        raise RuntimeError(
+            "Pinned existing resume Candidate Truth binding changed."
+        )
+
+    job = dict(record.get("job_snapshot_binding") or {})
+    if str(job.get("job_snapshot_sha256") or "") != str(
+        operation.get("job_snapshot_sha256") or ""
+    ):
+        raise RuntimeError("Pinned existing resume job snapshot binding changed.")
+
+    return record
+
+
 def run_native_resume_once(
     *,
     operation_id: str,
@@ -267,7 +303,10 @@ def run_native_resume_once(
         }
 
     try:
-        record = _reusable_generated_resume(operation=operation, task=task)
+        record = _pinned_existing_resume(operation=operation)
+        pinned_existing_version = record is not None
+        if record is None:
+            record = _reusable_generated_resume(operation=operation, task=task)
         reused_generated_version = record is not None
         if record is None:
             record = native_resume_service_v5.generate_resume(
@@ -291,6 +330,7 @@ def run_native_resume_once(
             "claimed": True,
             "output": output,
             "reused_generated_version": reused_generated_version,
+            "pinned_existing_version": pinned_existing_version,
             "submission_authority": False,
         }
     except Exception:

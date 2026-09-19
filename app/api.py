@@ -977,6 +977,13 @@ def n8n_status_update(
         "telegram_sync": telegram_sync_result,
     }
 
+# MUNSHI_INBOUND_MAIL_ROUTER_V2
+# Signed Cloudflare Email Routing ingress. This endpoint stores/classifies mail
+# only; it never carries review or submission authority.
+from app.inbound_mail import router as inbound_mail_router
+
+app.include_router(inbound_mail_router)
+
 # LOCAL_HR_AGENT_PROXY_ROUTER_V1
 from app.hr_agent_proxy import router as hr_agent_proxy_router
 

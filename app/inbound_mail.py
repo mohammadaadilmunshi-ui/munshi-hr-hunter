@@ -109,8 +109,11 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         ON inbound_mail_messages(verification_request_id,received_at DESC);
         """
     )
+    # PRAGMA table_info always exposes the column name at index 1. Numeric
+    # indexing works for both sqlite3.Row and the default tuple row shape used
+    # by deployment migration runners.
     columns = {
-        str(row["name"])
+        str(row[1])
         for row in connection.execute("PRAGMA table_info(inbound_mail_messages)").fetchall()
     }
     if "content_ciphertext" not in columns:
@@ -718,6 +721,10 @@ async def inbound_mail(
         default=None,
         alias="X-Munshi-Message-ID",
     ),
+    x_munshi_mail_class: str | None = Header(
+        default=None,
+        alias="X-Munshi-Mail-Class",
+    ),
     x_munshi_signature: str | None = Header(
         default=None,
         alias="X-Munshi-Signature",
@@ -763,35 +770,67 @@ async def inbound_mail(
             x_munshi_signature,
             maximum=128,
         )
-        if version != PROTOCOL_VERSION:
+        if version not in {PROTOCOL_VERSION, "v2"}:
             raise PermissionError(
                 "Unsupported inbound mail protocol version."
             )
 
         _signed_at(timestamp_value)
         raw = await _read_bounded_body(request)
-        signed_at, digest = verify_signature(
-            timestamp_value=timestamp_value,
-            recipient=recipient,
-            sender=sender,
-            message_id=message_id,
-            signature=signature,
-            raw=raw,
-        )
         parsed = parse_message(
             raw,
             signed_message_id=message_id,
         )
-        result = store_verified_message(
-            recipient=recipient,
-            sender=sender,
-            message_id=message_id,
-            signed_at=signed_at,
-            raw_sha256=digest,
-            raw=raw,
-            parsed=parsed,
-            router_version=version,
-        )
+
+        if version == "v2":
+            # Import lazily because mail_intelligence_v2 imports this module's
+            # bounded parser/signature primitives. V2 is the deployed
+            # Cloudflare router protocol and carries its coarse classification
+            # inside the signed material.
+            from app import mail_intelligence_v2
+
+            router_class = _safe_metadata(
+                "mail class",
+                x_munshi_mail_class,
+                maximum=64,
+            )
+            signed_at, digest = mail_intelligence_v2.verify_signature_v2(
+                timestamp_value=timestamp_value,
+                recipient=recipient,
+                sender=sender,
+                message_id=message_id,
+                router_class=router_class,
+                signature=signature,
+                raw=raw,
+            )
+            result = mail_intelligence_v2.store_verified_message_v2(
+                recipient=recipient,
+                sender=sender,
+                message_id=message_id,
+                signed_at=signed_at,
+                raw_sha256=digest,
+                parsed=parsed,
+                router_class=router_class,
+            )
+        else:
+            signed_at, digest = verify_signature(
+                timestamp_value=timestamp_value,
+                recipient=recipient,
+                sender=sender,
+                message_id=message_id,
+                signature=signature,
+                raw=raw,
+            )
+            result = store_verified_message(
+                recipient=recipient,
+                sender=sender,
+                message_id=message_id,
+                signed_at=signed_at,
+                raw_sha256=digest,
+                raw=raw,
+                parsed=parsed,
+                router_version=version,
+            )
 
     except HTTPException:
         raise

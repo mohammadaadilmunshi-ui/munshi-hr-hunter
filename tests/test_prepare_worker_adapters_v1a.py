@@ -154,6 +154,78 @@ def test_native_resume_worker_completes_exact_pdf_docx(worker_db, monkeypatch):
 
 
 
+def test_native_resume_worker_reuses_explicit_pinned_bound_version(
+    worker_db, monkeypatch
+):
+    operation = _start(key="workers-native-pinned-existing")
+    monkeypatch.setenv(workers.PINNED_RESUME_ENV, "resume-existing")
+
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "get_version",
+        lambda version_id: {
+            "version_id": version_id,
+            "version_number": 11,
+            "stage_b_bound": True,
+            "candidate_truth_binding": {"profile_digest": PROFILE_DIGEST},
+            "job_snapshot_binding": {"job_snapshot_sha256": JOB_DIGEST},
+        },
+    )
+
+    def must_not_generate(**kwargs):
+        raise AssertionError("pinned existing resume must be reused")
+
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "generate_resume",
+        must_not_generate,
+    )
+    monkeypatch.setattr(
+        workers.native_resume_artifact_v5,
+        "materialize",
+        lambda version_id: _bundle(),
+    )
+
+    result = workers.run_native_resume_once(
+        operation_id=operation["operation_id"],
+        worker_id="native-worker-pinned",
+    )
+
+    assert result["task_status"] == "SUCCEEDED"
+    assert result["pinned_existing_version"] is True
+    assert result["reused_generated_version"] is True
+    assert result["output"]["resume_version_id"] == "resume-existing"
+
+
+def test_native_resume_worker_rejects_stale_pinned_version(
+    worker_db, monkeypatch
+):
+    operation = _start(key="workers-native-pinned-stale")
+    monkeypatch.setenv(workers.PINNED_RESUME_ENV, "resume-stale")
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "get_version",
+        lambda version_id: {
+            "version_id": version_id,
+            "version_number": 12,
+            "stage_b_bound": True,
+            "candidate_truth_binding": {"profile_digest": PROFILE_DIGEST},
+            "job_snapshot_binding": {"job_snapshot_sha256": "0" * 64},
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="job snapshot binding"):
+        workers.run_native_resume_once(
+            operation_id=operation["operation_id"],
+            worker_id="native-worker-pinned-stale",
+        )
+
+    task = _task(operation["operation_id"], orchestrator.TASK_RESUME)
+    assert task["status"] == "PENDING"
+    assert task["attempts"] == 1
+    assert task["error_code"] == "NATIVE_RESUME_PREPARE_FAILED"
+
+
 def test_native_retry_reuses_validated_version_without_second_model_call(
     worker_db, monkeypatch
 ):
