@@ -306,7 +306,9 @@ for required in \
   'HUNTER_ENABLE_COORDINATOR: "false"' \
   'PRODUCTION_CALLBACKS_ENABLED: "false"' \
   'PRODUCTION_STATE_IMPORTED: "false"' \
-  'CLOUD_SHADOW_MODE: "true"'
+  'CLOUD_SHADOW_MODE: "true"' \
+  'MUNSHI_FINAL_SUBMIT_ENABLED: "false"' \
+  'MUNSHI_APPLY_SUBMIT_AUTHORITY_DELIVERY_ENABLED: "false"'
 do
   grep -Fq "$required" "$rendered" || {
     echo "missing staging safety token: $required" >&2
