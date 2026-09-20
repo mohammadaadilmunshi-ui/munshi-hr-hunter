@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import requests
 
@@ -63,3 +64,38 @@ def test_commoncrawl_transient_504_retries_then_succeeds(monkeypatch) -> None:
 
     assert rows == [{"url": "https://jobs.example.test/1"}]
     assert len(calls) == 3
+
+
+def test_local_discovery_skips_disabled_board_rows() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute(
+            """
+            CREATE TABLE public_adapter_boards(
+                company_name TEXT,
+                board_url TEXT,
+                enabled INTEGER
+            )
+            """
+        )
+        connection.executemany(
+            "INSERT INTO public_adapter_boards(company_name,board_url,enabled) VALUES(?,?,?)",
+            [
+                ("Active", "https://active.recruitee.com/api/offers/", 1),
+                ("Quarantined", "https://quarantined.recruitee.com/api/offers/", 0),
+            ],
+        )
+
+        rows = list(
+            discovery._iter_table_urls(
+                connection,
+                "public_adapter_boards",
+            )
+        )
+    finally:
+        connection.close()
+
+    assert rows == [
+        ("Active", "https://active.recruitee.com/api/offers/"),
+    ]
