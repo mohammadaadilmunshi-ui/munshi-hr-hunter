@@ -241,7 +241,9 @@ def apply_recent_linkedin_backfill(
     if not changed_rows:
         return plan
 
-    connection.execute("BEGIN IMMEDIATE")
+    owns_transaction = not connection.in_transaction
+    if owns_transaction:
+        connection.execute("BEGIN IMMEDIATE")
     try:
         for row in changed_rows:
             job_id = int(row["job_id"])
@@ -328,8 +330,10 @@ def apply_recent_linkedin_backfill(
                     ),
                 ),
             )
-        connection.commit()
+        if owns_transaction and connection.in_transaction:
+            connection.commit()
     except Exception:
-        connection.rollback()
+        if owns_transaction and connection.in_transaction:
+            connection.rollback()
         raise
     return plan
