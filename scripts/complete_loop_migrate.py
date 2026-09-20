@@ -24,6 +24,7 @@ MIGRATIONS = (
     "migrations.053_mail_intelligence_v2",
     "migrations.054_application_notifications_v1",
     "migrations.055_application_communication_notifications_v1",
+    "migrations.057_linkedin_recent_url_backfill_v1",
 )
 
 REQUIRED_TABLES = {
