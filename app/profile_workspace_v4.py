@@ -165,6 +165,7 @@ def _knowledge_center_workspace(knowledge: dict[str, Any]) -> None:
         st.metric("Canonical facts", int(knowledge.get("fact_count") or 0))
     with cols[1]:
         st.metric("Evidence claims", int(knowledge.get("claim_count") or 0))
+        st.caption(f"Reusable answer memory: {int(knowledge.get('answer_memory_count') or 0)}")
     with cols[2]:
         st.metric("Knowledge revision", int(knowledge.get("knowledge_revision") or 0))
     with cols[3]:
@@ -173,7 +174,8 @@ def _knowledge_center_workspace(knowledge: dict[str, Any]) -> None:
     conflicts = list(knowledge.get("conflicts") or [])
     if conflicts:
         st.warning(
-            f"{len(conflicts)} knowledge conflict{'s' if len(conflicts) != 1 else ''} require review before affected facts can autofill."
+            f"{len(conflicts)} source disagreement{'s' if len(conflicts) != 1 else ''} recorded. "
+            "A higher-authority user correction can win safely; equal-authority conflicts fail closed."
         )
 
     sections = dict(knowledge.get("sections") or {})
@@ -233,6 +235,50 @@ def _knowledge_center_workspace(knowledge: dict[str, Any]) -> None:
             else:
                 st.success("Canonical knowledge updated. Future equivalent employer questions will use this fact.")
                 st.rerun()
+
+    st.markdown("#### Add knowledge")
+    st.caption(
+        "Add a missing safe fact or an explicit skill/tool once. MUNSHI stores the canonical meaning, not an employer-specific question."
+    )
+    available = [dict(row) for row in knowledge.get("available_to_add") or [] if isinstance(row, dict)]
+    if available:
+        add_options = {str(row["concept_id"]): row for row in available}
+        selected_new = st.selectbox(
+            "Missing fact",
+            [""] + list(add_options),
+            format_func=lambda key: "Choose a fact…" if not key else f"{add_options[key].get('label') or key} · {key}",
+            key="knowledge_center_add_concept",
+        )
+        if selected_new:
+            new_row = add_options[selected_new]
+            description = str(new_row.get("description") or "").strip()
+            if description:
+                st.caption(description)
+            new_value = _knowledge_value_editor(new_row)
+            if st.button("Add canonical fact", type="primary", key="knowledge_center_add_fact"):
+                try:
+                    knowledge_center.save_normal_fact(concept_id=selected_new, value=new_value)
+                except Exception as error:  # noqa: BLE001
+                    st.error(str(error))
+                else:
+                    st.success("Canonical fact added. Equivalent employer wording can reuse it automatically.")
+                    st.rerun()
+    else:
+        st.caption("All currently editable canonical fact types already have a value.")
+
+    explicit_skill = st.text_input(
+        "Add an explicit skill or tool",
+        placeholder="Example: Snowflake, Rippling, Jira, SQL…",
+        key="knowledge_center_add_skill",
+    )
+    if st.button("Add skill/tool", key="knowledge_center_add_skill_button"):
+        try:
+            knowledge_center.save_explicit_skill(label=explicit_skill)
+        except Exception as error:  # noqa: BLE001
+            st.error(str(error))
+        else:
+            st.success("Skill/tool added as user-confirmed canonical knowledge.")
+            st.rerun()
 
 
 def _detail_navigation(authority: dict[str, Any], answers: dict[str, Any], knowledge: dict[str, Any]) -> str:

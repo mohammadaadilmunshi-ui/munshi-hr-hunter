@@ -697,3 +697,32 @@ def test_dashboard_can_add_arbitrary_explicit_skill_as_canonical_user_truth(hunt
     assert resolved["concept_id"] == "experience.skill.rippling"
     assert resolved["value"] is True
     assert resolved["autofill_allowed"] is True
+
+
+def test_knowledge_center_add_inventory_excludes_protected_and_repeated_entities() -> None:
+    rows = knowledge_center.editable_concept_inventory()
+    assert rows
+    assert all(row["protected"] is False for row in rows)
+    ids = {row["concept_id"] for row in rows}
+    assert "contact.region" in ids
+    assert "work.authorization.us" not in ids
+    assert not any(concept_id.startswith("experience.0.") for concept_id in ids)
+
+
+def test_knowledge_center_can_add_arbitrary_user_confirmed_skill_without_code_change(hunter_db) -> None:
+    stored = knowledge_center.save_explicit_skill(label="Rippling")
+    assert stored["concept_id"] == "experience.skill.rippling"
+    assert stored["value"] is True
+    assert stored["source_type"] == "USER_DASHBOARD"
+    assert stored["autofill_policy"] == "ALLOW"
+    resolved = graph.resolve_fact("experience.skill.rippling")
+    assert resolved["status"] == "ANSWERED"
+    assert resolved["fact"]["value"] is True
+
+
+def test_knowledge_center_normal_editor_cannot_write_protected_concept(hunter_db) -> None:
+    with pytest.raises(ValueError, match="Protected"):
+        knowledge_center.save_normal_fact(
+            concept_id="work.authorization.us",
+            value=True,
+        )

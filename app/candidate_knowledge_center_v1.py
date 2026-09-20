@@ -7,6 +7,7 @@ and are never rendered as plaintext by this module.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 from app import candidate_knowledge_graph_v1 as graph
@@ -78,6 +79,71 @@ def _safe_fact(raw: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def editable_concept_inventory() -> list[dict[str, Any]]:
+    """Normal reusable concepts the user may explicitly confirm in the dashboard."""
+    rows: list[dict[str, Any]] = []
+    for item in ontology.all_concepts():
+        if (
+            item.sensitivity != "NORMAL"
+            or item.repeated_entity
+            or item.answer_mode not in {"DIRECT_FACT", "PREFERENCE"}
+        ):
+            continue
+        rows.append(
+            {
+                "concept_id": item.concept_id,
+                "label": item.concept_id.replace(".", " ").replace("_", " ").title(),
+                "category": item.category,
+                "section": _section(item.concept_id, item.category),
+                "value_type": item.value_type,
+                "description": item.description,
+                "editable": True,
+                "protected": False,
+                "value": None,
+            }
+        )
+    rows.sort(key=lambda row: (str(row["section"]), str(row["label"])))
+    return rows
+
+
+def _skill_slug(label: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", " ".join(str(label or "").split()).casefold()).strip("_")
+    return normalized[:100]
+
+
+def save_explicit_skill(
+    *,
+    label: str,
+    source_ref: str = "dashboard:knowledge-center:explicit-skill",
+) -> dict[str, Any]:
+    clean = " ".join(str(label or "").split()).strip()
+    slug = _skill_slug(clean)
+    if not clean or not slug or len(clean) > 120:
+        raise ValueError("Skill/tool name must be between 1 and 120 characters.")
+    concept_id = f"experience.skill.{slug}"
+    item = ontology.require_concept(concept_id)
+    return graph.store_fact(
+        concept_id=item.concept_id,
+        value=True,
+        value_type="boolean",
+        source_type="USER_DASHBOARD",
+        source_ref=f"{source_ref}:{item.concept_id}",
+        trust_level="USER_CONFIRMED",
+        confidence=1.0,
+        sensitivity="NORMAL",
+        autofill_policy="ALLOW",
+        evidence=[
+            {
+                "source_kind": "USER_DASHBOARD",
+                "source_ref": source_ref,
+                "evidence_text": clean,
+                "metadata": {"explicit_skill_label": clean},
+                "confidence": 1.0,
+            }
+        ],
+    )
+
+
 def snapshot() -> dict[str, Any]:
     try:
         view = ingestion.read_only_knowledge_view()
@@ -93,7 +159,11 @@ def snapshot() -> dict[str, Any]:
 
     # Choose the highest-authority visible row per concept for the primary view;
     # provenance remains attached and all durable conflicts are surfaced separately.
-    safe_rows = [_safe_fact(row) for row in view.get("facts") or [] if isinstance(row, Mapping)]
+    safe_rows = [
+        _safe_fact(row)
+        for row in [*(view.get("facts") or []), *(view.get("answer_memory") or [])]
+        if isinstance(row, Mapping)
+    ]
     priority = graph.SOURCE_PRECEDENCE
     trust = graph.TRUST_RANK
     safe_rows.sort(
@@ -146,6 +216,11 @@ def snapshot() -> dict[str, Any]:
         conflicts = graph.open_conflicts()
     except (LookupError, RuntimeError, ValueError):
         conflicts = []
+    existing_ids = set(primary)
+    available_to_add = [
+        row for row in editable_concept_inventory()
+        if str(row["concept_id"]) not in existing_ids
+    ]
     return {
         "version": CENTER_VERSION,
         "ready": True,
@@ -155,7 +230,9 @@ def snapshot() -> dict[str, Any]:
         "persisted_graph_fact_count": int(view.get("persisted_graph_fact_count") or 0),
         "fact_count": len(primary),
         "claim_count": len(claims),
+        "answer_memory_count": len([row for row in view.get("answer_memory") or [] if isinstance(row, Mapping)]),
         "sections": sections,
+        "available_to_add": available_to_add,
         "conflicts": conflicts,
     }
 
@@ -182,5 +259,5 @@ def save_normal_fact(
         trust_level="USER_CONFIRMED",
         confidence=1.0,
         sensitivity="NORMAL",
-        autofill_policy="ALLOW" if item.autofill_default else "REQUIRE_CONFIRMATION",
+        autofill_policy="ALLOW",
     )
