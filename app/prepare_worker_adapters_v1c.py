@@ -360,7 +360,7 @@ def run_application_preflight_once(
 
         cover = _cover_decision(operation)
         reviewed_cover_letter: dict[str, Any] | None = None
-        if str(cover.get("decision") or "") == "REQUIRED":
+        if str(cover.get("decision") or "") != "NOT_REQUIRED":
             reviewed_cover_letter = native_cover_letter_writer_v1.generate(
                 preflight_package_id=str(package["package_id"]),
             )
@@ -919,7 +919,8 @@ def run_ats_form_preparation_once(
         }
 
     cover_letter: dict[str, Any] | None = None
-    if str(cover.get("decision")) == "REQUIRED":
+    cover_decision = str(cover.get("decision") or "")
+    if cover_decision != "NOT_REQUIRED":
         cover_letter_id_value = str(preflight.get("cover_letter_id") or "").strip()
         cover_letter_sha = str(
             preflight.get("cover_letter_artifact_sha256") or ""
@@ -934,13 +935,13 @@ def run_ats_form_preparation_once(
                 worker_id=str(worker_id),
                 error_code="REVIEWED_COVER_LETTER_MISSING",
                 error_message=(
-                    "A required cover letter was not present in the package approved "
-                    "before browser execution."
+                    "The cover-letter policy allowed a document, but no reviewed "
+                    "artifact was present before browser execution."
                 ),
                 retryable=False,
             )
             raise RuntimeError(
-                "Required cover letter must be reviewed before unattended ATS execution."
+                "Potential cover-letter artifact must be reviewed before unattended ATS execution."
             )
         cover_letter = {
             "cover_letter_id": cover_letter_id_value,
