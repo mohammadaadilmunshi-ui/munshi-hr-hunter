@@ -65,6 +65,7 @@ jobs:
             tests/test_linkedin_link_contract_v2.py \
             tests/test_linkedin_recent_backfill.py \
             tests/test_runtime_recovery.py \
+            tests/test_telegram_polling_ownership.py \
             tests/test_application_execution_mandate_v1.py \
             tests/test_single_approval_route_retirement_v1.py \
             tests/test_product_application_flow_v2.py \
