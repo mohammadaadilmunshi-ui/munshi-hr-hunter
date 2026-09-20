@@ -1306,11 +1306,25 @@ def run_ats_form_preparation_once(
             }
 
         if state in {"BLOCKED", "FAILED_SAFELY", "CANCELLED"}:
+            # Preserve Apply's bounded terminal diagnostic instead of collapsing
+            # every browser/runtime failure into the same opaque Hunter error.
+            # This is observability only: it grants no retry or submission authority.
+            apply_last_error = " ".join(
+                str(latest.get("last_error") or "").split()
+            )[:1000]
+            terminal_message = (
+                f"Apply background preparation ended in {state}."
+                + (
+                    f" Apply diagnostic: {apply_last_error}"
+                    if apply_last_error
+                    else ""
+                )
+            )
             orchestrator.fail_task(
                 task_id=str(task["task_id"]),
                 worker_id=str(worker_id),
                 error_code=f"APPLY_PREPARE_{state}",
-                error_message=f"Apply background preparation ended in {state}.",
+                error_message=terminal_message,
                 retryable=False,
             )
             return {
@@ -1320,6 +1334,7 @@ def run_ats_form_preparation_once(
                 "operation_status": "FAILED_SAFELY",
                 "apply_prepare_job_id": prepare_job_id,
                 "apply_prepare_state": state,
+                "apply_last_error": apply_last_error or None,
                 "submission_authority": False,
             }
 
