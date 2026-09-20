@@ -95,3 +95,39 @@ def test_historical_rejected_keeper_does_not_suppress_corrected_rediscovery(hunt
     assert third["inserted"] is False
     assert third["job_id"] == second["job_id"]
     assert third["duplicate_reason"] == "disambiguated_job_fingerprint"
+
+
+def test_repeated_historical_nonkeepers_get_distinct_fingerprints(hunter_db) -> None:
+    connection = database.get_connection()
+    try:
+        first = save_job(connection, _job(), actor="fixture_worker")
+        connection.execute(
+            "UPDATE jobs SET status='rejected' WHERE id=?",
+            (first["job_id"],),
+        )
+
+        second = save_job(connection, _job(), actor="fixture_worker")
+        connection.execute(
+            "UPDATE jobs SET status='rejected' WHERE id=?",
+            (second["job_id"],),
+        )
+
+        third = save_job(connection, _job(), actor="fixture_worker")
+        connection.commit()
+
+        fingerprints_in_db = [
+            row[0]
+            for row in connection.execute(
+                "SELECT job_fingerprint FROM jobs ORDER BY id"
+            ).fetchall()
+        ]
+    finally:
+        connection.close()
+
+    assert first["inserted"] is True
+    assert second["inserted"] is True
+    assert third["inserted"] is True
+    assert len({first["job_id"], second["job_id"], third["job_id"]}) == 3
+    assert len(set(fingerprints_in_db)) == 3
+    assert ":distinct:" in fingerprints_in_db[1]
+    assert ":history:" in fingerprints_in_db[2]
