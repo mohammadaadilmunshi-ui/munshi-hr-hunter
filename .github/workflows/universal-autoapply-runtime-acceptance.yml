@@ -16,6 +16,9 @@ on:
       - "tests/test_prepare_worker_adapters_v1c.py"
       - "tests/test_universal_runtime_integration_v2.py"
       - "tests/test_initial_dashboard_single_approval_contract_v1.py"
+      - "app/linkedin_recent_backfill.py"
+      - "scripts/linkedin_recent_backfill.py"
+      - "tests/test_linkedin_recent_backfill.py"
       - "scripts/staging_autoapply_canary.py"
       - "deploy/netcup/run_staging_autoapply_canary.sh"
       - "tests/test_staging_autoapply_canary.py"
@@ -64,7 +67,9 @@ jobs:
             app/application_execution_mandate_v1.py \
             app/application_workspace_page.py \
             app/product_application_flow_v2.py \
-            app/api.py
+            app/api.py \
+            app/linkedin_recent_backfill.py \
+            scripts/linkedin_recent_backfill.py
 
       - name: Run full Universal AutoApply Hunter runtime regression
         run: |
@@ -78,6 +83,7 @@ jobs:
             tests/test_inbound_mail_relay_v1.py \
             tests/test_ats_verification_orchestrator.py \
             tests/test_linkedin_link_contract_v2.py \
+            tests/test_linkedin_recent_backfill.py \
             tests/test_application_execution_mandate_v1.py \
             tests/test_application_review_v2.py \
             tests/test_application_submit_authorization_v1.py \
