@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -109,7 +110,7 @@ def promote_runtime_resolutions_after_verified_submission(
             for item in list(replacement["inputs"].get("answer_requirements") or [])
             if isinstance(item, Mapping)
         }
-        payload = application_plan_v2.json.loads(str(revision["resolutions_json"]))
+        payload = json.loads(str(revision["resolutions_json"]))
         resolutions = list(payload.get("resolutions") or []) if isinstance(payload, Mapping) else []
 
         for raw in resolutions:
