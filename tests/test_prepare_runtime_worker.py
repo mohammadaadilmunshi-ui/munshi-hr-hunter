@@ -79,3 +79,31 @@ def test_run_once_passes_activation_watermark(monkeypatch) -> None:
         "newest_first": True,
         "min_created_at": "2026-09-18T19:45:00+00:00",
     }]
+
+
+def test_run_once_defers_cleanly_while_discovery_owns_source_lock(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        prepare_runtime_worker,
+        "_source_runner_status",
+        lambda: {"state": "active", "pid": 4321},
+    )
+    monkeypatch.setattr(
+        prepare_runtime_worker.autonomous_prepare_v1,
+        "drive_open_operations",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    result = prepare_runtime_worker.run_once(limit=3)
+
+    assert calls == []
+    assert result == {
+        "success": True,
+        "status": "deferred",
+        "reason": "source_discovery_active",
+        "source_runner_pid": 4321,
+        "operation_count": 0,
+        "results": [],
+        "errors": [],
+        "submission_authority": False,
+    }
