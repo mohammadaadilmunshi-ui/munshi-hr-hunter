@@ -27,3 +27,9 @@ def apply(connection: sqlite3.Connection) -> None:
         raise RuntimeError(
             "LinkedIn 48h deployment backfill scope changed while Hunter was offline."
         )
+    print(f"LINKEDIN_48H_SCANNED={int(result['counts']['scanned'])}")
+    print(f"LINKEDIN_48H_REPAIRED={int(result['counts']['repaired'])}")
+    print(f"LINKEDIN_48H_QUARANTINED={int(result['counts']['quarantined'])}")
+    print(f"LINKEDIN_48H_ALREADY_VALID={int(result['counts']['already_valid'])}")
+    print(f"LINKEDIN_48H_REMAINING_CHANGES={int(verification['counts']['changed'])}")
+    print("LINKEDIN_48H_BACKFILL=PASS")
