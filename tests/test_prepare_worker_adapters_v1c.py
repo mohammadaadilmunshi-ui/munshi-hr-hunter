@@ -1061,3 +1061,40 @@ def test_provider_capability_retry_fails_closed_on_non_provider_semantic_drift(
             pending_task=pending,
             preflight=preflight,
         )
+
+
+def test_ats_browser_waits_for_single_prebrowser_mandate(
+    worker_db, monkeypatch
+):
+    operation = _ready_ats(
+        worker_db,
+        monkeypatch,
+        "v1c-single-mandate-gate",
+    )
+    monkeypatch.setattr(
+        workers.application_execution_mandate_v1,
+        "current_for_preflight",
+        lambda package_id: None,
+    )
+
+    def browser_must_not_start(**kwargs):
+        raise AssertionError("ATS plan/browser must not start before customer mandate")
+
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "prepare_application_plan",
+        browser_must_not_start,
+    )
+
+    result = workers.run_ats_form_preparation_once(
+        operation_id=operation["operation_id"],
+        worker_id="ats-worker",
+    )
+
+    assert result["claimed"] is False
+    assert result["reason"] == "single_customer_approval_required"
+    assert _task(
+        operation["operation_id"],
+        orchestrator.TASK_ATS_FORM_PREPARATION,
+    )["status"] == "PENDING"
+    assert result["submission_authority"] is False
