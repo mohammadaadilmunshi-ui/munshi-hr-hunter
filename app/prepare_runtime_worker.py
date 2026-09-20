@@ -14,7 +14,33 @@ from typing import Any
 from app import autonomous_prepare_v1
 
 
+def _source_runner_status() -> dict[str, Any]:
+    """Read the canonical discovery lock without opening the Hunter database."""
+    try:
+        from app.randomized_source_runner import inspect_source_runner_lock
+
+        return dict(inspect_source_runner_lock())
+    except Exception as error:
+        return {
+            "state": "unknown",
+            "reason": f"source_lock_check_failed:{type(error).__name__}",
+        }
+
+
 def run_once(*, limit: int = 1) -> dict[str, Any]:
+    source_runner = _source_runner_status()
+    if str(source_runner.get("state") or "").casefold() == "active":
+        return {
+            "success": True,
+            "status": "deferred",
+            "reason": "source_discovery_active",
+            "source_runner_pid": source_runner.get("pid"),
+            "operation_count": 0,
+            "results": [],
+            "errors": [],
+            "submission_authority": False,
+        }
+
     resolved = max(1, min(int(limit), 5))
     minimum = str(
         os.getenv("MUNSHI_PREPARE_RUNTIME_MIN_CREATED_AT") or ""
