@@ -460,12 +460,6 @@ def test_ats_runtime_default_off_does_not_claim(worker_db, monkeypatch):
 def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
     worker_db, monkeypatch
 ):
-    operation = _ready_ats(
-        worker_db,
-        monkeypatch,
-        "v1c-cover-required",
-        cover="REQUIRED",
-    )
     seen = {}
 
     monkeypatch.setattr(
@@ -483,6 +477,12 @@ def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
             "candidate_profile_digest": PROFILE_DIGEST,
             "submission_authority": False,
         },
+    )
+    operation = _ready_ats(
+        worker_db,
+        monkeypatch,
+        "v1c-cover-required",
+        cover="REQUIRED",
     )
 
     def prepare_plan(**kwargs):
@@ -527,15 +527,11 @@ def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
     assert result["output"]["submission_authority"] is False
 
 
-def test_required_cover_letter_writer_failure_requeues_safely(
+def test_required_cover_letter_writer_failure_requeues_preflight_safely(
     worker_db, monkeypatch
 ):
-    operation = _ready_ats(
-        worker_db,
-        monkeypatch,
-        "v1c-cover-required-failure",
-        cover="REQUIRED",
-    )
+    operation = _start("v1c-cover-required-failure")
+    _ready_dependencies(operation["operation_id"], cover="REQUIRED")
 
     monkeypatch.setattr(
         workers.native_cover_letter_writer_v1,
@@ -546,14 +542,11 @@ def test_required_cover_letter_writer_failure_requeues_safely(
     )
 
     with pytest.raises(RuntimeError, match="writer unavailable"):
-        workers.run_ats_form_preparation_once(
-            operation_id=operation["operation_id"],
-            worker_id="ats-worker",
-        )
+        _run_preflight_ready(operation, monkeypatch)
 
     task = _task(
         operation["operation_id"],
-        orchestrator.TASK_ATS_FORM_PREPARATION,
+        orchestrator.TASK_APPLICATION_PREFLIGHT,
     )
     assert task["status"] == "PENDING"
     assert task["attempts"] == 1
