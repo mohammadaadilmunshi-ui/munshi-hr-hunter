@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+env:
+  MUNSHI_FINAL_SUBMIT_ENABLED: "false"
+  MUNSHI_APPLY_SUBMIT_AUTHORITY_DELIVERY_ENABLED: "false"
+
 jobs:
   production-ci:
     runs-on: ubuntu-latest
@@ -49,7 +53,22 @@ jobs:
             tests/test_hr_agent_portability.py \
             tests/test_n8n_deployment_renderer.py \
             tests/test_netcup_shadow.py \
-            tests/test_complete_loop_deployment_migrations.py
+            tests/test_complete_loop_deployment_migrations.py \
+            tests/test_application_plan_v2.py \
+            tests/test_application_plan_runtime_revision_v2.py \
+            tests/test_application_plan_transport_v2.py \
+            tests/test_application_plan_delivery_v2.py \
+            tests/test_prepare_worker_adapters_v1c.py \
+            tests/test_mailbox_verification_service_v1.py \
+            tests/test_inbound_mail_relay_v1.py \
+            tests/test_ats_verification_orchestrator.py \
+            tests/test_linkedin_link_contract_v2.py \
+            tests/test_application_execution_mandate_v1.py \
+            tests/test_single_approval_route_retirement_v1.py \
+            tests/test_product_application_flow_v2.py \
+            tests/test_full_autoapply_production_activation.py \
+            tests/test_universal_runtime_integration_v2.py \
+            tests/test_initial_dashboard_single_approval_contract_v1.py
 
       - name: Validate deployment shell
         run: |
@@ -60,6 +79,11 @@ jobs:
           done
           grep -Fq 'docker run --rm -i' deploy/netcup/deploy_production_release.sh
           echo "PRODUCTION_BACKUP_CONTAINER_STDIN_CONTRACT=PASS"
+          test "$MUNSHI_FINAL_SUBMIT_ENABLED" = "false"
+          test "$MUNSHI_APPLY_SUBMIT_AUTHORITY_DELIVERY_ENABLED" = "false"
+          grep -Fq 'MUNSHI_FINAL_SUBMIT_ENABLED: "false"' compose.netcup-shadow.yaml
+          grep -Fq 'MUNSHI_APPLY_SUBMIT_AUTHORITY_DELIVERY_ENABLED: "false"' compose.netcup-shadow.yaml
+          echo "STAGING_FINAL_SUBMIT_HARD_OFF=PASS"
 
       - name: Build production Hunter image
         run: docker build --tag munshi-hunter:deployment-ci .
