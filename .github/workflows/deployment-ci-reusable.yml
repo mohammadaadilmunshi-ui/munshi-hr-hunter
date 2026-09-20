@@ -34,8 +34,8 @@ jobs:
       - name: Verify packages
         run: python -m pip check
 
-      - name: Compile source
-        run: python -m compileall -q app scripts integrations
+      - name: Compile source and migrations
+        run: python -m compileall -q app scripts integrations migrations
 
       - name: Run existing portability validation
         run: |
