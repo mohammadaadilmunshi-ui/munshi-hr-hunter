@@ -19,6 +19,45 @@ PROFILE_DIGEST = "c" * 64
 def worker_db(hunter_db, monkeypatch):
     monkeypatch.setenv(workers.WORKERS_ENV, "1")
     monkeypatch.setenv(workers.ATS_RUNTIME_ENV, "1")
+    monkeypatch.setattr(
+        workers.application_execution_mandate_v1,
+        "current_for_preflight",
+        lambda package_id: {
+            "mandate_id": "execution-mandate-94",
+            "preflight_package_id": package_id,
+        },
+    )
+    monkeypatch.setattr(
+        workers.application_review_v2,
+        "approve_review_from_execution_mandate",
+        lambda **kwargs: {
+            "approval_id": "technical-approval-94",
+            "approval_digest": "6" * 64,
+            "approval_source": "EXECUTION_MANDATE",
+            "execution_mandate_id": kwargs["execution_mandate_id"],
+            "approved": True,
+            "submission_authority": False,
+        },
+    )
+    monkeypatch.setattr(
+        workers.application_submit_authorization_v1,
+        "issue_authorization",
+        lambda payload: {
+            **dict(payload),
+            "authorization_id": "submit-auth-94",
+            "authority_digest": "7" * 64,
+            "submission_authority": True,
+        },
+    )
+    monkeypatch.setattr(
+        workers,
+        "deliver_submit_authorization",
+        lambda envelope, timeout_seconds=5.0: {
+            "delivered": True,
+            "authorization_id": envelope["authorization_id"],
+            "submission_authority": False,
+        },
+    )
     monkeypatch.setattr(orchestrator, "current_owner", lambda _connection: OWNER)
     monkeypatch.setattr(
         orchestrator,
@@ -400,9 +439,23 @@ def _frozen_review(*, cover_sha256=None):
 def _recorded_review(**kwargs):
     return {
         "review_id": "hunter-review-94",
+        "application_id": "application-94",
+        "plan_id": "plan-94",
+        "plan_digest": "1" * 64,
         "review_digest": "4" * 64,
         "prepared_package_digest": "5" * 64,
         "browser_form_digest": "2" * 64,
+        "resume_artifact_sha256": "8" * 64,
+        "review": {
+            "provider": "GREENHOUSE",
+            "destination_url": "https://boards.example.test/submit",
+            "bindings": {
+                "checkpoint_id": "checkpoint-94",
+                "cover_letter_artifact_sha256": (
+                    "9" * 64 if kwargs.get("prepared_package", {}).get("cover_letter_sha256") else None
+                ),
+            },
+        },
         "approved": False,
     }
 
