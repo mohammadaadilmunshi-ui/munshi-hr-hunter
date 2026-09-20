@@ -120,15 +120,43 @@ def _edit_profile_section(extracted: dict[str, Any], profile: dict[str, Any], se
             left, right = st.columns(2)
             with left:
                 full_name = st.text_input("Full name", value=str(contact.get("full_name") or ""))
-                location = st.text_input("Location", value=str(contact.get("location") or ""))
+                location = st.text_input(
+                    "Display location",
+                    value=str(contact.get("location") or ""),
+                    help="Human-readable location shown on resumes. AutoApply uses the structured address fields below when an employer asks for them.",
+                )
                 email = st.text_input("Email", value=str(contact.get("email") or ""))
+                address_line1 = st.text_input(
+                    "Street address",
+                    value=str(contact.get("address_line1") or ""),
+                )
+                city = st.text_input("City", value=str(contact.get("city") or ""))
+                postal_code = st.text_input(
+                    "ZIP / postal code",
+                    value=str(contact.get("postal_code") or ""),
+                )
             with right:
                 phone = st.text_input("Phone", value=str(contact.get("phone") or ""))
                 linkedin = st.text_input("LinkedIn", value=str(contact.get("linkedin") or ""))
                 portfolio = st.text_input("Portfolio / website", value=str(contact.get("portfolio") or ""))
+                address_line2 = st.text_input(
+                    "Address line 2",
+                    value=str(contact.get("address_line2") or ""),
+                )
+                region = st.text_input(
+                    "State / province / region",
+                    value=str(contact.get("region") or ""),
+                )
+                country = st.text_input("Country", value=str(contact.get("country") or ""))
             value = {
                 "full_name": full_name,
                 "location": location,
+                "address_line1": address_line1,
+                "address_line2": address_line2,
+                "city": city,
+                "region": region,
+                "postal_code": postal_code,
+                "country": country,
                 "email": email,
                 "phone": phone,
                 "linkedin": linkedin,
