@@ -24,6 +24,7 @@ MIGRATIONS = (
     "migrations.053_mail_intelligence_v2",
     "migrations.054_application_notifications_v1",
     "migrations.055_application_communication_notifications_v1",
+    "migrations.056_mandatory_mailbox_verification_v1",
     "migrations.057_linkedin_recent_url_backfill_v1",
 )
 
@@ -47,6 +48,8 @@ REQUIRED_TABLES = {
     "application_communication_events_v2",
     "application_notification_preferences_v1",
     "application_notification_outbox_v1",
+    "mailbox_verification_artifacts",
+    "mailbox_verification_audit",
 }
 REQUIRED_CALLBACK_COLUMNS = {"payload_sha256", "execution_artifact_id"}
 REQUIRED_NOTIFICATION_PREFERENCE_COLUMNS = {
@@ -54,6 +57,12 @@ REQUIRED_NOTIFICATION_PREFERENCE_COLUMNS = {
     "submission_email_enabled",
     "employer_confirmation_email_enabled",
     "communication_email_enabled",
+}
+
+REQUIRED_INBOUND_MAIL_ENCRYPTION_COLUMNS = {
+    "content_ciphertext",
+    "content_nonce",
+    "content_algorithm",
 }
 PRODUCTION_AUTHORIZATION = "AUTHORIZED_GUARDED_COMPLETE_LOOP_MIGRATION"
 
@@ -128,6 +137,21 @@ def _verify_schema(connection: sqlite3.Connection, *, full_quick_check: bool) ->
             + ", ".join(missing_notification_preferences)
         )
 
+    inbound_mail_columns = {
+        str(row[1])
+        for row in connection.execute(
+            "PRAGMA table_info(inbound_mail_messages)"
+        ).fetchall()
+    }
+    missing_inbound_mail_encryption = sorted(
+        REQUIRED_INBOUND_MAIL_ENCRYPTION_COLUMNS - inbound_mail_columns
+    )
+    if missing_inbound_mail_encryption:
+        raise RuntimeError(
+            "Inbound mail encryption schema missing: "
+            + ", ".join(missing_inbound_mail_encryption)
+        )
+
     foreign_keys = connection.execute("PRAGMA foreign_key_check").fetchall()
     if foreign_keys:
         raise RuntimeError(f"Complete Loop FK check failed: {len(foreign_keys)} violation(s).")
@@ -143,6 +167,9 @@ def _verify_schema(connection: sqlite3.Connection, *, full_quick_check: bool) ->
         "callback_columns": sorted(REQUIRED_CALLBACK_COLUMNS),
         "notification_preference_columns": sorted(
             REQUIRED_NOTIFICATION_PREFERENCE_COLUMNS
+        ),
+        "inbound_mail_encryption_columns": sorted(
+            REQUIRED_INBOUND_MAIL_ENCRYPTION_COLUMNS
         ),
         "foreign_key_violations": len(foreign_keys),
         "quick_check": quick,
