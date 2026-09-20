@@ -6,7 +6,19 @@ from app import application_plan_resolution_v2 as resolution
 
 
 def test_runtime_resolution_orchestrates_exact_replacement_and_delivery(monkeypatch) -> None:
-    replacement = {"plan_id": "replacement-plan-1", "plan_digest": "a" * 64}
+    replacement = {
+        "plan_id": "replacement-plan-1",
+        "plan_digest": "a" * 64,
+        "inputs": {
+            "answer_requirements": [
+                {
+                    "question_key": "contact.postal_code",
+                    "question_family": "candidate_fact",
+                    "conditions": {"profile_projection": "identity"},
+                }
+            ]
+        },
+    }
     calls: list[tuple[str, dict]] = []
 
     def reprepare(**kwargs):
@@ -30,6 +42,12 @@ def test_runtime_resolution_orchestrates_exact_replacement_and_delivery(monkeypa
     monkeypatch.setattr(
         resolution.application_plan_delivery_v2, "deliver_application_plan", deliver
     )
+    promoted = []
+    monkeypatch.setattr(
+        resolution.answer_brain_v2,
+        "save_answer",
+        lambda **kwargs: promoted.append(kwargs) or "answer-1",
+    )
     result = resolution.resolve_runtime_needs_input(
         prior_plan_id="prior-plan-1",
         expected_prior_plan_digest="b" * 64,
@@ -41,12 +59,25 @@ def test_runtime_resolution_orchestrates_exact_replacement_and_delivery(monkeypa
             "unresolved_questions": [],
         },
         answer_resolutions=[
-            {"question_key": "first_name", "canonical_answer": "Aadil"}
+            {"question_key": "contact.postal_code", "canonical_answer": "08065"}
         ],
     )
     assert result["replacement_plan_id"] == "replacement-plan-1"
     assert result["state"] == "PLAN_ACCEPTED"
     assert result["submission_authority"] is False
+    assert result["answer_vault_promotions"] == 1
+    assert promoted == [
+        {
+            "question_family": "candidate_fact",
+            "canonical_answer": "08065",
+            "source": "user",
+            "user_confirmed": True,
+            "confidence": 1.0,
+            "autofill_allowed": True,
+            "conditions": {"profile_projection": "identity"},
+            "question_key": "contact.postal_code",
+        }
+    ]
     assert calls[0][0] == "reprepare"
     assert calls[1][0] == "deliver"
     assert calls[1][1]["idempotency_key"].startswith(
