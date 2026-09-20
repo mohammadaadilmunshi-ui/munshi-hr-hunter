@@ -63,6 +63,7 @@ jobs:
             tests/test_inbound_mail_relay_v1.py \
             tests/test_ats_verification_orchestrator.py \
             tests/test_linkedin_link_contract_v2.py \
+            tests/test_linkedin_recent_backfill.py \
             tests/test_application_execution_mandate_v1.py \
             tests/test_single_approval_route_retirement_v1.py \
             tests/test_product_application_flow_v2.py \
@@ -84,6 +85,8 @@ jobs:
           test "$MUNSHI_APPLY_SUBMIT_AUTHORITY_DELIVERY_ENABLED" = "false"
           grep -Fq 'MUNSHI_FINAL_SUBMIT_ENABLED: "false"' compose.netcup-shadow.yaml
           grep -Fq 'MUNSHI_APPLY_SUBMIT_AUTHORITY_DELIVERY_ENABLED: "false"' compose.netcup-shadow.yaml
+          python -m py_compile app/linkedin_recent_backfill.py scripts/linkedin_recent_backfill.py
+          grep -Fq 'AUTHORIZED_LINKEDIN_48H_BACKFILL' scripts/linkedin_recent_backfill.py
           echo "STAGING_FINAL_SUBMIT_HARD_OFF=PASS"
 
       - name: Build production Hunter image
