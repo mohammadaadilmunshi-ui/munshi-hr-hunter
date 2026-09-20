@@ -9,6 +9,8 @@ import os
 import pytest
 
 from app import native_resume_service_v3 as v3
+from app import phase45_truth_binding as truth_binding
+from app import secure_vault
 from app import profile_snapshot_projection as projection
 from app import profile_truth_overrides_v1 as overrides
 from app import resume_profile_details_v31 as details
@@ -246,3 +248,19 @@ def test_stored_profile_payload_digest_still_fails_closed_on_mismatch() -> None:
                 "stored_profile_payload_sha256": "b" * 64,
             }
         )
+
+
+def test_current_snapshot_read_path_never_runs_schema_installers(
+    hunter_db, monkeypatch
+) -> None:
+    extracted = _profile_extract(hunter_db, monkeypatch)
+
+    def forbidden_schema_install(*_args, **_kwargs):
+        raise AssertionError("read-only Candidate Truth path attempted schema installation")
+
+    monkeypatch.setattr(v3, "ensure_schema", forbidden_schema_install)
+    monkeypatch.setattr(secure_vault, "ensure_schema", forbidden_schema_install)
+
+    snapshot = truth_binding.current_candidate_profile_snapshot()
+    assert snapshot["source_extraction_id"] == extracted["extraction_id"]
+    assert snapshot["projection_mode"] == "READ_ONLY"

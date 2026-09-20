@@ -16,7 +16,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from app import native_resume_service_v3 as v3
-from app.secure_vault import read_secret, store_secret, vault_available
+from app.tenant_foundation import current_owner_readonly
+from app.secure_vault import read_secret_readonly, store_secret, vault_available
 
 PROFILE_DETAILS_SECRET_TYPE = "candidate_profile_details_v31"
 PROFILE_DETAILS_ENVELOPE_SCHEMA = "candidate-profile-details-envelope-v1"
@@ -257,8 +258,7 @@ def extract_uploaded_source(filename: str, data: bytes) -> tuple[str, str]:
 def _owner_label() -> str:
     connection = v3.v2.v1.get_connection()
     try:
-        v3.ensure_schema(connection)
-        owner = v3.v2.v1.current_owner(connection)
+        owner = current_owner_readonly(connection)
         return f"{owner.tenant_id}:{owner.user_id}:candidate-profile-details:v31"
     finally:
         connection.close()
@@ -276,7 +276,7 @@ def load_candidate_profile_details_envelope() -> CandidateProfileDetailsEnvelope
     """
     if not vault_available():
         return CandidateProfileDetailsEnvelope()
-    payload = read_secret(PROFILE_DETAILS_SECRET_TYPE, account_label=_owner_label())
+    payload = read_secret_readonly(PROFILE_DETAILS_SECRET_TYPE, account_label=_owner_label())
     if not payload:
         return CandidateProfileDetailsEnvelope()
     try:

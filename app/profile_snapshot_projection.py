@@ -18,6 +18,7 @@ from typing import Any
 from app import native_resume_service_v3 as v3
 from app import profile_truth_overrides_v1 as overrides
 from app import resume_profile_details_v31 as profile_details
+from app.tenant_foundation import current_owner_readonly
 from app.cross_repo_contract import (
     PROFILE_AUTHORITY,
     PROFILE_REVISION_SCOPE,
@@ -33,8 +34,7 @@ def _now() -> str:
 def _owner() -> tuple[str, str]:
     connection = v3.v2.v1.get_connection()
     try:
-        v3.ensure_schema(connection)
-        owner = v3.v2.v1.current_owner(connection)
+        owner = current_owner_readonly(connection)
         return str(owner.tenant_id), str(owner.user_id)
     finally:
         connection.close()

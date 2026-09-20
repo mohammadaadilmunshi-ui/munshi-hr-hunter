@@ -15,7 +15,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from app import native_resume_service_v3 as v3
-from app.secure_vault import read_secret, store_secret, vault_available
+from app.tenant_foundation import current_owner_readonly
+from app.secure_vault import read_secret_readonly, store_secret, vault_available
 
 PROFILE_OVERRIDE_SECRET_TYPE = "candidate_profile_overrides_v1"
 PROFILE_OVERRIDE_SCHEMA = "candidate-profile-overrides-v1"
@@ -55,8 +56,7 @@ def _now() -> str:
 def _owner_label(extraction_id: str) -> str:
     connection = v3.v2.v1.get_connection()
     try:
-        v3.ensure_schema(connection)
-        owner = v3.v2.v1.current_owner(connection)
+        owner = current_owner_readonly(connection)
         return f"{owner.tenant_id}:{owner.user_id}:profile-overrides:{extraction_id}"
     finally:
         connection.close()
@@ -90,7 +90,7 @@ def load_profile_overrides(extraction_id: str) -> ProfileOverrideEnvelope:
         raise ValueError("A profile extraction ID is required.")
     if not vault_available():
         return _empty(extraction_id)
-    raw = read_secret(PROFILE_OVERRIDE_SECRET_TYPE, account_label=_owner_label(extraction_id))
+    raw = read_secret_readonly(PROFILE_OVERRIDE_SECRET_TYPE, account_label=_owner_label(extraction_id))
     if not raw:
         return _empty(extraction_id)
     try:

@@ -19,7 +19,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app import native_resume_service_v2 as v2
-from app.secure_vault import delete_secret, read_secret, store_secret, vault_available
+from app.secure_vault import delete_secret, read_secret_readonly, store_secret, vault_available
 
 SCHEMA_VERSION = "native-resume-studio-service-v3"
 PROFILE_SECRET_TYPE = "native_resume_profile_snapshot_v3"
@@ -333,7 +333,7 @@ def _decode_profile_row(row: dict[str, Any]) -> dict[str, Any]:
         label = str(data.get("vault_label") or "")
         if not label:
             raise RuntimeError("Encrypted profile metadata is incomplete.")
-        payload = read_secret(PROFILE_SECRET_TYPE, account_label=label)
+        payload = read_secret_readonly(PROFILE_SECRET_TYPE, account_label=label)
         if not payload:
             raise RuntimeError("Encrypted profile payload is unavailable.")
     else:
@@ -355,6 +355,25 @@ def _decode_profile_row(row: dict[str, Any]) -> dict[str, Any]:
     data.pop("profile_json", None)
     data.pop("vault_label", None)
     return data
+
+
+def get_profile_extract_readonly(extraction_id: str) -> dict[str, Any]:
+    """Read one owner-bound profile extraction without running schema installers."""
+    from app.tenant_foundation import current_owner_readonly
+
+    connection = v2.v1.get_connection()
+    try:
+        owner = current_owner_readonly(connection)
+        row = connection.execute(
+            "SELECT * FROM native_resume_profile_extracts "
+            "WHERE extraction_id=? AND tenant_id=? AND user_id=?",
+            (str(extraction_id), owner.tenant_id, owner.user_id),
+        ).fetchone()
+        if row is None:
+            raise LookupError("Profile extraction was not found for this candidate.")
+        return _decode_profile_row(dict(row))
+    finally:
+        connection.close()
 
 
 def get_profile_extract(extraction_id: str) -> dict[str, Any]:

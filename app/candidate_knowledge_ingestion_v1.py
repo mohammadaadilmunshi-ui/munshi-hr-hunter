@@ -59,7 +59,7 @@ def current_profile_extract(snapshot: Mapping[str, Any] | None = None) -> dict[s
     extraction_id = str(current.get("source_extraction_id") or "").strip()
     if not extraction_id:
         raise RuntimeError("Candidate Truth snapshot has no source extraction identity.")
-    extracted = resume_v3.get_profile_extract(extraction_id)
+    extracted = resume_v3.get_profile_extract_readonly(extraction_id)
     if str(extracted.get("status") or "") != "CONFIRMED":
         raise RuntimeError("Candidate profile extraction is not confirmed.")
     return extracted
