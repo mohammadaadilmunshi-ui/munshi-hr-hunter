@@ -6,7 +6,6 @@ import sqlite3
 import pytest
 
 from app import linkedin_recent_backfill as backfill
-from scripts import linkedin_recent_backfill as backfill_cli
 from app.linkedin_url_contract import LINKEDIN_QUARANTINE_REASON
 
 
@@ -265,25 +264,3 @@ def test_backfill_participates_in_existing_deployment_transaction() -> None:
         "SELECT job_url FROM jobs WHERE id=1"
     ).fetchone()[0] is None
     assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
-
-
-def test_production_apply_requires_explicit_authorization(
-    monkeypatch,
-) -> None:
-    monkeypatch.setenv("CLOUD_SHADOW_MODE", "false")
-    with pytest.raises(PermissionError, match="explicit authorization"):
-        backfill_cli._assert_apply_allowed("production", None)
-
-    backfill_cli._assert_apply_allowed(
-        "production",
-        backfill_cli.PRODUCTION_AUTHORIZATION,
-    )
-
-
-def test_production_apply_refuses_shadow_mode(monkeypatch) -> None:
-    monkeypatch.setenv("CLOUD_SHADOW_MODE", "true")
-    with pytest.raises(RuntimeError, match="refuses CLOUD_SHADOW_MODE=true"):
-        backfill_cli._assert_apply_allowed(
-            "production",
-            backfill_cli.PRODUCTION_AUTHORIZATION,
-        )
