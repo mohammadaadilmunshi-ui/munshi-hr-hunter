@@ -171,6 +171,8 @@ def review_authority(hunter_db, monkeypatch: pytest.MonkeyPatch):
                     approved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     consumed_at TEXT,
                     consumption_key TEXT,
+                    approval_source TEXT NOT NULL DEFAULT 'USER_REVIEW',
+                    execution_mandate_id TEXT,
                     UNIQUE(tenant_id,user_id,review_id),
                     UNIQUE(tenant_id,user_id,idempotency_key),
                     UNIQUE(tenant_id,user_id,approval_digest)
@@ -456,3 +458,37 @@ def test_retired_browser_bound_single_approval_fails_closed() -> None:
             review_id="legacy-review",
             session_id="legacy-session",
         )
+
+
+def test_internal_review_approval_is_derived_from_execution_mandate(
+    review_authority,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import application_execution_mandate_v1 as mandates
+
+    review = reviews.create_review(
+        plan_id="application-plan-1",
+        prepared_package=_prepared(),
+        idempotency_key="review-key-mandate-derived",
+    )
+    monkeypatch.setattr(
+        mandates,
+        "mandate_authorizes_internal_review",
+        lambda mandate_id, review_record: {
+            "mandate_id": mandate_id,
+            "review_digest": "9" * 64,
+        },
+    )
+
+    approval = reviews.approve_review_from_execution_mandate(
+        review_id=review["review_id"],
+        execution_mandate_id="execution-mandate-1",
+        idempotency_key="technical-approval-1",
+    )
+
+    assert approval["approved"] is True
+    assert approval["approval_source"] == "EXECUTION_MANDATE"
+    assert approval["execution_mandate_id"] == "execution-mandate-1"
+    stored = reviews.get_review(review["review_id"])
+    assert stored["approval_source"] == "EXECUTION_MANDATE"
+    assert stored["execution_mandate_id"] == "execution-mandate-1"
