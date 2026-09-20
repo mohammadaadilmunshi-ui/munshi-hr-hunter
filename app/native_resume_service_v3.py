@@ -338,8 +338,20 @@ def _decode_profile_row(row: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError("Encrypted profile payload is unavailable.")
     else:
         payload = str(data.get("profile_json") or "")
+    # Preserve the immutable identity of the exact stored payload before current
+    # schema validation adds any new default fields. Historical confirmed
+    # extracts must remain verifiable across additive schema evolution.
+    stored_payload_sha256 = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     profile = CandidateProfileExtract.model_validate_json(payload)
-    data["profile"] = profile.model_dump()
+    decoded_profile = profile.model_dump()
+    decoded_profile_json = json.dumps(
+        decoded_profile, ensure_ascii=False, sort_keys=True
+    )
+    data["profile"] = decoded_profile
+    data["stored_profile_payload_sha256"] = stored_payload_sha256
+    data["decoded_profile_sha256"] = hashlib.sha256(
+        decoded_profile_json.encode("utf-8")
+    ).hexdigest()
     data.pop("profile_json", None)
     data.pop("vault_label", None)
     return data
