@@ -15,12 +15,12 @@ Unrecoverable rows remain preserved as evidence and are quarantined from Browse 
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Mapping
 from typing import Any
-
-from app.job_store import PROTECTED_STATUSES, create_url_fingerprint
+from urllib.parse import urlsplit, urlunsplit
 from app.linkedin_url_contract import (
     LINKEDIN_QUARANTINE_REASON,
     canonical_linkedin_job_url,
@@ -31,10 +31,48 @@ from app.linkedin_url_contract import (
 
 REPAIR_EVENT_TYPE = "linkedin_recent_url_backfill_v1"
 DEFAULT_LOOKBACK_HOURS = 48
+PROTECTED_STATUSES = frozenset(
+    {
+        "hold",
+        "held",
+        "rejected",
+        "already_applied",
+        "approved_for_n8n",
+        "sent_to_n8n",
+        "application_ready",
+        "n8n_failed",
+    }
+)
 
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _canonical_url(value: Any) -> str:
+    raw_url = _text(value)
+    if not raw_url:
+        return ""
+    try:
+        parts = urlsplit(raw_url)
+        return urlunsplit(
+            (
+                parts.scheme.lower(),
+                parts.netloc.lower(),
+                parts.path.rstrip("/"),
+                "",
+                "",
+            )
+        )
+    except ValueError:
+        return raw_url.lower()
+
+
+def _url_fingerprint(*, job_url: Any, apply_url: Any) -> str | None:
+    canonical = _canonical_url(apply_url or job_url)
+    if not canonical:
+        return None
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _provenance(value: Any) -> list[Mapping[str, Any]]:
@@ -97,8 +135,9 @@ def _planned_change(row: Mapping[str, Any]) -> dict[str, Any]:
         if current_reason == LINKEDIN_QUARANTINE_REASON:
             new_reason = None
 
-        fingerprint = create_url_fingerprint(
-            {"job_url": posting, "apply_url": direct}
+        fingerprint = _url_fingerprint(
+            job_url=posting,
+            apply_url=direct,
         )
         return {
             "action": "repair",
@@ -121,8 +160,9 @@ def _planned_change(row: Mapping[str, Any]) -> dict[str, Any]:
         "action": "quarantine",
         "job_url": None,
         "apply_url": direct,
-        "url_fingerprint": create_url_fingerprint(
-            {"job_url": None, "apply_url": direct}
+        "url_fingerprint": _url_fingerprint(
+            job_url=None,
+            apply_url=direct,
         ),
         "status": new_status,
         "hard_rejection_reason": new_reason,
