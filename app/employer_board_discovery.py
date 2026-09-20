@@ -439,8 +439,13 @@ def _iter_table_urls(connection, table: str) -> Iterable[tuple[str, str]]:
             else "NULL AS company_name"
         )
     ] + [f'"{name}" AS "{name}"' for name in url_columns]
+    enabled_filter = (
+        " WHERE COALESCE(enabled,1)=1"
+        if "enabled" in columns
+        else ""
+    )
     rows = connection.execute(
-        f"SELECT {', '.join(selected)} FROM {table}"
+        f"SELECT {', '.join(selected)} FROM {table}{enabled_filter}"
     ).fetchall()
     output: list[tuple[str, str]] = []
     for row in rows:
@@ -564,6 +569,43 @@ def _parse_cdx_lines(body: bytes) -> list[dict[str, Any]]:
     return rows
 
 
+def _query_commoncrawl_with_retry(
+    session: requests.Session,
+    *,
+    api_url: str,
+    params: list[tuple[str, Any]],
+) -> list[dict[str, Any]]:
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            _response, body = _request_limited(
+                session,
+                api_url,
+                params=params,
+                timeout=90,
+                accept="application/json,text/plain",
+            )
+            return _parse_cdx_lines(body)
+        except requests.HTTPError as error:
+            status = (
+                int(error.response.status_code)
+                if error.response is not None
+                else 0
+            )
+            if status == 404:
+                return []
+            if status not in {429, 500, 502, 503, 504}:
+                raise
+            last_error = error
+        except (requests.Timeout, requests.ConnectionError) as error:
+            last_error = error
+        if attempt < 2:
+            time.sleep(float(attempt + 1))
+    if last_error is not None:
+        raise last_error
+    return []
+
+
 def query_commoncrawl_pattern(
     session: requests.Session,
     *,
@@ -582,14 +624,11 @@ def query_commoncrawl_pattern(
         ("pageSize", max(10, min(page_size, 1000))),
     ]
     try:
-        _response, body = _request_limited(
+        return _query_commoncrawl_with_retry(
             session,
-            api_url,
+            api_url=api_url,
             params=params,
-            timeout=90,
-            accept="application/json,text/plain",
         )
-        return _parse_cdx_lines(body)
     except Exception:
         fallback = [
             ("url", pattern),
@@ -599,14 +638,11 @@ def query_commoncrawl_pattern(
             ("fl", "url,status,mime,timestamp"),
             ("limit", max(10, min(page_size, 1000))),
         ]
-        _response, body = _request_limited(
+        return _query_commoncrawl_with_retry(
             session,
-            api_url,
+            api_url=api_url,
             params=fallback,
-            timeout=90,
-            accept="application/json,text/plain",
         )
-        return _parse_cdx_lines(body)
 
 
 def discover_commoncrawl_candidates(

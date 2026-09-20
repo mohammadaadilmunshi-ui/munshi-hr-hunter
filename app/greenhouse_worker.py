@@ -108,6 +108,8 @@ def load_enabled_companies(
                     )
                 ) != ''
             ORDER BY
+                CASE WHEN last_run_at IS NULL THEN 0 ELSE 1 END,
+                datetime(last_run_at) ASC,
                 priority_weight DESC,
                 company_name COLLATE NOCASE
             LIMIT ?
