@@ -4,7 +4,7 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from app import application_plan_delivery_v2, application_plan_v2
+from app import answer_brain_v2, application_plan_delivery_v2, application_plan_v2
 
 
 def _handoff_key(
@@ -55,6 +55,36 @@ def resolve_runtime_needs_input(
         raise RuntimeError(
             "Runtime replacement Application Plan acknowledgement is not exact."
         )
+
+    # After Apply has atomically accepted the replacement, promote only the
+    # explicitly user-confirmed NORMAL runtime facts into Answer Vault. Candidate
+    # values never enter Teach MUNSHI; Teach remains mechanics-only.
+    requirements = {
+        str(item.get("question_key") or ""): dict(item)
+        for item in list(replacement["inputs"].get("answer_requirements") or [])
+        if isinstance(item, Mapping)
+    }
+    promoted = 0
+    for raw in answer_resolutions:
+        key = str(raw.get("question_key") or "")
+        requirement = requirements.get(key)
+        if not requirement:
+            continue
+        family = str(requirement.get("question_family") or "").strip().casefold()
+        if family not in answer_brain_v2.NORMAL_QUESTION_FAMILIES:
+            continue
+        answer_brain_v2.save_answer(
+            question_family=family,
+            canonical_answer=str(raw.get("canonical_answer") or ""),
+            source="user",
+            user_confirmed=True,
+            confidence=1.0,
+            autofill_allowed=True,
+            conditions=dict(requirement.get("conditions") or {}),
+            question_key=key,
+        )
+        promoted += 1
+
     return {
         "success": True,
         "prior_plan_id": str(prior_plan_id),
@@ -63,5 +93,6 @@ def resolve_runtime_needs_input(
         "handoff_id": delivered.handoff_id,
         "state": delivered.state,
         "replayed": delivered.replayed,
+        "answer_vault_promotions": promoted,
         "submission_authority": False,
     }
