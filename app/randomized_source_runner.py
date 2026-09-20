@@ -786,6 +786,13 @@ def run_one(source: dict[str, Any]) -> dict[str, Any]:
         combined = full_stdout + "\n" + full_stderr
         blocked = _is_blocked(combined, payload)
         deferred = _is_deferred(combined, payload)
+        partial_blocked_success = (
+            blocked
+            and not timed_out
+            and completed.returncode == 0
+            and payload.get("success") is True
+            and payload.get("partial_success") is True
+        )
         success = (
             not timed_out
             and completed.returncode == 0
@@ -800,6 +807,8 @@ def run_one(source: dict[str, Any]) -> dict[str, Any]:
             if deferred
             else "completed"
             if success
+            else "rate_limited_partial"
+            if partial_blocked_success
             else "blocked"
             if blocked
             else "failed"
@@ -818,7 +827,7 @@ def run_one(source: dict[str, Any]) -> dict[str, Any]:
             worker_status=status,
             worker_returncode=returncode,
         )
-        if not (success or deferred):
+        if not (success or deferred or partial_blocked_success):
             failure_detail = runner_error or (
                 f"Worker finished with scheduler status {status} and return code {returncode}."
             )
