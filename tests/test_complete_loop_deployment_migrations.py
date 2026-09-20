@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import sqlite3
+
 import pytest
 
 from scripts import complete_loop_migrate
@@ -88,6 +90,59 @@ def test_complete_loop_runner_tolerates_executescript_commit_boundary(
     assert "migrations.056_mandatory_mailbox_verification_v1" in result["migrations"]
     assert "migrations.057_linkedin_recent_url_backfill_v1" in result["migrations"]
     assert result["quick_check"] == "ok"
+
+
+def test_guarded_migration_repairs_recent_linkedin_row(
+    hunter_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = sqlite3.connect(hunter_db)
+    try:
+        db.execute(
+            """
+            INSERT INTO jobs(
+                job_fingerprint,ats_job_id,source,company_name,title
+            ) VALUES (?,?,?,?,?)
+            """,
+            (
+                "linkedin-48h-migration-fixture",
+                "4466640999",
+                "JobSpy/linkedin",
+                "Example Employer",
+                "People Analytics Specialist",
+            ),
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setenv("CLOUD_SHADOW_MODE", "false")
+    result = complete_loop_migrate.apply(
+        hunter_db,
+        environment="production",
+        authorization=complete_loop_migrate.PRODUCTION_AUTHORIZATION,
+        full_quick_check=True,
+    )
+
+    assert "migrations.056_mandatory_mailbox_verification_v1" in result["migrations"]
+    assert "migrations.057_linkedin_recent_url_backfill_v1" in result["migrations"]
+
+    verify_db = sqlite3.connect(hunter_db)
+    try:
+        row = verify_db.execute(
+            """
+            SELECT job_url,status,hard_rejection_reason
+            FROM jobs
+            WHERE job_fingerprint='linkedin-48h-migration-fixture'
+            """
+        ).fetchone()
+    finally:
+        verify_db.close()
+
+    assert row is not None
+    assert row[0] == "https://www.linkedin.com/jobs/view/4466640999"
+    assert row[1] == "found"
+    assert row[2] is None
 
 
 def test_hunter_image_packages_complete_loop_runner() -> None:
