@@ -14,7 +14,9 @@ import json
 import sqlite3
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
+from app import application_plan_v2
 from app import application_preflight_package_v1 as preflight_v1
 from app.database import get_connection
 from app.phase67_common import sha256_json
@@ -342,15 +344,36 @@ def mandate_authorizes_internal_review(
     review = dict(review_record.get("review") or {})
     destination = str(review.get("destination_url") or "")
     package_job = dict(mandate["review"]["job"])
-    expected_destination = str(
+    approved_destination = str(
         package_job.get("apply_url") or package_job.get("job_url") or ""
+    )
+    plan_id = str(review_record.get("plan_id") or "")
+    plan = application_plan_v2.get_application_plan(plan_id)
+    plan_snapshot = dict(plan.get("snapshot") or {})
+    plan_job = dict(plan_snapshot.get("job") or {})
+    provider_policy = dict(plan_snapshot.get("provider_policy") or {})
+    allowed_hosts = {
+        str(value).strip().casefold()
+        for value in provider_policy.get("allowed_hosts") or []
+        if str(value).strip()
+    }
+    approved_host = str(urlsplit(approved_destination).hostname or "").casefold()
+    destination_host = str(urlsplit(destination).hostname or "").casefold()
+    destination_allowed = bool(
+        destination_host
+        and (
+            destination_host == approved_host
+            or destination_host in allowed_hosts
+        )
     )
     if (
         str(review_record.get("application_id") or "")
         != str(mandate["application_id"])
+        or int(plan.get("job_id") or 0) != int(mandate["job_id"])
+        or str(plan_job.get("id") or "") != str(package_job.get("id") or "")
         or str(review_record.get("resume_artifact_sha256") or "")
         != str(mandate["resume_sha256"])
-        or destination != expected_destination
+        or not destination_allowed
     ):
         raise PermissionError(
             "Internal browser review exceeds the approved execution mandate."
