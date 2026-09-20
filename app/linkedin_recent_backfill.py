@@ -272,6 +272,35 @@ def apply_recent_linkedin_backfill(
                 raise RuntimeError(
                     f"LinkedIn 48h backfill lost its scoped row before update: {job_id}"
                 )
+            stored = connection.execute(
+                """
+                SELECT job_url,apply_url,url_fingerprint,status,hard_rejection_reason
+                FROM jobs WHERE id=?
+                """,
+                (job_id,),
+            ).fetchone()
+            if stored is None:
+                raise RuntimeError(
+                    f"LinkedIn 48h backfill lost its row after update: {job_id}"
+                )
+            stored_map = dict(stored)
+            for field in (
+                "job_url",
+                "apply_url",
+                "url_fingerprint",
+                "status",
+                "hard_rejection_reason",
+            ):
+                actual = stored_map.get(field)
+                expected = row.get(field)
+                if (None if actual in (None, "") else str(actual)) != (
+                    None if expected in (None, "") else str(expected)
+                ):
+                    raise RuntimeError(
+                        f"LinkedIn 48h backfill verification failed for "
+                        f"job {job_id} field {field}."
+                    )
+
             connection.execute(
                 """
                 INSERT INTO events(
