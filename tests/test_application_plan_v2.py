@@ -318,8 +318,11 @@ def test_provider_and_prepare_permissions_fail_closed(
     assert set(result["global_blockers"]) == {
         "background_prepare_permission_missing",
         "resume_upload_permission_missing",
-        "provider_not_permitted_or_supported",
     }
+    assert result["provider_policy"]["provider"] == "GENERIC"
+    assert result["provider_policy"]["provider_recipe"] is None
+    assert result["provider_policy"]["allowed_hosts"] == ["example.test"]
+    assert result["provider_policy"]["permitted"] is True
 
 
 def test_provider_requires_a_real_supported_ats_host_and_policy_is_closed(
@@ -333,8 +336,13 @@ def test_provider_requires_a_real_supported_ats_host_and_policy_is_closed(
         preflight_package_id="preflight-1", requirements=[], permissions=_permissions(),
         provider_policy=None, secure_refs={}, resume_format="PDF",
     )
-    assert result["provider_policy"]["provider"] == "UNSUPPORTED"
-    assert "provider_not_permitted_or_supported" in result["global_blockers"]
+    # A spoofed provider-looking hostname stays GENERIC. It never acquires the
+    # Greenhouse recipe; execution is confined to the exact observed HTTPS host.
+    assert result["provider_policy"]["provider"] == "GENERIC"
+    assert result["provider_policy"]["provider_recipe"] is None
+    assert result["provider_policy"]["allowed_hosts"] == ["greenhouse.evil.test"]
+    assert result["provider_policy"]["permitted"] is True
+    assert "provider_not_permitted_or_target_invalid" not in result["global_blockers"]
     with pytest.raises(ValueError, match="Unsupported provider policy fields"):
         plans._normalize_provider_policy({"permitted": True, "host": "evil.test"}, provider="GREENHOUSE")
 
@@ -756,8 +764,13 @@ def test_agile_ats_provider_does_not_match_unrelated_host(
         resume_format="PDF",
     )
 
-    assert result["provider_policy"]["provider"] == "UNSUPPORTED"
-    assert "provider_not_permitted_or_supported" in result["global_blockers"]
+    # A lookalike host cannot inherit AGILE_ATS semantics. The provider-neutral
+    # engine may proceed only as GENERIC and only on this exact bound hostname.
+    assert result["provider_policy"]["provider"] == "GENERIC"
+    assert result["provider_policy"]["provider_recipe"] is None
+    assert result["provider_policy"]["allowed_hosts"] == ["agile-ats.com.evil.test"]
+    assert result["provider_policy"]["permitted"] is True
+    assert "provider_not_permitted_or_target_invalid" not in result["global_blockers"]
 
 
 @pytest.mark.parametrize(

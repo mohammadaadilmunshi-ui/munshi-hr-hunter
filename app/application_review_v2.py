@@ -100,6 +100,14 @@ def application_review_v2_enabled() -> bool:
     }
 
 
+def _pragma_column_name(row: Any) -> str:
+    """Return PRAGMA table_info column name for sqlite.Row or tuple rows."""
+    try:
+        return str(row["name"])
+    except (TypeError, IndexError, KeyError):
+        return str(row[1])
+
+
 def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
     owns = connection is None
     connection = connection or get_connection()
@@ -109,7 +117,7 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
         for statement in SCHEMA_STATEMENTS:
             connection.execute(statement)
         approval_columns = {
-            str(row["name"])
+            _pragma_column_name(row)
             for row in connection.execute(
                 "PRAGMA table_info(application_review_approvals_v2)"
             ).fetchall()
