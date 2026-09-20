@@ -223,6 +223,30 @@ def find_existing_job(
             disambiguated_fingerprint(job)
         )
 
+        # The alternate fingerprint is deterministic. A later rediscovery of
+        # the same corrected job must reuse the already-stored alternate row
+        # instead of trying to insert the same UNIQUE fingerprint again.
+        alternate = connection.execute(
+            """
+            SELECT *
+            FROM jobs
+            WHERE job_fingerprint = ?
+            LIMIT 1
+            """,
+            (job["job_fingerprint"],),
+        ).fetchone()
+        if alternate is not None:
+            evidence = duplicate_evidence(
+                dict(alternate),
+                job,
+            )
+            if evidence is not None:
+                job["_duplicate_evidence"] = evidence
+            return (
+                alternate,
+                "disambiguated_job_fingerprint",
+            )
+
     if job.get("url_fingerprint"):
         row = connection.execute(
             """
