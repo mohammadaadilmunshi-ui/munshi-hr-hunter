@@ -207,8 +207,18 @@ def resolve_concept(
             extra={"answer_source": str(row.get("source_type") or ""), "source_ref": str(row.get("source_ref") or "")},
         )
 
-    # Evidence-backed derivations run only after direct facts and reusable memory.
+    # Evidence-backed derivations run only after direct facts and reusable memory,
+    # and remain independently rollout-gated from direct NORMAL fact autofill.
     conditions = dict(question.get("conditions") or {})
+    if not graph.universal_derivation_enabled() and concept.answer_mode in {
+        "COMPUTED_FACT", "EXPERIENCE_EVIDENCE_BOOLEAN", "SKILL_EVIDENCE", "ENUMERATION"
+    }:
+        return _base_result(
+            status="MISSING_FACT", concept_id=concept_id, answer_mode=concept.answer_mode,
+            confidence=float(question.get("confidence") or 0.0), sensitivity="NORMAL",
+            autofill_allowed=False, reason="universal_derivation_rollout_disabled",
+            knowledge_revision=revision, question=question,
+        )
     profile = dict(view.get("profile") or {})
     claims = [dict(item) for item in view.get("claims") or []]
     derived: dict[str, Any] | None = None

@@ -19,6 +19,8 @@ from app import application_field_intelligence_v1 as field_intelligence
 from app import application_plan_v2
 from app import candidate_knowledge_graph_v1 as universal_graph
 from app import universal_brain_shadow_v1 as universal_shadow
+from app import universal_question_resolver_v1 as universal_questions
+from app import application_semantic_binding_v1 as universal_binding
 
 BRIDGE_VERSION = "application-plan-question-bridge-v1"
 
@@ -79,13 +81,30 @@ def normalize_visible_question(value: str | Mapping[str, Any]) -> dict[str, Any]
     # a later profile edit cannot silently reuse an older first/last/city projection.
     requirement = answer_autofill.enrich_requirement(requirement)
 
-    # Universal Brain begins as a value-free shadow observer.  It cannot alter the
-    # current question key, answer, plan status or browser behavior in this stage.
-    if universal_graph.universal_brain_shadow_enabled():
-        observation = raw or {"raw_question": text, "label": text}
-        requirement["universal_brain_shadow"] = universal_shadow.compare(
-            observation, current_requirement=requirement
-        )
+    # Universal Brain semantic metadata is value-free. In shadow mode it can be
+    # compared/logged without changing current authority. When the live NORMAL
+    # canary is enabled, Application Plan V2 may consume this canonical concept.
+    observation = raw or {"raw_question": text, "label": text}
+    if universal_graph.universal_brain_shadow_enabled() or universal_graph.universal_brain_enabled():
+        semantic = universal_questions.resolve_question(observation)
+        if semantic.get("state") == "RESOLVED":
+            requirement["universal_concept_id"] = str(semantic["concept_id"])
+            requirement["universal_semantic_confidence"] = float(semantic.get("confidence") or 0.0)
+            requirement["universal_classification_lane"] = str(semantic.get("classification_lane") or "")
+            requirement["universal_reason_code"] = str(semantic.get("reason_code") or "")
+            requirement["universal_sensitivity"] = str(semantic.get("sensitivity") or "NORMAL")
+            try:
+                requirement["universal_binding_fingerprint"] = universal_binding.fingerprint_parts(observation)[
+                    "logical_field_fingerprint"
+                ]
+            except ValueError:
+                # Unscoped repeated fields intentionally do not receive a durable
+                # binding fingerprint; they must remain unresolved/fail closed.
+                requirement["universal_binding_fingerprint"] = None
+        if universal_graph.universal_brain_shadow_enabled():
+            requirement["universal_brain_shadow"] = universal_shadow.compare(
+                observation, current_requirement=requirement
+            )
 
     requirement["provider_field_id"] = str(
         raw.get("field_id")

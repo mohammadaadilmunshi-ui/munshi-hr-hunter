@@ -6,6 +6,7 @@ import importlib
 import pytest
 
 from app import application_semantic_binding_v1 as bindings
+from app import application_plan_v2 as plans
 from app import application_question_catalog_v2 as catalog
 from app import candidate_derivation_engine_v1 as derivation
 from app import candidate_knowledge_graph_v1 as graph
@@ -70,6 +71,19 @@ def test_context_lane_recovers_region_when_legacy_field_classifier_cannot() -> N
     assert result["state"] == "RESOLVED"
     assert result["concept_id"] == "contact.region"
     assert result["classification_lane"] == "ONTOLOGY_CONTEXT"
+
+
+def test_repeated_employment_and_education_fields_get_entity_scoped_concepts() -> None:
+    employer = questions.resolve_question({
+        "rawText": "Employer", "semanticType": "EMPLOYER_NAME",
+        "repeatGroupId": "employment", "repeatIndex": 1,
+    })
+    assert employer["concept_id"] == "experience.1.employer"
+    school = questions.resolve_question({
+        "rawText": "School", "semanticType": "SCHOOL_NAME",
+        "repeatGroupId": "education", "repeatIndex": 2,
+    })
+    assert school["concept_id"] == "education.2.institution"
 
 
 def test_protected_semantic_cannot_be_downgraded_by_normal_metadata() -> None:
@@ -276,3 +290,122 @@ def test_migration_is_additive_and_idempotent(hunter_db) -> None:
         ).fetchone()
     finally:
         connection.close()
+
+
+def test_application_plan_preserves_validated_universal_semantic_metadata() -> None:
+    requirement = plans._normalize_requirement(
+        {
+            "question_key": "unknown.abc",
+            "question_family": "unknown",
+            "normalized_question": "State New Jersey",
+            "required": True,
+            "conditions": {},
+            "sensitivity_class": "NORMAL",
+            "universal_concept_id": "contact.region",
+            "universal_semantic_confidence": 0.99,
+            "universal_classification_lane": "ONTOLOGY_CONTEXT",
+            "universal_reason_code": "ADDRESS_REGION_CONTEXT",
+            "universal_sensitivity": "NORMAL",
+            "universal_binding_fingerprint": "a" * 64,
+        }
+    )
+    assert requirement["universal_concept_id"] == "contact.region"
+    assert requirement["universal_semantic_confidence"] == 0.99
+    assert requirement["universal_binding_fingerprint"] == "a" * 64
+
+
+def test_application_plan_universal_normal_canary_uses_opaque_ref_and_trusted_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requirement = plans._normalize_requirement(
+        {
+            "question_key": "unknown.abc",
+            "question_family": "unknown",
+            "normalized_question": "State New Jersey",
+            "required": True,
+            "conditions": {},
+            "sensitivity_class": "NORMAL",
+            "universal_concept_id": "contact.region",
+            "universal_semantic_confidence": 0.99,
+            "universal_classification_lane": "ONTOLOGY_CONTEXT",
+            "universal_reason_code": "ADDRESS_REGION_CONTEXT",
+            "universal_sensitivity": "NORMAL",
+            "universal_binding_fingerprint": "b" * 64,
+        }
+    )
+    monkeypatch.setattr(plans.universal_graph, "universal_normal_autofill_enabled", lambda: True)
+    monkeypatch.setattr(
+        plans.universal_answers,
+        "resolve_concept",
+        lambda _q: {
+            "answer_status": "ANSWERED",
+            "answer_mode": "DIRECT_FACT",
+            "value": "New Jersey",
+            "value_ref": "hunter-value://universal-brain/ref-1",
+            "knowledge_revision": 27,
+            "confidence": 0.99,
+            "autofill_allowed": True,
+            "answer_source": "USER_DASHBOARD",
+            "reason": "USER_CONFIRMED",
+            "evidence_ids": ["evidence-1"],
+        },
+    )
+    answer, reason = plans._resolve_requirement(
+        requirement,
+        permissions={"normal_answer_autofill": True},
+        secure_refs={},
+    )
+    assert reason is None
+    assert answer["execution_value"] == "New Jersey"
+    assert answer["universal_value_ref"] == "hunter-value://universal-brain/ref-1"
+    assert answer["universal_concept_id"] == "contact.region"
+    assert answer["autofill_allowed"] is True
+
+
+def test_application_plan_universal_conflict_fails_closed_without_legacy_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requirement = plans._normalize_requirement(
+        {
+            "question_key": "unknown.xyz",
+            "question_family": "unknown",
+            "normalized_question": "Current city",
+            "required": True,
+            "conditions": {},
+            "sensitivity_class": "NORMAL",
+            "universal_concept_id": "contact.city",
+            "universal_semantic_confidence": 0.98,
+            "universal_classification_lane": "ONTOLOGY_RETRIEVAL",
+            "universal_reason_code": "ALIAS_OR_SEMANTIC_RETRIEVAL",
+            "universal_sensitivity": "NORMAL",
+        }
+    )
+    monkeypatch.setattr(plans.universal_graph, "universal_normal_autofill_enabled", lambda: True)
+    monkeypatch.setattr(
+        plans.universal_answers,
+        "resolve_concept",
+        lambda _q: {
+            "answer_status": "CONFLICT",
+            "answer_mode": "DIRECT_FACT",
+            "value_ref": None,
+            "knowledge_revision": 28,
+            "confidence": 0.98,
+            "autofill_allowed": False,
+            "reason": "top_authority_candidate_facts_conflict",
+            "evidence_ids": [],
+        },
+    )
+    monkeypatch.setattr(
+        plans.answer_brain_v2,
+        "resolve_answer",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("legacy fallback must not run")),
+    )
+    answer, reason = plans._resolve_requirement(
+        requirement,
+        permissions={"normal_answer_autofill": True},
+        secure_refs={},
+    )
+    assert answer["execution_value"] is None
+    assert answer["universal_answer_status"] == "CONFLICT"
+    assert answer["autofill_allowed"] is False
+    assert reason == "top_authority_candidate_facts_conflict"

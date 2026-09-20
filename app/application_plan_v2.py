@@ -30,6 +30,9 @@ from app import (
     native_resume_artifact_v5,
 )
 from app import application_preflight_package_v1 as preflight_v1
+from app import candidate_knowledge_graph_v1 as universal_graph
+from app import candidate_ontology_v1 as universal_ontology
+from app import universal_answer_resolver_v1 as universal_answers
 from app import native_resume_service_v5 as resume_v5
 from app.database import get_connection
 from app.phase45_truth_binding import canonical_question_key
@@ -246,6 +249,35 @@ def _normalize_requirement(raw: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError(
             "Non-normal application questions cannot carry plaintext conditions."
         )
+
+    universal_concept_id = str(raw.get("universal_concept_id") or "").strip().casefold() or None
+    universal_confidence: float | None = None
+    universal_lane: str | None = None
+    universal_reason: str | None = None
+    universal_binding_fingerprint: str | None = None
+    if universal_concept_id is not None:
+        concept = universal_ontology.require_concept(universal_concept_id)
+        try:
+            universal_confidence = float(raw.get("universal_semantic_confidence") or 0.0)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Universal semantic confidence must be numeric.") from error
+        if not 0.0 <= universal_confidence <= 1.0:
+            raise ValueError("Universal semantic confidence must be between 0 and 1.")
+        universal_lane = _text(raw.get("universal_classification_lane") or "UNKNOWN", "Universal classification lane", 120)
+        universal_reason = _text(raw.get("universal_reason_code") or "UNKNOWN", "Universal reason code", 160)
+        ub_sensitivity = str(raw.get("universal_sensitivity") or concept.sensitivity).strip().upper()
+        ranks = {"NORMAL": 0, "PROTECTED": 1, "SELF_ID": 2, "CREDENTIAL": 3, "POST_OFFER": 4}
+        if ub_sensitivity not in ranks:
+            raise ValueError("Unsupported Universal Brain sensitivity.")
+        # Semantic metadata may make a requirement stricter, never less sensitive.
+        if ranks[ub_sensitivity] > ranks[sensitivity]:
+            sensitivity = ub_sensitivity
+        fingerprint = str(raw.get("universal_binding_fingerprint") or "").strip().lower()
+        if fingerprint:
+            if len(fingerprint) != 64 or any(ch not in "0123456789abcdef" for ch in fingerprint):
+                raise ValueError("Universal browser binding fingerprint must be SHA-256.")
+            universal_binding_fingerprint = fingerprint
+
     return {
         "question_key": key,
         "question_family": family,
@@ -254,6 +286,11 @@ def _normalize_requirement(raw: Mapping[str, Any]) -> dict[str, Any]:
         "profile_fact_key": profile_fact_key,
         "conditions": conditions,
         "sensitivity_class": sensitivity,
+        "universal_concept_id": universal_concept_id,
+        "universal_semantic_confidence": universal_confidence,
+        "universal_classification_lane": universal_lane,
+        "universal_reason_code": universal_reason,
+        "universal_binding_fingerprint": universal_binding_fingerprint,
     }
 
 
@@ -478,6 +515,8 @@ def _resolve_requirement(
         "conditions": copy.deepcopy(requirement["conditions"]),
         "sensitivity_class": sensitivity,
         "required": required,
+        "universal_concept_id": requirement.get("universal_concept_id"),
+        "universal_binding_fingerprint": requirement.get("universal_binding_fingerprint"),
     }
 
     if sensitivity in {"CREDENTIAL", "POST_OFFER"}:
@@ -567,6 +606,83 @@ def _resolve_requirement(
             if permitted or not required
             else "normal_answer_autofill_permission_missing",
         )
+
+    universal_concept_id = str(requirement.get("universal_concept_id") or "").strip().casefold()
+    if (
+        sensitivity == "NORMAL"
+        and universal_concept_id
+        and universal_graph.universal_normal_autofill_enabled()
+    ):
+        universal_question = {
+            "state": "RESOLVED",
+            "concept_id": universal_concept_id,
+            "confidence": float(requirement.get("universal_semantic_confidence") or 0.0),
+            "classification_lane": str(requirement.get("universal_classification_lane") or "UNKNOWN"),
+            "sensitivity": "NORMAL",
+            "reason_code": str(requirement.get("universal_reason_code") or "UNKNOWN"),
+            "conditions": copy.deepcopy(requirement.get("conditions") or {}),
+            "candidate_values_exposed": False,
+        }
+        universal = universal_answers.resolve_concept(universal_question)
+        status = str(universal.get("answer_status") or "MISSING_FACT")
+        if status in {"ANSWERED", "DERIVED", "POLICY_RESOLVED"}:
+            permitted = bool(permissions.get("normal_answer_autofill"))
+            approved = bool(universal.get("autofill_allowed")) and permitted
+            value = universal.get("value") if approved else None
+            reason = None
+            if required and not approved:
+                reason = (
+                    "normal_answer_autofill_permission_missing"
+                    if not permitted
+                    else "universal_answer_not_autofill_approved"
+                )
+            return (
+                {
+                    **common,
+                    "execution_value": value,
+                    "secure_resolver_ref": None,
+                    "universal_value_ref": universal.get("value_ref"),
+                    "universal_answer_status": status,
+                    "universal_answer_mode": universal.get("answer_mode"),
+                    "knowledge_revision": universal.get("knowledge_revision"),
+                    "display_value": _display_value(universal.get("value")),
+                    "source": universal.get("answer_source") or "universal_brain",
+                    "confidence": universal.get("confidence"),
+                    "provenance": universal.get("reason"),
+                    "autofill_allowed": approved,
+                    "requires_review": not approved or family in {"salary", "open_ended_job_specific"},
+                    "current_truth_binding": None,
+                    "evidence_ids": list(universal.get("evidence_ids") or []),
+                },
+                reason,
+            )
+        # Once a high-confidence normal concept is owned by Universal Brain, a
+        # conflict or exhausted knowledge search must fail closed. Do not bypass
+        # it through a weaker legacy answer path.
+        if status in {
+            "CONFLICT", "MISSING_FACT", "REQUIRES_EXPLICIT_USER",
+            "BLOCKED_BY_POLICY", "AMBIGUOUS_CONCEPT",
+        }:
+            return (
+                {
+                    **common,
+                    "execution_value": None,
+                    "secure_resolver_ref": None,
+                    "universal_value_ref": universal.get("value_ref"),
+                    "universal_answer_status": status,
+                    "universal_answer_mode": universal.get("answer_mode"),
+                    "knowledge_revision": universal.get("knowledge_revision"),
+                    "display_value": None,
+                    "source": "universal_brain",
+                    "confidence": universal.get("confidence"),
+                    "provenance": universal.get("reason"),
+                    "autofill_allowed": False,
+                    "requires_review": True,
+                    "current_truth_binding": None,
+                    "evidence_ids": list(universal.get("evidence_ids") or []),
+                },
+                str(universal.get("reason") or status.casefold()) if required else None,
+            )
 
     resolved = answer_brain_v2.resolve_answer(
         question_family=family,

@@ -176,6 +176,27 @@ def universal_brain_shadow_enabled() -> bool:
     return str(os.getenv("MUNSHI_UNIVERSAL_BRAIN_SHADOW") or "").strip().casefold() in {"1", "true", "yes", "on"}
 
 
+def universal_ontology_enabled() -> bool:
+    raw = os.getenv("MUNSHI_UNIVERSAL_ONTOLOGY_ENABLED")
+    return True if raw is None else str(raw).strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def universal_derivation_enabled() -> bool:
+    return str(os.getenv("MUNSHI_UNIVERSAL_DERIVATION_ENABLED") or "").strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def universal_browser_binding_enabled() -> bool:
+    return str(os.getenv("MUNSHI_UNIVERSAL_BROWSER_BINDING_ENABLED") or "").strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def universal_normal_autofill_enabled() -> bool:
+    return (
+        universal_brain_enabled()
+        and str(os.getenv("MUNSHI_UNIVERSAL_NORMAL_AUTOFILL_ENABLED") or "").strip().casefold()
+        in {"1", "true", "yes", "on"}
+    )
+
+
 def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
     owns = connection is None
     connection = connection or get_connection()
@@ -643,6 +664,10 @@ def public_status() -> dict[str, Any]:
         "version": GRAPH_VERSION,
         "enabled": universal_brain_enabled(),
         "shadow_enabled": universal_brain_shadow_enabled(),
+        "ontology_enabled": universal_ontology_enabled(),
+        "derivation_enabled": universal_derivation_enabled(),
+        "browser_binding_enabled": universal_browser_binding_enabled(),
+        "normal_autofill_enabled": universal_normal_autofill_enabled(),
         "ontology_version": ontology.ONTOLOGY_VERSION,
         "source_precedence": dict(SOURCE_PRECEDENCE),
         "protected_plaintext_storage": False,

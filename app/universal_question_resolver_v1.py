@@ -189,6 +189,44 @@ def _result(
     }
 
 
+def _repeat_scoped_concept(obs: QuestionObservation, concept_id: str) -> str:
+    if obs.repeat_group is None or obs.repeat_index is None:
+        return concept_id
+    group = _norm(obs.repeat_group).replace(" ", "_")
+    index = int(obs.repeat_index)
+    semantic = str(obs.apply_semantic_type or "").strip().upper()
+    if group in {"employment", "experience", "work_history", "work_experience"}:
+        semantic_fields = {
+            "EMPLOYER_NAME": "employer", "JOB_TITLE": "title",
+            "EMPLOYMENT_START_DATE": "start_date", "EMPLOYMENT_END_DATE": "end_date",
+        }
+        canonical_fields = {
+            "employment.current_employer": "employer",
+            "employment.current_title": "title",
+        }
+        field = semantic_fields.get(semantic) or canonical_fields.get(concept_id)
+        if field:
+            return f"experience.{index}.{field}"
+    if group in {"education", "education_history", "schools"}:
+        semantic_fields = {
+            "SCHOOL_NAME": "institution", "DEGREE": "degree",
+            "FIELD_OF_STUDY": "field", "GRADUATION_DATE": "end_date",
+        }
+        canonical_fields = {
+            "education.institution": "institution", "education.degree": "degree",
+            "education.highest_degree": "degree", "education.field": "field",
+            "education.graduation": "end_date",
+        }
+        field = semantic_fields.get(semantic) or canonical_fields.get(concept_id)
+        if field:
+            return f"education.{index}.{field}"
+    return concept_id
+
+
+def _resolved_concept(obs: QuestionObservation, concept_id: str) -> ontology.CandidateConcept:
+    return ontology.require_concept(_repeat_scoped_concept(obs, concept_id))
+
+
 def _context_candidate(obs: QuestionObservation) -> tuple[str, float, str] | None:
     text = _norm(" ".join((obs.label, obs.raw_question, obs.placeholder, obs.name)))
     section = _norm(obs.section_heading)
@@ -229,7 +267,7 @@ def resolve_question(
     # Lane A: existing deterministic semantics remain first.
     intent = field_intelligence.field_intent(obs.as_field_metadata())
     if intent is not None and ontology.concept(intent.key) is not None:
-        item = ontology.require_concept(intent.key)
+        item = _resolved_concept(obs, intent.key)
         sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
         return _result(
             state="RESOLVED", concept_id=item.concept_id, confidence=float(intent.confidence),
@@ -241,7 +279,7 @@ def resolve_question(
     if cat.get("matched"):
         key = str(cat.get("canonical_concept") or cat.get("question_key") or "")
         if ontology.concept(key) is not None:
-            item = ontology.require_concept(key)
+            item = _resolved_concept(obs, key)
             sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
             return _result(
                 state="RESOLVED", concept_id=item.concept_id,
@@ -252,7 +290,7 @@ def resolve_question(
 
     semantic_candidates = ontology.concepts_for_browser_semantic(obs.apply_semantic_type)
     if len(semantic_candidates) == 1:
-        item = semantic_candidates[0]
+        item = _resolved_concept(obs, semantic_candidates[0].concept_id)
         sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
         return _result(
             state="RESOLVED", concept_id=item.concept_id,
@@ -274,7 +312,7 @@ def resolve_question(
         top = ranked[0]
         second = float(ranked[1]["score"]) if len(ranked) > 1 else 0.0
         if float(top["score"]) >= 0.88 and (float(top["score"]) == 1.0 or float(top["score"]) - second >= 0.06):
-            item = ontology.require_concept(str(top["concept_id"]))
+            item = _resolved_concept(obs, str(top["concept_id"]))
             sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
             return _result(
                 state="RESOLVED", concept_id=item.concept_id, confidence=float(top["score"]),
@@ -287,7 +325,7 @@ def resolve_question(
     contextual = _context_candidate(obs)
     if contextual is not None:
         key, score, reason = contextual
-        item = ontology.require_concept(key)
+        item = _resolved_concept(obs, key)
         sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
         return _result(
             state="RESOLVED", concept_id=item.concept_id, confidence=score,
