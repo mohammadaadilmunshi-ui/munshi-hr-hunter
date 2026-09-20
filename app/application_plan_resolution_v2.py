@@ -141,9 +141,8 @@ def promote_runtime_resolutions_after_verified_submission(
                     else:
                         skipped_existing += 1
                     continue
-                if source in {"profile_evidence", "candidate_truth_projection"}:
-                    conflicts.append(key)
-                    continue
+                conflicts.append(key)
+                continue
 
             answer_brain_v2.save_answer(
                 question_family=family,
