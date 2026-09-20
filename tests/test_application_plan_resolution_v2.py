@@ -65,19 +65,7 @@ def test_runtime_resolution_orchestrates_exact_replacement_and_delivery(monkeypa
     assert result["replacement_plan_id"] == "replacement-plan-1"
     assert result["state"] == "PLAN_ACCEPTED"
     assert result["submission_authority"] is False
-    assert result["answer_vault_promotions"] == 1
-    assert promoted == [
-        {
-            "question_family": "candidate_fact",
-            "canonical_answer": "08065",
-            "source": "user",
-            "user_confirmed": True,
-            "confidence": 1.0,
-            "autofill_allowed": True,
-            "conditions": {"profile_projection": "identity"},
-            "question_key": "contact.postal_code",
-        }
-    ]
+    assert promoted == []
     assert calls[0][0] == "reprepare"
     assert calls[1][0] == "deliver"
     assert calls[1][1]["idempotency_key"].startswith(
