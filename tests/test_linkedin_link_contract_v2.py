@@ -249,6 +249,82 @@ class _LinkedInCardUI:
         return False
 
 
+def test_normal_linkedin_job_without_direct_apply_keeps_posting_link() -> None:
+    links = product_pages._external_job_links(
+        {
+            "source": "JobSpy/linkedin",
+            "ats_job_id": "4466640888",
+            "job_url": None,
+            "apply_url": None,
+        }
+    )
+
+    assert links == [
+        (
+            "Open LinkedIn job",
+            "https://www.linkedin.com/jobs/view/4466640888",
+            False,
+        )
+    ]
+
+
+def test_linkedin_posting_and_direct_apply_are_both_exposed() -> None:
+    links = product_pages._external_job_links(
+        {
+            "source": "JobSpy/linkedin",
+            "ats_job_id": "4466640889",
+            "job_url": "https://www.linkedin.com/jobs/view/4466640889?trk=test",
+            "apply_url": "https://boards.greenhouse.io/example/jobs/456",
+        }
+    )
+
+    assert links == [
+        (
+            "Open LinkedIn job",
+            "https://www.linkedin.com/jobs/view/4466640889",
+            False,
+        ),
+        (
+            "Apply",
+            "https://boards.greenhouse.io/example/jobs/456",
+            True,
+        ),
+    ]
+
+
+def test_non_linkedin_job_falls_back_to_posting_when_apply_url_missing() -> None:
+    links = product_pages._external_job_links(
+        {
+            "source": "JobSpy/indeed",
+            "job_url": "https://jobs.example.com/posting/123",
+            "apply_url": None,
+        }
+    )
+
+    assert links == [
+        ("Open job posting", "https://jobs.example.com/posting/123", False)
+    ]
+
+
+def test_broken_external_urls_do_not_create_fake_link_actions() -> None:
+    assert product_pages._external_job_links(
+        {
+            "source": "JobSpy/linkedin",
+            "ats_job_id": "unknown",
+            "job_url": None,
+            "apply_url": "javascript:alert(1)",
+        }
+    ) == []
+
+
+def test_cards_and_job_details_share_the_same_external_link_resolver() -> None:
+    source = __import__("pathlib").Path("app/product_pages.py").read_text(encoding="utf-8")
+
+    assert source.count("_external_job_links(row)") >= 2
+    assert 'safe_link(row.get("apply_url"))' not in source[source.index("def _job_detail_dialog"):source.index("def _job_detail()")]
+    assert "No application URL" not in source
+
+
 def test_jobspy_linkedin_result_reaches_clickable_card_with_separate_apply(
     monkeypatch,
 ) -> None:
