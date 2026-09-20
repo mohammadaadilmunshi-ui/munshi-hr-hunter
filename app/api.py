@@ -1084,14 +1084,13 @@ def revalidate_application_review(
     dependencies=[Depends(require_api_secret)],
 )
 def approve_application_review(review_id: str) -> dict[str, Any]:
-    """Retired second-approval surface; the single boundary is approve-and-submit."""
+    """Retired late browser-review approval surface."""
     del review_id
     raise HTTPException(
         status_code=status.HTTP_410_GONE,
         detail=(
-            "Separate review approval was retired. Use the single "
-            "POST /api/application-reviews/{review_id}/approve-and-submit action bound "
-            "to the frozen review digest."
+            "Late browser-review approval is retired. The only customer approval "
+            "is POST /api/jobs/{job_id}/approve-and-submit before ATS execution."
         ),
     )
 
@@ -1104,19 +1103,27 @@ def approve_and_submit_application_review(
     review_id: str,
     payload: ApplicationApproveAndSubmitRequest,
 ) -> dict[str, Any]:
-    """The sole customer approval boundary; no later review is permitted."""
-    from app import application_single_approval_v1
+    """Retired late approval route kept only as an explicit tombstone."""
+    del review_id, payload
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "Browser-bound approve-and-submit is retired. Use the pre-browser "
+            "POST /api/jobs/{job_id}/approve-and-submit package mandate."
+        ),
+    )
+
+
+@app.post(
+    "/api/jobs/{job_id}/approve-and-submit",
+    dependencies=[Depends(require_api_secret)],
+)
+def approve_and_submit_job_package(job_id: int) -> dict[str, Any]:
+    """The sole customer approval boundary, before unattended ATS execution."""
+    from app import product_application_flow_v2
 
     try:
-        return application_single_approval_v1.approve_and_authorize(
-            review_id=review_id,
-            session_id=payload.session_id,
-            approval_idempotency_key=payload.approval_idempotency_key,
-            authorization_idempotency_key=payload.authorization_idempotency_key,
-            expected_review_digest=payload.expected_review_digest,
-            expected_prepared_package_digest=payload.expected_prepared_package_digest,
-            expected_browser_form_digest=payload.expected_browser_form_digest,
-        )
+        return product_application_flow_v2.approve_and_submit_for_job(int(job_id))
     except (LookupError, PermissionError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 

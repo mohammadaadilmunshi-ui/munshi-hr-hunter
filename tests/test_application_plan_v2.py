@@ -758,3 +758,31 @@ def test_agile_ats_provider_does_not_match_unrelated_host(
 
     assert result["provider_policy"]["provider"] == "UNSUPPORTED"
     assert "provider_not_permitted_or_supported" in result["global_blockers"]
+
+
+@pytest.mark.parametrize(
+    ("question_key", "question", "semantic_type"),
+    [
+        ("contact.address_line1", "Address", "UNKNOWN"),
+        ("contact.postal_code", "Zip Code", "POSTAL_CODE"),
+        ("contact.region", "State / Province", "STATE_PROVINCE"),
+    ],
+)
+def test_runtime_normal_address_questions_survive_plan_validation(
+    question_key: str,
+    question: str,
+    semantic_type: str,
+) -> None:
+    observed, requirement = plans._runtime_question_requirement(
+        {
+            "question_key": question_key,
+            "control_id": "control-" + question_key.replace(".", "-"),
+            "question": question,
+            "semantic_type": semantic_type,
+            "sensitivity_class": "NORMAL",
+        }
+    )
+    assert observed["question_key"] == question_key
+    assert observed["sensitivity_class"] == "NORMAL"
+    assert requirement["question_family"] == "location"
+    assert requirement["sensitivity_class"] == "NORMAL"

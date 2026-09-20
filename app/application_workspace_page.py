@@ -255,10 +255,11 @@ def _render_current_action(state: str) -> None:
             "**Your action now:** answer only the genuine missing employer question(s) shown below. "
             "MUNSHI will not guess."
         )
-    elif normalized in {"READY_FOR_REVIEW", "READY_TO_SUBMIT"}:
+    elif normalized == "READY_FOR_APPROVAL":
         st.warning(
-            "**Your action now:** review the complete package once, then press **Approve & Submit** "
-            "if it is correct. There is no second approval step."
+            "**Your action now:** review the completed pre-browser package once, then press "
+            "**Approve & Submit** if it is correct. Chromium/ATS execution starts only after "
+            "this one approval, and there is no later review or submit prompt."
         )
     elif normalized == "SUBMITTING":
         st.info(
@@ -309,8 +310,8 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
     _render_current_action(state)
     st.markdown('### Application progress')
     st.caption(
-        'The source of truth across preparation, the one customer review, '
-        'submission verification, and CRM.'
+        'The source of truth across package preparation, the one pre-browser customer '
+        'approval, unattended ATS execution, submission verification, and CRM.'
     )
 
     if not state:
@@ -465,23 +466,25 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
 
     artifacts = flow.get('artifacts') or {}
     resume = artifacts.get('resume') or {}
+    preflight = artifacts.get('preflight') or {}
     cover = artifacts.get('cover_letter') or {}
     plan = artifacts.get('plan') or {}
 
-    if state in {'READY_FOR_REVIEW', 'READY_TO_SUBMIT'}:
+    if state == 'READY_FOR_APPROVAL':
         from app import application_review_card_v1 as review_card
         from app import native_resume_presentation_v1 as resume_presentation
         import streamlit.components.v1 as components
 
-        review_record = flow.get('customer_review') or {}
-        review = review_record.get('review') or {}
-        st.markdown('### Review application')
+        review = flow.get('package_review') or {}
+        review_record = review
+        st.markdown('### Review application package')
         st.caption(
-            'Your tailored application is ready. Review it once, then '
-            'Approve & Submit. There is no second approval.'
+            'This is the only customer review. It happens before the employer ATS browser '
+            'starts. Approve & Submit records one execution mandate; later form filling, '
+            'internal digest checks, and final submission are unattended.'
         )
 
-        job = safe_owned_job_snapshot(int(job_id))['job']
+        job = dict(review.get('job') or safe_owned_job_snapshot(int(job_id))['job'])
         st.markdown(
             f"**{esc(job.get('title'), 'Untitled role')} · "
             f"{esc(job.get('company_name'), 'Company')}**",
@@ -614,42 +617,55 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
             )
             artifact_cols[1].metric(
                 'Cover letter',
-                'Ready' if cover.get('cover_letter_id') else 'Not required',
+                (
+                    'Ready'
+                    if preflight.get('cover_letter_id')
+                    else str(preflight.get('cover_letter_decision') or 'Not planned').replace('_', ' ').title()
+                ),
             )
-            artifact_cols[2].metric('ATS form', 'Completed')
+            artifact_cols[2].metric('ATS browser', 'Starts after approval')
 
         with st.expander('Application details', expanded=False):
+            destination = str(
+                (review.get('job') or {}).get('apply_url')
+                or (review.get('job') or {}).get('job_url')
+                or '—'
+            )
+            st.write(f"Exact destination: {destination}")
+            policy = dict(review.get('execution_policy') or {})
             st.write(
-                f"Provider: "
-                f"{review.get('provider') or plan.get('provider') or '—'}"
+                'Normal employer questions: '
+                + str(policy.get('normal_runtime_questions') or 'AUTONOMOUS')
             )
-            completed_fields = (review.get('application') or {}).get(
-                'completed_required_fields'
+            st.write(
+                'Account creation: '
+                + str(policy.get('account_creation') or 'AUTONOMOUS')
             )
-            if completed_fields is not None:
+            st.write(
+                'Email verification: '
+                + str(policy.get('email_verification') or 'AUTONOMOUS')
+            )
+            checkpoints = list(policy.get('protected_human_checkpoints') or [])
+            if checkpoints:
                 st.write(
-                    'Required application fields completed: '
-                    f'{completed_fields}'
+                    'Protected human checkpoints only: '
+                    + ', '.join(value.replace('_', ' ').title() for value in checkpoints)
                 )
-            answers = list(review.get('answers') or [])
-            if answers:
-                for item in answers:
-                    question = item.get('question_key') or item.get(
-                        'question_family'
-                    )
-                    st.write(
-                        f"• {question or 'Application question'}: "
-                        f"{item.get('display_value')}"
-                    )
+            answers = dict(review.get('application_answers') or {})
+            reusable = list(answers.get('reusable_answer_metadata') or [])
             st.caption(
-                'Protected values stay masked. Approval remains bound to the '
-                'exact review, form, resume, plan, and checkpoint digests.'
+                f"{len(reusable)} reusable answer record(s) are bound to the current "
+                'Candidate Truth profile. Protected values are never exposed here.'
+            )
+            st.caption(
+                'The later browser/form digest is an internal integrity snapshot only. '
+                'It cannot create another customer review or approval prompt.'
             )
 
         if not review_record:
             st.warning(
-                'The immutable review snapshot is still synchronizing. '
-                'Submission remains blocked.'
+                'The immutable pre-browser package review is still synchronizing. '
+                'ATS execution remains blocked.'
             )
         else:
             skip_col, submit_col = st.columns([1, 2], gap='small')
@@ -659,7 +675,7 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
                     key=f'complete_loop_skip_review_{job_id}',
                     use_container_width=True,
                 ):
-                    st.toast('Review left pending. Nothing was submitted.')
+                    st.toast('Package approval left pending. ATS execution did not start.')
                     st.query_params['view'] = 'jobs'
                     try:
                         del st.query_params['job']
@@ -680,7 +696,7 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
                             )
                     except Exception as error:
                         st.error(
-                            'Submission could not start safely: ' + str(error)
+                            'AutoApply could not start safely: ' + str(error)
                         )
                     else:
                         st.toast(
@@ -689,8 +705,9 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
                         )
                         st.rerun()
         st.caption(
-            'No second review follows. Backend hashing, one-use authority, '
-            'browser continuation, verification, and receipts remain automatic.'
+            'No second review follows. Chromium, account/login handling, employer '
+            'questions, internal form hashing, one-use submit authority, verification, '
+            'and receipts continue automatically.'
         )
 
     if state == 'SUBMITTING':

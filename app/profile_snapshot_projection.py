@@ -158,6 +158,12 @@ def _add_resume_profile_facts(
     contact_categories = {
         "full_name": "IDENTITY",
         "location": "ADDRESS",
+        "address_line1": "ADDRESS",
+        "address_line2": "ADDRESS",
+        "city": "ADDRESS",
+        "region": "ADDRESS",
+        "postal_code": "ADDRESS",
+        "country": "ADDRESS",
         "email": "CONTACT",
         "phone": "CONTACT",
         "linkedin": "CONTACT",

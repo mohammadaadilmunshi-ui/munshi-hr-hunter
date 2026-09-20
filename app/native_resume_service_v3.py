@@ -29,6 +29,15 @@ _MAX_PROFILE_RESPONSE_TOKENS = 6000
 class ContactProfile(BaseModel):
     full_name: str = ""
     location: str = ""
+    # Canonical application-address facts are stored separately instead of
+    # overloading one display location string.  Providers may ask for any subset
+    # of these fields; unknown values remain blank and are never inferred.
+    address_line1: str = ""
+    address_line2: str = ""
+    city: str = ""
+    region: str = ""
+    postal_code: str = ""
+    country: str = ""
     email: str = ""
     phone: str = ""
     linkedin: str = ""

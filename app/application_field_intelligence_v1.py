@@ -55,11 +55,14 @@ _AUTOCOMPLETE_MAP: dict[str, FieldIntent] = {
     "organization-title": FieldIntent(
         "employment.current_title", "experience.0.title", "identity"
     ),
-    "address-level2": FieldIntent("contact.city", "contact.location", "location_city"),
-    "address-level1": FieldIntent("contact.region", "contact.location", "location_region"),
-    "postal-code": FieldIntent("contact.postal_code", "contact.location", "location_postal"),
-    "country": FieldIntent("contact.country", "contact.location", "location_country"),
-    "country-name": FieldIntent("contact.country", "contact.location", "location_country"),
+    "street-address": FieldIntent("contact.address_line1", "contact.address_line1", "identity"),
+    "address-line1": FieldIntent("contact.address_line1", "contact.address_line1", "identity"),
+    "address-line2": FieldIntent("contact.address_line2", "contact.address_line2", "identity"),
+    "address-level2": FieldIntent("contact.city", "contact.city", "identity"),
+    "address-level1": FieldIntent("contact.region", "contact.region", "identity"),
+    "postal-code": FieldIntent("contact.postal_code", "contact.postal_code", "identity"),
+    "country": FieldIntent("contact.country", "contact.country", "identity"),
+    "country-name": FieldIntent("contact.country", "contact.country", "identity"),
 }
 
 # This mirrors only Apply semantic types that are safe structural projections of
@@ -77,6 +80,10 @@ _APPLY_SAFE_SEMANTIC_MAP: dict[str, FieldIntent] = {
     "PORTFOLIO": FieldIntent("contact.portfolio", "contact.portfolio", "identity", "url"),
     "WEBSITE": FieldIntent("contact.portfolio", "contact.portfolio", "identity", "url"),
     "CURRENT_LOCATION": FieldIntent("contact.location", "contact.location", "identity"),
+    "ADDRESS": _AUTOCOMPLETE_MAP["street-address"],
+    "STREET_ADDRESS": _AUTOCOMPLETE_MAP["street-address"],
+    "ADDRESS_LINE1": _AUTOCOMPLETE_MAP["address-line1"],
+    "ADDRESS_LINE2": _AUTOCOMPLETE_MAP["address-line2"],
     "CITY": _AUTOCOMPLETE_MAP["address-level2"],
     "STATE_PROVINCE": _AUTOCOMPLETE_MAP["address-level1"],
     "POSTAL_CODE": _AUTOCOMPLETE_MAP["postal-code"],
@@ -138,6 +145,14 @@ _LABEL_RULES: tuple[tuple[re.Pattern[str], FieldIntent], ...] = (
     (
         re.compile(r"\b(current\s+)?location\b", re.I),
         FieldIntent("contact.location", "contact.location", "identity"),
+    ),
+    (
+        re.compile(r"\b(address\s+line\s*2|address\s*2|apt\.?|apartment|suite|unit)\b", re.I),
+        _AUTOCOMPLETE_MAP["address-line2"],
+    ),
+    (
+        re.compile(r"\b(street\s+address|address\s+line\s*1|address\s*1|mailing\s+address|home\s+address|address)\b", re.I),
+        _AUTOCOMPLETE_MAP["address-line1"],
     ),
     (re.compile(r"\bcity\b", re.I), _AUTOCOMPLETE_MAP["address-level2"]),
     (
@@ -369,6 +384,28 @@ def resolve_profile_projection(
         }
 
     fact = _snapshot_fact(snapshot, profile_fact_key)
+    if fact is None:
+        # Backward-compatible structural fallback for profiles confirmed before
+        # structured address facts existed.  This never invents missing data:
+        # it only projects a component that is explicitly present in the older
+        # human-readable contact.location value.
+        fallback_projection = {
+            "contact.city": "location_city",
+            "contact.region": "location_region",
+            "contact.postal_code": "location_postal",
+            "contact.country": "location_country",
+        }.get(str(profile_fact_key).strip().casefold())
+        if fallback_projection:
+            legacy = _snapshot_fact(snapshot, "contact.location")
+            if legacy is not None and legacy.get("protected") is not True:
+                projected = _project(legacy.get("value"), fallback_projection)
+                if projected:
+                    fact = {
+                        **legacy,
+                        "key": profile_fact_key,
+                        "value": projected,
+                        "source": f"{legacy.get('source') or 'candidate_truth'}:legacy-location-projection",
+                    }
     if fact is None:
         return {"status": "NEEDS_INPUT", "reason": "profile_fact_missing"}
     if fact.get("protected") is True:

@@ -19,6 +19,45 @@ PROFILE_DIGEST = "c" * 64
 def worker_db(hunter_db, monkeypatch):
     monkeypatch.setenv(workers.WORKERS_ENV, "1")
     monkeypatch.setenv(workers.ATS_RUNTIME_ENV, "1")
+    monkeypatch.setattr(
+        workers.application_execution_mandate_v1,
+        "current_for_preflight",
+        lambda package_id: {
+            "mandate_id": "execution-mandate-94",
+            "preflight_package_id": package_id,
+        },
+    )
+    monkeypatch.setattr(
+        workers.application_review_v2,
+        "approve_review_from_execution_mandate",
+        lambda **kwargs: {
+            "approval_id": "technical-approval-94",
+            "approval_digest": "6" * 64,
+            "approval_source": "EXECUTION_MANDATE",
+            "execution_mandate_id": kwargs["execution_mandate_id"],
+            "approved": True,
+            "submission_authority": False,
+        },
+    )
+    monkeypatch.setattr(
+        workers.application_submit_authorization_v1,
+        "issue_authorization",
+        lambda payload: {
+            **dict(payload),
+            "authorization_id": "submit-auth-94",
+            "authority_digest": "7" * 64,
+            "submission_authority": True,
+        },
+    )
+    monkeypatch.setattr(
+        workers,
+        "deliver_submit_authorization",
+        lambda envelope, timeout_seconds=5.0: {
+            "delivered": True,
+            "authorization_id": envelope["authorization_id"],
+            "submission_authority": False,
+        },
+    )
     monkeypatch.setattr(orchestrator, "current_owner", lambda _connection: OWNER)
     monkeypatch.setattr(
         orchestrator,
@@ -400,9 +439,23 @@ def _frozen_review(*, cover_sha256=None):
 def _recorded_review(**kwargs):
     return {
         "review_id": "hunter-review-94",
+        "application_id": "application-94",
+        "plan_id": "plan-94",
+        "plan_digest": "1" * 64,
         "review_digest": "4" * 64,
         "prepared_package_digest": "5" * 64,
         "browser_form_digest": "2" * 64,
+        "resume_artifact_sha256": "8" * 64,
+        "review": {
+            "provider": "GREENHOUSE",
+            "destination_url": "https://boards.example.test/submit",
+            "bindings": {
+                "checkpoint_id": "checkpoint-94",
+                "cover_letter_artifact_sha256": (
+                    "9" * 64 if kwargs.get("prepared_package", {}).get("cover_letter_sha256") else None
+                ),
+            },
+        },
         "approved": False,
     }
 
@@ -460,12 +513,6 @@ def test_ats_runtime_default_off_does_not_claim(worker_db, monkeypatch):
 def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
     worker_db, monkeypatch
 ):
-    operation = _ready_ats(
-        worker_db,
-        monkeypatch,
-        "v1c-cover-required",
-        cover="REQUIRED",
-    )
     seen = {}
 
     monkeypatch.setattr(
@@ -483,6 +530,12 @@ def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
             "candidate_profile_digest": PROFILE_DIGEST,
             "submission_authority": False,
         },
+    )
+    operation = _ready_ats(
+        worker_db,
+        monkeypatch,
+        "v1c-cover-required",
+        cover="REQUIRED",
     )
 
     def prepare_plan(**kwargs):
@@ -527,15 +580,11 @@ def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
     assert result["output"]["submission_authority"] is False
 
 
-def test_required_cover_letter_writer_failure_requeues_safely(
+def test_required_cover_letter_writer_failure_requeues_preflight_safely(
     worker_db, monkeypatch
 ):
-    operation = _ready_ats(
-        worker_db,
-        monkeypatch,
-        "v1c-cover-required-failure",
-        cover="REQUIRED",
-    )
+    operation = _start("v1c-cover-required-failure")
+    _ready_dependencies(operation["operation_id"], cover="REQUIRED")
 
     monkeypatch.setattr(
         workers.native_cover_letter_writer_v1,
@@ -546,14 +595,11 @@ def test_required_cover_letter_writer_failure_requeues_safely(
     )
 
     with pytest.raises(RuntimeError, match="writer unavailable"):
-        workers.run_ats_form_preparation_once(
-            operation_id=operation["operation_id"],
-            worker_id="ats-worker",
-        )
+        _run_preflight_ready(operation, monkeypatch)
 
     task = _task(
         operation["operation_id"],
-        orchestrator.TASK_ATS_FORM_PREPARATION,
+        orchestrator.TASK_APPLICATION_PREFLIGHT,
     )
     assert task["status"] == "PENDING"
     assert task["attempts"] == 1
@@ -631,16 +677,23 @@ def test_apply_terminal_failure_fails_safely(worker_db, monkeypatch):
         lambda **kwargs: _fake_plan(),
     )
 
+    terminal = _session("FAILED_SAFELY")
+    terminal["preparation_job"]["last_error"] = "browser adapter failed closed"
     result = workers.run_ats_form_preparation_once(
         operation_id=operation["operation_id"],
         worker_id="ats-worker",
         poll_interval_seconds=0,
         plan_delivery=lambda **kwargs: _delivery(),
-        session_starter=lambda plan: _session("FAILED_SAFELY"),
+        session_starter=lambda plan: terminal,
         status_reader=lambda **kwargs: {},
     )
     assert result["task_status"] == "FAILED"
     assert result["operation_status"] == "FAILED_SAFELY"
+    assert result["apply_last_error"] == "browser adapter failed closed"
+    task = _task(
+        operation["operation_id"], orchestrator.TASK_ATS_FORM_PREPARATION
+    )
+    assert "browser adapter failed closed" in str(task["error_message"])
 
 
 def test_poll_timeout_requeues_without_submission(worker_db, monkeypatch):
@@ -1061,3 +1114,40 @@ def test_provider_capability_retry_fails_closed_on_non_provider_semantic_drift(
             pending_task=pending,
             preflight=preflight,
         )
+
+
+def test_ats_browser_waits_for_single_prebrowser_mandate(
+    worker_db, monkeypatch
+):
+    operation = _ready_ats(
+        worker_db,
+        monkeypatch,
+        "v1c-single-mandate-gate",
+    )
+    monkeypatch.setattr(
+        workers.application_execution_mandate_v1,
+        "current_for_preflight",
+        lambda package_id: None,
+    )
+
+    def browser_must_not_start(**kwargs):
+        raise AssertionError("ATS plan/browser must not start before customer mandate")
+
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "prepare_application_plan",
+        browser_must_not_start,
+    )
+
+    result = workers.run_ats_form_preparation_once(
+        operation_id=operation["operation_id"],
+        worker_id="ats-worker",
+    )
+
+    assert result["claimed"] is False
+    assert result["reason"] == "single_customer_approval_required"
+    assert _task(
+        operation["operation_id"],
+        orchestrator.TASK_ATS_FORM_PREPARATION,
+    )["status"] == "PENDING"
+    assert result["submission_authority"] is False

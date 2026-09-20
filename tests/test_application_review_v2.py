@@ -171,6 +171,8 @@ def review_authority(hunter_db, monkeypatch: pytest.MonkeyPatch):
                     approved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     consumed_at TEXT,
                     consumption_key TEXT,
+                    approval_source TEXT NOT NULL DEFAULT 'USER_REVIEW',
+                    execution_mandate_id TEXT,
                     UNIQUE(tenant_id,user_id,review_id),
                     UNIQUE(tenant_id,user_id,idempotency_key),
                     UNIQUE(tenant_id,user_id,approval_digest)
@@ -449,55 +451,44 @@ def test_prepared_package_digest_changes_when_material_review_changes(
     assert sha256_json(base) != sha256_json(changed)
 
 
-def test_one_customer_approval_mints_exact_submit_authority(
+def test_retired_browser_bound_single_approval_fails_closed() -> None:
+    assert single_approval.LEGACY_RETIRED is True
+    with pytest.raises(RuntimeError, match="pre-browser application execution mandate"):
+        single_approval.approve_and_authorize(
+            review_id="legacy-review",
+            session_id="legacy-session",
+        )
+
+
+def test_internal_review_approval_is_derived_from_execution_mandate(
     review_authority,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from app import application_execution_mandate_v1 as mandates
+
     review = reviews.create_review(
         plan_id="application-plan-1",
         prepared_package=_prepared(),
-        idempotency_key="review-key-single-approval",
+        idempotency_key="review-key-mandate-derived",
     )
     monkeypatch.setattr(
-        single_approval,
-        "current_owner",
-        lambda _connection: SimpleNamespace(
-            tenant_id="default", user_id="local-owner"
-        ),
-    )
-    issued: list[dict] = []
-
-    def issue(payload):
-        issued.append(dict(payload))
-        return {
-            "authorization_id": "submit-auth-1",
-            "submission_authority": True,
-        }
-
-    monkeypatch.setattr(
-        single_approval.application_submit_authorization_v1,
-        "issue_authorization",
-        issue,
+        mandates,
+        "mandate_authorizes_internal_review",
+        lambda mandate_id, review_record: {
+            "mandate_id": mandate_id,
+            "review_digest": "9" * 64,
+        },
     )
 
-    arguments = {
-        "review_id": review["review_id"],
-        "session_id": "apply-session-1",
-        "approval_idempotency_key": "customer-submit-click-1",
-        "authorization_idempotency_key": "customer-submit-click-1",
-        "expected_review_digest": review["review_digest"],
-        "expected_prepared_package_digest": review["prepared_package_digest"],
-        "expected_browser_form_digest": review["browser_form_digest"],
-    }
-    first = single_approval.approve_and_authorize(**arguments)
-    second = single_approval.approve_and_authorize(**arguments)
+    approval = reviews.approve_review_from_execution_mandate(
+        review_id=review["review_id"],
+        execution_mandate_id="execution-mandate-1",
+        idempotency_key="technical-approval-1",
+    )
 
-    assert first["status"] == "APPLYING_NOW"
-    assert first["customer_approval_complete"] is True
-    assert first["additional_customer_approval_required"] is False
-    assert second["approval_id"] == first["approval_id"]
-    assert issued[0]["review_digest"] == review["review_digest"]
-    assert issued[0]["prepared_package_digest"] == review["prepared_package_digest"]
-    assert issued[0]["browser_form_digest"] == review["browser_form_digest"]
-    assert issued[0]["resume_sha256"] == "3" * 64
-    assert all(item["idempotency_key"] == "customer-submit-click-1" for item in issued)
+    assert approval["approved"] is True
+    assert approval["approval_source"] == "EXECUTION_MANDATE"
+    assert approval["execution_mandate_id"] == "execution-mandate-1"
+    stored = reviews.get_review(review["review_id"])
+    assert stored["approval_source"] == "EXECUTION_MANDATE"
+    assert stored["execution_mandate_id"] == "execution-mandate-1"

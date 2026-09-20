@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib, hmac, json, os, sqlite3
 from typing import Any, Mapping
 from app import application_lifecycle_authority_v1 as lifecycle
+from app import application_plan_resolution_v2 as runtime_resolution
 from app import application_submit_authorization_v1 as submit_auth
 from app.database import get_connection
 from app.tenant_foundation import current_owner
@@ -237,7 +238,18 @@ def ingest_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
         if prior is not None:
             if str(prior["receipt_digest"]) != str(value["receipt_digest"]): raise PermissionError("Conflicting production-receipt replay.")
             application_state = _project_submitted(connection, value)
-            connection.commit(); return {"receipt_id": str(value["receipt_id"]), "status":"INGESTED", "replayed":True, "verification_status":"VERIFIED", "application_state": application_state}
+            connection.commit()
+            memory = runtime_resolution.promote_runtime_resolutions_after_verified_submission(
+                plan_id=str(value["plan_id"])
+            )
+            return {
+                "receipt_id": str(value["receipt_id"]),
+                "status": "INGESTED",
+                "replayed": True,
+                "verification_status": "VERIFIED",
+                "application_state": application_state,
+                "runtime_answer_memory": memory,
+            }
         authority = connection.execute("SELECT * FROM application_submit_authorizations_v1 WHERE authorization_id=?", (str(value["authorization_id"]),)).fetchone()
         if authority is None or str(authority["status"]) != "CLAIMED": raise PermissionError("Production receipt requires a currently CLAIMED submit authorization.")
         for key in ("tenant_id","user_id","application_id","authority_digest","claim_digest","plan_id","session_id","review_id","approval_id","provider","target_url"):
@@ -246,7 +258,18 @@ def ingest_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
         if connection.execute("UPDATE application_submit_authorizations_v1 SET status='CONSUMED',consumed_at=CURRENT_TIMESTAMP WHERE authorization_id=? AND status='CLAIMED' AND claim_digest=?", (str(value["authorization_id"]),str(value["claim_digest"]))).rowcount != 1:
             raise PermissionError("Production receipt lost the atomic authorization-consumption race.")
         application_state = _project_submitted(connection, value)
-        connection.commit(); return {"receipt_id":str(value["receipt_id"]),"status":"INGESTED","replayed":False,"verification_status":"VERIFIED","application_state":application_state}
+        connection.commit()
+        memory = runtime_resolution.promote_runtime_resolutions_after_verified_submission(
+            plan_id=str(value["plan_id"])
+        )
+        return {
+            "receipt_id": str(value["receipt_id"]),
+            "status": "INGESTED",
+            "replayed": False,
+            "verification_status": "VERIFIED",
+            "application_state": application_state,
+            "runtime_answer_memory": memory,
+        }
     except Exception:
         connection.rollback(); raise
     finally:

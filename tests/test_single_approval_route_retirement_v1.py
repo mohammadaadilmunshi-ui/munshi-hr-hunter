@@ -42,24 +42,48 @@ def test_separate_approval_endpoint_is_gone(payload: dict) -> None:
     assert "approve-and-submit" in detail
 
 
-def test_canonical_single_approval_route_is_still_reachable() -> None:
-    """The one customer boundary must remain routed (not accidentally removed)."""
+def test_late_browser_bound_approve_and_submit_is_gone() -> None:
     client = TestClient(api.app)
     response = client.post(
         "/api/application-reviews/review-v2-abc/approve-and-submit",
         json={
             "session_id": "apply-session-1",
-            "approval_idempotency_key": "customer-approve-submit-1",
-            "authorization_idempotency_key": "customer-approve-submit-1",
+            "approval_idempotency_key": "retired-late-approval",
+            "authorization_idempotency_key": "retired-late-approval",
             "expected_review_digest": "b" * 64,
             "expected_prepared_package_digest": "d" * 64,
             "expected_browser_form_digest": "e" * 64,
         },
         headers=HEADERS,
     )
-    # Unauthenticated against a real review fails closed (409), but is never 404/405/410.
-    assert response.status_code not in {404, 405, 410}
-    assert response.status_code in {200, 401, 409}
+    assert response.status_code == 410
+    assert "pre-browser" in str(response.json().get("detail", "")).casefold()
+
+
+def test_canonical_single_approval_route_is_prebrowser_job_package_route(
+    monkeypatch,
+) -> None:
+    from app import product_application_flow_v2
+
+    monkeypatch.setattr(
+        product_application_flow_v2,
+        "approve_and_submit_for_job",
+        lambda job_id: {
+            "mandate_id": f"execution-mandate-{job_id}",
+            "status": "APPLYING_NOW",
+            "customer_approval_complete": True,
+            "additional_customer_approval_required": False,
+            "submission_authority": False,
+        },
+    )
+    client = TestClient(api.app)
+    response = client.post(
+        "/api/jobs/94/approve-and-submit",
+        headers=HEADERS,
+    )
+    assert response.status_code == 200
+    assert response.json()["mandate_id"] == "execution-mandate-94"
+    assert response.json()["customer_approval_complete"] is True
 
 
 def test_no_other_approval_route_is_registered() -> None:
@@ -71,4 +95,5 @@ def test_no_other_approval_route_is_registered() -> None:
     assert paths == {
         "/api/application-reviews/{review_id}/approve",
         "/api/application-reviews/{review_id}/approve-and-submit",
+        "/api/jobs/{job_id}/approve-and-submit",
     }
