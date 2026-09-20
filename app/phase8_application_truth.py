@@ -28,6 +28,14 @@ BASELINE_APPLICATION_FACT_KEYS = (
     "contact.full_name",
     "contact.email",
     "contact.phone",
+    # These are reusable application facts, not mandatory for every job. Their
+    # absence is reported once in Profile readiness instead of becoming a
+    # provider/job-specific runtime patch.
+    "contact.address_line1",
+    "contact.city",
+    "contact.region",
+    "contact.postal_code",
+    "contact.country",
     "application_defaults.open_to_work",
     "application_defaults.willing_to_relocate",
     "application_defaults.work_modes",
