@@ -62,6 +62,31 @@ def test_healthy_owned_service_is_not_restarted_and_recover_is_idempotent() -> N
     assert harness.bootstrap_calls == harness.kickstart_calls == harness.terminate_calls == 0
 
 
+def test_bootstrap_clears_persisted_launchd_disabled_state_before_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def runner(args, timeout):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    recovery = RuntimeRecovery(command_runner=runner)
+    monkeypatch.setattr(
+        recovery,
+        "launch_details",
+        lambda _spec: {"loaded": True},
+    )
+
+    assert recovery._bootstrap(SERVICES["fastapi"]) is True
+    assert calls[0] == [
+        "launchctl",
+        "enable",
+        f"gui/{recovery.uid}/com.aadil.hr-hunter.fastapi",
+    ]
+    assert calls[1][0:3] == ["launchctl", "bootstrap", f"gui/{recovery.uid}"]
+
+
 def test_missing_service_is_started_once_and_unmanaged_healthy_service_is_adopted() -> None:
     missing = ComponentHarness(_status())
     result = missing._recover_component(SERVICES["fastapi"], repair_unhealthy=True)
