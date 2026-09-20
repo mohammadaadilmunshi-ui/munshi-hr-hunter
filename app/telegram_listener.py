@@ -4,6 +4,7 @@ import asyncio
 import fcntl
 import json
 import os
+import signal
 import threading
 import time
 from datetime import datetime, timezone
@@ -56,6 +57,18 @@ HEARTBEAT_PATH = (
 )
 
 HEARTBEAT_SECONDS = 5
+
+def inbound_polling_enabled() -> bool:
+    """Whether this runtime owns Telegram getUpdates polling.
+
+    Production owns inbound polling after cloud cutover. Local runtimes may keep
+    the listener process alive for heartbeat and operational-outbox delivery
+    while disabling getUpdates with MUNSHI_TELEGRAM_POLLING_ENABLED=false.
+    """
+    value = str(os.getenv("MUNSHI_TELEGRAM_POLLING_ENABLED", "true")).strip().casefold()
+    return value not in {"0", "false", "no", "off"}
+
+
 
 
 def utc_now() -> str:
@@ -1178,6 +1191,35 @@ def main() -> None:
         daemon=True,
     )
     outbox_thread.start()
+
+    if not inbound_polling_enabled():
+        print(
+            "Telegram inbound polling disabled for this runtime; "
+            "operational outbox delivery remains active.",
+            flush=True,
+        )
+
+        def _request_stop(_signum: int, _frame: object) -> None:
+            stop_event.set()
+
+        signal.signal(signal.SIGTERM, _request_stop)
+        signal.signal(signal.SIGINT, _request_stop)
+        try:
+            while not stop_event.wait(1):
+                pass
+        finally:
+            stop_event.set()
+            heartbeat_thread.join(timeout=2)
+            outbox_thread.join(timeout=2)
+            try:
+                write_heartbeat("offline")
+            except Exception:
+                pass
+            try:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                lock_handle.close()
+        return
 
     # AADIL_TELEGRAM_TRANSPORT_CALLBACK_RESILIENCE_V3
     application = (
