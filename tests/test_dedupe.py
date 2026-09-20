@@ -80,3 +80,18 @@ def test_historical_rejected_keeper_does_not_suppress_corrected_rediscovery(hunt
     assert first["inserted"] is True
     assert second["inserted"] is True
     assert second["job_id"] != first["job_id"]
+
+    connection = database.get_connection()
+    try:
+        third = save_job(
+            connection,
+            _job(source="LinkedIn/JobSpy", apply_url="https://mirror.test/jobs/90001"),
+            actor="fixture_worker",
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    assert third["inserted"] is False
+    assert third["job_id"] == second["job_id"]
+    assert third["duplicate_reason"] == "disambiguated_job_fingerprint"
