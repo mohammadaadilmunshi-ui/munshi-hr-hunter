@@ -1,0 +1,159 @@
+name: Staging AutoApply Preparation Canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Existing staging Hunter job ID for the real-job canary"
+        required: true
+        type: string
+      phase:
+        description: "Pre-approval starts/replays Prepare; post-approval only observes after your dashboard approval"
+        required: true
+        type: choice
+        options:
+          - pre-approval
+          - post-approval-observe
+      expected_hunter_sha:
+        description: "Exact Hunter staging SHA"
+        required: true
+        type: string
+      expected_apply_sha:
+        description: "Exact Apply staging image SHA"
+        required: true
+        type: string
+      source_branch:
+        description: "Hunter branch that must contain expected_hunter_sha"
+        required: true
+        default: "fix/universal-autoapply-runtime-integration-v2-20260920"
+        type: string
+      timeout_seconds:
+        description: "Maximum observation time"
+        required: true
+        default: "900"
+        type: string
+      staging_project:
+        description: "Hunter staging Compose project"
+        required: true
+        default: "munshi-netcup-staging"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-staging-autoapply-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 30
+    steps:
+      - name: Validate exact candidates and canary inputs
+        shell: bash
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          PHASE: ${{ inputs.phase }}
+          HUNTER_SHA: ${{ inputs.expected_hunter_sha }}
+          APPLY_SHA: ${{ inputs.expected_apply_sha }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+          STAGING_PROJECT: ${{ inputs.staging_project }}
+        run: |
+          set -euo pipefail
+          [[ "$JOB_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PHASE" == "pre-approval" || "$PHASE" == "post-approval-observe" ]]
+          [[ "$HUNTER_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$APPLY_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]]
+          git check-ref-format --branch "$SOURCE_BRANCH" >/dev/null
+          [[ "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]]
+          [[ "$STAGING_PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]
+
+      - name: Checkout exact Hunter candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.expected_hunter_sha }}
+          fetch-depth: 0
+
+      - name: Prove Hunter SHA belongs to requested source branch
+        shell: bash
+        env:
+          HUNTER_SHA: ${{ inputs.expected_hunter_sha }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$SOURCE_BRANCH:refs/remotes/origin/$SOURCE_BRANCH"
+          test "$(git rev-parse HEAD)" = "$HUNTER_SHA"
+          git merge-base --is-ancestor "$HUNTER_SHA" "refs/remotes/origin/$SOURCE_BRANCH"
+          bash -n deploy/netcup/run_staging_autoapply_canary.sh
+          python -m py_compile scripts/staging_autoapply_canary.py
+
+      - name: Configure restricted staging SSH
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_SSH_PRIVATE_KEY"
+          test -n "$NETCUP_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_deploy"
+          chmod 600 "$HOME/.ssh/netcup_deploy"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Run preparation-only staging canary
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          JOB_ID: ${{ inputs.job_id }}
+          PHASE: ${{ inputs.phase }}
+          HUNTER_SHA: ${{ inputs.expected_hunter_sha }}
+          APPLY_SHA: ${{ inputs.expected_apply_sha }}
+          TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+          STAGING_PROJECT: ${{ inputs.staging_project }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_HOST"
+          test -n "$NETCUP_USER"
+          output="$RUNNER_TEMP/staging-autoapply-canary.txt"
+          remote_command="/home/munshi/munshi-staging-v1/repo/deploy/netcup/run_staging_autoapply_canary.sh --job-id $JOB_ID --phase $PHASE --expected-hunter-sha $HUNTER_SHA --expected-apply-sha $APPLY_SHA --timeout-seconds $TIMEOUT_SECONDS --project $STAGING_PROJECT"
+          ssh \
+            -i "$HOME/.ssh/netcup_deploy" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$NETCUP_USER@$NETCUP_HOST" \
+            "$remote_command" 2>&1 | tee "$output"
+          grep -Fxq "HUNTER_STAGING_SHA=$HUNTER_SHA" "$output"
+          grep -Fxq "APPLY_STAGING_SHA=$APPLY_SHA" "$output"
+          grep -Fxq "FINAL_SUBMIT_ENABLED=false" "$output"
+          grep -Fxq "CUSTOMER_APPROVAL_CREATED_BY_CANARY=NO" "$output"
+          grep -Fxq "EMPLOYER_SUBMIT_ACTION_AVAILABLE_TO_CANARY=NO" "$output"
+          grep -Fxq "FINAL_SUBMIT_EXECUTED=NO" "$output"
+          grep -Fxq "PRODUCTION_RECEIPT_CREATED=NO" "$output"
+          grep -Fxq "RESULT=STAGING_AUTOAPPLY_CANARY_PASS" "$output"
+
+      - name: Record canary boundary
+        shell: bash
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          PHASE: ${{ inputs.phase }}
+          HUNTER_SHA: ${{ inputs.expected_hunter_sha }}
+          APPLY_SHA: ${{ inputs.expected_apply_sha }}
+        run: |
+          {
+            echo "### Staging AutoApply canary"
+            echo "- job id: $JOB_ID"
+            echo "- phase: $PHASE"
+            echo "- Hunter SHA: $HUNTER_SHA"
+            echo "- Apply SHA: $APPLY_SHA"
+            echo "- customer approval created by workflow: NO"
+            echo "- final employer submit: OFF"
+            echo "- production receipt creation: forbidden"
+          } >> "$GITHUB_STEP_SUMMARY"
