@@ -245,7 +245,7 @@ def apply_recent_linkedin_backfill(
     try:
         for row in changed_rows:
             job_id = int(row["job_id"])
-            connection.execute(
+            cursor = connection.execute(
                 """
                 UPDATE jobs
                 SET job_url=?,
@@ -268,6 +268,10 @@ def apply_recent_linkedin_backfill(
                     f"-{int(lookback_hours)} hours",
                 ),
             )
+            if int(cursor.rowcount or 0) != 1:
+                raise RuntimeError(
+                    f"LinkedIn 48h backfill lost its scoped row before update: {job_id}"
+                )
             connection.execute(
                 """
                 INSERT INTO events(
