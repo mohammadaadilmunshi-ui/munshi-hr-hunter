@@ -162,11 +162,17 @@ def read_only_knowledge_view() -> dict[str, Any]:
     """Complete value-bearing local view for trusted shadow resolution only."""
     snapshot = current_truth_snapshot()
     extracted = current_profile_extract(snapshot)
+    source_facts = preview_candidate_truth(snapshot)
+    try:
+        persisted_facts = graph.current_facts()
+    except (LookupError, RuntimeError, ValueError):
+        persisted_facts = []
     return {
         "version": INGESTION_VERSION,
         "profile_revision": int(snapshot.get("profile_revision") or 0),
         "profile_digest": str(snapshot.get("profile_digest") or ""),
-        "facts": preview_candidate_truth(snapshot),
+        "facts": [*persisted_facts, *source_facts],
+        "persisted_graph_fact_count": len(persisted_facts),
         "answer_memory": preview_answer_memory(),
         "claims": derivation.extract_profile_claims(
             dict(extracted.get("profile") or {}),

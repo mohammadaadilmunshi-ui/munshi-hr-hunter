@@ -11,6 +11,7 @@ from app import application_question_catalog_v2 as catalog
 from app import candidate_derivation_engine_v1 as derivation
 from app import candidate_knowledge_graph_v1 as graph
 from app import candidate_knowledge_ingestion_v1 as ingestion
+from app import candidate_knowledge_center_v1 as knowledge_center
 from app import candidate_ontology_v1 as ontology
 from app import universal_answer_resolver_v1 as answers
 from app import universal_question_resolver_v1 as questions
@@ -409,3 +410,60 @@ def test_application_plan_universal_conflict_fails_closed_without_legacy_fallbac
     assert answer["universal_answer_status"] == "CONFLICT"
     assert answer["autofill_allowed"] is False
     assert reason == "top_authority_candidate_facts_conflict"
+
+
+def test_knowledge_center_masks_protected_values_and_exposes_provenance(hunter_db, monkeypatch):
+    monkeypatch.setattr(
+        knowledge_center.ingestion,
+        "read_only_knowledge_view",
+        lambda: {
+            "profile_revision": 27,
+            "profile_digest": "d" * 64,
+            "persisted_graph_fact_count": 0,
+            "facts": [
+                {
+                    "concept_id": "contact.region", "value": "New Jersey",
+                    "source_type": "CANDIDATE_TRUTH", "source_ref": "profile:region",
+                    "trust_level": "USER_CONFIRMED", "confidence": 1.0,
+                    "sensitivity": "NORMAL", "autofill_policy": "ALLOW",
+                },
+                {
+                    "concept_id": "eligibility.visa_status",
+                    "value_ref": "hunter-vault://visa/ref",
+                    "source_type": "PROTECTED_POLICY", "source_ref": "protected:visa",
+                    "trust_level": "USER_CONFIRMED", "confidence": 1.0,
+                    "sensitivity": "PROTECTED", "autofill_policy": "POLICY",
+                },
+            ],
+            "claims": [], "answer_memory": [], "profile": {},
+        },
+    )
+    view = knowledge_center.snapshot()
+    identity = next(row for row in view["sections"]["Identity"] if row["concept_id"] == "contact.region")
+    protected = next(row for row in view["sections"]["Work authorization"] if row["concept_id"] == "eligibility.visa_status")
+    assert identity["value"] == "New Jersey"
+    assert identity["source_type"] == "CANDIDATE_TRUTH"
+    assert protected["value"] is None
+    assert protected["value_reference_available"] is True
+
+
+def test_dashboard_canonical_correction_wins_future_universal_resolution(hunter_db):
+    knowledge_center.save_normal_fact(concept_id="contact.region", value="Pennsylvania")
+    view = {
+        "profile_revision": 27,
+        "facts": [
+            *graph.current_facts(),
+            {
+                "concept_id": "contact.region", "value": "New Jersey",
+                "source_type": "CANDIDATE_TRUTH", "source_ref": "profile:region",
+                "trust_level": "USER_CONFIRMED", "confidence": 1.0,
+                "autofill_policy": "ALLOW",
+            },
+        ],
+        "answer_memory": [], "claims": [], "profile": {},
+    }
+    question = questions.resolve_question({"rawText": "State / Province", "sectionHeading": "Address"})
+    resolved = answers.resolve_concept(question, knowledge_view=view)
+    assert resolved["answer_status"] == "ANSWERED"
+    assert resolved["value"] == "Pennsylvania"
+    assert resolved["answer_source"] == "USER_DASHBOARD"

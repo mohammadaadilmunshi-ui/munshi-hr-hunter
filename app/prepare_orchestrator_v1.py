@@ -855,6 +855,81 @@ def complete_task(
         connection.close()
 
 
+def requeue_task_after_internal_resolution(
+    *,
+    task_id: str,
+    worker_id: str,
+    output: Mapping[str, Any],
+    resolution_kind: str,
+) -> dict[str, Any]:
+    """Atomically requeue a RUNNING task after trusted internal resolution.
+
+    This is intentionally distinct from user-facing NEEDS_INPUT. It preserves
+    value-free resolution metadata while avoiding a transient customer prompt
+    when MUNSHI already resolved every normal field from canonical knowledge.
+    """
+    task_id = _text(task_id, "Task id", 240)
+    worker_id = _text(worker_id, "Worker id", 160)
+    kind = _text(resolution_kind, "Internal resolution kind", 120)
+    if not isinstance(output, Mapping):
+        raise ValueError("Prepare task output must be an object.")
+    output_dict = dict(output)
+    output_dict["internal_resolution_kind"] = kind
+    output_dict["submission_authority"] = False
+    output_json = _canonical(output_dict)
+    output_digest = _digest(output_dict)
+
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        owner = current_owner(connection)
+        if connection.in_transaction:
+            connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        row = _task_for_worker(
+            connection,
+            owner=owner,
+            task_id=task_id,
+            worker_id=worker_id,
+        )
+        operation_id = str(row["operation_id"])
+        connection.execute(
+            """UPDATE prepare_tasks_v1
+                  SET status='PENDING',
+                      output_json=?,
+                      output_digest=?,
+                      unresolved_json='[]',
+                      error_code=NULL,
+                      error_message=NULL,
+                      lease_owner=NULL,
+                      lease_expires_at=NULL,
+                      completed_at=NULL,
+                      updated_at=CURRENT_TIMESTAMP
+                WHERE task_id=?""",
+            (output_json, output_digest, task_id),
+        )
+        status = _refresh_operation(
+            connection,
+            owner=owner,
+            operation_id=operation_id,
+        )
+        connection.commit()
+        return {
+            "task_id": task_id,
+            "operation_id": operation_id,
+            "task_status": "PENDING",
+            "operation_status": status,
+            "internal_resolution_kind": kind,
+            "output_digest": output_digest,
+            "submission_authority": False,
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def task_needs_input(
     *,
     task_id: str,

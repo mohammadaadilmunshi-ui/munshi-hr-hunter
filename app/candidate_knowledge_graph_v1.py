@@ -24,7 +24,7 @@ from app.tenant_foundation import OwnerContext, current_owner, ensure_schema as 
 GRAPH_VERSION = "candidate-knowledge-graph-v1"
 
 SOURCE_PRECEDENCE = {
-    "USER_DASHBOARD": 700,
+    "USER_DASHBOARD": 720,
     "CANDIDATE_TRUTH": 700,
     "PROTECTED_POLICY": 690,
     "PROFILE_OVERRIDE": 650,

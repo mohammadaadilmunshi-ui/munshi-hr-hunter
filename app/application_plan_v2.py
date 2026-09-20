@@ -33,6 +33,8 @@ from app import application_preflight_package_v1 as preflight_v1
 from app import candidate_knowledge_graph_v1 as universal_graph
 from app import candidate_ontology_v1 as universal_ontology
 from app import universal_answer_resolver_v1 as universal_answers
+from app import universal_question_resolver_v1 as universal_questions
+from app import application_semantic_binding_v1 as universal_binding
 from app import native_resume_service_v5 as resume_v5
 from app.database import get_connection
 from app.phase45_truth_binding import canonical_question_key
@@ -1377,13 +1379,14 @@ def reprepare_needs_input_plan(
 
 def _runtime_question_requirement(
     raw: Mapping[str, Any],
-) -> tuple[dict[str, str], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     allowed = {
         "question_key",
         "control_id",
         "question",
         "semantic_type",
         "sensitivity_class",
+        "question_observation",
     }
     unknown = sorted(set(raw) - allowed)
     if unknown:
@@ -1401,42 +1404,82 @@ def _runtime_question_requirement(
     explicit_sensitivity = _text(
         raw.get("sensitivity_class"), "Runtime sensitivity class", 32
     ).upper()
-    family = answer_brain_v2.classify_question(question)
-    # A browser may report arbitrary labels.  Until a separate candidate
-    # confirmation authority exists, only an already classified normal family
-    # can enter the plaintext runtime-resolution path.
-    if (
-        explicit_sensitivity != "NORMAL"
-        or family not in answer_brain_v2.NORMAL_QUESTION_FAMILIES
-        or family == "unknown"
-    ):
+    if explicit_sensitivity != "NORMAL":
         raise ValueError(
-            "Runtime protected, sensitive, or unclassified questions require their separate policy."
+            "Runtime protected, self-ID, credential, work-authorization, and "
+            "post-offer questions require their separate policy."
         )
-    requirement = _normalize_requirement(
-        {
-            "question_key": key,
-            "question_family": family,
-            "normalized_question": question,
-            "required": True,
-            "sensitivity_class": explicit_sensitivity,
-        }
-    )
+
+    raw_observation = raw.get("question_observation")
+    observation = dict(raw_observation) if isinstance(raw_observation, Mapping) else {}
+    observation.setdefault("raw_question", question)
+    observation.setdefault("label", question)
+    observation.setdefault("control_id", control_id)
+    observation.setdefault("apply_semantic_type", semantic_type)
+    semantic = universal_questions.resolve_question(observation)
+
+    legacy_family = answer_brain_v2.classify_question(question)
+    universal_concept_id: str | None = None
+    if semantic.get("state") == "RESOLVED":
+        universal_concept_id = str(semantic.get("concept_id") or "").strip().casefold() or None
+        semantic_sensitivity = str(semantic.get("sensitivity") or "NORMAL").upper()
+        if semantic_sensitivity != "NORMAL":
+            raise ValueError(
+                "Runtime protected or sensitive question requires its separate policy after Universal Brain classification."
+            )
+        if universal_concept_id:
+            legacy_family = universal_ontology.legacy_question_family(universal_concept_id)
+
+    # Legacy classification remains accepted. Truly unclassified normal wording is
+    # accepted only when Universal Brain has produced a safe canonical concept.
+    if (
+        legacy_family not in answer_brain_v2.NORMAL_QUESTION_FAMILIES
+        or legacy_family == "unknown"
+    ) and universal_concept_id is None:
+        raise ValueError(
+            "Runtime unclassified normal question remains unresolved after Universal Brain."
+        )
+
+    requirement_payload: dict[str, Any] = {
+        "question_key": key,
+        "question_family": legacy_family,
+        "normalized_question": question,
+        "required": True,
+        "sensitivity_class": "NORMAL",
+    }
+    if universal_concept_id:
+        requirement_payload.update(
+            {
+                "universal_concept_id": universal_concept_id,
+                "universal_semantic_confidence": float(semantic.get("confidence") or 0.0),
+                "universal_classification_lane": str(semantic.get("classification_lane") or "UNKNOWN"),
+                "universal_reason_code": str(semantic.get("reason_code") or "UNKNOWN"),
+                "universal_sensitivity": "NORMAL",
+            }
+        )
+        try:
+            requirement_payload["universal_binding_fingerprint"] = universal_binding.fingerprint_parts(observation)[
+                "logical_field_fingerprint"
+            ]
+        except ValueError:
+            requirement_payload["universal_binding_fingerprint"] = None
+
+    requirement = _normalize_requirement(requirement_payload)
     if str(requirement["sensitivity_class"]) != "NORMAL":
         raise ValueError(
             "Runtime protected, self-ID, credential, work-authorization, and "
             "post-offer questions require their separate policy."
         )
-    return (
-        {
-            "question_key": key,
-            "control_id": control_id,
-            "question": question,
-            "semantic_type": semantic_type,
-            "sensitivity_class": "NORMAL",
-        },
-        requirement,
-    )
+    question_record: dict[str, Any] = {
+        "question_key": key,
+        "control_id": control_id,
+        "question": question,
+        "semantic_type": semantic_type,
+        "sensitivity_class": "NORMAL",
+    }
+    if observation:
+        question_record["question_observation"] = observation
+    return question_record, requirement
 
 
 def _normalize_runtime_needs_input_context(
@@ -1510,12 +1553,22 @@ def _runtime_resolution_inputs(
         for item in list(runtime_context.get("unresolved_questions") or [])
         if isinstance(item, Mapping)
     }
+    allowed_provenance = {
+        "candidate_explicit_runtime_resolution",
+        "universal_brain_existing_knowledge",
+        "universal_brain_derived_evidence",
+        "universal_brain_policy_resolution",
+    }
     result: list[dict[str, str]] = []
     for raw in values:
-        if not isinstance(raw, Mapping) or set(raw) != {
-            "question_key",
-            "canonical_answer",
-        }:
+        if not isinstance(raw, Mapping):
+            raise ValueError("Each runtime answer resolution must be an object.")
+        unknown = sorted(set(raw) - {"question_key", "canonical_answer", "provenance"})
+        if unknown:
+            raise ValueError(
+                "Unsupported runtime answer resolution fields: " + ", ".join(unknown)
+            )
+        if "question_key" not in raw or "canonical_answer" not in raw:
             raise ValueError(
                 "Each runtime answer resolution must contain question_key and canonical_answer."
             )
@@ -1526,20 +1579,25 @@ def _runtime_resolution_inputs(
             raise ValueError(
                 "Runtime answer resolution is not for the current browser question set."
             )
+        provenance = str(
+            raw.get("provenance") or "candidate_explicit_runtime_resolution"
+        ).strip()
+        if provenance not in allowed_provenance:
+            raise ValueError("Unsupported runtime answer provenance.")
         result.append(
             {
                 "question_key": key,
                 "canonical_answer": _text(
                     raw.get("canonical_answer"), "Canonical answer", 8000
                 ),
-                "provenance": "candidate_explicit_runtime_resolution",
+                "provenance": provenance,
             }
         )
     if {item["question_key"] for item in result} != unresolved or len(result) != len(
         unresolved
     ):
         raise ValueError(
-            "Every current runtime unresolved question requires one explicit answer."
+            "Every current runtime unresolved question requires one answer."
         )
     return sorted(result, key=lambda item: item["question_key"])
 

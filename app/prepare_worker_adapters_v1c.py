@@ -37,6 +37,9 @@ from app import application_execution_mandate_v1
 from app import application_plan_delivery_v2
 from app import application_review_v2
 from app import application_plan_v2
+from app import application_plan_resolution_v2
+from app import candidate_knowledge_graph_v1 as universal_graph
+from app import universal_answer_resolver_v1 as universal_answers
 from app import application_submit_authorization_v1
 from app import application_preflight_package_v1 as preflight_v1
 from app import opportunity_intelligence_v3
@@ -610,7 +613,7 @@ _RUNTIME_TASK_STATUSES = frozenset({"PENDING", "RESOLVING", "WAITING_FOR_USER"})
 _RUNTIME_TASK_SAFE_FIELDS = (
     "schema_version", "task_id", "application_id", "session_id",
     "checkpoint_id", "page_id", "control_id", "question_id", "question",
-    "semantic_type", "category", "sensitivity_class", "status", "risk_level", "auto_resolvable",
+    "semantic_type", "question_observation", "category", "sensitivity_class", "status", "risk_level", "auto_resolvable",
     "requires_user", "grouping_scope", "group_key", "reason",
     "created_at", "updated_at",
 )
@@ -637,9 +640,16 @@ def _validate_runtime_resolution_sync(
         or payload.get("submission_authority") is not False
     ):
         raise RuntimeError("Apply runtime resolution read model is not exactly correlated.")
+    browser_form_digest = str(payload.get("browser_form_digest") or "").strip().lower()
+    checkpoint_id = str(payload.get("checkpoint_id") or "").strip()
     raw_tasks = payload.get("resolution_tasks")
     if not isinstance(raw_tasks, list):
         raise RuntimeError("Apply runtime resolution task list is invalid.")
+    if raw_tasks:
+        if len(browser_form_digest) != 64 or any(ch not in "0123456789abcdef" for ch in browser_form_digest):
+            raise RuntimeError("Apply runtime resolution browser form digest is invalid.")
+        if not checkpoint_id:
+            raise RuntimeError("Apply runtime resolution checkpoint binding is missing.")
     safe_tasks = []
     unresolved = []
     seen = set()
@@ -668,6 +678,130 @@ def _validate_runtime_resolution_sync(
     safe_tasks.sort(key=lambda row: str(row["task_id"]))
     unresolved.sort()
     return safe_tasks, unresolved
+
+
+def _universal_runtime_execution_text(value: Any) -> str:
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(str(item) for item in value)
+    if isinstance(value, Mapping):
+        return json.dumps(dict(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return str(value)
+
+
+def _universal_runtime_auto_resolution(
+    *,
+    operation_id: str,
+    plan: Mapping[str, Any],
+    session_id: str,
+    resolution_payload: Mapping[str, Any],
+    runtime_tasks: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Resolve every NORMAL runtime field from Universal Brain or return None.
+
+    Partial automatic resolution is intentionally not committed. Either every
+    current normal runtime field is safely grounded and a single immutable
+    replacement plan is created, or the existing user-facing NEEDS_INPUT path
+    remains authoritative for the unresolved set.
+    """
+    if (
+        not universal_graph.universal_normal_autofill_enabled()
+        or not application_plan_v2.runtime_application_plan_resolution_enabled()
+        or not runtime_tasks
+    ):
+        return None
+
+    answers: list[dict[str, str]] = []
+    questions: list[dict[str, Any]] = []
+    traces: list[dict[str, Any]] = []
+    for task in runtime_tasks:
+        if str(task.get("sensitivity_class") or "").upper() != "NORMAL":
+            return None
+        observation = task.get("question_observation")
+        if not isinstance(observation, Mapping):
+            return None
+        resolved = universal_answers.resolve_observation(dict(observation))
+        trace = universal_answers.public_trace(resolved)
+        traces.append(
+            {
+                "task_id": str(task.get("task_id") or ""),
+                "concept_id": trace.get("concept_id"),
+                "answer_status": trace.get("answer_status"),
+                "answer_mode": trace.get("answer_mode"),
+                "classification_lane": dict(trace.get("question_resolution") or {}).get("classification_lane"),
+                "confidence": trace.get("confidence"),
+                "knowledge_revision": trace.get("knowledge_revision"),
+                "autofill_allowed": bool(trace.get("autofill_allowed")),
+                "value_exposed": False,
+            }
+        )
+        status = str(resolved.get("answer_status") or "")
+        if (
+            status not in {"ANSWERED", "DERIVED", "POLICY_RESOLVED"}
+            or resolved.get("autofill_allowed") is not True
+            or resolved.get("value") is None
+        ):
+            return None
+        question_key = str(task.get("group_key") or task.get("question_id") or "").strip()
+        if not question_key:
+            return None
+        provenance = {
+            "ANSWERED": "universal_brain_existing_knowledge",
+            "DERIVED": "universal_brain_derived_evidence",
+            "POLICY_RESOLVED": "universal_brain_policy_resolution",
+        }[status]
+        answers.append(
+            {
+                "question_key": question_key,
+                "canonical_answer": _universal_runtime_execution_text(resolved.get("value")),
+                "provenance": provenance,
+            }
+        )
+        questions.append(
+            {
+                "question_key": question_key,
+                "control_id": str(task.get("control_id") or ""),
+                "question": str(task.get("question") or question_key),
+                "semantic_type": str(task.get("semantic_type") or "unknown"),
+                "sensitivity_class": "NORMAL",
+                "question_observation": dict(observation),
+            }
+        )
+
+    browser_form_digest = str(resolution_payload.get("browser_form_digest") or "")
+    checkpoint_id = str(resolution_payload.get("checkpoint_id") or "")
+    stable_material = json.dumps(
+        {
+            "plan_id": str(plan["plan_id"]),
+            "form_digest": browser_form_digest,
+            "questions": sorted((q["question_key"], q["control_id"]) for q in questions),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    import hashlib
+    token = hashlib.sha256(stable_material.encode("utf-8")).hexdigest()[:32]
+    revision_key = f"prepare:{operation_id}:universal-runtime:{token}"
+    replacement = application_plan_resolution_v2.resolve_runtime_needs_input(
+        prior_plan_id=str(plan["plan_id"]),
+        expected_prior_plan_digest=str(plan["plan_digest"]),
+        revision_idempotency_key=revision_key,
+        runtime_context={
+            "session_id": str(session_id),
+            "checkpoint_id": checkpoint_id,
+            "browser_form_digest": browser_form_digest,
+            "unresolved_questions": questions,
+        },
+        answer_resolutions=answers,
+    )
+    return {
+        "replacement": replacement,
+        "trace": traces,
+        "resolved_count": len(answers),
+        "revision_idempotency_key": revision_key,
+        "value_exposed": False,
+    }
 
 
 def _plan_permissions(
@@ -1127,6 +1261,46 @@ def run_ats_form_preparation_once(
                     "runtime_question_sync_pending": True,
                     "submission_authority": False,
                 }
+            universal_runtime = _universal_runtime_auto_resolution(
+                operation_id=str(operation_id),
+                plan=plan,
+                session_id=str(session["session_id"]),
+                resolution_payload=resolution_payload,
+                runtime_tasks=runtime_tasks,
+            )
+            if universal_runtime is not None:
+                replacement = dict(universal_runtime["replacement"])
+                result = orchestrator.requeue_task_after_internal_resolution(
+                    task_id=str(task["task_id"]),
+                    worker_id=str(worker_id),
+                    resolution_kind="UNIVERSAL_BRAIN_NORMAL_FIELDS",
+                    output={
+                        "version": WORKER_VERSION,
+                        "plan_id": str(plan["plan_id"]),
+                        "plan_digest": str(plan["plan_digest"]),
+                        "apply_session_id": str(session["session_id"]),
+                        "apply_prepare_job_id": prepare_job_id,
+                        "apply_prepare_state": state,
+                        "runtime_resolution_tasks": runtime_tasks,
+                        "universal_brain_auto_resolved": True,
+                        "universal_brain_resolution_trace": universal_runtime["trace"],
+                        "universal_brain_resolved_count": int(universal_runtime["resolved_count"]),
+                        "replacement_plan_id": str(replacement["replacement_plan_id"]),
+                        "replacement_plan_digest": str(replacement["replacement_plan_digest"]),
+                        "replacement_plan_authority": "application_plan_resolution_v2",
+                        "runtime_resolution_values_persisted": False,
+                        "submission_authority": False,
+                    },
+                )
+                return {
+                    **result,
+                    "claimed": True,
+                    "universal_brain_auto_resolved": True,
+                    "universal_brain_resolved_count": int(universal_runtime["resolved_count"]),
+                    "replacement_plan_id": str(replacement["replacement_plan_id"]),
+                    "submission_authority": False,
+                }
+
             result = orchestrator.task_needs_input(
                 task_id=str(task["task_id"]),
                 worker_id=str(worker_id),

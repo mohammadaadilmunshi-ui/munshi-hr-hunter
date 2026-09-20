@@ -116,6 +116,13 @@ def promote_runtime_resolutions_after_verified_submission(
         for raw in resolutions:
             if not isinstance(raw, Mapping):
                 continue
+            # Existing/derived/policy Universal Brain answers are already backed by
+            # canonical knowledge. They must not be re-promoted as if the user had
+            # explicitly taught a new Answer Vault fact during the active plan.
+            provenance = str(raw.get("provenance") or "candidate_explicit_runtime_resolution")
+            if provenance != "candidate_explicit_runtime_resolution":
+                skipped_existing += 1
+                continue
             key = str(raw.get("question_key") or "")
             value = str(raw.get("canonical_answer") or "").strip()
             requirement = requirements.get(key)

@@ -441,6 +441,28 @@ def retrieve(
     return scored[: max(1, int(top_k))]
 
 
+def legacy_question_family(concept_id: str) -> str:
+    """Map a canonical concept into the existing Answer/Application Plan family.
+
+    This is a compatibility adapter only; concept identity remains the ontology ID.
+    """
+    item = require_concept(concept_id)
+    key = item.concept_id
+    if item.answer_mode == "OPEN_ENDED_JOB_SPECIFIC":
+        return "open_ended_job_specific"
+    if item.answer_mode in {"EXPERIENCE_EVIDENCE_BOOLEAN", "SKILL_EVIDENCE", "COMPUTED_FACT", "ENUMERATION"}:
+        return "experience_skill"
+    if item.category == "COMPENSATION" or key.startswith("compensation."):
+        return "salary"
+    if item.category == "AVAILABILITY" or key.startswith(("availability.", "schedule.")):
+        return "availability"
+    if item.category in {"WORK_PREFERENCE", "LOCATION"} or key.startswith(("work.relocation", "preference.", "location.")):
+        return "career_preference"
+    if item.category == "WORK_AUTHORIZATION" or item.sensitivity != "NORMAL":
+        return "work_authorization"
+    return "candidate_fact"
+
+
 def sensitivity_at_least(current: str, candidate: str) -> str:
     """Return the stricter sensitivity.  A browser hint can never downgrade it."""
     left = str(current or "NORMAL").upper()

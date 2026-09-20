@@ -748,7 +748,13 @@ def _runtime_resolution_payload(*, include_resolution=False, session_id="session
         "application_id": "application-94", "session_id": session_id,
         "checkpoint_id": "checkpoint-runtime", "page_id": "page-runtime",
         "control_id": "portfolio", "question_id": "portfolio",
-        "question": "Portfolio URL", "semantic_type": "URL", "category": "MISSING_FACT",
+        "question": "Portfolio URL", "semantic_type": "URL",
+        "question_observation": {
+            "raw_question": "Portfolio URL", "label": "Portfolio URL",
+            "section_heading": "Links", "control_id": "portfolio",
+            "apply_semantic_type": "UNKNOWN", "options": [],
+        },
+        "category": "MISSING_FACT",
         "sensitivity_class": "NORMAL", "status": "WAITING_FOR_USER", "risk_level": "LOW",
         "auto_resolvable": False, "requires_user": True,
         "grouping_scope": "APPLICATION", "group_key": "application-94",
@@ -764,6 +770,7 @@ def _runtime_resolution_payload(*, include_resolution=False, session_id="session
         "job_id": "prepare-job-94", "session_id": "session-94",
         "application_id": "application-94", "plan_id": "plan-94",
         "provider": "GREENHOUSE", "prepare_state": "WAITING_INPUT",
+        "browser_form_digest": "f" * 64, "checkpoint_id": "checkpoint-runtime",
         "resolution_tasks": [task], "open_task_count": 1,
         "resolution_values_exposed": False, "final_review_authority": False,
         "submission_authority": False,
@@ -1151,3 +1158,119 @@ def test_ats_browser_waits_for_single_prebrowser_mandate(
         orchestrator.TASK_ATS_FORM_PREPARATION,
     )["status"] == "PENDING"
     assert result["submission_authority"] is False
+
+
+def test_universal_runtime_auto_resolution_creates_one_immutable_replacement(monkeypatch):
+    payload = _runtime_resolution_payload()
+    task = dict(payload["resolution_tasks"][0])
+    task["group_key"] = "unknown.portfolio"
+    task["question_observation"] = {
+        "raw_question": "State New Jersey",
+        "label": "State",
+        "section_heading": "Contact Information",
+        "control_id": "portfolio",
+        "apply_semantic_type": "UNKNOWN",
+        "options": ["New Jersey", "New York", "Pennsylvania"],
+    }
+    seen = {}
+    monkeypatch.setattr(workers.universal_graph, "universal_normal_autofill_enabled", lambda: True)
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "runtime_application_plan_resolution_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        workers.universal_answers,
+        "resolve_observation",
+        lambda observation: {
+            "answer_status": "ANSWERED",
+            "answer_mode": "DIRECT_FACT",
+            "concept_id": "contact.region",
+            "value": "New Jersey",
+            "value_ref": "hunter-value://universal-brain/region",
+            "confidence": 0.99,
+            "autofill_allowed": True,
+            "knowledge_revision": 27,
+            "question_resolution": {
+                "classification_lane": "ONTOLOGY_CONTEXT",
+                "confidence": 0.99,
+            },
+            "evidence_ids": [],
+        },
+    )
+    monkeypatch.setattr(
+        workers.universal_answers,
+        "public_trace",
+        lambda result: {key: value for key, value in result.items() if key != "value"},
+    )
+
+    def resolve_runtime_needs_input(**kwargs):
+        seen.update(kwargs)
+        return {
+            "success": True,
+            "prior_plan_id": "plan-94",
+            "replacement_plan_id": "plan-95",
+            "replacement_plan_digest": "9" * 64,
+            "handoff_id": "handoff-95",
+            "state": "PLAN_ACCEPTED",
+            "replayed": False,
+            "submission_authority": False,
+        }
+
+    monkeypatch.setattr(
+        workers.application_plan_resolution_v2,
+        "resolve_runtime_needs_input",
+        resolve_runtime_needs_input,
+    )
+    result = workers._universal_runtime_auto_resolution(
+        operation_id="operation-94",
+        plan={"plan_id": "plan-94", "plan_digest": "8" * 64},
+        session_id="session-94",
+        resolution_payload=payload,
+        runtime_tasks=[task],
+    )
+    assert result is not None
+    assert result["replacement"]["replacement_plan_id"] == "plan-95"
+    assert result["resolved_count"] == 1
+    assert result["value_exposed"] is False
+    assert seen["runtime_context"]["unresolved_questions"][0]["question_observation"]["label"] == "State"
+    assert seen["answer_resolutions"] == [
+        {
+            "question_key": "unknown.portfolio",
+            "canonical_answer": "New Jersey",
+            "provenance": "universal_brain_existing_knowledge",
+        }
+    ]
+    assert "New Jersey" not in repr(result["trace"])
+
+
+def test_universal_runtime_auto_resolution_falls_through_when_any_fact_is_missing(monkeypatch):
+    payload = _runtime_resolution_payload()
+    task = dict(payload["resolution_tasks"][0])
+    task["group_key"] = "unknown.portfolio"
+    monkeypatch.setattr(workers.universal_graph, "universal_normal_autofill_enabled", lambda: True)
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "runtime_application_plan_resolution_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        workers.universal_answers,
+        "resolve_observation",
+        lambda observation: {
+            "answer_status": "MISSING_FACT",
+            "concept_id": "contact.portfolio",
+            "autofill_allowed": False,
+            "confidence": 0.9,
+            "knowledge_revision": 27,
+            "question_resolution": {"classification_lane": "ONTOLOGY_RETRIEVAL"},
+        },
+    )
+    monkeypatch.setattr(workers.universal_answers, "public_trace", lambda result: dict(result))
+    assert workers._universal_runtime_auto_resolution(
+        operation_id="operation-94",
+        plan={"plan_id": "plan-94", "plan_digest": "8" * 64},
+        session_id="session-94",
+        resolution_payload=payload,
+        runtime_tasks=[task],
+    ) is None

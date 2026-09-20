@@ -13,12 +13,13 @@ import streamlit as st
 
 from app import application_answer_router_v1 as answer_router
 from app import candidate_profile_authority_v1 as profile_authority
+from app import candidate_knowledge_center_v1 as knowledge_center
 from app import master_resume_visual_ui_v2 as master_resume_ui
 from app import profile_answer_center_ui_v3 as answer_center
 from app import profile_workspace_v3 as v3
 
 
-_DETAIL_SECTIONS = ("Candidate Truth", "Application Answers", "Master Resume")
+_DETAIL_SECTIONS = ("Candidate Truth", "Knowledge Center", "Application Answers", "Master Resume")
 
 
 def _open_unanswered_answers() -> None:
@@ -131,8 +132,111 @@ def _master_resume_details(authority: dict[str, Any]) -> None:
         )
 
 
-def _detail_navigation(authority: dict[str, Any], answers: dict[str, Any]) -> str:
-    """Render Profile Details as three first-class work areas instead of small pills."""
+def _knowledge_value_editor(row: dict[str, Any]) -> Any:
+    value = row.get("value")
+    value_type = str(row.get("value_type") or "text").casefold()
+    key = f"knowledge_edit_value_{row['concept_id'].replace('.', '_')}"
+    if value_type in {"boolean", "bool"}:
+        return st.checkbox("Value", value=bool(value), key=key)
+    if value_type in {"number", "integer", "float"}:
+        try:
+            initial = float(value or 0)
+        except (TypeError, ValueError):
+            initial = 0.0
+        return st.number_input("Value", value=initial, key=key)
+    if value_type in {"list", "array"}:
+        initial = ", ".join(str(item) for item in (value or [])) if isinstance(value, list) else str(value or "")
+        raw = st.text_area("Values (comma separated)", value=initial, key=key)
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    return st.text_input("Value", value="" if value is None else str(value), key=key)
+
+
+def _knowledge_center_workspace(knowledge: dict[str, Any]) -> None:
+    st.markdown("### Candidate Knowledge Center")
+    st.caption(
+        "Canonical facts and evidence MUNSHI can reuse across employers. Employer wording is not the identity; the concept is."
+    )
+    if not knowledge.get("ready"):
+        st.warning(str(knowledge.get("reason") or "Candidate Knowledge is not ready yet."))
+        return
+
+    cols = st.columns(4, gap="small")
+    with cols[0]:
+        st.metric("Canonical facts", int(knowledge.get("fact_count") or 0))
+    with cols[1]:
+        st.metric("Evidence claims", int(knowledge.get("claim_count") or 0))
+    with cols[2]:
+        st.metric("Knowledge revision", int(knowledge.get("knowledge_revision") or 0))
+    with cols[3]:
+        st.metric("Open conflicts", len(knowledge.get("conflicts") or []))
+
+    conflicts = list(knowledge.get("conflicts") or [])
+    if conflicts:
+        st.warning(
+            f"{len(conflicts)} knowledge conflict{'s' if len(conflicts) != 1 else ''} require review before affected facts can autofill."
+        )
+
+    sections = dict(knowledge.get("sections") or {})
+    editable: list[dict[str, Any]] = []
+    for section_name, rows in sections.items():
+        rows = [dict(row) for row in rows if isinstance(row, dict)]
+        if not rows:
+            continue
+        with st.expander(f"{section_name} · {len(rows)}", expanded=section_name in {"Identity", "Skills & tools"}):
+            for row in rows:
+                concept_id = str(row.get("concept_id") or "")
+                protected = bool(row.get("protected"))
+                source = str(row.get("source_type") or "Unknown")
+                trust = str(row.get("trust_level") or "UNKNOWN").replace("_", " ").title()
+                confidence = float(row.get("confidence") or 0.0)
+                if protected:
+                    display = "Configured in protected policy store" if row.get("value_reference_available") else "Not configured"
+                else:
+                    raw_value = row.get("value")
+                    if isinstance(raw_value, list):
+                        display = ", ".join(str(item) for item in raw_value)
+                    elif isinstance(raw_value, dict):
+                        display = "Structured value"
+                    else:
+                        display = str(raw_value) if raw_value is not None else "Not set"
+                st.markdown(f"**{row.get('label') or concept_id}**  \n`{concept_id}`")
+                st.write(display)
+                st.caption(
+                    f"Source: {source} · Trust: {trust} · Confidence: {confidence:.0%} · Autofill: {row.get('autofill_policy') or 'policy'}"
+                )
+                evidence_text = str(row.get("evidence_text") or "").strip()
+                if evidence_text:
+                    st.caption(f"Evidence: {evidence_text}")
+                if row.get("editable") and not protected:
+                    editable.append(row)
+                st.divider()
+
+    if editable:
+        st.markdown("#### Correct a canonical fact")
+        st.caption(
+            "A correction here is stored once as user-confirmed canonical knowledge and takes precedence over older extracted values."
+        )
+        options = {str(row["concept_id"]): row for row in editable}
+        selected = st.selectbox(
+            "Fact",
+            list(options),
+            format_func=lambda key: f"{options[key].get('label') or key} · {key}",
+            key="knowledge_center_edit_concept",
+        )
+        row = options[selected]
+        edited = _knowledge_value_editor(row)
+        if st.button("Save canonical correction", type="primary", key="knowledge_center_save"):
+            try:
+                knowledge_center.save_normal_fact(concept_id=selected, value=edited)
+            except Exception as error:  # noqa: BLE001
+                st.error(str(error))
+            else:
+                st.success("Canonical knowledge updated. Future equivalent employer questions will use this fact.")
+                st.rerun()
+
+
+def _detail_navigation(authority: dict[str, Any], answers: dict[str, Any], knowledge: dict[str, Any]) -> str:
+    """Render Profile Details as first-class authority work areas."""
     current = str(st.session_state.get("profile_v4_detail_section") or "Candidate Truth")
     if current not in _DETAIL_SECTIONS:
         current = "Candidate Truth"
@@ -145,14 +249,19 @@ def _detail_navigation(authority: dict[str, Any], answers: dict[str, Any]) -> st
 
     st.markdown("### Profile workspace")
     st.caption(
-        "Choose the authority you want to review. Each area stays separate so editing one cannot silently change another."
+        "Review source truth, canonical reusable knowledge, application meanings, and the Master Resume evidence authority."
     )
-    cols = st.columns(3, gap="medium")
+    cols = st.columns(4, gap="medium")
     cards = (
         (
             "Candidate Truth",
             f"{facts} verified facts",
-            "Review the structured facts MUNSHI is allowed to treat as candidate truth.",
+            "Review the structured source facts MUNSHI is allowed to treat as candidate truth.",
+        ),
+        (
+            "Knowledge Center",
+            f"{int(knowledge.get('fact_count') or 0)} canonical facts",
+            "See and correct the reusable concepts Universal Brain searches regardless of employer wording.",
         ),
         (
             "Application Answers",
@@ -198,6 +307,7 @@ def render() -> None:
 
     authority = profile_authority.authority_snapshot()
     answers = answer_router.readiness_projection()
+    knowledge = knowledge_center.snapshot()
 
     st.markdown("## Candidate Profile & Application Truth")
     st.caption(
@@ -211,9 +321,11 @@ def render() -> None:
     for warning in authority.get("warnings") or []:
         st.warning(str(warning))
 
-    section = _detail_navigation(authority, answers)
+    section = _detail_navigation(authority, answers, knowledge)
     if section == "Candidate Truth":
         _candidate_truth_workspace()
+    elif section == "Knowledge Center":
+        _knowledge_center_workspace(knowledge)
     elif section == "Application Answers":
         answer_center.render(authority)
     else:
