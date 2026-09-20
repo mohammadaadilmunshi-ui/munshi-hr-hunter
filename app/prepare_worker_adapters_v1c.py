@@ -56,6 +56,11 @@ APPLY_INTERNAL_HTTP_BASE_URL_ENV = "MUNSHI_APPLY_INTERNAL_HTTP_BASE_URL"
 WORKER_VERSION = "munshi-prepare-worker-adapters-v1c"
 SUBMISSION_AUTHORITY = False
 
+# Immutable generation bump for policy-bearing runtime integration.
+# Existing Application Plans and accepted handoffs remain untouched. New/retried
+# V1C work receives a distinct idempotency namespace.
+PLAN_GENERATION = "runtime-integration-v1"
+
 _APPLY_SESSION_PATH = "/v1/complete-loop/sessions"
 _APPLY_PREPARE_JOB_PATH = "/v1/complete-loop/preparation-jobs/{job_id}"
 _APPLY_RESOLUTION_TASK_PATH = "/v1/complete-loop/preparation-jobs/{job_id}/resolution-tasks"
@@ -701,7 +706,10 @@ def _application_plan_idempotency_key(
     answer blocker, stale binding, mixed blocker set, or authority anomaly keeps
     the original key/fails closed.
     """
-    base = f"prepare:{operation['operation_id']}:application-plan:v1c"
+    base = (
+        f"prepare:{operation['operation_id']}:application-plan:v1c:"
+        f"{PLAN_GENERATION}"
+    )
     raw_output = pending_task.get("output")
     if not isinstance(raw_output, Mapping):
         return base, None
@@ -1037,7 +1045,10 @@ def run_ats_form_preparation_once(
         handoff_key = (
             f"prepare:{operation_id}:handoff:runtime:{plan['plan_id']}"
             if runtime_supersession_from_plan_id
-            else f"prepare:{operation_id}:handoff:v1c"
+            else (
+                f"prepare:{operation_id}:handoff:v1c:{PLAN_GENERATION}:"
+                f"{plan['plan_id']}"
+            )
         )
         delivery = deliver(
             plan_id=str(plan["plan_id"]),
