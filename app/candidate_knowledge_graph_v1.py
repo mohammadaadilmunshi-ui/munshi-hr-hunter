@@ -512,6 +512,38 @@ def add_evidence(
             connection.close()
 
 
+def evidence_for_fact(
+    fact_id: str,
+    *,
+    connection: sqlite3.Connection | None = None,
+) -> list[dict[str, Any]]:
+    owns = connection is None
+    connection = connection or get_connection()
+    try:
+        ensure_schema(connection)
+        owner = _owner(connection)
+        rows = connection.execute(
+            """SELECT evidence_id,source_kind,source_ref,source_digest,evidence_text,
+                      metadata_json,confidence,created_at
+               FROM candidate_knowledge_evidence
+               WHERE tenant_id=? AND user_id=? AND fact_id=?
+               ORDER BY created_at,evidence_id""",
+            (owner.tenant_id, owner.user_id, str(fact_id)),
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["metadata"] = json.loads(str(item.pop("metadata_json") or "{}"))
+            except json.JSONDecodeError:
+                item["metadata"] = {}
+            result.append(item)
+        return result
+    finally:
+        if owns:
+            connection.close()
+
+
 def add_relation(
     *,
     subject_concept: str,

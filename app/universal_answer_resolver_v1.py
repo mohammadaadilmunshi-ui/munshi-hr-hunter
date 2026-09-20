@@ -221,6 +221,36 @@ def resolve_concept(
         )
     profile = dict(view.get("profile") or {})
     claims = [dict(item) for item in view.get("claims") or []]
+    seen_claim_ids = {str(item.get("claim_id") or "") for item in claims}
+    for fact in view.get("facts") or []:
+        if not isinstance(fact, Mapping):
+            continue
+        fact_concept = str(fact.get("concept_id") or "").strip().casefold()
+        if not fact_concept.startswith("experience.skill.") or fact.get("value") is not True:
+            continue
+        fact_id = str(fact.get("fact_id") or fact.get("source_fact_id") or fact_concept)
+        synthetic_id = f"fact-evidence:{fact_id}"
+        if synthetic_id in seen_claim_ids:
+            continue
+        evidence_rows = [dict(row) for row in fact.get("evidence") or [] if isinstance(row, Mapping)]
+        evidence_text = next(
+            (str(row.get("evidence_text") or "").strip() for row in evidence_rows if str(row.get("evidence_text") or "").strip()),
+            fact_concept.removeprefix("experience.skill.").replace("_", " "),
+        )
+        claims.append(
+            {
+                "claim_id": synthetic_id,
+                "claim_type": "USER_CONFIRMED_CAPABILITY",
+                "concept": fact_concept,
+                "capability": fact_concept.removeprefix("experience.skill."),
+                "entity_ref": None,
+                "evidence_text": evidence_text,
+                "evidence_category": "user confirmed skill",
+                "source_ref": str(fact.get("source_ref") or "candidate-knowledge"),
+                "confidence": float(fact.get("confidence") or 1.0),
+            }
+        )
+        seen_claim_ids.add(synthetic_id)
     derived: dict[str, Any] | None = None
     if concept_id == "experience.total_years":
         derived = derivation.total_experience(profile, as_of=as_of)
@@ -231,6 +261,10 @@ def resolve_concept(
     elif concept_id.startswith("experience.skill."):
         capability = concept_id.removeprefix("experience.skill.")
         derived = derivation.capability_boolean(capability, claims)
+    elif concept_id == "experience.capabilities":
+        derived = derivation.supported_capabilities(
+            claims, filter_text=str(conditions.get("filter_text") or "")
+        )
     if derived and derived.get("status") == "DERIVED":
         evidence_ids = [str(item) for item in derived.get("evidence_ids") or []]
         row = {
@@ -282,7 +316,7 @@ def resolve_concept(
             return _base_result(
                 status="GENERATED", concept_id=concept_id, answer_mode=concept.answer_mode,
                 confidence=min(float(question.get("confidence") or 0.0), float(row["confidence"])),
-                sensitivity="NORMAL", autofill_allowed=False,
+                sensitivity="NORMAL", autofill_allowed=bool(generated.get("autofill_allowed")),
                 reason="evidence_guarded_job_specific_generation", knowledge_revision=revision,
                 question=question, value_ref=_opaque_value_ref(concept_id, row, revision), value=value,
                 evidence_ids=[str(item) for item in generated.get("evidence_ids") or []],

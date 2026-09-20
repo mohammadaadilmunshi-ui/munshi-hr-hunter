@@ -15,6 +15,7 @@ from app import candidate_knowledge_center_v1 as knowledge_center
 from app import candidate_ontology_v1 as ontology
 from app import universal_answer_resolver_v1 as answers
 from app import universal_question_resolver_v1 as questions
+from app import universal_open_ended_generator_v1 as open_ended
 
 
 def test_ontology_contains_every_current_catalog_concept_and_never_autofills_protected() -> None:
@@ -726,3 +727,207 @@ def test_knowledge_center_normal_editor_cannot_write_protected_concept(hunter_db
             concept_id="work.authorization.us",
             value=True,
         )
+
+
+def test_dynamic_enumeration_scopes_to_candidate_provided_skill_category(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_DERIVATION_ENABLED", "true")
+    claims = derivation.extract_profile_claims(
+        {
+            "skills": [
+                {"category": "HRIS / ATS", "skills": ["Workday", "Greenhouse", "Rippling"]},
+                {"category": "Analytics", "skills": ["Python", "Tableau"]},
+            ],
+            "experience": [],
+            "projects": [],
+        },
+        extraction_id="enumeration-category",
+    )
+    question = questions.resolve_question(
+        {"rawText": "Which HRIS / ATS systems have you used?", "semanticType": "UNKNOWN"}
+    )
+    assert question["state"] == "RESOLVED"
+    assert question["concept_id"] == "experience.capabilities"
+    assert question["classification_lane"] == "ONTOLOGY_DYNAMIC_ENUMERATION"
+    resolved = answers.resolve_concept(
+        question,
+        knowledge_view={
+            "profile_revision": 1,
+            "facts": [],
+            "answer_memory": [],
+            "claims": claims,
+            "profile": {},
+        },
+    )
+    assert resolved["answer_status"] == "DERIVED"
+    assert resolved["answer_mode"] == "ENUMERATION"
+    assert resolved["value"] == ["Greenhouse", "Rippling", "Workday"]
+    assert "Python" not in resolved["value"]
+
+
+def test_dynamic_enumeration_without_category_returns_all_explicit_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_DERIVATION_ENABLED", "true")
+    claims = derivation.extract_profile_claims(
+        {
+            "skills": [{"category": "Tools", "skills": ["Snowflake", "Jira"]}],
+            "experience": [],
+            "projects": [],
+        },
+        extraction_id="enumeration-all",
+    )
+    question = questions.resolve_question(
+        {"rawText": "What tools and technologies have you used?", "semanticType": "UNKNOWN"}
+    )
+    assert question["concept_id"] == "experience.capabilities"
+    resolved = answers.resolve_concept(
+        question,
+        knowledge_view={
+            "profile_revision": 1,
+            "facts": [],
+            "answer_memory": [],
+            "claims": claims,
+            "profile": {},
+        },
+    )
+    assert resolved["answer_status"] == "DERIVED"
+    assert resolved["value"] == ["Jira", "Snowflake"]
+
+
+def test_enumeration_includes_dashboard_added_arbitrary_skill_from_graph_evidence(
+    hunter_db, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_DERIVATION_ENABLED", "true")
+    knowledge_center.save_explicit_skill(label="Rippling")
+    persisted = graph.current_facts()
+    for fact in persisted:
+        fact["evidence"] = graph.evidence_for_fact(str(fact["fact_id"]))
+    question = questions.resolve_question(
+        {"rawText": "Which tools have you used?", "semanticType": "UNKNOWN"}
+    )
+    resolved = answers.resolve_concept(
+        question,
+        knowledge_view={
+            "profile_revision": 1,
+            "facts": persisted,
+            "answer_memory": [],
+            "claims": [],
+            "profile": {},
+        },
+    )
+    assert resolved["answer_status"] == "DERIVED"
+    assert resolved["value"] == ["Rippling"]
+
+
+def _open_ended_claims() -> list[dict[str, object]]:
+    return derivation.extract_profile_claims(
+        {
+            "skills": [
+                {"category": "Analytics", "skills": ["Python", "Power BI"]},
+                {"category": "Recruiting", "skills": ["Recruiting", "Onboarding"]},
+            ],
+            "experience": [],
+            "projects": [],
+        },
+        extraction_id="open-ended-evidence",
+    )
+
+
+def test_open_ended_why_role_is_generated_only_from_exact_job_and_candidate_evidence() -> None:
+    question = questions.resolve_question(
+        {"rawText": "Why are you interested in this position?", "semanticType": "UNKNOWN"}
+    )
+    resolved = answers.resolve_concept(
+        question,
+        knowledge_view={
+            "profile_revision": 1,
+            "facts": [],
+            "answer_memory": [],
+            "claims": _open_ended_claims(),
+            "profile": {},
+        },
+        open_ended_generator=open_ended.generate,
+        job_context={
+            "company_name": "Example Company",
+            "title": "People Analytics Specialist",
+            "responsibilities": "Build dashboards and analyze recruiting and workforce data.",
+            "qualifications": "Experience with analytics and recruiting operations.",
+        },
+    )
+    assert resolved["answer_status"] == "GENERATED"
+    assert resolved["autofill_allowed"] is True
+    assert "People Analytics Specialist" in resolved["value"]
+    assert resolved["evidence_ids"]
+    assert "culture" not in resolved["value"].casefold()
+
+
+def test_open_ended_why_company_does_not_invent_company_attributes() -> None:
+    question = questions.resolve_question(
+        {"rawText": "Why do you want to work for our company?", "semanticType": "UNKNOWN"}
+    )
+    resolved = answers.resolve_concept(
+        question,
+        knowledge_view={
+            "profile_revision": 1,
+            "facts": [],
+            "answer_memory": [],
+            "claims": _open_ended_claims(),
+            "profile": {},
+        },
+        open_ended_generator=open_ended.generate,
+        job_context={
+            "company_name": "Example Company",
+            "title": "HR Analyst",
+            "responsibilities": "Support HR reporting and recruiting analytics.",
+        },
+    )
+    assert resolved["answer_status"] == "GENERATED"
+    assert resolved["autofill_allowed"] is True
+    assert "Example Company" in resolved["value"]
+    prohibited = ("leading company", "great culture", "mission", "values", "industry leader")
+    assert not any(term in resolved["value"].casefold() for term in prohibited)
+
+
+def test_relevant_experience_open_ended_concept_is_provider_neutral_and_evidence_grounded() -> None:
+    question = questions.resolve_question(
+        {"rawText": "Describe your relevant experience", "semanticType": "UNKNOWN"}
+    )
+    assert question["concept_id"] == "motivation.relevant_experience"
+    resolved = answers.resolve_concept(
+        question,
+        knowledge_view={
+            "profile_revision": 1,
+            "facts": [],
+            "answer_memory": [],
+            "claims": _open_ended_claims(),
+            "profile": {},
+        },
+        open_ended_generator=open_ended.generate,
+        job_context={"title": "People Analyst", "skills_keywords": "analytics recruiting"},
+    )
+    assert resolved["answer_status"] == "GENERATED"
+    assert resolved["evidence_ids"]
+    assert resolved["autofill_allowed"] is True
+
+
+def test_reason_for_leaving_is_never_invented_by_open_ended_generator() -> None:
+    question = questions.resolve_question(
+        {"rawText": "Why are you looking to leave your current role?", "semanticType": "UNKNOWN"}
+    )
+    resolved = answers.resolve_concept(
+        question,
+        knowledge_view={
+            "profile_revision": 1,
+            "facts": [],
+            "answer_memory": [],
+            "claims": _open_ended_claims(),
+            "profile": {},
+        },
+        open_ended_generator=open_ended.generate,
+        job_context={"company_name": "Example Company", "title": "HR Analyst"},
+    )
+    assert resolved["answer_status"] == "BLOCKED_BY_POLICY"
+    assert resolved["autofill_allowed"] is False
+    assert "value" not in resolved

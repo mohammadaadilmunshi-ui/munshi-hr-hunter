@@ -227,6 +227,44 @@ def _resolved_concept(obs: QuestionObservation, concept_id: str) -> ontology.Can
     return ontology.require_concept(_repeat_scoped_concept(obs, concept_id))
 
 
+_DYNAMIC_ENUMERATION_PATTERNS = (
+    re.compile(
+        r"^(?:which|what)\s+(?P<category>.*?)\s*(?:tools|systems|software|technologies|platforms|skills|applications|programs)\s+(?:have|do|are|can|did)\s+you\b.*$",
+        re.I,
+    ),
+    re.compile(
+        r"^(?:please\s+)?(?:list|select|identify|name|indicate)\s+(?:all\s+)?(?:the\s+)?(?P<category>.*?)\s*(?:tools|systems|software|technologies|platforms|skills|applications|programs)\b.*$",
+        re.I,
+    ),
+)
+
+
+def _dynamic_enumeration_concept(obs: QuestionObservation) -> tuple[str, float, str, dict[str, Any]] | None:
+    raw = " ".join((obs.label or obs.raw_question or "").split()).strip()
+    if not raw or len(raw) > 800:
+        return None
+    blocked = {
+        "work authorization", "sponsorship", "visa", "citizenship", "salary",
+        "compensation", "race", "ethnicity", "gender", "disability", "veteran",
+        "password", "otp", "captcha", "social security", "ssn",
+    }
+    for pattern in _DYNAMIC_ENUMERATION_PATTERNS:
+        match = pattern.fullmatch(raw)
+        if not match:
+            continue
+        category = " ".join(str(match.group("category") or "").strip(" .,:;/-").split())
+        lowered = category.casefold()
+        if any(term in lowered for term in blocked):
+            return None
+        return (
+            "experience.capabilities",
+            0.96,
+            "DYNAMIC_CAPABILITY_ENUMERATION",
+            {"filter_text": category},
+        )
+    return None
+
+
 _DYNAMIC_CAPABILITY_PATTERNS = (
     re.compile(r"^(?:do you have|have you had|do you possess)\s+(?:any\s+)?experience\s+(?:with|using|in)\s+(?P<skill>.+?)[?.!]*$", re.I),
     re.compile(r"^(?:have you|did you)\s+(?:ever\s+)?(?:used|worked with|utilized|utilised)\s+(?P<skill>.+?)[?.!]*$", re.I),
@@ -299,7 +337,30 @@ def resolve_question(
     pre = _preclassification(obs)
     sensitivity_floor = str(pre["sensitivity"])
 
-    # Lane A: existing deterministic semantics remain first.
+    # A full-question exact catalog meaning outranks token-level structural
+    # heuristics (e.g. "why ... company" must not become employer-name).
+    # Sensitivity still uses the strict preclassification floor, so this rule can
+    # never downgrade a protected browser observation.
+    catalog_match = dict(pre.get("catalog_match") or {})
+    catalog_concept_id = str(pre.get("catalog_concept_id") or "").strip().casefold()
+    if (
+        catalog_match.get("matched") is True
+        and float(catalog_match.get("confidence") or 0.0) >= 0.995
+        and catalog_concept_id
+        and ontology.concept(catalog_concept_id) is not None
+    ):
+        item = _resolved_concept(obs, catalog_concept_id)
+        sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
+        return _result(
+            state="RESOLVED", concept_id=item.concept_id,
+            confidence=float(catalog_match.get("confidence") or 1.0),
+            lane="DETERMINISTIC_CATALOG_EXACT", sensitivity=sensitivity,
+            reason_code="FULL_QUESTION_EXACT_SEMANTICS",
+            conditions=dict(catalog_match.get("conditions") or {}),
+            preclassification=pre,
+        )
+
+    # Lane A: existing deterministic structural semantics remain next.
     intent = field_intelligence.field_intent(obs.as_field_metadata())
     if intent is not None and ontology.concept(intent.key) is not None:
         item = _resolved_concept(obs, intent.key)
@@ -331,6 +392,16 @@ def resolve_question(
             state="RESOLVED", concept_id=item.concept_id,
             confidence=max(0.93, obs.apply_semantic_confidence), lane="DETERMINISTIC_BROWSER_SEMANTIC",
             sensitivity=sensitivity, reason_code="UNIQUE_BROWSER_SEMANTIC", preclassification=pre,
+        )
+
+    dynamic_enumeration = _dynamic_enumeration_concept(obs)
+    if dynamic_enumeration is not None and sensitivity_floor == "NORMAL":
+        key, score, reason, conditions = dynamic_enumeration
+        item = _resolved_concept(obs, key)
+        return _result(
+            state="RESOLVED", concept_id=item.concept_id, confidence=score,
+            lane="ONTOLOGY_DYNAMIC_ENUMERATION", sensitivity="NORMAL",
+            reason_code=reason, conditions=conditions, preclassification=pre,
         )
 
     dynamic_capability = _dynamic_capability_concept(obs)

@@ -99,7 +99,10 @@ def extract_profile_claims(
     claims: list[dict[str, Any]] = []
     base_ref = f"master-resume-extraction:{extraction_id}" if extraction_id else "candidate-profile"
 
-    def add(capability: str, *, entity_ref: str, evidence_ref: str, evidence_text: str, confidence: float) -> None:
+    def add(
+        capability: str, *, entity_ref: str, evidence_ref: str, evidence_text: str,
+        confidence: float, evidence_category: str = "",
+    ) -> None:
         concept = f"experience.skill.{capability}"
         source_ref = f"{base_ref}/{evidence_ref}"
         claims.append(
@@ -111,6 +114,7 @@ def extract_profile_claims(
                 "entity_ref": entity_ref,
                 "evidence_text_ref": evidence_ref,
                 "evidence_text": _clean(evidence_text),
+                "evidence_category": _clean(evidence_category),
                 "source_ref": source_ref,
                 "source_digest": source_digest or None,
                 "confidence": float(confidence),
@@ -132,6 +136,7 @@ def extract_profile_claims(
                     evidence_ref=f"skills.{i}.skills.{j}",
                     evidence_text=skill,
                     confidence=0.99,
+                    evidence_category=_clean(group.get("category")),
                 )
 
     for i, raw_exp in enumerate(profile.get("experience") or []):
@@ -146,6 +151,7 @@ def extract_profile_claims(
                     evidence_ref=f"experience.{i}.bullets.{j}",
                     evidence_text=bullet,
                     confidence=0.98,
+                    evidence_category="experience",
                 )
 
     for i, raw_project in enumerate(profile.get("projects") or []):
@@ -163,6 +169,7 @@ def extract_profile_claims(
                     evidence_ref=f"projects.{i}.tools.{j}",
                     evidence_text=tool,
                     confidence=0.97,
+                    evidence_category="project tools",
                 )
         for j, raw_bullet in enumerate(raw_project.get("bullets") or []):
             bullet = _clean(raw_bullet)
@@ -173,6 +180,7 @@ def extract_profile_claims(
                     evidence_ref=f"projects.{i}.bullets.{j}",
                     evidence_text=bullet,
                     confidence=0.95,
+                    evidence_category="project experience",
                 )
 
     # Deterministic de-duplication by source-linked claim identity.
@@ -332,14 +340,67 @@ def capability_years(
     }
 
 
-def supported_capabilities(claims: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    values = sorted({str(item.get("capability")) for item in claims if item.get("capability")})
-    if not values:
-        return {"status": "MISSING_FACT", "reason": "no_explicit_capability_evidence"}
+def _enumeration_filter_terms(value: str) -> set[str]:
+    generic = {
+        "which", "what", "please", "list", "select", "all", "the", "any",
+        "tools", "tool", "systems", "system", "software", "technologies",
+        "technology", "platforms", "platform", "skills", "skill", "applications",
+        "application", "programs", "program", "have", "has", "you", "used",
+        "use", "worked", "with", "experience", "experienced", "proficient", "in",
+        "are", "familiar", "knowledge", "of", "and", "or",
+    }
+    tokens = {
+        token for token in re.findall(r"[a-z0-9+#]+", _clean(value).casefold())
+        if token not in generic and len(token) > 1
+    }
+    return tokens
+
+
+def supported_capabilities(
+    claims: Sequence[Mapping[str, Any]],
+    *,
+    filter_text: str = "",
+) -> dict[str, Any]:
+    """Enumerate explicit supported capabilities, optionally scoped by source category.
+
+    Filtering uses only candidate-provided source categories/labels plus canonical
+    claim metadata. It never guesses that a tool belongs to a domain merely from a
+    job title or employer.
+    """
+    terms = _enumeration_filter_terms(filter_text)
+    selected: list[Mapping[str, Any]] = []
+    for item in claims:
+        capability = str(item.get("capability") or "").strip()
+        evidence_text = _clean(item.get("evidence_text"))
+        category = _clean(item.get("evidence_category"))
+        if not capability and not evidence_text:
+            continue
+        if terms:
+            haystack = " ".join((capability.replace("_", " "), evidence_text, category)).casefold()
+            hay_tokens = set(re.findall(r"[a-z0-9+#]+", haystack))
+            if not terms.intersection(hay_tokens):
+                continue
+        selected.append(item)
+    if not selected:
+        return {
+            "status": "MISSING_FACT",
+            "reason": "no_explicit_capability_evidence_for_requested_scope" if terms else "no_explicit_capability_evidence",
+            "filter_terms": sorted(terms),
+        }
+    values: list[str] = []
+    seen: set[str] = set()
+    for item in selected:
+        label = _clean(item.get("evidence_text")) or str(item.get("capability") or "").replace("_", " ")
+        key = label.casefold()
+        if label and key not in seen:
+            seen.add(key)
+            values.append(label)
+    values.sort(key=str.casefold)
     return {
         "status": "DERIVED",
         "answer_mode": "ENUMERATION",
         "value": values,
-        "evidence_ids": sorted({str(item.get("claim_id")) for item in claims if item.get("claim_id")}),
+        "filter_terms": sorted(terms),
+        "evidence_ids": sorted({str(item.get("claim_id")) for item in selected if item.get("claim_id")}),
         "derivation_version": DERIVATION_VERSION,
     }

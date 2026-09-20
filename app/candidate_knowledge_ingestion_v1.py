@@ -165,6 +165,9 @@ def read_only_knowledge_view() -> dict[str, Any]:
     source_facts = preview_candidate_truth(snapshot)
     try:
         persisted_facts = graph.current_facts()
+        for fact in persisted_facts:
+            fact_id = str(fact.get("fact_id") or "")
+            fact["evidence"] = graph.evidence_for_fact(fact_id) if fact_id else []
     except (LookupError, RuntimeError, ValueError):
         persisted_facts = []
     return {

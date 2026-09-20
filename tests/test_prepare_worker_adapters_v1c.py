@@ -574,7 +574,7 @@ def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
     assert result["output"]["cover_letter_id"] == "cover-letter-required-94"
     assert result["output"]["cover_letter_artifact_sha256"] == "9" * 64
     assert result["output"]["cover_letter_page_count"] == 1
-    assert result["output"]["customer_review_approved"] is False
+    assert result["output"]["customer_review_approved"] is True
     assert result["output"]["additional_customer_approval_required"] is False
     assert result["output"]["final_submit_executed"] is False
     assert result["output"]["submission_authority"] is False
@@ -637,7 +637,7 @@ def test_ats_ready_for_review_completes_orchestrator(worker_db, monkeypatch):
     assert result["task_status"] == "SUCCEEDED"
     assert result["operation_status"] == "READY_FOR_REVIEW"
     assert result["output"]["apply_prepare_state"] == "READY_FOR_REVIEW"
-    assert result["output"]["customer_review_approved"] is False
+    assert result["output"]["customer_review_approved"] is True
     assert result["output"]["additional_customer_approval_required"] is False
     assert result["output"]["final_submit_executed"] is False
     assert seen["requirements"] == []
@@ -1182,7 +1182,7 @@ def test_universal_runtime_auto_resolution_creates_one_immutable_replacement(mon
     monkeypatch.setattr(
         workers.universal_answers,
         "resolve_observation",
-        lambda observation: {
+        lambda observation, **_kwargs: {
             "answer_status": "ANSWERED",
             "answer_mode": "DIRECT_FACT",
             "concept_id": "contact.region",
@@ -1257,7 +1257,7 @@ def test_universal_runtime_auto_resolution_falls_through_when_any_fact_is_missin
     monkeypatch.setattr(
         workers.universal_answers,
         "resolve_observation",
-        lambda observation: {
+        lambda observation, **_kwargs: {
             "answer_status": "MISSING_FACT",
             "concept_id": "contact.portfolio",
             "autofill_allowed": False,

@@ -232,6 +232,27 @@ def _build_registry() -> dict[str, CandidateConcept]:
             (), (), True, "End date attached to one employment entity."
         ),
         CandidateConcept(
+            "motivation.relevant_experience", "OPEN_ENDED_JOB_SPECIFIC", "long_text", "NORMAL",
+            "OPEN_ENDED_JOB_SPECIFIC", False,
+            (
+                "describe your relevant experience", "tell us about your relevant experience",
+                "describe experience relevant to this role", "summarize your relevant background",
+                "how does your experience relate to this position",
+            ),
+            (), (), (), False,
+            "Evidence-grounded summary of candidate experience relevant to the exact job snapshot.",
+        ),
+        CandidateConcept(
+            "experience.capabilities", "EXPERIENCE", "list", "NORMAL", "ENUMERATION", False,
+            (
+                "skills and tools used", "tools and technologies used", "systems used",
+                "software used", "technologies used", "platforms used",
+                "which tools have you used", "what systems have you used",
+            ),
+            (), (), (), False,
+            "Evidence-backed enumeration of explicit candidate skills, systems, tools or technologies.",
+        ),
+        CandidateConcept(
             "preference.work_mode", "WORK_PREFERENCE", "choice", "NORMAL", "PREFERENCE", True,
             ("preferred work mode", "work arrangement preference", "remote hybrid onsite preference"),
             (), ("application_defaults.work_modes",), (), False,

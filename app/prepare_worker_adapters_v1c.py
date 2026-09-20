@@ -48,6 +48,8 @@ from app import application_preflight_package_v1 as preflight_v1
 from app import opportunity_intelligence_v3
 from app import relationship_intelligence_v3
 from app import native_cover_letter_writer_v1
+from app import phase67_common
+from app import universal_open_ended_generator_v1 as universal_open_ended
 from app import prepare_orchestrator_v1 as orchestrator
 
 
@@ -733,12 +735,34 @@ def _runtime_binding_source(classification_lane: str) -> str:
     return "ONTOLOGY"
 
 
+def _universal_runtime_job_context(plan: Mapping[str, Any]) -> dict[str, Any]:
+    snapshot = dict(plan.get("snapshot") or {})
+    planned_job = dict(snapshot.get("job") or plan.get("job") or {})
+    job_id = planned_job.get("id") or plan.get("job_id")
+    if job_id in (None, ""):
+        return {}
+    tenant_id = str(plan.get("tenant_id") or "").strip()
+    user_id = str(plan.get("user_id") or "").strip()
+    if tenant_id and user_id:
+        owned = phase67_common.safe_owned_job_snapshot(
+            int(job_id), tenant_id=tenant_id, user_id=user_id
+        )
+    else:
+        owned = phase67_common.safe_owned_job_snapshot(int(job_id))
+    expected = str(planned_job.get("job_snapshot_digest") or "").strip().lower()
+    actual = str(owned.get("job_snapshot_sha256") or "").strip().lower()
+    if expected and expected != actual:
+        raise RuntimeError("Universal Brain job context no longer matches immutable Application Plan.")
+    return dict(owned.get("job") or {})
+
+
 def _resolve_universal_runtime_observation(
     *,
     plan: Mapping[str, Any],
     session_id: str,
     checkpoint_id: str,
     observation: Mapping[str, Any],
+    job_context: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Resolve one value-free browser observation and maintain durable semantics."""
     application_id = str(plan.get("application_id") or "").strip()
@@ -781,7 +805,14 @@ def _resolve_universal_runtime_observation(
             "conditions": {},
             "candidate_values_exposed": False,
         }
-        return universal_answers.resolve_concept(question), universal_binding.public_binding(binding_row)
+        return (
+            universal_answers.resolve_concept(
+                question,
+                open_ended_generator=universal_open_ended.generate,
+                job_context=dict(job_context or {}),
+            ),
+            universal_binding.public_binding(binding_row),
+        )
 
     model_interpreter = None
     if universal_questions.model_semantics_enabled():
@@ -797,10 +828,16 @@ def _resolve_universal_runtime_observation(
                     return {}
 
     if model_interpreter is None:
-        resolved = universal_answers.resolve_observation(dict(observation))
+        resolved = universal_answers.resolve_observation(
+            dict(observation),
+            open_ended_generator=universal_open_ended.generate,
+            job_context=dict(job_context or {}),
+        )
     else:
         resolved = universal_answers.resolve_observation(
-            dict(observation), model_interpreter=model_interpreter
+            dict(observation), model_interpreter=model_interpreter,
+            open_ended_generator=universal_open_ended.generate,
+            job_context=dict(job_context or {}),
         )
 
     question = dict(resolved.get("question_resolution") or {})
@@ -856,6 +893,7 @@ def _universal_runtime_auto_resolution(
     answers: list[dict[str, str]] = []
     questions: list[dict[str, Any]] = []
     traces: list[dict[str, Any]] = []
+    job_context = _universal_runtime_job_context(plan)
     for task in runtime_tasks:
         if str(task.get("sensitivity_class") or "").upper() != "NORMAL":
             return None
@@ -867,6 +905,7 @@ def _universal_runtime_auto_resolution(
             session_id=str(session_id),
             checkpoint_id=str(resolution_payload.get("checkpoint_id") or ""),
             observation=dict(observation),
+            job_context=job_context,
         )
         trace = universal_answers.public_trace(resolved)
         traces.append(
@@ -886,7 +925,7 @@ def _universal_runtime_auto_resolution(
         )
         status = str(resolved.get("answer_status") or "")
         if (
-            status not in {"ANSWERED", "DERIVED", "POLICY_RESOLVED"}
+            status not in {"ANSWERED", "DERIVED", "POLICY_RESOLVED", "GENERATED"}
             or resolved.get("autofill_allowed") is not True
             or resolved.get("value") is None
         ):
@@ -898,6 +937,7 @@ def _universal_runtime_auto_resolution(
             "ANSWERED": "universal_brain_existing_knowledge",
             "DERIVED": "universal_brain_derived_evidence",
             "POLICY_RESOLVED": "universal_brain_policy_resolution",
+            "GENERATED": "universal_brain_generated_evidence",
         }[status]
         answers.append(
             {
