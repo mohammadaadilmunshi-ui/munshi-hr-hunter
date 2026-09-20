@@ -439,8 +439,13 @@ def _iter_table_urls(connection, table: str) -> Iterable[tuple[str, str]]:
             else "NULL AS company_name"
         )
     ] + [f'"{name}" AS "{name}"' for name in url_columns]
+    enabled_filter = (
+        " WHERE COALESCE(enabled,1)=1"
+        if "enabled" in columns
+        else ""
+    )
     rows = connection.execute(
-        f"SELECT {', '.join(selected)} FROM {table}"
+        f"SELECT {', '.join(selected)} FROM {table}{enabled_filter}"
     ).fetchall()
     output: list[tuple[str, str]] = []
     for row in rows:
