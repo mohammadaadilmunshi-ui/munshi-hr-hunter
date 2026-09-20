@@ -647,3 +647,73 @@ def public_status() -> dict[str, Any]:
         "source_precedence": dict(SOURCE_PRECEDENCE),
         "protected_plaintext_storage": False,
     }
+
+
+def current_relations(
+    *,
+    subject_concept: str | None = None,
+    predicate: str | None = None,
+    object_concept: str | None = None,
+    connection: sqlite3.Connection | None = None,
+) -> list[dict[str, Any]]:
+    owns = connection is None
+    connection = connection or get_connection()
+    try:
+        ensure_schema(connection)
+        owner = _owner(connection)
+        where = ["tenant_id=?", "user_id=?", "superseded_at IS NULL"]
+        params: list[Any] = [owner.tenant_id, owner.user_id]
+        if subject_concept:
+            where.append("subject_concept=?")
+            params.append(str(subject_concept).strip().casefold())
+        if predicate:
+            where.append("predicate=?")
+            params.append(str(predicate).strip().upper())
+        if object_concept:
+            where.append("object_concept=?")
+            params.append(str(object_concept).strip().casefold())
+        rows = connection.execute(
+            "SELECT * FROM candidate_knowledge_relations WHERE " + " AND ".join(where)
+            + " ORDER BY revision,relation_id",
+            params,
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["evidence_ids"] = json.loads(str(item.pop("evidence_ids_json") or "[]"))
+            result.append(item)
+        return result
+    finally:
+        if owns:
+            connection.close()
+
+
+def evidence_records(
+    evidence_ids: Sequence[str],
+    *,
+    connection: sqlite3.Connection | None = None,
+) -> list[dict[str, Any]]:
+    ids = [str(item) for item in evidence_ids if str(item).strip()]
+    if not ids:
+        return []
+    owns = connection is None
+    connection = connection or get_connection()
+    try:
+        ensure_schema(connection)
+        owner = _owner(connection)
+        placeholders = ",".join("?" for _ in ids)
+        rows = connection.execute(
+            f"""SELECT * FROM candidate_knowledge_evidence
+                WHERE tenant_id=? AND user_id=? AND evidence_id IN ({placeholders})
+                ORDER BY created_at,evidence_id""",
+            [owner.tenant_id, owner.user_id, *ids],
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["metadata"] = json.loads(str(item.pop("metadata_json") or "{}"))
+            result.append(item)
+        return result
+    finally:
+        if owns:
+            connection.close()

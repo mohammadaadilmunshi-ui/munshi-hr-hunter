@@ -1,6 +1,8 @@
-"""Multi-lane, value-free employer question understanding for Universal Brain."""
+"""Value-free multi-lane semantic understanding for MUNSHI Universal Brain."""
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 from dataclasses import asdict, dataclass, field
@@ -8,10 +10,68 @@ from typing import Any, Callable, Mapping, Sequence
 
 from app import answer_brain
 from app import application_field_intelligence_v1 as field_intelligence
-from app import application_question_catalog_v2 as catalog
+from app import application_question_catalog_v2 as question_catalog
 from app import candidate_ontology_v1 as ontology
 
 RESOLVER_VERSION = "universal-question-resolver-v1"
+MODEL_SEMANTICS_ENV = "MUNSHI_UNIVERSAL_MODEL_SEMANTICS_ENABLED"
+
+_PROTECTED_SEMANTICS = {
+    "WORK_AUTHORIZATION_CURRENT": "eligibility.work_authorized_us",
+    "SPONSORSHIP_CURRENT": "eligibility.sponsorship_now",
+    "SPONSORSHIP_FUTURE": "eligibility.sponsorship_future",
+    "IMMIGRATION_ASSISTANCE": "eligibility.sponsorship_future",
+    "SECURITY_CLEARANCE": "background.clearance",
+    "VETERAN_STATUS": "self_id.veteran",
+    "PROTECTED_VETERAN_STATUS": "self_id.veteran",
+    "DISABILITY_STATUS": "self_id.disability",
+    "GENDER": "self_id.gender",
+    "RACE_ETHNICITY": "self_id.race_ethnicity",
+    "EEO_SELF_ID": "self_id.race_ethnicity",
+    "BACKGROUND_CHECK": "background.background_check",
+    "DRUG_SCREENING": "background.drug_screen",
+}
+
+_SECURITY_PATTERNS = (
+    ("CAPTCHA", re.compile(r"\bcaptcha\b|i am not a robot|recaptcha|hcaptcha", re.I)),
+    ("MFA", re.compile(r"\b(mfa|multi[- ]?factor|two[- ]?factor|2fa|one[- ]?time (?:code|password)|otp)\b", re.I)),
+    ("PASSKEY", re.compile(r"\bpasskey\b|security key|webauthn", re.I)),
+    ("BIOMETRIC", re.compile(r"\bbiometric|fingerprint|face id|touch id\b", re.I)),
+    ("PASSWORD", re.compile(r"\bpassword|passcode|security answer\b", re.I)),
+)
+
+_US_STATE_NAMES = {
+    "alabama","alaska","arizona","arkansas","california","colorado","connecticut","delaware",
+    "florida","georgia","hawaii","idaho","illinois","indiana","iowa","kansas","kentucky",
+    "louisiana","maine","maryland","massachusetts","michigan","minnesota","mississippi","missouri",
+    "montana","nebraska","nevada","new hampshire","new jersey","new mexico","new york","north carolina",
+    "north dakota","ohio","oklahoma","oregon","pennsylvania","rhode island","south carolina",
+    "south dakota","tennessee","texas","utah","vermont","virginia","washington","west virginia",
+    "wisconsin","wyoming","district of columbia",
+}
+
+
+def _text(value: Any, maximum: int = 4000) -> str:
+    return " ".join(str(value or "").split())[:maximum]
+
+
+def _list_text(values: Any, *, limit: int = 200) -> tuple[str, ...]:
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+        return ()
+    result: list[str] = []
+    for raw in values[:limit]:
+        if isinstance(raw, Mapping):
+            value = raw.get("label") or raw.get("text") or raw.get("value") or ""
+        else:
+            value = raw
+        item = _text(value, 240)
+        if item:
+            result.append(item)
+    return tuple(result)
+
+
+def _norm(value: Any) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold())).strip()
 
 
 @dataclass(frozen=True)
@@ -22,7 +82,7 @@ class QuestionObservation:
     nearby_text: str = ""
     placeholder: str = ""
     name: str = ""
-    id: str = ""
+    html_id: str = ""
     autocomplete: str = ""
     input_type: str = ""
     role: str = ""
@@ -31,321 +91,333 @@ class QuestionObservation:
     apply_semantic_confidence: float = 0.0
     control_id: str = ""
     page_id: str = ""
-    repeat_group: str | None = None
+    repeat_group: str = ""
     repeat_index: int | None = None
-    previous_labels: tuple[str, ...] = field(default_factory=tuple)
-    next_labels: tuple[str, ...] = field(default_factory=tuple)
+    neighboring_labels: tuple[str, ...] = field(default_factory=tuple)
+    required: bool = True
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any] | None) -> "QuestionObservation":
-        value = dict(raw or {})
-        def text(*keys: str) -> str:
-            for key in keys:
-                candidate = value.get(key)
-                if candidate is not None and str(candidate).strip():
-                    return " ".join(str(candidate).split())[:4000]
-            return ""
-        options_raw = value.get("options") or value.get("optionLabels") or ()
-        if isinstance(options_raw, (str, bytes)):
-            options_raw = (str(options_raw),)
-        options = tuple(" ".join(str(item).split())[:500] for item in options_raw if str(item).strip())[:250]
-        prev = value.get("previous_labels") or value.get("previousLabels") or ()
-        nxt = value.get("next_labels") or value.get("nextLabels") or ()
-        def string_tuple(items: Any) -> tuple[str, ...]:
-            if isinstance(items, (str, bytes)):
-                items = (items,)
-            return tuple(" ".join(str(item).split())[:500] for item in (items or ()) if str(item).strip())[:20]
-        repeat_index = value.get("repeat_index", value.get("repeatIndex"))
+        data = dict(raw or {})
+        repeat_index = data.get("repeatIndex", data.get("repeat_index"))
         try:
             repeat_index = int(repeat_index) if repeat_index is not None else None
         except (TypeError, ValueError):
             repeat_index = None
+        semantic_confidence = data.get("semanticConfidence", data.get("apply_semantic_confidence", 0.0))
         try:
-            semantic_conf = float(value.get("apply_semantic_confidence", value.get("semanticConfidence", 0.0)) or 0.0)
+            semantic_confidence = float(semantic_confidence or 0.0)
         except (TypeError, ValueError):
-            semantic_conf = 0.0
+            semantic_confidence = 0.0
         return cls(
-            raw_question=text("raw_question", "rawText", "question", "prompt", "normalized_question"),
-            label=text("label"), section_heading=text("section_heading", "sectionHeading", "section"),
-            nearby_text=text("nearby_text", "nearbyText", "contextText"), placeholder=text("placeholder"),
-            name=text("name", "fieldName", "field_name"), id=text("id"), autocomplete=text("autocomplete"),
-            input_type=text("input_type", "inputType", "type"), role=text("role"), options=options,
-            apply_semantic_type=text("apply_semantic_type", "semanticType") or "UNKNOWN",
-            apply_semantic_confidence=max(0.0, min(1.0, semantic_conf)),
-            control_id=text("control_id", "controlId", "provider_field_id"), page_id=text("page_id", "pageId"),
-            repeat_group=text("repeat_group", "repeatGroupId") or None, repeat_index=repeat_index,
-            previous_labels=string_tuple(prev), next_labels=string_tuple(nxt),
+            raw_question=_text(data.get("raw_question") or data.get("rawText") or data.get("question") or data.get("prompt")),
+            label=_text(data.get("label")),
+            section_heading=_text(data.get("section_heading") or data.get("sectionHeading") or data.get("section")),
+            nearby_text=_text(data.get("nearby_text") or data.get("nearbyText")),
+            placeholder=_text(data.get("placeholder")),
+            name=_text(data.get("name") or data.get("fieldName") or data.get("field_name")),
+            html_id=_text(data.get("id") or data.get("html_id")),
+            autocomplete=_text(data.get("autocomplete")),
+            input_type=_text(data.get("input_type") or data.get("inputType") or data.get("type")),
+            role=_text(data.get("role")),
+            options=_list_text(data.get("options")),
+            apply_semantic_type=_text(data.get("apply_semantic_type") or data.get("semanticType") or "UNKNOWN", 120).upper() or "UNKNOWN",
+            apply_semantic_confidence=max(0.0, min(1.0, semantic_confidence)),
+            control_id=_text(data.get("control_id") or data.get("controlId"), 500),
+            page_id=_text(data.get("page_id") or data.get("pageId"), 500),
+            repeat_group=_text(data.get("repeat_group") or data.get("repeatGroup") or data.get("repeatGroupId"), 500),
+            repeat_index=repeat_index,
+            neighboring_labels=_list_text(data.get("neighboring_labels") or data.get("neighboringLabels"), limit=20),
+            required=bool(data.get("required", True)),
         )
 
-    def as_field_metadata(self) -> dict[str, Any]:
+    def semantic_text(self) -> str:
+        parts = (
+            self.label,
+            self.raw_question,
+            self.placeholder,
+            self.name,
+            self.section_heading,
+            self.nearby_text,
+            *self.neighboring_labels,
+        )
+        return " | ".join(part for part in parts if part)
+
+    def value_free_payload(self, *, ontology_candidates: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
+        """Payload permitted for bounded semantic interpretation; no candidate store values."""
         return {
-            "semanticType": self.apply_semantic_type,
-            "semanticConfidence": self.apply_semantic_confidence,
-            "rawText": self.raw_question,
-            "question": self.raw_question,
-            "label": self.label,
-            "sectionHeading": self.section_heading,
-            "nearbyText": self.nearby_text,
-            "placeholder": self.placeholder,
-            "name": self.name,
-            "id": self.id,
-            "autocomplete": self.autocomplete,
-            "inputType": self.input_type,
-            "role": self.role,
-            "options": list(self.options),
-            "controlId": self.control_id,
-            "pageId": self.page_id,
-            "repeatGroupId": self.repeat_group,
-            "repeatIndex": self.repeat_index,
+            "resolver_version": RESOLVER_VERSION,
+            "question": {
+                "raw_question": self.raw_question,
+                "label": self.label,
+                "section_heading": self.section_heading,
+                "nearby_text": self.nearby_text,
+                "placeholder": self.placeholder,
+                "name": self.name,
+                "id": self.html_id,
+                "autocomplete": self.autocomplete,
+                "input_type": self.input_type,
+                "role": self.role,
+                "options": list(self.options[:100]),
+                "apply_semantic_type": self.apply_semantic_type,
+                "apply_semantic_confidence": self.apply_semantic_confidence,
+                "repeat_group": self.repeat_group or None,
+                "repeat_index": self.repeat_index,
+                "neighboring_labels": list(self.neighboring_labels),
+                "required": self.required,
+            },
+            "ontology_candidates": [dict(item) for item in ontology_candidates[:8]],
+            "candidate_values_included": False,
         }
 
 
 def model_semantics_enabled() -> bool:
-    return str(os.getenv("MUNSHI_UNIVERSAL_MODEL_SEMANTICS_ENABLED") or "").strip().casefold() in {"1", "true", "yes", "on"}
+    return str(os.getenv(MODEL_SEMANTICS_ENV) or "").strip().casefold() in {"1", "true", "yes", "on"}
 
 
-def _norm(value: Any) -> str:
-    text = str(value or "").strip().casefold().replace("on-site", "onsite")
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9+/#. ]+", " ", text)).strip()
+def _security_checkpoint(observation: QuestionObservation) -> dict[str, Any] | None:
+    text = observation.semantic_text()
+    for checkpoint, pattern in _SECURITY_PATTERNS:
+        if pattern.search(text):
+            return {
+                "status": "SECURITY_CHECKPOINT",
+                "checkpoint": checkpoint,
+                "classification_lane": "SECURITY_PRECLASSIFICATION",
+                "confidence": 1.0,
+                "resolver_version": RESOLVER_VERSION,
+            }
+    return None
 
 
-def _visible_text(obs: QuestionObservation) -> str:
-    return " ".join(
-        part for part in (
-            obs.label, obs.raw_question, obs.placeholder, obs.name, obs.section_heading,
-            obs.nearby_text, *obs.previous_labels, *obs.next_labels,
-        ) if part
-    )[:12000]
-
-
-def _primary_texts(obs: QuestionObservation) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(
-        value for value in (
-            obs.label, obs.raw_question, obs.placeholder, obs.name,
-            f"{obs.section_heading} {obs.label}".strip(), _visible_text(obs),
-        ) if value
-    ))
-
-
-def _preclassification(obs: QuestionObservation) -> dict[str, Any]:
-    visible = obs.raw_question or obs.label or obs.placeholder or obs.name
-    family = "unknown"
-    if visible:
-        try:
-            family = answer_brain.classify_question(visible)
-        except ValueError:
-            family = "unknown"
-    catalog_match = catalog.match_question(visible) if visible else {"matched": False}
-    sensitivity = "NORMAL"
-    concept_id = None
-    if catalog_match.get("matched"):
-        sensitivity = str(catalog_match.get("sensitivity_class") or "NORMAL").upper()
-        concept_id = str(catalog_match.get("canonical_concept") or catalog_match.get("question_key") or "") or None
-    if family == "work_authorization":
-        sensitivity = ontology.sensitivity_at_least(sensitivity, "PROTECTED")
-    elif family == "voluntary_self_identification":
-        sensitivity = ontology.sensitivity_at_least(sensitivity, "SELF_ID")
-    elif family == "credential_requirement":
-        sensitivity = ontology.sensitivity_at_least(sensitivity, "CREDENTIAL")
-    elif family == "post_offer_sensitive":
-        sensitivity = ontology.sensitivity_at_least(sensitivity, "POST_OFFER")
-    semantic = str(obs.apply_semantic_type or "").upper()
-    if semantic in {
-        "WORK_AUTHORIZATION_CURRENT", "SPONSORSHIP_CURRENT", "SPONSORSHIP_FUTURE",
-        "IMMIGRATION_ASSISTANCE", "SECURITY_CLEARANCE",
-    }:
-        sensitivity = ontology.sensitivity_at_least(sensitivity, "PROTECTED")
-    if semantic in {"VETERAN_STATUS", "PROTECTED_VETERAN_STATUS", "DISABILITY_STATUS", "GENDER", "RACE_ETHNICITY", "EEO_SELF_ID"}:
-        sensitivity = ontology.sensitivity_at_least(sensitivity, "SELF_ID")
-    if semantic in {"PASSWORD", "OTP", "MFA", "CAPTCHA", "PASSKEY", "BIOMETRIC", "IDENTITY_VERIFICATION"}:
-        sensitivity = ontology.sensitivity_at_least(sensitivity, "CREDENTIAL")
-    return {"family": family, "sensitivity": sensitivity, "catalog_match": catalog_match, "catalog_concept_id": concept_id}
-
-
-def _result(
-    *,
-    state: str,
-    concept_id: str | None,
-    confidence: float,
-    lane: str,
-    sensitivity: str,
-    reason_code: str,
-    conditions: Mapping[str, Any] | None = None,
-    candidates: Sequence[Mapping[str, Any]] = (),
-    preclassification: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
+def _field_metadata(observation: QuestionObservation) -> dict[str, Any]:
     return {
-        "resolver_version": RESOLVER_VERSION,
-        "state": state,
-        "concept_id": concept_id,
-        "confidence": round(float(confidence), 6),
-        "classification_lane": lane,
-        "sensitivity": sensitivity,
-        "reason_code": reason_code,
-        "conditions": dict(conditions or {}),
-        "candidates": [dict(item) for item in candidates[:8]],
-        "preclassification": dict(preclassification or {}),
-        "candidate_values_exposed": False,
+        "semanticType": observation.apply_semantic_type,
+        "semanticConfidence": observation.apply_semantic_confidence,
+        "rawText": observation.raw_question,
+        "label": observation.label,
+        "sectionHeading": observation.section_heading,
+        "nearbyText": observation.nearby_text,
+        "placeholder": observation.placeholder,
+        "name": observation.name,
+        "id": observation.html_id,
+        "autocomplete": observation.autocomplete,
+        "type": observation.input_type,
+        "role": observation.role,
+        "options": list(observation.options),
+        "controlId": observation.control_id,
+        "repeatGroupId": observation.repeat_group or None,
+        "repeatIndex": observation.repeat_index,
+        "required": observation.required,
     }
 
 
-def _context_candidate(obs: QuestionObservation) -> tuple[str, float, str] | None:
-    text = _norm(" ".join((obs.label, obs.raw_question, obs.placeholder, obs.name)))
-    section = _norm(obs.section_heading)
-    option_text = [_norm(item) for item in obs.options]
-    control_is_choice = _norm(obs.role) in {"combobox", "listbox", "radio", "radiogroup"} or _norm(obs.input_type) in {"select", "select-one", "radio"} or bool(obs.options)
-    address_context = any(token in section for token in ("address", "contact", "location", "personal information", "personal details"))
-    if re.search(r"\b(state|province|region)\b", text):
-        score = 0.98 if address_context or control_is_choice else 0.92
-        return "contact.region", score, "ADDRESS_REGION_CONTEXT"
-    if re.search(r"\b(zip|postal)(?:\s+code)?\b", text):
-        return "contact.postal_code", 0.98 if address_context else 0.94, "POSTAL_CONTEXT"
-    if re.search(r"\bcity\b", text) and (address_context or control_is_choice):
-        return "contact.city", 0.97, "ADDRESS_CITY_CONTEXT"
-    if re.search(r"\bcountry\b", text) and (address_context or control_is_choice):
-        return "contact.country", 0.97, "ADDRESS_COUNTRY_CONTEXT"
-    if re.search(r"\b(street\s+address|address\s*(line)?\s*1|mailing\s+address|home\s+address)\b", text):
-        return "contact.address_line1", 0.98, "ADDRESS_LINE1_CONTEXT"
-    if re.search(r"\b(address\s*(line)?\s*2|apt|apartment|suite|unit)\b", text):
-        return "contact.address_line2", 0.98, "ADDRESS_LINE2_CONTEXT"
-    # Option sets can disambiguate a weak region label without relying on a
-    # candidate-selected value. Require multiple region-looking labels.
-    if control_is_choice and len(option_text) >= 8 and address_context:
-        region_tokens = sum(bool(re.fullmatch(r"[a-z .'-]{2,32}", item)) for item in option_text[:80])
-        if region_tokens >= min(8, len(option_text)) and "state" in _norm(obs.nearby_text):
-            return "contact.region", 0.91, "OPTION_SET_REGION_CONTEXT"
+def _repeat_adjust(concept_id: str, observation: QuestionObservation) -> str:
+    if not observation.repeat_group and observation.repeat_index is None:
+        return concept_id
+    group = _norm(observation.repeat_group + " " + observation.section_heading)
+    if "experience" in group or "employment" in group or "work history" in group:
+        return {
+            "employment.current_employer": "employment.employer",
+            "employment.current_title": "employment.title",
+        }.get(concept_id, concept_id)
+    if "education" in group or "school" in group:
+        return {
+            "education.highest_degree": "education.degree",
+        }.get(concept_id, concept_id)
+    return concept_id
+
+
+def _lane_a(observation: QuestionObservation) -> dict[str, Any] | None:
+    semantic = observation.apply_semantic_type
+    if semantic in _PROTECTED_SEMANTICS:
+        concept_id = _PROTECTED_SEMANTICS[semantic]
+        concept = ontology.concept(concept_id)
+        if concept:
+            return {
+                "concept_id": concept.concept_id,
+                "confidence": max(0.99, observation.apply_semantic_confidence),
+                "classification_lane": "DETERMINISTIC_PROTECTED_SEMANTIC",
+                "reason_code": semantic,
+            }
+
+    requirement = field_intelligence.requirement_from_field(_field_metadata(observation), required=observation.required)
+    if requirement is not None:
+        concept_id = _repeat_adjust(str(requirement["question_key"]), observation)
+        if ontology.concept(concept_id):
+            return {
+                "concept_id": concept_id,
+                "confidence": float((requirement.get("field_intelligence") or {}).get("confidence") or 1.0),
+                "classification_lane": "DETERMINISTIC_STRUCTURAL",
+                "reason_code": str((requirement.get("field_intelligence") or {}).get("classification_source") or "field_intelligence"),
+            }
+
+    visible = observation.label or observation.raw_question or observation.placeholder
+    if visible:
+        matched = question_catalog.match_question(visible)
+        if matched.get("matched"):
+            concept_id = _repeat_adjust(str(matched["canonical_concept"]), observation)
+            if ontology.concept(concept_id):
+                return {
+                    "concept_id": concept_id,
+                    "confidence": float(matched.get("confidence") or 0.0),
+                    "classification_lane": "DETERMINISTIC_QUESTION_CATALOG",
+                    "reason_code": str(matched.get("match_type") or "catalog"),
+                }
     return None
+
+
+def _looks_like_state_selector(observation: QuestionObservation) -> bool:
+    labels = _norm(" ".join((observation.label, observation.raw_question, observation.placeholder, observation.name)))
+    section = _norm(observation.section_heading + " " + " ".join(observation.neighboring_labels))
+    state_word = bool(re.search(r"\b(state|province|region)\b", labels))
+    address_context = any(token in section for token in ("address", "contact", "location", "city", "postal", "zip", "country"))
+    option_names = {_norm(item) for item in observation.options}
+    state_option_count = sum(name in _US_STATE_NAMES for name in option_names)
+    selector = observation.input_type.casefold() in {"select", "choice"} or observation.role.casefold() in {"combobox", "listbox"}
+    return state_word and (address_context or (selector and state_option_count >= 5))
+
+
+def _looks_like_country_selector(observation: QuestionObservation) -> bool:
+    labels = _norm(" ".join((observation.label, observation.raw_question, observation.placeholder, observation.name)))
+    return "country" in labels and (
+        "address" in _norm(observation.section_heading) or len(observation.options) >= 5
+    )
+
+
+def _context_override(observation: QuestionObservation) -> dict[str, Any] | None:
+    if _looks_like_state_selector(observation):
+        return {
+            "concept_id": "contact.region",
+            "confidence": 0.995,
+            "classification_lane": "ONTOLOGY_CONTEXT",
+            "reason_code": "STATE_SELECTION_CONTEXT",
+        }
+    if _looks_like_country_selector(observation):
+        return {
+            "concept_id": "contact.country",
+            "confidence": 0.99,
+            "classification_lane": "ONTOLOGY_CONTEXT",
+            "reason_code": "COUNTRY_SELECTION_CONTEXT",
+        }
+    return None
+
+
+def _ontology_candidates(observation: QuestionObservation) -> list[dict[str, Any]]:
+    return ontology.retrieve(
+        observation.semantic_text(),
+        browser_semantic=observation.apply_semantic_type,
+        top_k=8,
+    )
 
 
 def resolve_question(
     observation: QuestionObservation | Mapping[str, Any],
     *,
     model_interpreter: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
+    minimum_score: float = 0.78,
+    minimum_margin: float = 0.07,
 ) -> dict[str, Any]:
     obs = observation if isinstance(observation, QuestionObservation) else QuestionObservation.from_mapping(observation)
-    pre = _preclassification(obs)
-    sensitivity_floor = str(pre["sensitivity"])
+    security = _security_checkpoint(obs)
+    if security:
+        return security
 
-    # Lane A: existing deterministic semantics remain first.
-    intent = field_intelligence.field_intent(obs.as_field_metadata())
-    if intent is not None and ontology.concept(intent.key) is not None:
-        item = ontology.require_concept(intent.key)
-        sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
-        return _result(
-            state="RESOLVED", concept_id=item.concept_id, confidence=float(intent.confidence),
-            lane="DETERMINISTIC_STRUCTURAL", sensitivity=sensitivity,
-            reason_code="FIELD_INTELLIGENCE", preclassification=pre,
-        )
-
-    cat = dict(pre.get("catalog_match") or {})
-    if cat.get("matched"):
-        key = str(cat.get("canonical_concept") or cat.get("question_key") or "")
-        if ontology.concept(key) is not None:
-            item = ontology.require_concept(key)
-            sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
-            return _result(
-                state="RESOLVED", concept_id=item.concept_id,
-                confidence=float(cat.get("confidence") or 1.0), lane="DETERMINISTIC_CATALOG",
-                sensitivity=sensitivity, reason_code=str(cat.get("match_type") or "CATALOG"),
-                conditions=dict(cat.get("conditions") or {}), preclassification=pre,
-            )
-
-    semantic_candidates = ontology.concepts_for_browser_semantic(obs.apply_semantic_type)
-    if len(semantic_candidates) == 1:
-        item = semantic_candidates[0]
-        sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
-        return _result(
-            state="RESOLVED", concept_id=item.concept_id,
-            confidence=max(0.93, obs.apply_semantic_confidence), lane="DETERMINISTIC_BROWSER_SEMANTIC",
-            sensitivity=sensitivity, reason_code="UNIQUE_BROWSER_SEMANTIC", preclassification=pre,
-        )
-
-    # Lane B/C: retrieve over aliases/descriptions independently for each visible
-    # fragment, then retain the best score per concept. Candidate values are never
-    # part of this retrieval.
-    best: dict[str, dict[str, Any]] = {}
-    for text in _primary_texts(obs):
-        for row in ontology.retrieve(text, browser_semantic=obs.apply_semantic_type, top_k=10):
-            current = best.get(str(row["concept_id"]))
-            if current is None or float(row["score"]) > float(current["score"]):
-                best[str(row["concept_id"])] = row
-    ranked = sorted(best.values(), key=lambda row: (-float(row["score"]), str(row["concept_id"])))
-    if ranked:
-        top = ranked[0]
-        second = float(ranked[1]["score"]) if len(ranked) > 1 else 0.0
-        if float(top["score"]) >= 0.88 and (float(top["score"]) == 1.0 or float(top["score"]) - second >= 0.06):
-            item = ontology.require_concept(str(top["concept_id"]))
-            sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
-            return _result(
-                state="RESOLVED", concept_id=item.concept_id, confidence=float(top["score"]),
-                lane="ONTOLOGY_RETRIEVAL", sensitivity=sensitivity,
-                reason_code="ALIAS_OR_SEMANTIC_RETRIEVAL", candidates=ranked, preclassification=pre,
-            )
-
-    # Lane D: structural context disambiguation. This specifically handles forms
-    # such as "State New Jersey" without learning a candidate value from the text.
-    contextual = _context_candidate(obs)
-    if contextual is not None:
-        key, score, reason = contextual
-        item = ontology.require_concept(key)
-        sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
-        return _result(
-            state="RESOLVED", concept_id=item.concept_id, confidence=score,
-            lane="ONTOLOGY_CONTEXT", sensitivity=sensitivity, reason_code=reason,
-            candidates=ranked, preclassification=pre,
-        )
-
-    # Lane E: bounded model semantic interpretation. The callback receives only
-    # browser structure and ontology candidates; candidate values/secrets are absent.
-    if model_semantics_enabled() and model_interpreter is not None and sensitivity_floor not in {"CREDENTIAL", "SECRET", "POST_OFFER"}:
-        payload = {
+    deterministic = _lane_a(obs)
+    if deterministic:
+        item = ontology.require_concept(str(deterministic["concept_id"]))
+        return {
+            "status": "RESOLVED",
+            **deterministic,
+            "sensitivity": item.sensitivity,
+            "answer_mode": item.answer_mode,
+            "repeated_entity": item.repeated_entity,
             "resolver_version": RESOLVER_VERSION,
-            "observation": {
-                "raw_question": obs.raw_question,
-                "label": obs.label,
-                "section_heading": obs.section_heading,
-                "nearby_text": obs.nearby_text,
-                "placeholder": obs.placeholder,
-                "name": obs.name,
-                "input_type": obs.input_type,
-                "role": obs.role,
-                "options": list(obs.options)[:100],
-                "apply_semantic_type": obs.apply_semantic_type,
-                "repeat_group": obs.repeat_group,
-                "repeat_index": obs.repeat_index,
-            },
-            "ontology_candidates": ranked[:8],
-            "candidate_values": None,
         }
-        response = dict(model_interpreter(payload) or {})
-        key = str(response.get("concept_id") or "").strip().casefold()
+
+    context = _context_override(obs)
+    if context:
+        item = ontology.require_concept(str(context["concept_id"]))
+        return {
+            "status": "RESOLVED",
+            **context,
+            "sensitivity": item.sensitivity,
+            "answer_mode": item.answer_mode,
+            "repeated_entity": item.repeated_entity,
+            "resolver_version": RESOLVER_VERSION,
+        }
+
+    candidates = _ontology_candidates(obs)
+    if candidates:
+        top = candidates[0]
+        runner_up = candidates[1] if len(candidates) > 1 else {"score": 0.0}
+        top_score = float(top["score"])
+        margin = top_score - float(runner_up["score"])
+        if top_score >= minimum_score and (top_score >= 0.995 or margin >= minimum_margin):
+            concept_id = _repeat_adjust(str(top["concept_id"]), obs)
+            item = ontology.require_concept(concept_id)
+            return {
+                "status": "RESOLVED",
+                "concept_id": concept_id,
+                "confidence": top_score,
+                "classification_lane": "ONTOLOGY_RETRIEVAL",
+                "reason_code": "ALIAS_OR_SEMANTIC_RETRIEVAL",
+                "sensitivity": item.sensitivity,
+                "answer_mode": item.answer_mode,
+                "repeated_entity": item.repeated_entity,
+                "resolver_version": RESOLVER_VERSION,
+            }
+
+    if model_interpreter is not None and model_semantics_enabled():
+        payload = obs.value_free_payload(ontology_candidates=candidates)
+        interpreted = dict(model_interpreter(payload) or {})
+        concept_id = str(interpreted.get("concept_id") or "").strip().casefold()
         try:
-            confidence = float(response.get("confidence") or 0.0)
+            confidence = float(interpreted.get("confidence") or 0.0)
         except (TypeError, ValueError):
             confidence = 0.0
-        item = ontology.concept(key)
-        if item is not None and confidence >= 0.92:
-            sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
-            return _result(
-                state="RESOLVED", concept_id=item.concept_id, confidence=confidence,
-                lane="BOUNDED_MODEL_INTERPRETATION", sensitivity=sensitivity,
-                reason_code=str(response.get("reason_code") or "MODEL_SEMANTIC_INTERPRETATION")[:120],
-                candidates=ranked, preclassification=pre,
-            )
+        allowed_ids = {str(item["concept_id"]) for item in candidates}
+        if concept_id in allowed_ids and confidence >= 0.90:
+            item = ontology.require_concept(concept_id)
+            return {
+                "status": "RESOLVED",
+                "concept_id": concept_id,
+                "confidence": min(1.0, confidence),
+                "classification_lane": "BOUNDED_MODEL_SEMANTICS",
+                "reason_code": _text(interpreted.get("reason_code") or "MODEL_INTERPRETATION", 120),
+                "sensitivity": item.sensitivity,
+                "answer_mode": item.answer_mode,
+                "repeated_entity": item.repeated_entity,
+                "resolver_version": RESOLVER_VERSION,
+                "candidate_values_exposed_to_model": False,
+            }
 
-    if ranked and float(ranked[0]["score"]) >= 0.55:
-        return _result(
-            state="AMBIGUOUS_CONCEPT", concept_id=None, confidence=float(ranked[0]["score"]),
-            lane="UNRESOLVED", sensitivity=sensitivity_floor, reason_code="AMBIGUOUS_ONTOLOGY_CANDIDATES",
-            candidates=ranked, preclassification=pre,
-        )
-    return _result(
-        state="UNKNOWN", concept_id=None, confidence=0.0, lane="UNRESOLVED",
-        sensitivity=sensitivity_floor, reason_code="NO_SAFE_SEMANTIC_MATCH",
-        candidates=ranked, preclassification=pre,
-    )
+    top = candidates[0] if candidates else None
+    runner = candidates[1] if len(candidates) > 1 else None
+    if top and float(top["score"]) >= 0.50:
+        return {
+            "status": "AMBIGUOUS_CONCEPT",
+            "classification_lane": "ONTOLOGY_RETRIEVAL",
+            "top_candidate": {"concept_id": top["concept_id"], "score": top["score"], "sensitivity": top["sensitivity"]},
+            "runner_up": ({"concept_id": runner["concept_id"], "score": runner["score"], "sensitivity": runner["sensitivity"]} if runner else None),
+            "resolver_version": RESOLVER_VERSION,
+        }
+    return {
+        "status": "UNKNOWN_CONCEPT",
+        "classification_lane": "EXHAUSTED",
+        "resolver_version": RESOLVER_VERSION,
+    }
 
 
-def public_observation(observation: QuestionObservation | Mapping[str, Any]) -> dict[str, Any]:
+def observation_fingerprint(observation: QuestionObservation | Mapping[str, Any]) -> str:
     obs = observation if isinstance(observation, QuestionObservation) else QuestionObservation.from_mapping(observation)
-    return asdict(obs)
+    payload = {
+        "question": _norm(obs.raw_question or obs.label),
+        "section": _norm(obs.section_heading),
+        "input_type": _norm(obs.input_type),
+        "role": _norm(obs.role),
+        "option_signature": hashlib.sha256(json.dumps(sorted(_norm(item) for item in obs.options), separators=(",", ":")).encode()).hexdigest() if obs.options else "",
+        "repeat_group": _norm(obs.repeat_group),
+        "repeat_index": obs.repeat_index,
+        "page_id": _norm(obs.page_id),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

@@ -1,339 +1,277 @@
-"""Evidence-backed derivation engine for MUNSHI Universal Brain.
-
-Derivations are deterministic and conservative.  The engine never upgrades an
-unsupported resume claim into candidate truth: capabilities are emitted only
-when explicit skill text or exact source evidence supports them, and experience
-durations never round upward.
-"""
+"""Evidence-backed deterministic derivations for MUNSHI Universal Brain."""
 from __future__ import annotations
 
-import calendar
-import hashlib
 import math
 import re
-from dataclasses import dataclass
+import sqlite3
 from datetime import date, datetime
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
+
+from dateutil import parser as date_parser
+
+from app import candidate_knowledge_graph_v1 as graph
+from app import candidate_ontology_v1 as ontology
+from app.database import get_connection
 
 DERIVATION_VERSION = "candidate-derivation-engine-v1"
 
-# Provider-neutral capability ontology. Patterns require explicit source text;
-# they are not role/title assumptions.
-_CAPABILITY_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
-    "recruiting": (re.compile(r"\brecruit(?:ing|ment|er|ed)?\b", re.I), re.compile(r"\bhiring\b", re.I)),
-    "technical_recruiting": (re.compile(r"\btechnical recruit(?:ing|ment|er)?\b", re.I),),
-    "candidate_sourcing": (re.compile(r"\b(candidate )?sourc(?:ing|ed|e)\b", re.I),),
-    "resume_screening": (re.compile(r"\b(resume|cv) screen(?:ing|ed)?\b", re.I), re.compile(r"\bscreen(?:ing|ed) candidates?\b", re.I)),
-    "interviewing": (re.compile(r"\binterview(?:ing|ed|s)?\b", re.I),),
-    "onboarding": (re.compile(r"\bon[- ]?board(?:ing|ed)?\b", re.I),),
-    "i9": (re.compile(r"\bi[- ]?9\b", re.I),),
-    "documentation": (re.compile(r"\bdocument(?:ation|ing|ed)?\b", re.I),),
-    "hr_operations": (re.compile(r"\bhr operations?\b", re.I), re.compile(r"\bhuman resources operations?\b", re.I)),
-    "employee_records": (re.compile(r"\bemployee records?\b", re.I),),
-    "compliance": (re.compile(r"\bcompliance\b", re.I),),
-    "audit_support": (re.compile(r"\baudit(?:s|ing)?\b", re.I),),
-    "training_coordination": (re.compile(r"\btraining (?:coordination|coordinat(?:e|ed|ing))\b", re.I),),
-    "payroll_support": (re.compile(r"\bpayroll\b", re.I),),
-    "timekeeping": (re.compile(r"\btime[- ]?keeping\b", re.I), re.compile(r"\btimesheets?\b", re.I)),
-    "analytics": (re.compile(r"\banalytics?\b", re.I), re.compile(r"\banalys(?:is|es|t)\b", re.I)),
-    "dashboarding": (re.compile(r"\bdashboards?\b", re.I),),
-    "data_cleaning": (re.compile(r"\bdata clean(?:ing|ed)?\b", re.I), re.compile(r"\bclean(?:ing|ed) data\b", re.I)),
-    "excel": (re.compile(r"\b(?:microsoft )?excel\b", re.I),),
-    "power_bi": (re.compile(r"\bpower\s*bi\b", re.I),),
-    "workday": (re.compile(r"\bworkday\b", re.I),),
-    "greenhouse": (re.compile(r"\bgreenhouse\b", re.I),),
-    "bamboohr": (re.compile(r"\bbamboo\s*hr\b", re.I),),
-    "successfactors": (re.compile(r"\bsuccess\s*factors\b", re.I),),
-    "adp": (re.compile(r"\badp(?: workforce now)?\b", re.I),),
-    "ukg": (re.compile(r"\bukg(?: pro)?\b", re.I), re.compile(r"\bultimate kronos\b", re.I)),
-    "python": (re.compile(r"\bpython\b", re.I),),
-    "tableau": (re.compile(r"\btableau\b", re.I),),
-}
-
-_MONTHS = {
-    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
-    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
-    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9, "oct": 10,
-    "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
-}
+_CURRENT_TOKENS = {"present", "current", "now", "ongoing", "today"}
 
 
-def _clean(value: Any) -> str:
-    return " ".join(str(value or "").split())
+def _normalize(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().casefold())
 
 
-def _slug(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", _clean(value).casefold()).strip("_")[:100]
-
-
-def capability_for_text(text: str) -> tuple[str, ...]:
-    raw = _clean(text)
-    if not raw:
-        return ()
-    return tuple(
-        key for key, patterns in _CAPABILITY_PATTERNS.items()
-        if any(pattern.search(raw) for pattern in patterns)
-    )
-
-
-def capability_for_skill(skill: str) -> tuple[str, ...]:
-    """Map an explicit skill label to capabilities; no role/context inference."""
-    raw = _clean(skill)
-    if not raw:
-        return ()
-    return capability_for_text(raw)
-
-
-def _claim_id(source_ref: str, concept: str) -> str:
-    digest = hashlib.sha256(f"{source_ref}\n{concept}".encode("utf-8")).hexdigest()
-    return f"claim-{digest[:32]}"
-
-
-def extract_profile_claims(
-    profile: Mapping[str, Any],
-    *,
-    extraction_id: str = "",
-    source_digest: str = "",
-) -> list[dict[str, Any]]:
-    """Extract atomic, source-linked capability claims from explicit profile text."""
-    claims: list[dict[str, Any]] = []
-    base_ref = f"master-resume-extraction:{extraction_id}" if extraction_id else "candidate-profile"
-
-    def add(capability: str, *, entity_ref: str, evidence_ref: str, evidence_text: str, confidence: float) -> None:
-        concept = f"experience.skill.{capability}"
-        source_ref = f"{base_ref}/{evidence_ref}"
-        claims.append(
-            {
-                "claim_id": _claim_id(source_ref, concept),
-                "claim_type": "EXPERIENCE_CAPABILITY",
-                "concept": concept,
-                "capability": capability,
-                "entity_ref": entity_ref,
-                "evidence_text_ref": evidence_ref,
-                "evidence_text": _clean(evidence_text),
-                "source_ref": source_ref,
-                "source_digest": source_digest or None,
-                "confidence": float(confidence),
-            }
-        )
-
-    for i, group in enumerate(profile.get("skills") or []):
-        if not isinstance(group, Mapping):
-            continue
-        for j, raw_skill in enumerate(group.get("skills") or []):
-            skill = _clean(raw_skill)
-            for capability in capability_for_skill(skill):
-                add(
-                    capability,
-                    entity_ref=f"skills.{i}",
-                    evidence_ref=f"skills.{i}.skills.{j}",
-                    evidence_text=skill,
-                    confidence=0.99,
-                )
-
-    for i, raw_exp in enumerate(profile.get("experience") or []):
-        if not isinstance(raw_exp, Mapping):
-            continue
-        for j, raw_bullet in enumerate(raw_exp.get("bullets") or []):
-            bullet = _clean(raw_bullet)
-            for capability in capability_for_text(bullet):
-                add(
-                    capability,
-                    entity_ref=f"experience.{i}",
-                    evidence_ref=f"experience.{i}.bullets.{j}",
-                    evidence_text=bullet,
-                    confidence=0.98,
-                )
-
-    for i, raw_project in enumerate(profile.get("projects") or []):
-        if not isinstance(raw_project, Mapping):
-            continue
-        for j, raw_tool in enumerate(raw_project.get("tools") or []):
-            tool = _clean(raw_tool)
-            for capability in capability_for_skill(tool):
-                add(
-                    capability,
-                    entity_ref=f"projects.{i}",
-                    evidence_ref=f"projects.{i}.tools.{j}",
-                    evidence_text=tool,
-                    confidence=0.97,
-                )
-        for j, raw_bullet in enumerate(raw_project.get("bullets") or []):
-            bullet = _clean(raw_bullet)
-            for capability in capability_for_text(bullet):
-                add(
-                    capability,
-                    entity_ref=f"projects.{i}",
-                    evidence_ref=f"projects.{i}.bullets.{j}",
-                    evidence_text=bullet,
-                    confidence=0.95,
-                )
-
-    # Deterministic de-duplication by source-linked claim identity.
-    unique: dict[str, dict[str, Any]] = {}
-    for claim in claims:
-        unique[str(claim["claim_id"])] = claim
-    return [unique[key] for key in sorted(unique)]
-
-
-def _month_date(year: int, month: int, *, end: bool) -> date:
-    day = calendar.monthrange(year, month)[1] if end else 1
-    return date(year, month, day)
-
-
-def parse_date(value: Any, *, end: bool = False, as_of: date | None = None) -> date | None:
-    text = _clean(value).casefold().strip(".,")
-    if not text:
-        return None
-    if text in {"present", "current", "now", "ongoing"}:
-        return as_of or date.today()
-    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%Y", "%Y-%m"):
-        try:
-            parsed = datetime.strptime(text, fmt).date()
-            if fmt in {"%m/%Y", "%Y-%m"}:
-                return _month_date(parsed.year, parsed.month, end=end)
-            return parsed
-        except ValueError:
-            pass
-    match = re.fullmatch(r"(?P<month>[a-z]+)\s+(?P<year>\d{4})", text)
-    if match and match.group("month") in _MONTHS:
-        return _month_date(int(match.group("year")), _MONTHS[match.group("month")], end=end)
-    match = re.fullmatch(r"(?P<year>\d{4})", text)
+def _month_index(value: Any, *, as_of: date, current_if_blank: bool = False) -> int | None:
+    text = str(value or "").strip()
+    normalized = _normalize(text)
+    if not normalized:
+        if not current_if_blank:
+            return None
+        return as_of.year * 12 + (as_of.month - 1)
+    if normalized in _CURRENT_TOKENS or any(token in normalized for token in ("present", "current")):
+        return as_of.year * 12 + (as_of.month - 1)
+    # Preserve exact YYYY-MM and YYYY first; dateutil fills missing components
+    # from today's date which would accidentally increase duration.
+    match = re.fullmatch(r"(\d{4})[-/](\d{1,2})", normalized)
     if match:
-        year = int(match.group("year"))
-        return date(year, 12, 31) if end else date(year, 1, 1)
-    return None
+        year, month = int(match.group(1)), int(match.group(2))
+        if 1 <= month <= 12:
+            return year * 12 + (month - 1)
+        return None
+    match = re.fullmatch(r"(\d{4})", normalized)
+    if match:
+        return int(match.group(1)) * 12  # January: conservative for an end year too.
+    try:
+        parsed = date_parser.parse(text, fuzzy=True, default=datetime(1900, 1, 1))
+    except (ValueError, OverflowError, TypeError):
+        return None
+    if parsed.year < 1900 or parsed.year > as_of.year + 20:
+        return None
+    return parsed.year * 12 + (parsed.month - 1)
 
 
-def experience_intervals(
-    profile: Mapping[str, Any],
-    *,
-    as_of: date | None = None,
-    entity_refs: set[str] | None = None,
-) -> list[tuple[date, date, str]]:
-    current = as_of or date.today()
-    rows: list[tuple[date, date, str]] = []
-    for index, raw in enumerate(profile.get("experience") or []):
-        if not isinstance(raw, Mapping):
+def _employment_intervals(*, connection: sqlite3.Connection, as_of: date) -> list[dict[str, Any]]:
+    starts = graph.current_facts("employment.start_date", connection=connection)
+    ends = graph.current_facts("employment.end_date", connection=connection)
+    end_by_entity = {str(row.get("entity_ref") or ""): row for row in ends}
+    intervals: list[dict[str, Any]] = []
+    for start_fact in starts:
+        entity = str(start_fact.get("entity_ref") or "")
+        if not entity:
             continue
-        entity = f"experience.{index}"
-        if entity_refs is not None and entity not in entity_refs:
-            continue
-        start = parse_date(raw.get("start_date"), end=False, as_of=current)
-        end = parse_date(raw.get("end_date"), end=True, as_of=current)
+        start = _month_index(start_fact.get("value"), as_of=as_of)
         if start is None:
             continue
-        if end is None:
-            # Missing end date is not automatically "present". Only explicit
-            # present/current text may resolve to as_of.
+        end_fact = end_by_entity.get(entity)
+        # Existing Candidate Truth treats experience.0 as current employer/title.
+        current_if_blank = entity == "experience.0"
+        end = _month_index(end_fact.get("value") if end_fact else None, as_of=as_of, current_if_blank=current_if_blank)
+        if end is None or end <= start:
             continue
-        if end > current:
-            end = current
-        if end < start:
-            continue
-        rows.append((start, end, entity))
-    return rows
+        intervals.append(
+            {
+                "entity_ref": entity,
+                "start_month": start,
+                "end_month": min(end, as_of.year * 12 + (as_of.month - 1)),
+                "source_fact_ids": [start_fact["fact_id"], *(([end_fact["fact_id"]]) if end_fact else [])],
+            }
+        )
+    return intervals
 
 
-def merge_intervals(intervals: Sequence[tuple[date, date, str]]) -> list[tuple[date, date]]:
-    ordered = sorted((start, end) for start, end, _entity in intervals)
+def _merge_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    ordered = sorted((start, end) for start, end in intervals if end > start)
     if not ordered:
         return []
-    merged: list[tuple[date, date]] = [ordered[0]]
+    merged = [ordered[0]]
     for start, end in ordered[1:]:
-        prev_start, prev_end = merged[-1]
-        if start <= prev_end:
-            if end > prev_end:
-                merged[-1] = (prev_start, end)
+        previous_start, previous_end = merged[-1]
+        if start <= previous_end:
+            merged[-1] = (previous_start, max(previous_end, end))
         else:
             merged.append((start, end))
     return merged
 
 
-def conservative_years(intervals: Sequence[tuple[date, date, str]]) -> float:
-    merged = merge_intervals(intervals)
-    days = sum((end - start).days + 1 for start, end in merged)
-    exact = days / 365.2425
-    # Never round upward.  Two decimals are enough for downstream range/select
-    # conversion while retaining a conservative derivation.
-    return math.floor(exact * 100.0) / 100.0
-
-
-def total_experience(profile: Mapping[str, Any], *, as_of: date | None = None) -> dict[str, Any]:
-    intervals = experience_intervals(profile, as_of=as_of)
-    if not intervals:
-        return {"status": "MISSING_FACT", "reason": "no_complete_experience_intervals"}
-    merged = merge_intervals(intervals)
+def _duration_result(intervals: list[dict[str, Any]], *, concept_id: str) -> dict[str, Any]:
+    merged = _merge_intervals([(int(item["start_month"]), int(item["end_month"])) for item in intervals])
+    months = sum(end - start for start, end in merged)
+    if months <= 0:
+        return {"status": "MISSING_FACT", "concept_id": concept_id, "derivation_version": DERIVATION_VERSION}
+    # Floor, never round upward. A display layer can choose integer or decimal.
+    years_decimal = math.floor((months / 12.0) * 100.0) / 100.0
     return {
         "status": "DERIVED",
+        "concept_id": concept_id,
         "answer_mode": "COMPUTED_FACT",
-        "value": conservative_years(intervals),
-        "unit": "years",
-        "evidence_entities": [entity for _start, _end, entity in intervals],
-        "merged_intervals": [(start.isoformat(), end.isoformat()) for start, end in merged],
+        "value": years_decimal,
+        "value_type": "number",
+        "months": months,
+        "years_floor": months // 12,
+        "source_fact_ids": sorted({fid for item in intervals for fid in item["source_fact_ids"]}),
+        "evidence_ids": [],
+        "confidence": 0.98,
+        "reason": "OVERLAP_AWARE_EMPLOYMENT_DURATION",
         "derivation_version": DERIVATION_VERSION,
+        "rounding_policy": "FLOOR_NEVER_UP",
     }
 
 
-def capability_evidence(
-    capability: str,
-    claims: Sequence[Mapping[str, Any]],
-) -> list[dict[str, Any]]:
-    wanted = _slug(capability)
-    return [dict(claim) for claim in claims if _slug(str(claim.get("capability") or "")) == wanted]
+def derive_total_experience(*, as_of: date | None = None, connection: sqlite3.Connection | None = None) -> dict[str, Any]:
+    owns = connection is None
+    connection = connection or get_connection()
+    try:
+        graph.ensure_schema(connection)
+        intervals = _employment_intervals(connection=connection, as_of=as_of or date.today())
+        return _duration_result(intervals, concept_id="experience.total_years")
+    finally:
+        if owns:
+            connection.close()
 
 
-def capability_boolean(capability: str, claims: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    evidence = capability_evidence(capability, claims)
-    if not evidence:
-        return {"status": "MISSING_FACT", "reason": "no_explicit_capability_evidence"}
-    return {
-        "status": "DERIVED",
-        "answer_mode": "EXPERIENCE_EVIDENCE_BOOLEAN",
-        "value": True,
-        "capability": _slug(capability),
-        "evidence_ids": [str(item.get("claim_id")) for item in evidence],
-        "derivation_version": DERIVATION_VERSION,
-    }
+def _skill_concept(skill: str) -> str | None:
+    raw = str(skill or "").strip()
+    if not raw:
+        return None
+    direct = "skill." + re.sub(r"[^a-z0-9]+", "_", raw.casefold()).strip("_")
+    if ontology.concept(direct):
+        return direct
+    candidates = ontology.retrieve(raw, top_k=5)
+    for item in candidates:
+        if str(item["concept_id"]).startswith("skill.") and float(item["score"]) >= 0.82:
+            return str(item["concept_id"])
+    return None
 
 
-def capability_years(
-    capability: str,
-    profile: Mapping[str, Any],
-    claims: Sequence[Mapping[str, Any]],
+def derive_capability_boolean(
+    concept_id: str,
+    *,
+    connection: sqlite3.Connection | None = None,
+) -> dict[str, Any]:
+    concept = ontology.require_concept(concept_id)
+    if not concept.concept_id.startswith("skill."):
+        raise ValueError("Capability derivation requires a skill.* concept.")
+    owns = connection is None
+    connection = connection or get_connection()
+    try:
+        graph.ensure_schema(connection)
+        relations = graph.current_relations(predicate="HAS_SKILL", object_concept=concept.concept_id, connection=connection)
+        if not relations:
+            # Absence of evidence is not evidence of absence; never invent "No".
+            return {
+                "status": "MISSING_FACT",
+                "concept_id": concept.concept_id,
+                "reason": "NO_EXPLICIT_CAPABILITY_EVIDENCE",
+                "derivation_version": DERIVATION_VERSION,
+            }
+        evidence_ids = sorted({eid for relation in relations for eid in relation.get("evidence_ids") or []})
+        return {
+            "status": "DERIVED",
+            "concept_id": concept.concept_id,
+            "answer_mode": "EXPERIENCE_EVIDENCE_BOOLEAN",
+            "value": True,
+            "value_type": "boolean",
+            "source_fact_ids": [],
+            "evidence_ids": evidence_ids,
+            "confidence": min(float(relation.get("confidence") or 0.0) for relation in relations),
+            "reason": "EXPLICIT_CAPABILITY_EVIDENCE",
+            "derivation_version": DERIVATION_VERSION,
+        }
+    finally:
+        if owns:
+            connection.close()
+
+
+def derive_skill_years(
+    skill: str,
     *,
     as_of: date | None = None,
+    connection: sqlite3.Connection | None = None,
 ) -> dict[str, Any]:
-    evidence = capability_evidence(capability, claims)
-    entity_refs = {
-        str(item.get("entity_ref")) for item in evidence
-        if str(item.get("entity_ref") or "").startswith("experience.")
-    }
-    if not entity_refs:
-        return {"status": "MISSING_FACT", "reason": "capability_not_bound_to_dated_experience"}
-    intervals = experience_intervals(profile, as_of=as_of, entity_refs=entity_refs)
-    if not intervals:
-        return {"status": "MISSING_FACT", "reason": "capability_experience_dates_missing"}
-    return {
-        "status": "DERIVED",
-        "answer_mode": "COMPUTED_FACT",
-        "value": conservative_years(intervals),
-        "unit": "years",
-        "capability": _slug(capability),
-        "evidence_ids": [str(item.get("claim_id")) for item in evidence],
-        "evidence_entities": sorted(entity_refs),
-        "derivation_version": DERIVATION_VERSION,
-    }
+    skill_concept = _skill_concept(skill)
+    if skill_concept is None:
+        return {"status": "MISSING_FACT", "concept_id": "experience.skill_years", "reason": "UNKNOWN_SKILL_CONCEPT", "derivation_version": DERIVATION_VERSION}
+    owns = connection is None
+    connection = connection or get_connection()
+    try:
+        graph.ensure_schema(connection)
+        relations = graph.current_relations(predicate="HAS_SKILL", object_concept=skill_concept, connection=connection)
+        if not relations:
+            return {"status": "MISSING_FACT", "concept_id": "experience.skill_years", "reason": "NO_EXPLICIT_SKILL_EVIDENCE", "derivation_version": DERIVATION_VERSION}
+        entities = {str(row["subject_concept"]) for row in relations if str(row.get("subject_concept") or "").startswith("experience.")}
+        if not entities:
+            # Skill-section evidence proves usage but not duration.
+            return {"status": "MISSING_FACT", "concept_id": "experience.skill_years", "reason": "SKILL_DURATION_NOT_EVIDENCED_BY_DATED_EXPERIENCE", "derivation_version": DERIVATION_VERSION}
+        all_intervals = _employment_intervals(connection=connection, as_of=as_of or date.today())
+        intervals = [item for item in all_intervals if item["entity_ref"] in entities]
+        result = _duration_result(intervals, concept_id="experience.skill_years")
+        if result.get("status") == "DERIVED":
+            result["conditions"] = {"skill": skill}
+            result["evidence_ids"] = sorted({eid for row in relations for eid in row.get("evidence_ids") or []})
+            result["reason"] = "DATED_EXPERIENCE_WITH_EXPLICIT_SKILL_EVIDENCE"
+        return result
+    finally:
+        if owns:
+            connection.close()
 
 
-def supported_capabilities(claims: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    values = sorted({str(item.get("capability")) for item in claims if item.get("capability")})
-    if not values:
-        return {"status": "MISSING_FACT", "reason": "no_explicit_capability_evidence"}
-    return {
-        "status": "DERIVED",
-        "answer_mode": "ENUMERATION",
-        "value": values,
-        "evidence_ids": sorted({str(item.get("claim_id")) for item in claims if item.get("claim_id")}),
-        "derivation_version": DERIVATION_VERSION,
-    }
+def derive_work_mode(
+    concept_id: str,
+    *,
+    connection: sqlite3.Connection | None = None,
+) -> dict[str, Any]:
+    wanted = {
+        "work.remote": {"remote", "work from home", "wfh"},
+        "work.hybrid": {"hybrid"},
+        "work.onsite": {"onsite", "on site", "in person", "in-person"},
+    }.get(concept_id)
+    if wanted is None:
+        raise ValueError("Unsupported work-mode concept.")
+    owns = connection is None
+    connection = connection or get_connection()
+    try:
+        graph.ensure_schema(connection)
+        resolved = graph.resolve_fact("preference.work_mode", connection=connection)
+        if resolved.get("status") != "ANSWERED":
+            return {"status": "MISSING_FACT", "concept_id": concept_id, "reason": "EXPLICIT_WORK_MODE_PREFERENCE_MISSING", "derivation_version": DERIVATION_VERSION}
+        fact = dict(resolved["fact"])
+        raw = fact.get("value")
+        values = raw if isinstance(raw, list) else [raw]
+        normalized = {_normalize(item).replace("-", " ") for item in values if str(item or "").strip()}
+        supported = any(any(token == value or token in value for token in wanted) for value in normalized)
+        return {
+            "status": "DERIVED",
+            "concept_id": concept_id,
+            "answer_mode": "PREFERENCE",
+            "value": bool(supported),
+            "value_type": "boolean",
+            "source_fact_ids": [fact["fact_id"]],
+            "evidence_ids": [],
+            "confidence": float(fact.get("confidence") or 0.0),
+            "reason": "EXPLICIT_WORK_MODE_PREFERENCE",
+            "derivation_version": DERIVATION_VERSION,
+        }
+    finally:
+        if owns:
+            connection.close()
+
+
+def derive(
+    concept_id: str,
+    *,
+    conditions: Mapping[str, Any] | None = None,
+    as_of: date | None = None,
+    connection: sqlite3.Connection | None = None,
+) -> dict[str, Any]:
+    key = str(concept_id or "").strip().casefold()
+    conditions = dict(conditions or {})
+    if key == "experience.total_years":
+        return derive_total_experience(as_of=as_of, connection=connection)
+    if key == "experience.skill_years":
+        return derive_skill_years(str(conditions.get("skill") or ""), as_of=as_of, connection=connection)
+    if key.startswith("skill."):
+        return derive_capability_boolean(key, connection=connection)
+    if key in {"work.remote", "work.hybrid", "work.onsite"}:
+        return derive_work_mode(key, connection=connection)
+    return {"status": "MISSING_FACT", "concept_id": key, "reason": "NO_SAFE_DERIVATION", "derivation_version": DERIVATION_VERSION}
