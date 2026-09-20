@@ -108,6 +108,22 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
         application_plan_v2.ensure_schema(connection)
         for statement in SCHEMA_STATEMENTS:
             connection.execute(statement)
+        approval_columns = {
+            str(row["name"])
+            for row in connection.execute(
+                "PRAGMA table_info(application_review_approvals_v2)"
+            ).fetchall()
+        }
+        if "approval_source" not in approval_columns:
+            connection.execute(
+                """ALTER TABLE application_review_approvals_v2
+                   ADD COLUMN approval_source TEXT NOT NULL DEFAULT 'USER_REVIEW'"""
+            )
+        if "execution_mandate_id" not in approval_columns:
+            connection.execute(
+                """ALTER TABLE application_review_approvals_v2
+                   ADD COLUMN execution_mandate_id TEXT"""
+            )
         if owns:
             connection.commit()
     finally:
@@ -366,6 +382,18 @@ def _review_result(
         else None,
         "approval_consumed": bool(
             approval is not None and approval["consumed_at"] is not None
+        ),
+        "approval_source": (
+            str(approval["approval_source"])
+            if approval is not None and "approval_source" in approval.keys()
+            else None
+        ),
+        "execution_mandate_id": (
+            str(approval["execution_mandate_id"])
+            if approval is not None
+            and "execution_mandate_id" in approval.keys()
+            and approval["execution_mandate_id"] is not None
+            else None
         ),
         "submission_authority": False,
     }
@@ -772,6 +800,126 @@ def approve_review(
             "review_id": str(review_id),
             "review_digest": expected_review,
             "approval_digest": approval_digest,
+            "approved": True,
+            "replayed": False,
+            "consumed": False,
+            "submission_authority": False,
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def approve_review_from_execution_mandate(
+    *,
+    review_id: str,
+    execution_mandate_id: str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    """Create the internal technical approval derived from the earlier user mandate.
+
+    This is NOT a customer-facing approval.  The customer already approved the
+    pre-browser package.  The later review binds the exact browser/form state so
+    submit authority can be minted without another UI prompt.
+    """
+    if not application_review_v2_enabled():
+        raise RuntimeError("Application Review V2 is disabled.")
+
+    from app import application_execution_mandate_v1 as mandate_v1
+
+    key = _text(idempotency_key, "Mandate-derived approval idempotency key", 240)
+    current = revalidate_review(review_id)
+    if current.get("fresh") is not True:
+        raise ValueError("Internal browser review is stale.")
+    review = get_review(review_id)
+    mandate = mandate_v1.mandate_authorizes_internal_review(
+        mandate_id=str(execution_mandate_id),
+        review_record=review,
+    )
+
+    approval_material = {
+        "version": APPROVAL_VERSION,
+        "source": "EXECUTION_MANDATE",
+        "execution_mandate_id": str(mandate["mandate_id"]),
+        "execution_mandate_review_digest": str(mandate["review_digest"]),
+        "review_id": str(review_id),
+        "review_digest": str(review["review_digest"]),
+        "plan_digest": str(review["plan_digest"]),
+        "prepared_package_digest": str(review["prepared_package_digest"]),
+        "browser_form_digest": str(review["browser_form_digest"]),
+    }
+    approval_digest = sha256_json(approval_material)
+
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        owner = current_owner(connection)
+        if connection.in_transaction:
+            connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        prior = connection.execute(
+            """SELECT * FROM application_review_approvals_v2
+               WHERE tenant_id=? AND user_id=? AND review_id=?""",
+            (owner.tenant_id, owner.user_id, str(review_id)),
+        ).fetchone()
+        if prior is not None:
+            if (
+                str(prior["approval_source"]) != "EXECUTION_MANDATE"
+                or str(prior["execution_mandate_id"] or "")
+                != str(mandate["mandate_id"])
+                or str(prior["approval_digest"]) != approval_digest
+            ):
+                raise ValueError(
+                    "Internal browser review already has a different approval authority."
+                )
+            connection.commit()
+            return {
+                "approval_id": str(prior["approval_id"]),
+                "review_id": str(review_id),
+                "review_digest": str(review["review_digest"]),
+                "approval_digest": approval_digest,
+                "approval_source": "EXECUTION_MANDATE",
+                "execution_mandate_id": str(mandate["mandate_id"]),
+                "approved": True,
+                "replayed": True,
+                "consumed": prior["consumed_at"] is not None,
+                "submission_authority": False,
+            }
+
+        approval_id = f"review-approval-{uuid4()}"
+        connection.execute(
+            """INSERT INTO application_review_approvals_v2(
+                   approval_id,tenant_id,user_id,review_id,idempotency_key,
+                   approval_version,review_digest,plan_digest,prepared_package_digest,
+                   browser_form_digest,approval_digest,approval_source,
+                   execution_mandate_id
+               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                approval_id,
+                owner.tenant_id,
+                owner.user_id,
+                str(review_id),
+                key,
+                APPROVAL_VERSION,
+                str(review["review_digest"]),
+                str(review["plan_digest"]),
+                str(review["prepared_package_digest"]),
+                str(review["browser_form_digest"]),
+                approval_digest,
+                "EXECUTION_MANDATE",
+                str(mandate["mandate_id"]),
+            ),
+        )
+        connection.commit()
+        return {
+            "approval_id": approval_id,
+            "review_id": str(review_id),
+            "review_digest": str(review["review_digest"]),
+            "approval_digest": approval_digest,
+            "approval_source": "EXECUTION_MANDATE",
+            "execution_mandate_id": str(mandate["mandate_id"]),
             "approved": True,
             "replayed": False,
             "consumed": False,
