@@ -23,13 +23,14 @@ EXPECTED_MIGRATIONS = (
     "migrations.053_mail_intelligence_v2",
     "migrations.054_application_notifications_v1",
     "migrations.055_application_communication_notifications_v1",
+    "migrations.056_mandatory_mailbox_verification_v1",
     "migrations.057_linkedin_recent_url_backfill_v1",
 )
 
 
 def test_complete_loop_migration_manifest_is_exact() -> None:
     assert complete_loop_migrate.MIGRATIONS == EXPECTED_MIGRATIONS
-    assert len(complete_loop_migrate.MIGRATIONS) == 16
+    assert len(complete_loop_migrate.MIGRATIONS) == 17
     assert complete_loop_migrate.REQUIRED_CALLBACK_COLUMNS == {
         "payload_sha256",
         "execution_artifact_id",
@@ -45,12 +46,19 @@ def test_complete_loop_migration_manifest_is_exact() -> None:
         "application_communication_events_v2",
         "application_notification_preferences_v1",
         "application_notification_outbox_v1",
+        "mailbox_verification_artifacts",
+        "mailbox_verification_audit",
     }.issubset(complete_loop_migrate.REQUIRED_TABLES)
     assert complete_loop_migrate.REQUIRED_NOTIFICATION_PREFERENCE_COLUMNS == {
         "destination_email",
         "submission_email_enabled",
         "employer_confirmation_email_enabled",
         "communication_email_enabled",
+    }
+    assert complete_loop_migrate.REQUIRED_INBOUND_MAIL_ENCRYPTION_COLUMNS == {
+        "content_ciphertext",
+        "content_nonce",
+        "content_algorithm",
     }
 
 
@@ -75,8 +83,9 @@ def test_complete_loop_runner_tolerates_executescript_commit_boundary(
         authorization=complete_loop_migrate.PRODUCTION_AUTHORIZATION,
         full_quick_check=True,
     )
-    assert len(result["migrations"]) == 16
+    assert len(result["migrations"]) == 17
     assert "migrations.052_inbound_mail_relay_v1" in result["migrations"]
+    assert "migrations.056_mandatory_mailbox_verification_v1" in result["migrations"]
     assert "migrations.057_linkedin_recent_url_backfill_v1" in result["migrations"]
     assert result["quick_check"] == "ok"
 
