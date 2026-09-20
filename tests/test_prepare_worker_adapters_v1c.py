@@ -574,8 +574,10 @@ def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
     assert result["output"]["cover_letter_id"] == "cover-letter-required-94"
     assert result["output"]["cover_letter_artifact_sha256"] == "9" * 64
     assert result["output"]["cover_letter_page_count"] == 1
-    assert result["output"]["customer_review_approved"] is False
+    assert result["output"]["customer_review_approved"] is True
+    assert result["output"]["single_customer_approval_complete"] is True
     assert result["output"]["additional_customer_approval_required"] is False
+    assert result["output"]["post_approval_user_review_required"] is False
     assert result["output"]["final_submit_executed"] is False
     assert result["output"]["submission_authority"] is False
 
@@ -637,8 +639,10 @@ def test_ats_ready_for_review_completes_orchestrator(worker_db, monkeypatch):
     assert result["task_status"] == "SUCCEEDED"
     assert result["operation_status"] == "READY_FOR_REVIEW"
     assert result["output"]["apply_prepare_state"] == "READY_FOR_REVIEW"
-    assert result["output"]["customer_review_approved"] is False
+    assert result["output"]["customer_review_approved"] is True
+    assert result["output"]["single_customer_approval_complete"] is True
     assert result["output"]["additional_customer_approval_required"] is False
+    assert result["output"]["post_approval_user_review_required"] is False
     assert result["output"]["final_submit_executed"] is False
     assert seen["requirements"] == []
     assert seen["permissions"]["final_review"] is False
@@ -929,7 +933,7 @@ def test_provider_capability_retry_uses_new_immutable_key_only_for_exact_blocker
 
     assert key == (
         "prepare:prepare-op-provider-retry:application-plan:v1c:"
-        "provider-capability-v2"
+        "runtime-integration-v1:provider-capability-v2"
     )
     assert prior_id == "prior-provider-plan"
 
@@ -986,7 +990,10 @@ def test_provider_capability_retry_never_bypasses_mixed_or_answer_blockers(
         preflight=preflight,
     )
 
-    assert key == "prepare:prepare-op-provider-retry:application-plan:v1c"
+    assert key == (
+        "prepare:prepare-op-provider-retry:application-plan:v1c:"
+        "runtime-integration-v1"
+    )
     assert prior_id is None
 
 
@@ -1151,3 +1158,28 @@ def test_ats_browser_waits_for_single_prebrowser_mandate(
         orchestrator.TASK_ATS_FORM_PREPARATION,
     )["status"] == "PENDING"
     assert result["submission_authority"] is False
+
+
+
+def test_runtime_integration_plan_generation_is_distinct_from_legacy_v1c() -> None:
+    operation = {
+        "operation_id": "prepare-op-generation",
+        "application_id": "application-generation",
+        "job_id": 501,
+    }
+    preflight = {
+        "preflight_package_id": "preflight-generation",
+        "resume_version_id": "resume-generation",
+        "resume_pdf_sha256": "a" * 64,
+    }
+    key, prior_id = workers._application_plan_idempotency_key(
+        operation=operation,
+        pending_task={"output": {}},
+        preflight=preflight,
+    )
+    assert key == (
+        "prepare:prepare-op-generation:application-plan:v1c:"
+        "runtime-integration-v1"
+    )
+    assert prior_id is None
+    assert key != "prepare:prepare-op-generation:application-plan:v1c"

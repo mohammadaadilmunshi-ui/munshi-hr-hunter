@@ -39,6 +39,38 @@ def _sync_subroute(parameter: str, state_key: str, values: dict[str, str]) -> No
 
 
 
+def _external_job_links(row: dict[str, Any]) -> list[tuple[str, str, bool]]:
+    """Resolve user-facing posting/apply links without conflating the two."""
+    links: list[tuple[str, str, bool]] = []
+
+    if is_linkedin_source(row.get("source")):
+        linkedin_url = canonical_linkedin_job_url(
+            row.get("job_url"),
+            job_id=row.get("ats_job_id"),
+        )
+        posting = safe_link(linkedin_url)
+        if posting:
+            links.append(("Open LinkedIn job", posting, False))
+
+        direct = safe_link(
+            direct_application_url(
+                row.get("apply_url"),
+                linkedin_url=linkedin_url,
+            )
+        )
+        if direct and direct != posting:
+            links.append(("Apply", direct, True))
+        return links
+
+    direct = safe_link(row.get("apply_url"))
+    posting = safe_link(row.get("job_url"))
+    if direct:
+        links.append(("Open application", direct, True))
+    if posting and posting != direct:
+        links.append(("Open job posting", posting, False))
+    return links
+
+
 def _relative_time(value: Any) -> str:
     if not value:
         return "Date not recorded"
@@ -169,28 +201,15 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
             on_click=_open_job_detail,
             args=(job_id,),
         )
-        if is_linkedin_source(row.get("source")):
-            linkedin_url = canonical_linkedin_job_url(
-                row.get("job_url"),
-                job_id=row.get("ats_job_id"),
-            )
-            direct_url = direct_application_url(
-                row.get("apply_url"),
-                linkedin_url=linkedin_url,
-            )
-            external_actions = st.columns(2 if direct_url else 1, gap="small")
-            with external_actions[0]:
-                st.link_button(
-                    "Open LinkedIn job",
-                    linkedin_url,
-                    use_container_width=True,
-                )
-            if direct_url:
-                with external_actions[1]:
+        external_links = _external_job_links(row)
+        if external_links:
+            external_actions = st.columns(len(external_links), gap="small")
+            for index, (label, url, primary) in enumerate(external_links):
+                with external_actions[index]:
                     st.link_button(
-                        "Apply",
-                        direct_url,
-                        type="primary",
+                        label,
+                        url,
+                        type="primary" if primary else "secondary",
                         use_container_width=True,
                     )
         actions = st.columns(3, gap="small")
@@ -280,7 +299,19 @@ def _job_detail_dialog(job_id: int) -> None:
             st.caption("Work authorization: not recorded.")
         if row.get("hard_rejection_reason"):
             st.warning("Eligibility evidence: " + str(row["hard_rejection_reason"]))
-    action_columns = st.columns((1, 1, 1, 1.2))
+    external_links = _external_job_links(row)
+    if external_links:
+        external_actions = st.columns(len(external_links), gap="small")
+        for index, (label, url, primary) in enumerate(external_links):
+            with external_actions[index]:
+                st.link_button(
+                    label,
+                    url,
+                    type="primary" if primary else "secondary",
+                    use_container_width=True,
+                )
+
+    action_columns = st.columns(3)
     with action_columns[0]:
         st.button("Saved" if row["saved"] else "Save", key=f"dialog_save_{job_id}", use_container_width=True, on_click=_toggle_job_saved, args=(job_id, bool(row["saved"])))
     with action_columns[1]:
@@ -302,11 +333,6 @@ def _job_detail_dialog(job_id: int) -> None:
                 type="primary",
                 use_container_width=True,
             )
-    with action_columns[3]:
-        if safe_link(row.get("apply_url")):
-            st.link_button("Open application", safe_link(row["apply_url"]), use_container_width=True)
-        else:
-            st.button("No application URL", disabled=True, use_container_width=True)
     with st.expander("Advanced decision evidence", expanded=False):
         st.caption("Stored evidence only; missing values are not inferred.")
         st.dataframe([{"Source": row.get("source"), "Remote type": row.get("remote_type"), "Date posted": row.get("date_posted"), "Target track": row.get("target_track"), "Hard rejection reason": row.get("hard_rejection_reason")}], hide_index=True, use_container_width=True)

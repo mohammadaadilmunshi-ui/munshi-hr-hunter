@@ -168,9 +168,21 @@ def _host(value: str) -> str:
     candidate = str(value or "").strip().casefold().rstrip(".")
     if "://" in candidate:
         candidate = (urlsplit(candidate).hostname or "").casefold().rstrip(".")
-    if not candidate or "/" in candidate or "@" in candidate:
+    if not candidate or "/" in candidate or "@" in candidate or ":" in candidate:
         raise MailboxVerificationError("Mailbox verification host is invalid.")
     return candidate
+
+
+def _domain_matches(observed: str, expected_parent: str) -> bool:
+    try:
+        observed_domain = _host(observed)
+        expected_domain = _host(expected_parent)
+    except MailboxVerificationError:
+        return False
+    return (
+        observed_domain == expected_domain
+        or observed_domain.endswith("." + expected_domain)
+    )
 
 
 def _request(
@@ -267,7 +279,10 @@ def _extract_link(content: dict[str, Any], allowed_hosts: set[str]) -> str:
         host = (parsed.hostname or "").casefold().rstrip(".")
         if parsed.scheme.casefold() != "https" or not host:
             continue
-        if host in allowed_hosts:
+        if any(
+            _domain_matches(host, expected_domain)
+            for expected_domain in allowed_hosts
+        ):
             matches.append(candidate)
     unique = list(dict.fromkeys(matches))
     if len(unique) != 1:
@@ -382,7 +397,10 @@ def claim_artifact(
         allowed_senders = {
             _host(v) for v in json.loads(str(request["expected_sender_domains_json"]))
         }
-        if sender not in allowed_senders:
+        if not any(
+            _domain_matches(sender, expected_domain)
+            for expected_domain in allowed_senders
+        ):
             _audit(
                 connection, tenant_id=tenant_id, user_id=user_id, request_id=request_id,
                 inbound_id=str(message["inbound_id"]), application_key=application_key,

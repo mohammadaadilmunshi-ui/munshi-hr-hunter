@@ -566,8 +566,16 @@ class RuntimeRecovery:
         _atomic_json(BACKOFF_PATH, state)
 
     def _bootstrap(self, spec: ServiceSpec) -> bool:
+        # launchd persists explicit disable/enable state independently of whether
+        # the plist exists. Clear a stale disabled bit before bootstrapping the
+        # canonical service so recovery can heal an all-services-disabled outage.
+        self.command(
+            ["launchctl", "enable", f"gui/{self.uid}/{spec.label}"],
+            timeout=10,
+        )
         result = self.command(
-            ["launchctl", "bootstrap", f"gui/{self.uid}", str(spec.installed_plist)], timeout=20
+            ["launchctl", "bootstrap", f"gui/{self.uid}", str(spec.installed_plist)],
+            timeout=20,
         )
         return result.returncode == 0 or self.launch_details(spec)["loaded"]
 

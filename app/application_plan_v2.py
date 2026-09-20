@@ -14,6 +14,7 @@ unresolved in V2.
 from __future__ import annotations
 
 import copy
+import ipaddress
 import json
 import os
 import re
@@ -56,9 +57,48 @@ _PROVIDER_HOSTS = {
     "LEVER": ("lever.co",),
     "ASHBY": ("ashbyhq.com",),
     "SMARTRECRUITERS": ("smartrecruiters.com",),
-    "WORKDAY": ("myworkdayjobs.com", "workdayjobs.com"),
+    "WORKDAY": (
+        "myworkdayjobs.com",
+        "myworkdaysite.com",
+        "workdayjobs.com",
+    ),
     "AGILE_ATS": ("agile-ats.com",),
 }
+
+# UNIVERSAL_MAILBOX_POLICY_INTEGRATION_V1
+# Trust hints for mailbox correlation, not provider eligibility gates.
+_PROVIDER_VERIFICATION_SENDER_DOMAINS = {
+    "GREENHOUSE": ("greenhouse.io",),
+    "LEVER": ("lever.co",),
+    "ASHBY": ("ashbyhq.com",),
+    "SMARTRECRUITERS": ("smartrecruiters.com",),
+    "WORKDAY": (
+        "myworkdayjobs.com",
+        "myworkdaysite.com",
+        "workdayjobs.com",
+        "workday.com",
+        "myworkday.com",
+    ),
+    "AGILE_ATS": ("agile-ats.com",),
+}
+_COMMON_PUBLIC_SECOND_LEVEL = frozenset(
+    {"ac", "co", "com", "edu", "gov", "net", "org"}
+)
+_PROVIDER_POLICY_FIELDS = frozenset(
+    {
+        "permitted",
+        "authentication_mode",
+        "captcha_policy",
+        "mailbox_verification",
+        "account_identity",
+        "verification_sender_domains",
+        "verification_link_hosts",
+        "username_policy",
+    }
+)
+_USERNAME_POLICIES = frozenset(
+    {"EMAIL", "APPLICATION_EMAIL", "MAIL_ALIAS", "EMAIL_LOCAL_PART"}
+)
 
 SCHEMA_STATEMENTS = (
     """CREATE TABLE IF NOT EXISTS application_plans_v2 (
@@ -385,6 +425,131 @@ def _provider_from_job(job: Mapping[str, Any]) -> str:
     return "GENERIC"
 
 
+def _verification_domain(value: Any, field: str) -> str:
+    candidate = str(value or "").strip().casefold().rstrip(".")
+    if "://" in candidate:
+        parsed = urlsplit(candidate)
+        if (
+            parsed.scheme.casefold() != "https"
+            or parsed.username
+            or parsed.password
+            or not parsed.hostname
+        ):
+            raise ValueError(f"{field} contains an invalid verification domain.")
+        candidate = str(parsed.hostname).casefold().rstrip(".")
+    if (
+        not candidate
+        or "/" in candidate
+        or "@" in candidate
+        or ":" in candidate
+        or "." not in candidate
+    ):
+        raise ValueError(f"{field} contains an invalid verification domain.")
+    labels = candidate.split(".")
+    if any(
+        not label
+        or len(label) > 63
+        or label.startswith("-")
+        or label.endswith("-")
+        or not re.fullmatch(r"[a-z0-9-]+", label)
+        for label in labels
+    ):
+        raise ValueError(f"{field} contains an invalid verification domain.")
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        pass
+    else:
+        raise ValueError(f"{field} may not contain an IP address.")
+    return candidate
+
+
+def _organizational_domain_hint(host: str) -> str:
+    parts = _verification_domain(host, "Provider host").split(".")
+    if len(parts) <= 2:
+        return ".".join(parts)
+    if len(parts[-1]) == 2 and parts[-2] in _COMMON_PUBLIC_SECOND_LEVEL:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
+
+
+def _verification_domain_set(values: Sequence[Any], field: str) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(_verification_domain(value, field) for value in values)
+    )
+
+
+def _expand_verification_domains(hosts: Sequence[str]) -> tuple[str, ...]:
+    expanded: list[str] = []
+    for host in hosts:
+        normalized = _verification_domain(host, "Provider host")
+        expanded.extend((normalized, _organizational_domain_hint(normalized)))
+    return tuple(dict.fromkeys(expanded))
+
+
+def _policy_domain_additions(
+    raw: Mapping[str, Any],
+    *,
+    nested_key: str,
+    legacy_key: str,
+    field: str,
+) -> tuple[str, ...]:
+    mailbox = raw.get("mailbox_verification")
+    if mailbox is None:
+        mailbox_map: Mapping[str, Any] = {}
+    elif isinstance(mailbox, Mapping):
+        mailbox_map = mailbox
+        unknown_nested = sorted(
+            set(mailbox_map) - {"sender_domains", "link_hosts", "mandatory"}
+        )
+        if unknown_nested:
+            raise ValueError(
+                "Unsupported mailbox verification policy fields: "
+                + ", ".join(unknown_nested)
+            )
+        if mailbox_map.get("mandatory") not in (None, True):
+            raise ValueError("Application mailbox verification is mandatory.")
+    else:
+        raise ValueError("Provider mailbox verification policy must be an object.")
+
+    value = mailbox_map.get(nested_key)
+    if value is None:
+        value = raw.get(legacy_key)
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        values: Sequence[Any] = (value,)
+    elif isinstance(value, Sequence):
+        values = value
+    else:
+        raise ValueError(f"{field} must be a domain list.")
+    return _verification_domain_set(values, field)
+
+
+def _account_identity_policy(raw: Mapping[str, Any]) -> dict[str, str]:
+    nested = raw.get("account_identity")
+    if nested is None:
+        account: Mapping[str, Any] = {}
+    elif isinstance(nested, Mapping):
+        account = nested
+        unknown = sorted(set(account) - {"username_policy"})
+        if unknown:
+            raise ValueError(
+                "Unsupported account identity policy fields: " + ", ".join(unknown)
+            )
+    else:
+        raise ValueError("Provider account identity policy must be an object.")
+
+    username_policy = str(
+        account.get("username_policy")
+        or raw.get("username_policy")
+        or "EMAIL"
+    ).strip().upper()
+    if username_policy not in _USERNAME_POLICIES:
+        raise ValueError("Unsupported ATS username policy.")
+    return {"username_policy": username_policy}
+
+
 def _normalize_provider_policy(
     value: Mapping[str, Any] | None,
     *,
@@ -392,33 +557,64 @@ def _normalize_provider_policy(
     allowed_hosts: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     raw = dict(value or {})
-    unknown = sorted(set(raw) - {"permitted", "authentication_mode", "captcha_policy"})
+    unknown = sorted(set(raw) - _PROVIDER_POLICY_FIELDS)
     if unknown:
         raise ValueError("Unsupported provider policy fields: " + ", ".join(unknown))
-    effective_hosts = tuple(
-        dict.fromkeys(
-            str(host).casefold().rstrip(".")
-            for host in (
-                _PROVIDER_HOSTS.get(provider, ())
-                if provider in KNOWN_PROVIDER_RECIPES
-                else allowed_hosts
-            )
-            if str(host).strip()
-        )
+
+    provider_hosts = _PROVIDER_HOSTS.get(provider, ())
+    effective_hosts = _verification_domain_set(
+        (*provider_hosts, *allowed_hosts),
+        "Provider allowed host",
     )
     permitted = raw.get("permitted", bool(effective_hosts))
     if not isinstance(permitted, bool):
         raise ValueError("Provider policy permitted must be boolean.")
+
     authentication_mode = (
         str(raw.get("authentication_mode") or "PAUSE_IF_REQUIRED").strip().upper()
     )
     if authentication_mode not in {"NONE", "PAUSE_IF_REQUIRED"}:
         raise ValueError("Unsupported provider authentication mode.")
+
     captcha_policy = str(raw.get("captcha_policy") or "PAUSE").strip().upper()
     if captcha_policy != "PAUSE":
         raise ValueError(
             "Application Plan V2 never permits automatic CAPTCHA handling."
         )
+
+    default_link_hosts = _expand_verification_domains(effective_hosts)
+    default_sender_domains = tuple(
+        dict.fromkeys(
+            (
+                *_PROVIDER_VERIFICATION_SENDER_DOMAINS.get(provider, ()),
+                *_expand_verification_domains(effective_hosts),
+            )
+        )
+    )
+    explicit_sender_domains = _policy_domain_additions(
+        raw,
+        nested_key="sender_domains",
+        legacy_key="verification_sender_domains",
+        field="Verification sender domain",
+    )
+    explicit_link_hosts = _policy_domain_additions(
+        raw,
+        nested_key="link_hosts",
+        legacy_key="verification_link_hosts",
+        field="Verification link host",
+    )
+    sender_domains = tuple(
+        dict.fromkeys((*default_sender_domains, *explicit_sender_domains))
+    )
+    link_hosts = tuple(
+        dict.fromkeys((*default_link_hosts, *explicit_link_hosts))
+    )
+
+    if permitted and (not effective_hosts or not sender_domains or not link_hosts):
+        raise ValueError(
+            "Executable provider policy requires mailbox sender/link trust domains."
+        )
+
     return {
         "provider": provider,
         "provider_recipe": provider if provider in KNOWN_PROVIDER_RECIPES else None,
@@ -428,6 +624,12 @@ def _normalize_provider_policy(
         "mfa_policy": "PAUSE",
         "credentials_authority": False,
         "allowed_hosts": list(effective_hosts),
+        "mailbox_verification": {
+            "mandatory": True,
+            "sender_domains": list(sender_domains),
+            "link_hosts": list(link_hosts),
+        },
+        "account_identity": _account_identity_policy(raw),
     }
 
 

@@ -306,7 +306,9 @@ for required in \
   'HUNTER_ENABLE_COORDINATOR: "false"' \
   'PRODUCTION_CALLBACKS_ENABLED: "false"' \
   'PRODUCTION_STATE_IMPORTED: "false"' \
-  'CLOUD_SHADOW_MODE: "true"'
+  'CLOUD_SHADOW_MODE: "true"' \
+  'MUNSHI_FINAL_SUBMIT_ENABLED: "false"' \
+  'MUNSHI_APPLY_SUBMIT_AUTHORITY_DELIVERY_ENABLED: "false"'
 do
   grep -Fq "$required" "$rendered" || {
     echo "missing staging safety token: $required" >&2
@@ -338,7 +340,7 @@ migration_attempted=1
 "${compose[@]}" stop hunter
 hunter_stopped=1
 
-echo "=== APPLY COMPLETE-LOOP MIGRATIONS 041-055 TO STAGING DB ==="
+echo "=== APPLY COMPLETE-LOOP MIGRATIONS 041-057 TO STAGING DB ==="
 timeout 600s docker run --rm -i   --network none   --read-only   --tmpfs /tmp:rw,nosuid,nodev,size=256m   --mount "type=volume,src=$hunter_data_volume,dst=/app/hunter/data"   --entrypoint python   -e CLOUD_SHADOW_MODE=true   -e PRODUCTION_STATE_IMPORTED=false   -e PRODUCTION_CALLBACKS_ENABLED=false   "$new_hunter_image_id"   /app/hunter/scripts/complete_loop_migrate.py   --db-path "$db_path"   --environment staging   --full-quick-check
 echo "STAGING_COMPLETE_LOOP_MIGRATION=PASS"
 

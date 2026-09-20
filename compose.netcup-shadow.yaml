@@ -16,6 +16,10 @@ services:
       PRODUCTION_CALLBACKS_ENABLED: "false"
       CLOUD_SHADOW_MODE: "true"
       PRODUCTION_STATE_IMPORTED: "false"
+      # Controlled staging is preparation-only. These values intentionally
+      # override staging.env so no deployment can accidentally enable employer submit.
+      MUNSHI_FINAL_SUBMIT_ENABLED: "false"
+      MUNSHI_APPLY_SUBMIT_AUTHORITY_DELIVERY_ENABLED: "false"
     logging:
       driver: json-file
       options:
