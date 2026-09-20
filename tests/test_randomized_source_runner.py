@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import subprocess
+
 from app import database
 from app import randomized_source_runner
 from app.randomized_source_runner import _is_blocked, _last_json, _record_runner_failure
@@ -100,3 +103,87 @@ def test_runner_failure_updates_canonical_source_health(hunter_db) -> None:
         "accounting_delta": 0,
     }
     assert stage_count == 7
+
+
+def test_partial_rate_limited_success_keeps_backoff_without_runner_failure(monkeypatch) -> None:
+    payload = {
+        "success": True,
+        "partial_success": True,
+        "raw_jobs_found": 509,
+        "errors": [{"status": 429, "company": "Example"}],
+    }
+    completed = subprocess.CompletedProcess(
+        ["python", "-m", "app.recruitee_worker", "--run-now"],
+        0,
+        stdout=json.dumps(payload),
+        stderr="",
+    )
+    schedule_calls = []
+    runner_failures = []
+
+    monkeypatch.setattr(
+        randomized_source_runner,
+        "get_adapter_timer",
+        lambda *_args, **_kwargs: {"next_allowed_at": "2026-09-20T00:00:00+00:00"},
+    )
+    monkeypatch.setattr(
+        randomized_source_runner,
+        "discover_worker",
+        lambda _name: "app.recruitee_worker",
+    )
+    monkeypatch.setattr(
+        randomized_source_runner,
+        "_source_timeout_seconds",
+        lambda _name: 1200,
+    )
+    monkeypatch.setattr(
+        randomized_source_runner,
+        "mark_source_started",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        randomized_source_runner,
+        "_run_worker_command",
+        lambda *_args, **_kwargs: (completed, False, None),
+    )
+    monkeypatch.setattr(
+        randomized_source_runner,
+        "mark_source_completed",
+        lambda name, **kwargs: schedule_calls.append((name, kwargs)) or {"schedule_state": "rate_limited"},
+    )
+    monkeypatch.setattr(
+        randomized_source_runner,
+        "_record_runner_failure",
+        lambda *args, **kwargs: runner_failures.append((args, kwargs)),
+    )
+
+    from app import telegram_run_visibility
+
+    monkeypatch.setattr(
+        telegram_run_visibility,
+        "reconcile_terminal_run_outbox",
+        lambda **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        telegram_run_visibility,
+        "deliver_pending_operational_cards",
+        lambda **_kwargs: {},
+    )
+
+    result = randomized_source_runner.run_one({"source_name": "Recruitee"})
+
+    assert result["status"] == "rate_limited_partial"
+    assert result["returncode"] == 0
+    assert runner_failures == []
+    assert schedule_calls == [
+        (
+            "Recruitee",
+            {
+                "success": False,
+                "blocked": True,
+                "deferred": False,
+                "worker_status": "rate_limited_partial",
+                "worker_returncode": 0,
+            },
+        )
+    ]
