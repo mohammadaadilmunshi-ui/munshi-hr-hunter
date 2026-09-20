@@ -283,6 +283,32 @@ def _runtime_questions(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+_PROTECTED_HUMAN_CHECKPOINT_TOKENS = frozenset(
+    {
+        "CAPTCHA",
+        "SMS_MFA",
+        "SMS_OTP",
+        "PASSKEY",
+        "BIOMETRIC",
+        "IDENTITY",
+        "IDENTITY_VERIFICATION",
+    }
+)
+
+
+def _protected_human_checkpoint(
+    runtime_questions: list[dict[str, Any]],
+) -> bool:
+    for question in runtime_questions:
+        values = {
+            str(question.get("category") or "").strip().upper(),
+            str(question.get("semantic_type") or "").strip().upper(),
+        }
+        if values & _PROTECTED_HUMAN_CHECKPOINT_TOKENS:
+            return True
+    return False
+
+
 def _artifact_summary(tasks: list[dict[str, Any]]) -> dict[str, Any]:
     resume: dict[str, Any] | None = None
     preflight: dict[str, Any] | None = None
@@ -454,6 +480,7 @@ def flow_for_job(job_id: int) -> dict[str, Any]:
     lifecycle = _latest_lifecycle(int(job_id))
     state, authority = _effective_state(prepare, lifecycle)
     tasks = list((prepare or {}).get('tasks') or [])
+    runtime_questions = _runtime_questions(tasks)
     artifacts = _artifact_summary(tasks)
     package_review = _package_review(artifacts.get('preflight'))
     execution_mandate = _execution_mandate(artifacts.get('preflight'))
@@ -487,11 +514,16 @@ def flow_for_job(job_id: int) -> dict[str, Any]:
             and str(ats_task.get('status') or '') == 'PENDING'
         ):
             state, authority = 'READY_FOR_APPROVAL', 'single_customer_approval_required'
+        elif execution_mandate is not None and state == 'NEEDS_INPUT':
+            if _protected_human_checkpoint(runtime_questions):
+                state, authority = 'NEEDS_INPUT', 'protected_human_checkpoint'
+            else:
+                # After the one customer approval, an ordinary unresolved field
+                # is an AutoApply issue to diagnose/fix, not a second user review.
+                state, authority = 'FAILED_SAFELY', 'unresolved_runtime_issue'
         elif execution_mandate is not None and state in {
-            'RUNNING', 'NEEDS_INPUT', 'READY_FOR_REVIEW', 'READY_TO_SUBMIT'
+            'RUNNING', 'READY_FOR_REVIEW', 'READY_TO_SUBMIT'
         }:
-            # Runtime questions that can be resolved automatically stay internal.
-            # Genuine protected checkpoints are still projected by the task model.
             state, authority = 'SUBMITTING', 'single_customer_approval_recorded'
     progress = _required_progress(tasks)
 
@@ -550,7 +582,7 @@ def flow_for_job(job_id: int) -> dict[str, Any]:
         'prepare': prepare,
         'lifecycle': lifecycle,
         'tasks': tasks,
-        'runtime_questions': _runtime_questions(tasks),
+        'runtime_questions': runtime_questions,
         'artifacts': artifacts,
         'package_review': package_review,
         'execution_mandate': execution_mandate,
