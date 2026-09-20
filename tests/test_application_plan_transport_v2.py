@@ -242,3 +242,35 @@ def test_runtime_supersession_uses_v3_and_binds_exact_browser_context(
     assert envelope["content_contract"]["receiver_max_version"] == 3
     assert envelope["supersession"] == plan["runtime_supersession"]
     assert envelope["submission_authority"] is False
+
+
+def test_same_immutable_plan_reuses_existing_handoff_across_continuation_keys(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = _plan()
+    _wire_transport(hunter_db, monkeypatch, plan)
+
+    first = transport.create_signed_plan_transport(
+        plan_id="application-plan-1",
+        idempotency_key="runtime-resolution-key",
+        timestamp=1000,
+    )
+    resumed = transport.create_signed_plan_transport(
+        plan_id="application-plan-1",
+        idempotency_key="worker-continuation-key",
+        timestamp=1001,
+    )
+
+    first_envelope = json.loads(first.body)
+    resumed_envelope = json.loads(resumed.body)
+    assert resumed_envelope == first_envelope
+    assert resumed.headers["X-Munshi-Event-Id"] == first.headers["X-Munshi-Event-Id"]
+    connection = database.get_connection()
+    try:
+        rows = connection.execute(
+            "SELECT handoff_id,plan_id FROM apply_plan_handoffs_v2"
+        ).fetchall()
+    finally:
+        connection.close()
+    assert len(rows) == 1
+    assert rows[0]["plan_id"] == "application-plan-1"
