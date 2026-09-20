@@ -56,7 +56,8 @@ STATE_LABELS = {
     'QUEUED': 'Queued',
     'RUNNING': 'Preparing',
     'NEEDS_INPUT': 'Needs input',
-    'READY_FOR_REVIEW': 'Ready for review',
+    'READY_FOR_APPROVAL': 'Ready for approval',
+    'READY_FOR_REVIEW': 'Applying',
     'FAILED_SAFELY': 'Needs attention',
     'CANCELLED': 'Cancelled',
     'DISCOVERED': 'Discovered',
@@ -284,6 +285,7 @@ def _runtime_questions(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _artifact_summary(tasks: list[dict[str, Any]]) -> dict[str, Any]:
     resume: dict[str, Any] | None = None
+    preflight: dict[str, Any] | None = None
     cover: dict[str, Any] | None = None
     plan: dict[str, Any] | None = None
 
@@ -297,6 +299,23 @@ def _artifact_summary(tasks: list[dict[str, Any]]) -> dict[str, Any]:
                 'pdf': output.get('pdf'),
                 'docx': output.get('docx'),
                 'page_verification': output.get('page_verification'),
+            }
+        elif kind == 'APPLICATION_PREFLIGHT' and output:
+            preflight = {
+                'preflight_package_id': output.get('preflight_package_id'),
+                'preflight_package_digest': output.get('preflight_package_digest'),
+                'preflight_status': output.get('preflight_status'),
+                'resume_version_id': output.get('resume_version_id'),
+                'resume_pdf_sha256': output.get('resume_pdf_sha256'),
+                'cover_letter_decision': output.get('cover_letter_decision'),
+                'cover_letter_id': output.get('cover_letter_id'),
+                'cover_letter_artifact_sha256': output.get(
+                    'cover_letter_artifact_sha256'
+                ),
+                'cover_letter_page_count': output.get('cover_letter_page_count'),
+                'single_approval_package_ready': output.get(
+                    'single_approval_package_ready'
+                ),
             }
         elif kind == 'ATS_FORM_PREPARATION' and output:
             cover = {
@@ -332,9 +351,53 @@ def _artifact_summary(tasks: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         'resume': resume,
+        'preflight': preflight,
         'cover_letter': cover,
         'plan': plan,
     }
+
+
+def _package_review(
+    preflight: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    package_id = str((preflight or {}).get('preflight_package_id') or '')
+    if not package_id or (preflight or {}).get('single_approval_package_ready') is not True:
+        return None
+    try:
+        from app import application_execution_mandate_v1 as mandate_v1
+
+        cover_letter = None
+        if str((preflight or {}).get('cover_letter_id') or ''):
+            cover_letter = {
+                'cover_letter_id': str(preflight['cover_letter_id']),
+                'artifact_sha256': str(
+                    preflight.get('cover_letter_artifact_sha256') or ''
+                ),
+                'page_count': int(preflight.get('cover_letter_page_count') or 0),
+            }
+        return mandate_v1.package_review(
+            preflight_package_id=package_id,
+            cover_letter_decision=str(
+                (preflight or {}).get('cover_letter_decision') or 'UNDETERMINED'
+            ),
+            cover_letter=cover_letter,
+        )
+    except (LookupError, PermissionError, RuntimeError, ValueError):
+        return None
+
+
+def _execution_mandate(
+    preflight: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    package_id = str((preflight or {}).get('preflight_package_id') or '')
+    if not package_id:
+        return None
+    try:
+        from app import application_execution_mandate_v1 as mandate_v1
+
+        return mandate_v1.current_for_preflight(package_id)
+    except (LookupError, PermissionError, RuntimeError, ValueError):
+        return None
 
 
 def _customer_review(plan: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -392,7 +455,11 @@ def flow_for_job(job_id: int) -> dict[str, Any]:
     state, authority = _effective_state(prepare, lifecycle)
     tasks = list((prepare or {}).get('tasks') or [])
     artifacts = _artifact_summary(tasks)
-    review = _customer_review(artifacts.get('plan'))
+    package_review = _package_review(artifacts.get('preflight'))
+    execution_mandate = _execution_mandate(artifacts.get('preflight'))
+    # The post-browser review is an INTERNAL integrity snapshot. It is never
+    # projected as a second customer-facing review after the execution mandate.
+    internal_review = _customer_review(artifacts.get('plan'))
     application_id = (
         str((lifecycle or {}).get('application_id') or '')
         or str((prepare or {}).get('application_id') or '')
@@ -400,11 +467,36 @@ def flow_for_job(job_id: int) -> dict[str, Any]:
     production_receipt = _production_receipt(application_id)
     if production_receipt is not None:
         state, authority = 'SUBMITTED', 'verified_production_receipt'
-    elif review is not None and review.get('approval_consumed'):
+    elif internal_review is not None and internal_review.get('approval_consumed'):
         state, authority = 'SUBMITTING', 'one_use_submit_authorization'
+    else:
+        preflight_task = next(
+            (task for task in tasks if task.get('task_kind') == 'APPLICATION_PREFLIGHT'),
+            None,
+        )
+        ats_task = next(
+            (task for task in tasks if task.get('task_kind') == 'ATS_FORM_PREPARATION'),
+            None,
+        )
+        if (
+            execution_mandate is None
+            and package_review is not None
+            and preflight_task is not None
+            and str(preflight_task.get('status') or '') == 'SUCCEEDED'
+            and ats_task is not None
+            and str(ats_task.get('status') or '') == 'PENDING'
+        ):
+            state, authority = 'READY_FOR_APPROVAL', 'single_customer_approval_required'
+        elif execution_mandate is not None and state in {
+            'RUNNING', 'NEEDS_INPUT', 'READY_FOR_REVIEW', 'READY_TO_SUBMIT'
+        }:
+            # Runtime questions that can be resolved automatically stay internal.
+            # Genuine protected checkpoints are still projected by the task model.
+            state, authority = 'SUBMITTING', 'single_customer_approval_recorded'
     progress = _required_progress(tasks)
 
     if state in {
+        'READY_FOR_APPROVAL',
         'READY_FOR_REVIEW',
         'READY_TO_SUBMIT',
         'SUBMITTING',
@@ -439,8 +531,8 @@ def flow_for_job(job_id: int) -> dict[str, Any]:
     else:
         cta = 'workspace'
         cta_label = (
-            'Review'
-            if state in {'READY_FOR_REVIEW', 'READY_TO_SUBMIT'}
+            'Review package'
+            if state == 'READY_FOR_APPROVAL'
             else STATE_LABELS.get(
                 state, state.replace('_', ' ').title()
             )
@@ -460,7 +552,11 @@ def flow_for_job(job_id: int) -> dict[str, Any]:
         'tasks': tasks,
         'runtime_questions': _runtime_questions(tasks),
         'artifacts': artifacts,
-        'customer_review': review,
+        'package_review': package_review,
+        'execution_mandate': execution_mandate,
+        'internal_integrity_review': internal_review,
+        # Retired user-facing late-review field: deliberately never populated.
+        'customer_review': None,
         'production_receipt': production_receipt,
         'cta': cta,
         'cta_label': cta_label,
@@ -552,47 +648,58 @@ def start_prepare_for_job(
 
 
 def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
-    """Consume the sole customer approval and mint exact JIT authority."""
-    from app import application_single_approval_v1
+    """Record the sole customer package approval before browser execution.
+
+    No submit authority is minted here because the live browser form does not
+    exist yet. The autonomous ATS worker later creates an internal integrity
+    snapshot and derives the one-use submit authority from this mandate.
+    """
+    from app import application_execution_mandate_v1 as mandate_v1
 
     flow = flow_for_job(int(job_id))
-    review = dict(flow.get('customer_review') or {})
-    plan = dict((flow.get('artifacts') or {}).get('plan') or {})
-    if str(flow.get('state') or '') not in {'READY_FOR_REVIEW', 'READY_TO_SUBMIT'}:
-        raise ValueError('Application is not ready for customer review.')
-    if not review or not str(plan.get('apply_session_id') or ''):
-        raise ValueError('The exact prepared review/session binding is unavailable.')
+    if str(flow.get('state') or '') != 'READY_FOR_APPROVAL':
+        raise ValueError('Application package is not ready for its one approval.')
+
+    review = dict(flow.get('package_review') or {})
+    preflight = dict((flow.get('artifacts') or {}).get('preflight') or {})
+    if not review or not str(preflight.get('preflight_package_id') or ''):
+        raise ValueError('The exact pre-browser package review is unavailable.')
+
     click_identity = (
-        f"{review['review_id']}:{review['review_digest']}:"
-        f"{review['prepared_package_digest']}:approve-and-submit-v1"
+        f"{review['preflight_package_id']}:{review['review_digest']}:"
+        "approve-and-submit-pre-browser-v2"
     )
     click_key = (
         'customer-approve-submit-'
         + hashlib.sha256(click_identity.encode('utf-8')).hexdigest()[:40]
     )
-    result = application_single_approval_v1.approve_and_authorize(
-        review_id=str(review['review_id']),
-        session_id=str(plan['apply_session_id']),
-        approval_idempotency_key=click_key,
-        authorization_idempotency_key=click_key,
-        expected_review_digest=str(review['review_digest']),
-        expected_prepared_package_digest=str(
-            review['prepared_package_digest']
-        ),
-        expected_browser_form_digest=str(review['browser_form_digest']),
-    )
-    # Hand the authority to the session that earned it. Best-effort and never
-    # fatal: the approval and the ISSUED authority are already durable, and
-    # Apply can pull the identical envelope over the authenticated bridge if
-    # this fails, so a delivery error must not roll back or re-ask the customer.
-    from app import prepare_worker_adapters_v1c
+    cover_letter = None
+    if str(preflight.get('cover_letter_id') or ''):
+        cover_letter = {
+            'cover_letter_id': str(preflight['cover_letter_id']),
+            'artifact_sha256': str(
+                preflight.get('cover_letter_artifact_sha256') or ''
+            ),
+            'page_count': int(preflight.get('cover_letter_page_count') or 0),
+        }
 
-    result['authority_delivery'] = (
-        prepare_worker_adapters_v1c.deliver_submit_authorization(
-            dict(result.get('submit_authorization') or {})
-        )
+    mandate = mandate_v1.approve_package(
+        preflight_package_id=str(preflight['preflight_package_id']),
+        cover_letter_decision=str(
+            preflight.get('cover_letter_decision') or 'UNDETERMINED'
+        ),
+        cover_letter=cover_letter,
+        expected_review_digest=str(review['review_digest']),
+        idempotency_key=click_key,
     )
-    return result
+    return {
+        'mandate_id': str(mandate['mandate_id']),
+        'status': 'APPLYING_NOW',
+        'customer_approval_complete': True,
+        'additional_customer_approval_required': False,
+        'submit_authorization': None,
+        'submission_authority': False,
+    }
 
 
 def pipeline_rows(limit: int = 250) -> list[dict[str, Any]]:
