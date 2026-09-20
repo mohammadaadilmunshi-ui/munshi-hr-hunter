@@ -467,3 +467,233 @@ def test_dashboard_canonical_correction_wins_future_universal_resolution(hunter_
     assert resolved["answer_status"] == "ANSWERED"
     assert resolved["value"] == "Pennsylvania"
     assert resolved["answer_source"] == "USER_DASHBOARD"
+
+
+def test_bounded_model_semantics_can_resolve_weird_wording_without_candidate_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_MODEL_SEMANTICS_ENABLED", "true")
+    seen = {}
+
+    def interpret(payload):
+        seen.update(payload)
+        assert payload["candidate_values"] is None
+        assert "value" not in payload["observation"]
+        assert payload["ontology_candidates"]
+        return {
+            "concept_id": "contact.region",
+            "confidence": 0.97,
+            "reason_code": "HOME_BASE_REGION_CONTEXT",
+        }
+
+    result = questions.resolve_question(
+        {
+            "rawText": "Your home base jurisdiction",
+            "label": "Home base",
+            "sectionHeading": "Personal details",
+            "inputType": "select",
+            "role": "combobox",
+            "options": ["New Jersey", "New York", "Pennsylvania"],
+            "semanticType": "UNKNOWN",
+        },
+        model_interpreter=interpret,
+    )
+    assert result["state"] == "RESOLVED"
+    assert result["concept_id"] == "contact.region"
+    assert result["classification_lane"] == "BOUNDED_MODEL_INTERPRETATION"
+    assert result["candidate_values_exposed"] is False
+    assert seen["candidate_values"] is None
+
+
+def test_arbitrary_explicit_resume_skill_becomes_evidence_concept_without_hardcoding() -> None:
+    claims = derivation.extract_profile_claims(
+        {
+            "skills": [{"category": "Data", "skills": ["Snowflake"]}],
+            "experience": [],
+            "projects": [],
+        },
+        extraction_id="extract-generic-skill",
+    )
+    matches = [claim for claim in claims if claim["concept"] == "experience.skill.snowflake"]
+    assert len(matches) == 1
+    assert matches[0]["evidence_text"] == "Snowflake"
+    assert matches[0]["confidence"] == 0.99
+
+
+def test_dynamic_capability_question_resolves_arbitrary_explicit_skill_without_skill_regex() -> None:
+    result = questions.resolve_question(
+        {
+            "rawText": "Have you ever used Snowflake?",
+            "label": "Have you ever used Snowflake?",
+            "semanticType": "UNKNOWN",
+            "inputType": "radio",
+        }
+    )
+    assert result["state"] == "RESOLVED"
+    assert result["concept_id"] == "experience.skill.snowflake"
+    assert result["classification_lane"] == "ONTOLOGY_DYNAMIC_CAPABILITY"
+
+
+def test_dynamic_capability_question_cannot_reclassify_protected_wording_as_normal_skill() -> None:
+    result = questions.resolve_question(
+        {
+            "rawText": "Do you have experience with work authorization?",
+            "label": "Do you have experience with work authorization?",
+            "semanticType": "UNKNOWN",
+        }
+    )
+    assert result.get("concept_id") != "experience.skill.work_authorization"
+
+
+def test_dynamic_skill_answer_requires_actual_extracted_evidence() -> None:
+    question = questions.resolve_question(
+        {"rawText": "Have you ever used Snowflake?", "semanticType": "UNKNOWN"}
+    )
+    missing = answers.resolve_concept(
+        question,
+        knowledge_view={
+            "profile_revision": 1,
+            "facts": [],
+            "answer_memory": [],
+            "claims": [],
+            "profile": {},
+        },
+    )
+    assert missing["answer_status"] == "MISSING_FACT"
+
+
+def test_semantic_binding_application_fallback_is_opt_in_and_exact(hunter_db) -> None:
+    observation = {
+        "rawText": "State",
+        "label": "State",
+        "sectionHeading": "Address",
+        "role": "combobox",
+        "options": ["New Jersey", "New York"],
+        "controlId": "state-session-one",
+    }
+    first = bindings.bind(
+        application_id="app-cross-session",
+        session_id="session-one",
+        observation=observation,
+        concept_id="contact.region",
+        classification_source="ONTOLOGY",
+        confidence=0.99,
+    )
+    rerendered = {**observation, "controlId": "state-session-two", "semanticType": "UNKNOWN"}
+    assert bindings.lookup(
+        application_id="app-cross-session",
+        session_id="session-two",
+        observation=rerendered,
+    ) is None
+    recovered = bindings.lookup(
+        application_id="app-cross-session",
+        session_id="session-two",
+        observation=rerendered,
+        allow_application_fallback=True,
+    )
+    assert recovered is not None
+    assert recovered["binding_id"] == first["binding_id"]
+    assert recovered["concept_id"] == "contact.region"
+    assert recovered["cross_session"] is True
+
+
+def test_dynamic_arbitrary_skill_autofill_is_enabled_only_with_explicit_evidence_and_derivation_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_DERIVATION_ENABLED", "true")
+    claims = derivation.extract_profile_claims(
+        {"skills": [{"category": "Data", "skills": ["Snowflake"]}], "experience": []},
+        extraction_id="extract-snowflake",
+    )
+    question = questions.resolve_question(
+        {"rawText": "Have you ever used Snowflake?", "semanticType": "UNKNOWN"}
+    )
+    resolved = answers.resolve_concept(
+        question,
+        knowledge_view={
+            "profile_revision": 8,
+            "facts": [],
+            "answer_memory": [],
+            "claims": claims,
+            "profile": {},
+        },
+    )
+    assert resolved["answer_status"] == "DERIVED"
+    assert resolved["answer_mode"] == "EXPERIENCE_EVIDENCE_BOOLEAN"
+    assert resolved["value"] is True
+    assert resolved["evidence_ids"]
+    assert resolved["autofill_allowed"] is True
+
+
+def test_knowledge_center_surfaces_reusable_answer_memory_and_missing_safe_concepts(
+    hunter_db, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        knowledge_center.ingestion,
+        "read_only_knowledge_view",
+        lambda: {
+            "profile_revision": 3,
+            "profile_digest": "a" * 64,
+            "persisted_graph_fact_count": 0,
+            "facts": [
+                {
+                    "concept_id": "contact.region",
+                    "value": "New Jersey",
+                    "source_type": "CANDIDATE_TRUTH",
+                    "source_ref": "profile:region",
+                    "trust_level": "USER_CONFIRMED",
+                    "confidence": 1.0,
+                    "sensitivity": "NORMAL",
+                    "autofill_policy": "ALLOW",
+                }
+            ],
+            "answer_memory": [
+                {
+                    "concept_id": "work.relocation",
+                    "value": True,
+                    "source_type": "ANSWER_MEMORY",
+                    "source_ref": "answer-vault:relocate",
+                    "trust_level": "USER_CONFIRMED",
+                    "confidence": 1.0,
+                    "sensitivity": "NORMAL",
+                    "autofill_policy": "ALLOW",
+                }
+            ],
+            "claims": [],
+            "profile": {},
+        },
+    )
+    view = knowledge_center.snapshot()
+    assert view["answer_memory_count"] == 1
+    assert any(
+        row["concept_id"] == "work.relocation"
+        for row in view["sections"]["Career preferences"]
+    )
+    available = {row["concept_id"] for row in view["available_to_add"]}
+    assert "contact.region" not in available
+    assert "contact.city" in available
+
+
+def test_dashboard_can_add_arbitrary_explicit_skill_as_canonical_user_truth(hunter_db) -> None:
+    stored = knowledge_center.save_explicit_skill(label="Rippling")
+    assert stored["concept_id"] == "experience.skill.rippling"
+    assert stored["value"] is True
+    assert stored["source_type"] == "USER_DASHBOARD"
+    assert stored["autofill_policy"] == "ALLOW"
+    question = questions.resolve_question(
+        {"rawText": "Have you worked with Rippling?", "semanticType": "UNKNOWN"}
+    )
+    resolved = answers.resolve_concept(
+        question,
+        knowledge_view={
+            "profile_revision": 1,
+            "facts": graph.current_facts(),
+            "answer_memory": [],
+            "claims": [],
+            "profile": {},
+        },
+    )
+    assert resolved["answer_status"] == "ANSWERED"
+    assert resolved["concept_id"] == "experience.skill.rippling"
+    assert resolved["value"] is True
+    assert resolved["autofill_allowed"] is True

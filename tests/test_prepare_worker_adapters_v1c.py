@@ -1274,3 +1274,80 @@ def test_universal_runtime_auto_resolution_falls_through_when_any_fact_is_missin
         resolution_payload=payload,
         runtime_tasks=[task],
     ) is None
+
+
+def test_apply_semantic_interpretation_bridge_is_value_free(monkeypatch):
+    seen = {}
+
+    def fake_request(**kwargs):
+        seen.update(kwargs)
+        return {
+            "concept_id": "contact.region",
+            "confidence": 0.97,
+            "reason_code": "STATE_SELECTION_CONTEXT",
+            "candidate_values_sent": False,
+            "secret_material_sent": False,
+            "protected_values_sent": False,
+        }
+
+    monkeypatch.setattr(workers, "_apply_base_url", lambda: "http://apply.internal")
+    monkeypatch.setattr(
+        workers,
+        "_apply_headers",
+        lambda **kwargs: {"X-Munshi-Tenant-Id": kwargs["tenant_id"], "X-Munshi-User-Id": kwargs["user_id"]},
+    )
+    monkeypatch.setattr(workers, "_json_request", fake_request)
+    payload = {
+        "resolver_version": "universal-question-resolver-v1",
+        "observation": {"raw_question": "Home base", "label": "Home base"},
+        "ontology_candidates": [
+            {
+                "concept_id": "contact.region",
+                "score": 0.72,
+                "sensitivity": "NORMAL",
+                "answer_mode": "DIRECT_FACT",
+                "category": "CONTACT",
+            }
+        ],
+        "candidate_values": None,
+    }
+    result = workers._interpret_apply_universal_semantics(
+        payload, tenant_id="tenant-a", user_id="user-a"
+    )
+    assert result == {
+        "concept_id": "contact.region",
+        "confidence": 0.97,
+        "reason_code": "STATE_SELECTION_CONTEXT",
+    }
+    assert seen["url"].endswith("/v1/universal-brain/semantic-interpretation")
+    sent = seen["body"]["payload"]
+    assert sent["candidate_values"] is None
+    assert "canonical_answer" not in repr(sent)
+    assert "execution_value" not in repr(sent)
+
+
+def test_apply_semantic_bridge_rejects_provider_contract_leak(monkeypatch):
+    monkeypatch.setattr(workers, "_apply_base_url", lambda: "http://apply.internal")
+    monkeypatch.setattr(workers, "_apply_headers", lambda **kwargs: {})
+    monkeypatch.setattr(
+        workers,
+        "_json_request",
+        lambda **kwargs: {
+            "concept_id": "contact.region",
+            "confidence": 0.99,
+            "candidate_values_sent": True,
+            "secret_material_sent": False,
+            "protected_values_sent": False,
+        },
+    )
+    with pytest.raises(RuntimeError, match="value-free"):
+        workers._interpret_apply_universal_semantics(
+            {
+                "resolver_version": "v1",
+                "observation": {"label": "Home base"},
+                "ontology_candidates": [],
+                "candidate_values": None,
+            },
+            tenant_id="tenant-a",
+            user_id="user-a",
+        )

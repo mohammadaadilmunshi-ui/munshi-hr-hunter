@@ -38,8 +38,11 @@ from app import application_plan_delivery_v2
 from app import application_review_v2
 from app import application_plan_v2
 from app import application_plan_resolution_v2
+from app import application_semantic_binding_v1 as universal_binding
 from app import candidate_knowledge_graph_v1 as universal_graph
+from app import candidate_ontology_v1 as universal_ontology
 from app import universal_answer_resolver_v1 as universal_answers
+from app import universal_question_resolver_v1 as universal_questions
 from app import application_submit_authorization_v1
 from app import application_preflight_package_v1 as preflight_v1
 from app import opportunity_intelligence_v3
@@ -63,6 +66,7 @@ _APPLY_SESSION_PATH = "/v1/complete-loop/sessions"
 _APPLY_PREPARE_JOB_PATH = "/v1/complete-loop/preparation-jobs/{job_id}"
 _APPLY_RESOLUTION_TASK_PATH = "/v1/complete-loop/preparation-jobs/{job_id}/resolution-tasks"
 _APPLY_REVIEW_PATH = "/v1/complete-loop/sessions/{session_id}/review"
+_APPLY_UNIVERSAL_SEMANTIC_PATH = "/v1/universal-brain/semantic-interpretation"
 _APPLY_SUBMIT_AUTHORITY_PATH = (
     "/v1/complete-loop/sessions/{session_id}/submit-authority"
 )
@@ -587,6 +591,36 @@ def _read_apply_prepare_job(
     )
 
 
+def _interpret_apply_universal_semantics(
+    payload: Mapping[str, Any],
+    *,
+    tenant_id: str,
+    user_id: str,
+) -> dict[str, Any]:
+    """Ask Apply/Sonnet to choose among Hunter ontology candidates, value-free."""
+    if payload.get("candidate_values") is not None:
+        raise ValueError("Universal semantic interpretation must never send candidate values.")
+    base = _apply_base_url()
+    result = _json_request(
+        method="POST",
+        url=base + _APPLY_UNIVERSAL_SEMANTIC_PATH,
+        headers=_apply_headers(tenant_id=tenant_id, user_id=user_id),
+        body={"payload": dict(payload)},
+        timeout_seconds=30.0,
+    )
+    if (
+        result.get("candidate_values_sent") is not False
+        or result.get("secret_material_sent") is not False
+        or result.get("protected_values_sent") is not False
+    ):
+        raise RuntimeError("Apply semantic interpretation violated the value-free contract.")
+    return {
+        "concept_id": str(result.get("concept_id") or "").strip().casefold(),
+        "confidence": float(result.get("confidence") or 0.0),
+        "reason_code": str(result.get("reason_code") or "MODEL_SEMANTIC_INTERPRETATION")[:120],
+    }
+
+
 def _read_apply_resolution_tasks(
     *, job_id: str, tenant_id: str, user_id: str,
 ) -> dict[str, Any]:
@@ -690,6 +724,113 @@ def _universal_runtime_execution_text(value: Any) -> str:
     return str(value)
 
 
+def _runtime_binding_source(classification_lane: str) -> str:
+    lane = str(classification_lane or "").upper()
+    if lane == "BOUNDED_MODEL_INTERPRETATION":
+        return "MODEL"
+    if lane.startswith("DETERMINISTIC"):
+        return "DETERMINISTIC"
+    return "ONTOLOGY"
+
+
+def _resolve_universal_runtime_observation(
+    *,
+    plan: Mapping[str, Any],
+    session_id: str,
+    checkpoint_id: str,
+    observation: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Resolve one value-free browser observation and maintain durable semantics."""
+    application_id = str(plan.get("application_id") or "").strip()
+    plan_id = str(plan.get("plan_id") or "").strip()
+    binding_row: dict[str, Any] | None = None
+
+    if universal_graph.universal_browser_binding_enabled() and application_id and session_id:
+        try:
+            binding_row = universal_binding.lookup(
+                application_id=application_id,
+                session_id=session_id,
+                observation=dict(observation),
+                allow_application_fallback=True,
+            )
+        except (LookupError, RuntimeError, ValueError):
+            binding_row = None
+
+    if binding_row is not None:
+        concept = universal_ontology.require_concept(str(binding_row.get("concept_id") or ""))
+        if concept.sensitivity != "NORMAL":
+            raise ValueError("Durable runtime semantic binding points to a protected concept.")
+        if binding_row.get("cross_session") is True:
+            binding_row = universal_binding.bind(
+                application_id=application_id,
+                session_id=session_id,
+                observation=dict(observation),
+                concept_id=concept.concept_id,
+                classification_source=str(binding_row.get("classification_source") or "ONTOLOGY"),
+                confidence=float(binding_row.get("confidence") or 0.0),
+                plan_id=plan_id or None,
+                checkpoint_id=checkpoint_id or None,
+            )
+        question = {
+            "state": "RESOLVED",
+            "concept_id": concept.concept_id,
+            "confidence": float(binding_row.get("confidence") or 0.0),
+            "classification_lane": "DURABLE_BROWSER_BINDING",
+            "sensitivity": "NORMAL",
+            "reason_code": "REUSED_LOGICAL_FIELD_BINDING",
+            "conditions": {},
+            "candidate_values_exposed": False,
+        }
+        return universal_answers.resolve_concept(question), universal_binding.public_binding(binding_row)
+
+    model_interpreter = None
+    if universal_questions.model_semantics_enabled():
+        tenant_id = str(plan.get("tenant_id") or "").strip()
+        user_id = str(plan.get("user_id") or "").strip()
+        if tenant_id and user_id:
+            def model_interpreter(payload: dict[str, Any]) -> Mapping[str, Any]:
+                try:
+                    return _interpret_apply_universal_semantics(
+                        payload, tenant_id=tenant_id, user_id=user_id
+                    )
+                except (RuntimeError, ValueError, TypeError):
+                    return {}
+
+    if model_interpreter is None:
+        resolved = universal_answers.resolve_observation(dict(observation))
+    else:
+        resolved = universal_answers.resolve_observation(
+            dict(observation), model_interpreter=model_interpreter
+        )
+
+    question = dict(resolved.get("question_resolution") or {})
+    if (
+        universal_graph.universal_browser_binding_enabled()
+        and application_id
+        and session_id
+        and question.get("state") == "RESOLVED"
+        and question.get("concept_id")
+        and str(question.get("sensitivity") or "NORMAL").upper() == "NORMAL"
+    ):
+        try:
+            bound = universal_binding.bind(
+                application_id=application_id,
+                session_id=session_id,
+                observation=dict(observation),
+                concept_id=str(question["concept_id"]),
+                classification_source=_runtime_binding_source(
+                    str(question.get("classification_lane") or "")
+                ),
+                confidence=float(question.get("confidence") or 0.0),
+                plan_id=plan_id or None,
+                checkpoint_id=checkpoint_id or None,
+            )
+            binding_row = universal_binding.public_binding(bound)
+        except (LookupError, RuntimeError, ValueError):
+            binding_row = None
+    return resolved, binding_row
+
+
 def _universal_runtime_auto_resolution(
     *,
     operation_id: str,
@@ -721,7 +862,12 @@ def _universal_runtime_auto_resolution(
         observation = task.get("question_observation")
         if not isinstance(observation, Mapping):
             return None
-        resolved = universal_answers.resolve_observation(dict(observation))
+        resolved, binding = _resolve_universal_runtime_observation(
+            plan=plan,
+            session_id=str(session_id),
+            checkpoint_id=str(resolution_payload.get("checkpoint_id") or ""),
+            observation=dict(observation),
+        )
         trace = universal_answers.public_trace(resolved)
         traces.append(
             {
@@ -733,6 +879,8 @@ def _universal_runtime_auto_resolution(
                 "confidence": trace.get("confidence"),
                 "knowledge_revision": trace.get("knowledge_revision"),
                 "autofill_allowed": bool(trace.get("autofill_allowed")),
+                "browser_binding_id": (binding or {}).get("binding_id"),
+                "browser_binding_revision": (binding or {}).get("binding_revision"),
                 "value_exposed": False,
             }
         )

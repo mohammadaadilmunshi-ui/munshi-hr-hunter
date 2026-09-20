@@ -227,6 +227,41 @@ def _resolved_concept(obs: QuestionObservation, concept_id: str) -> ontology.Can
     return ontology.require_concept(_repeat_scoped_concept(obs, concept_id))
 
 
+_DYNAMIC_CAPABILITY_PATTERNS = (
+    re.compile(r"^(?:do you have|have you had|do you possess)\s+(?:any\s+)?experience\s+(?:with|using|in)\s+(?P<skill>.+?)[?.!]*$", re.I),
+    re.compile(r"^(?:have you|did you)\s+(?:ever\s+)?(?:used|worked with|utilized|utilised)\s+(?P<skill>.+?)[?.!]*$", re.I),
+    re.compile(r"^(?:are you|would you consider yourself)\s+(?:proficient|experienced|skilled)\s+(?:with|in)\s+(?P<skill>.+?)[?.!]*$", re.I),
+    re.compile(r"^(?:experience|knowledge|proficiency)\s+(?:with|of|in)\s+(?P<skill>.+?)[?.!]*$", re.I),
+)
+
+
+def _dynamic_capability_concept(obs: QuestionObservation) -> tuple[str, float, str] | None:
+    raw = " ".join((obs.label or obs.raw_question or "").split()).strip()
+    if not raw or len(raw) > 500 or re.search(r"\byears?\b", raw, re.I):
+        return None
+    for pattern in _DYNAMIC_CAPABILITY_PATTERNS:
+        match = pattern.fullmatch(raw)
+        if not match:
+            continue
+        skill = " ".join(match.group("skill").strip(" .?!").split())
+        normalized = re.sub(r"[^a-z0-9]+", "_", skill.casefold()).strip("_")[:100]
+        if not normalized or len(skill) > 120:
+            return None
+        blocked = {
+            "work authorization", "sponsorship", "visa", "citizenship", "salary",
+            "compensation", "race", "ethnicity", "gender", "disability", "veteran",
+            "password", "otp", "captcha", "social security", "ssn",
+        }
+        lowered = skill.casefold()
+        if any(term in lowered for term in blocked):
+            return None
+        concept_id = f"experience.skill.{normalized}"
+        if ontology.concept(concept_id) is None:
+            return None
+        return concept_id, 0.96, "DYNAMIC_CAPABILITY_GRAMMAR"
+    return None
+
+
 def _context_candidate(obs: QuestionObservation) -> tuple[str, float, str] | None:
     text = _norm(" ".join((obs.label, obs.raw_question, obs.placeholder, obs.name)))
     section = _norm(obs.section_heading)
@@ -296,6 +331,16 @@ def resolve_question(
             state="RESOLVED", concept_id=item.concept_id,
             confidence=max(0.93, obs.apply_semantic_confidence), lane="DETERMINISTIC_BROWSER_SEMANTIC",
             sensitivity=sensitivity, reason_code="UNIQUE_BROWSER_SEMANTIC", preclassification=pre,
+        )
+
+    dynamic_capability = _dynamic_capability_concept(obs)
+    if dynamic_capability is not None and sensitivity_floor == "NORMAL":
+        key, score, reason = dynamic_capability
+        item = _resolved_concept(obs, key)
+        return _result(
+            state="RESOLVED", concept_id=item.concept_id, confidence=score,
+            lane="ONTOLOGY_DYNAMIC_CAPABILITY", sensitivity="NORMAL",
+            reason_code=reason, preclassification=pre,
         )
 
     # Lane B/C: retrieve over aliases/descriptions independently for each visible

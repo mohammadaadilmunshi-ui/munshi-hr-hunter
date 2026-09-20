@@ -122,7 +122,10 @@ def extract_profile_claims(
             continue
         for j, raw_skill in enumerate(group.get("skills") or []):
             skill = _clean(raw_skill)
-            for capability in capability_for_skill(skill):
+            capabilities = capability_for_skill(skill)
+            if not capabilities and skill:
+                capabilities = (_slug(skill),)
+            for capability in capabilities:
                 add(
                     capability,
                     entity_ref=f"skills.{i}",
@@ -150,7 +153,10 @@ def extract_profile_claims(
             continue
         for j, raw_tool in enumerate(raw_project.get("tools") or []):
             tool = _clean(raw_tool)
-            for capability in capability_for_skill(tool):
+            capabilities = capability_for_skill(tool)
+            if not capabilities and tool:
+                capabilities = (_slug(tool),)
+            for capability in capabilities:
                 add(
                     capability,
                     entity_ref=f"projects.{i}",

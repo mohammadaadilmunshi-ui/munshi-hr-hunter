@@ -456,6 +456,11 @@ def legacy_question_family(concept_id: str) -> str:
         return "salary"
     if item.category == "AVAILABILITY" or key.startswith(("availability.", "schedule.")):
         return "availability"
+    if key.startswith((
+        "contact.address", "contact.city", "contact.region",
+        "contact.postal", "contact.country", "contact.location",
+    )):
+        return "location"
     if item.category in {"WORK_PREFERENCE", "LOCATION"} or key.startswith(("work.relocation", "preference.", "location.")):
         return "career_preference"
     if item.category == "WORK_AUTHORIZATION" or item.sensitivity != "NORMAL":

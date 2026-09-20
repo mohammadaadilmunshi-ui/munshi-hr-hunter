@@ -268,6 +268,7 @@ def lookup(
     application_id: str,
     session_id: str,
     observation: QuestionObservation | Mapping[str, Any],
+    allow_application_fallback: bool = False,
     connection: sqlite3.Connection | None = None,
 ) -> dict[str, Any] | None:
     owns = connection is None
@@ -286,7 +287,26 @@ def lookup(
                 parts["logical_field_fingerprint"],
             ),
         ).fetchone()
-        return dict(row) if row else None
+        if row is not None:
+            result = dict(row)
+            result["cross_session"] = False
+            return result
+        if allow_application_fallback:
+            prior = connection.execute(
+                """SELECT * FROM application_semantic_bindings
+                   WHERE tenant_id=? AND user_id=? AND application_id=?
+                     AND logical_field_fingerprint=?
+                   ORDER BY binding_revision DESC LIMIT 1""",
+                (
+                    owner.tenant_id, owner.user_id, str(application_id),
+                    parts["logical_field_fingerprint"],
+                ),
+            ).fetchone()
+            if prior is not None:
+                result = dict(prior)
+                result["cross_session"] = str(result.get("session_id") or "") != str(session_id)
+                return result
+        return None
     finally:
         if owns:
             connection.close()

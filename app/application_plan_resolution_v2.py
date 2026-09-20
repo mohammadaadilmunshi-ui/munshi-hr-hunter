@@ -6,6 +6,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from app import answer_brain_v2, application_plan_delivery_v2, application_plan_v2
+from app import candidate_knowledge_graph_v1 as candidate_knowledge
+from app import candidate_ontology_v1 as candidate_ontology
 
 
 def _handoff_key(
@@ -70,6 +72,68 @@ def resolve_runtime_needs_input(
 
 
 
+def _runtime_value_for_canonical_knowledge(value: str, value_type: str) -> Any:
+    text = str(value or "").strip()
+    kind = str(value_type or "text").strip().casefold()
+    if kind in {"boolean", "bool", "yes_no", "yesno"}:
+        lowered = text.casefold()
+        if lowered in {"yes", "true", "1"}:
+            return True
+        if lowered in {"no", "false", "0"}:
+            return False
+        raise ValueError("Verified runtime boolean answer is not canonicalizable.")
+    if kind in {"integer", "int"}:
+        return int(text)
+    if kind in {"number", "float", "decimal"}:
+        return float(text)
+    return text
+
+
+def _promote_runtime_resolution_to_knowledge(
+    *,
+    requirement: Mapping[str, Any],
+    question_key: str,
+    canonical_answer: str,
+    verified_plan_id: str,
+) -> dict[str, Any] | None:
+    """Promote one verified user answer into canonical knowledge when globally safe."""
+    concept_id = str(requirement.get("universal_concept_id") or "").strip().casefold()
+    if not concept_id:
+        return None
+    concept = candidate_ontology.concept(concept_id)
+    if concept is None or concept.sensitivity != "NORMAL":
+        return None
+    # Job-specific prose, evidence booleans and computed values are not new
+    # user-owned canonical facts. They retain their existing evidence/derivation.
+    if concept.answer_mode not in {"DIRECT_FACT", "PREFERENCE"}:
+        return None
+    value = _runtime_value_for_canonical_knowledge(canonical_answer, concept.value_type)
+    return candidate_knowledge.store_fact(
+        concept_id=concept.concept_id,
+        value=value,
+        value_type=concept.value_type,
+        source_type="USER_DASHBOARD",
+        source_ref=f"verified-runtime:{verified_plan_id}:{question_key}",
+        trust_level="USER_CONFIRMED",
+        confidence=1.0,
+        sensitivity="NORMAL",
+        autofill_policy="ALLOW",
+        evidence=[
+            {
+                "source_kind": "ANSWER_MEMORY",
+                "source_ref": f"verified-runtime:{verified_plan_id}:{question_key}",
+                "metadata": {
+                    "verification_gate": "PRODUCTION_SUBMISSION_RECEIPT_VERIFIED",
+                    "plan_id": str(verified_plan_id),
+                    "question_key": str(question_key),
+                    "candidate_value_stored_in_evidence": False,
+                },
+                "confidence": 1.0,
+            }
+        ],
+    )
+
+
 def promote_runtime_resolutions_after_verified_submission(
     *,
     plan_id: str,
@@ -82,9 +146,12 @@ def promote_runtime_resolutions_after_verified_submission(
     """
     current_plan_id = str(plan_id)
     promoted = 0
+    canonical_knowledge_promoted = 0
+    canonical_knowledge_reused = 0
     skipped_candidate_truth = 0
     skipped_existing = 0
     conflicts: list[str] = []
+    canonical_knowledge_conflicts: list[str] = []
     visited: set[str] = set()
 
     while current_plan_id and current_plan_id not in visited:
@@ -162,11 +229,31 @@ def promote_runtime_resolutions_after_verified_submission(
                 question_key=key,
             )
             promoted += 1
+            try:
+                canonical = _promote_runtime_resolution_to_knowledge(
+                    requirement=requirement,
+                    question_key=key,
+                    canonical_answer=value,
+                    verified_plan_id=current_plan_id,
+                )
+            except (LookupError, RuntimeError, ValueError):
+                canonical_knowledge_conflicts.append(
+                    str(requirement.get("universal_concept_id") or key)
+                )
+            else:
+                if canonical is not None:
+                    if canonical.get("reused"):
+                        canonical_knowledge_reused += 1
+                    else:
+                        canonical_knowledge_promoted += 1
 
         current_plan_id = str(revision["prior_plan_id"])
 
     return {
         "promoted": promoted,
+        "canonical_knowledge_promoted": canonical_knowledge_promoted,
+        "canonical_knowledge_reused": canonical_knowledge_reused,
+        "canonical_knowledge_conflicts": sorted(set(canonical_knowledge_conflicts)),
         "skipped_candidate_truth": skipped_candidate_truth,
         "skipped_existing": skipped_existing,
         "conflicts": sorted(set(conflicts)),
