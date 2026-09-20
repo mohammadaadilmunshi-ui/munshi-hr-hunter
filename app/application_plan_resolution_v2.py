@@ -73,6 +73,19 @@ def resolve_runtime_needs_input(
         family = str(requirement.get("question_family") or "").strip().casefold()
         if family not in answer_brain_v2.NORMAL_QUESTION_FAMILIES:
             continue
+        profile_fact_key = str(requirement.get("profile_fact_key") or "").strip()
+        if profile_fact_key:
+            try:
+                snapshot = answer_brain_v2.truth_binding.current_candidate_profile_snapshot()
+                fact = answer_brain_v2.truth_binding.profile_fact(
+                    snapshot, profile_fact_key
+                )
+            except (LookupError, RuntimeError, ValueError):
+                fact = None
+            if fact is not None and fact.get("value") not in (None, "", []):
+                # Candidate Truth already owns this fact; do not rewrite it as
+                # user-entered Answer Vault memory.
+                continue
         answer_brain_v2.save_answer(
             question_family=family,
             canonical_answer=str(raw.get("canonical_answer") or ""),
