@@ -9,6 +9,7 @@ from app import answer_brain_v2
 from app import candidate_knowledge_graph_v1 as graph
 from app import universal_answer_resolver_v1 as answers
 from app import universal_question_resolver_v1 as questions
+from app import universal_semantic_model_v1 as semantic_model
 
 SHADOW_VERSION = "universal-brain-shadow-v1"
 _LOG = logging.getLogger(__name__)
@@ -33,7 +34,9 @@ def compare(
     current_requirement: Mapping[str, Any] | None = None,
     knowledge_view: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    question = questions.resolve_question(observation)
+    question = questions.resolve_question(
+        observation, model_interpreter=semantic_model.interpret_fail_closed
+    )
     answer = answers.resolve_concept(question, knowledge_view=knowledge_view)
     trace = answers.public_trace(answer)
     current = dict(current_requirement or {})

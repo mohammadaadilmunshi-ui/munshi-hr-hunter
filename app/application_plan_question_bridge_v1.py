@@ -20,6 +20,7 @@ from app import application_plan_v2
 from app import candidate_knowledge_graph_v1 as universal_graph
 from app import universal_brain_shadow_v1 as universal_shadow
 from app import universal_question_resolver_v1 as universal_questions
+from app import universal_semantic_model_v1 as universal_semantic_model
 from app import application_semantic_binding_v1 as universal_binding
 
 BRIDGE_VERSION = "application-plan-question-bridge-v1"
@@ -86,7 +87,9 @@ def normalize_visible_question(value: str | Mapping[str, Any]) -> dict[str, Any]
     # canary is enabled, Application Plan V2 may consume this canonical concept.
     observation = raw or {"raw_question": text, "label": text}
     if universal_graph.universal_brain_shadow_enabled() or universal_graph.universal_brain_enabled():
-        semantic = universal_questions.resolve_question(observation)
+        semantic = universal_questions.resolve_question(
+            observation, model_interpreter=universal_semantic_model.interpret_fail_closed
+        )
         if semantic.get("state") == "RESOLVED":
             requirement["universal_concept_id"] = str(semantic["concept_id"])
             requirement["universal_semantic_confidence"] = float(semantic.get("confidence") or 0.0)

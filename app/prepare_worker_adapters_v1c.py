@@ -40,6 +40,7 @@ from app import application_plan_v2
 from app import application_plan_resolution_v2
 from app import candidate_knowledge_graph_v1 as universal_graph
 from app import universal_answer_resolver_v1 as universal_answers
+from app import universal_semantic_model_v1 as universal_semantic_model
 from app import application_submit_authorization_v1
 from app import application_preflight_package_v1 as preflight_v1
 from app import opportunity_intelligence_v3
@@ -721,7 +722,10 @@ def _universal_runtime_auto_resolution(
         observation = task.get("question_observation")
         if not isinstance(observation, Mapping):
             return None
-        resolved = universal_answers.resolve_observation(dict(observation))
+        resolved = universal_answers.resolve_observation(
+            dict(observation),
+            model_interpreter=universal_semantic_model.interpret_fail_closed,
+        )
         trace = universal_answers.public_trace(resolved)
         traces.append(
             {
