@@ -68,7 +68,8 @@ jobs:
             tests/test_product_application_flow_v2.py \
             tests/test_full_autoapply_production_activation.py \
             tests/test_universal_runtime_integration_v2.py \
-            tests/test_initial_dashboard_single_approval_contract_v1.py
+            tests/test_initial_dashboard_single_approval_contract_v1.py \
+            tests/test_staging_autoapply_canary.py
 
       - name: Validate deployment shell
         run: |
