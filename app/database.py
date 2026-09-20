@@ -704,6 +704,8 @@ def initialize_database() -> Path:
         from app.staging_fixtures import ensure_schema as ensure_staging_fixture_schema
         from app.tenant_foundation import ensure_schema as ensure_tenant_foundation_schema
         from app.universal_n8n_progress import ensure_schema as ensure_n8n_progress_schema
+        from app.candidate_knowledge_graph_v1 import ensure_schema as ensure_candidate_knowledge_schema
+        from app.application_semantic_binding_v1 import ensure_schema as ensure_semantic_binding_schema
 
         ensure_n8n_dispatch_schema(connection)
         ensure_n8n_progress_schema(connection)
@@ -712,6 +714,8 @@ def initialize_database() -> Path:
         ensure_candidate_artifact_schema(connection)
         ensure_native_resume_shadow_schema(connection)
         ensure_answer_brain_schema(connection)
+        ensure_candidate_knowledge_schema(connection)
+        ensure_semantic_binding_schema(connection)
         ensure_career_policy_schema(connection)
         ensure_relationship_intelligence_schema(connection)
         ensure_native_application_preparation_schema(connection)

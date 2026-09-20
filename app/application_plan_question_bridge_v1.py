@@ -17,6 +17,8 @@ from app import application_answer_autofill_v1 as answer_autofill
 from app import application_answer_router_v1 as answer_router
 from app import application_field_intelligence_v1 as field_intelligence
 from app import application_plan_v2
+from app import candidate_knowledge_graph_v1 as universal_graph
+from app import universal_brain_shadow_v1 as universal_shadow
 
 BRIDGE_VERSION = "application-plan-question-bridge-v1"
 
@@ -76,6 +78,14 @@ def normalize_visible_question(value: str | Mapping[str, Any]) -> dict[str, Any]
     # Bind derived projections to the current confirmed profile digest/revision so
     # a later profile edit cannot silently reuse an older first/last/city projection.
     requirement = answer_autofill.enrich_requirement(requirement)
+
+    # Universal Brain begins as a value-free shadow observer.  It cannot alter the
+    # current question key, answer, plan status or browser behavior in this stage.
+    if universal_graph.universal_brain_shadow_enabled():
+        observation = raw or {"raw_question": text, "label": text}
+        requirement["universal_brain_shadow"] = universal_shadow.compare(
+            observation, current_requirement=requirement
+        )
 
     requirement["provider_field_id"] = str(
         raw.get("field_id")
@@ -146,6 +156,8 @@ def prepare_application_plan_from_questions(
         "answer_router_version": answer_router.ROUTER_VERSION,
         "field_intelligence_version": field_intelligence.INTELLIGENCE_VERSION,
         "answer_autofill_version": answer_autofill.AUTOFILL_VERSION,
+        "universal_brain_shadow_version": universal_shadow.SHADOW_VERSION,
+        "universal_brain_shadow_enabled": universal_graph.universal_brain_shadow_enabled(),
         "normalized_question_count": len(requirements),
     }
     return result
