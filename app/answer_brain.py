@@ -122,7 +122,31 @@ def classify_question(question: str) -> str:
         return "work_authorization"
     if any(term in text for term in ("salary", "compensation", "pay range", "hourly rate")):
         return "salary"
-    if any(term in text for term in ("location", "where are you", "relocate", "remote", "hybrid", "onsite", "on-site")):
+    if any(
+        term in text
+        for term in (
+            "location",
+            "where are you",
+            "relocate",
+            "remote",
+            "hybrid",
+            "onsite",
+            "on-site",
+            "street address",
+            "mailing address",
+            "home address",
+            "address line",
+            "address",
+            "zip code",
+            "zipcode",
+            "postal code",
+            "city",
+            "state",
+            "province",
+            "region",
+            "country",
+        )
+    ):
         return "location"
     if any(term in text for term in ("start date", "available to start", "when can you start", "availability", "notice period")):
         return "availability"
