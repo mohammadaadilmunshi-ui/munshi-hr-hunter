@@ -219,32 +219,66 @@ def find_existing_job(
         # the historical row is no longer a valid keeper. Use a deterministic
         # distinct fingerprint so the corrected job can be stored alongside the
         # preserved historical row.
-        job["job_fingerprint"] = (
-            disambiguated_fingerprint(job)
-        )
+        base_distinct_fingerprint = disambiguated_fingerprint(job)
+        candidate_fingerprint = base_distinct_fingerprint
 
-        # The alternate fingerprint is deterministic. A later rediscovery of
-        # the same corrected job must reuse the already-stored alternate row
-        # instead of trying to insert the same UNIQUE fingerprint again.
-        alternate = connection.execute(
-            """
-            SELECT *
-            FROM jobs
-            WHERE job_fingerprint = ?
-            LIMIT 1
-            """,
-            (job["job_fingerprint"],),
-        ).fetchone()
-        if alternate is not None:
-            evidence = duplicate_evidence(
-                dict(alternate),
-                job,
+        # The alternate fingerprint is deterministic. Reuse it when it still
+        # belongs to an authoritative keeper. If it belongs to another
+        # historical non-keeper, keep walking deterministically until an
+        # available fingerprint is found rather than violating the UNIQUE
+        # constraint or reviving a rejected row.
+        for _collision_index in range(32):
+            alternate = connection.execute(
+                """
+                SELECT *
+                FROM jobs
+                WHERE job_fingerprint = ?
+                LIMIT 1
+                """,
+                (candidate_fingerprint,),
+            ).fetchone()
+
+            if alternate is None:
+                job["job_fingerprint"] = candidate_fingerprint
+                break
+
+            alternate_candidate = dict(alternate)
+            if dedupe_keeper_allowed(
+                alternate_candidate,
+                rules=dedupe_rules,
+            ):
+                evidence = duplicate_evidence(
+                    alternate_candidate,
+                    job,
+                )
+                if evidence is not None:
+                    job["_duplicate_evidence"] = evidence
+                return (
+                    alternate,
+                    "disambiguated_job_fingerprint",
+                )
+
+            try:
+                ignored_keeper_ids.append(
+                    int(alternate_candidate.get("id"))
+                )
+            except (TypeError, ValueError):
+                pass
+
+            history_key = ",".join(
+                str(value)
+                for value in sorted(set(ignored_keeper_ids))
             )
-            if evidence is not None:
-                job["_duplicate_evidence"] = evidence
-            return (
-                alternate,
-                "disambiguated_job_fingerprint",
+            history_suffix = hashlib.sha256(
+                history_key.encode("utf-8")
+            ).hexdigest()[:16]
+            candidate_fingerprint = (
+                f"{base_distinct_fingerprint}:history:{history_suffix}"
+            )
+        else:
+            raise RuntimeError(
+                "Unable to allocate a unique rediscovery fingerprint "
+                "after 32 historical non-keeper collisions."
             )
 
     if job.get("url_fingerprint"):
