@@ -122,7 +122,7 @@ jobs:
           test -n "$NETCUP_HOST"
           test -n "$NETCUP_USER"
           output="$RUNNER_TEMP/staging-autoapply-canary.txt"
-          remote_command="/home/munshi/munshi-staging-v1/repo/deploy/netcup/run_staging_autoapply_canary.sh --job-id $JOB_ID --phase $PHASE --expected-hunter-sha $HUNTER_SHA --expected-apply-sha $APPLY_SHA --timeout-seconds $TIMEOUT_SECONDS --project $STAGING_PROJECT"
+          remote_command="bash /home/munshi/munshi-staging-v1/repo/deploy/netcup/run_staging_autoapply_canary.sh --job-id $JOB_ID --phase $PHASE --expected-hunter-sha $HUNTER_SHA --expected-apply-sha $APPLY_SHA --timeout-seconds $TIMEOUT_SECONDS --project $STAGING_PROJECT"
           ssh \
             -i "$HOME/.ssh/netcup_deploy" \
             -o BatchMode=yes \
