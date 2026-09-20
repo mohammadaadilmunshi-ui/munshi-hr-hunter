@@ -677,16 +677,23 @@ def test_apply_terminal_failure_fails_safely(worker_db, monkeypatch):
         lambda **kwargs: _fake_plan(),
     )
 
+    terminal = _session("FAILED_SAFELY")
+    terminal["preparation_job"]["last_error"] = "browser adapter failed closed"
     result = workers.run_ats_form_preparation_once(
         operation_id=operation["operation_id"],
         worker_id="ats-worker",
         poll_interval_seconds=0,
         plan_delivery=lambda **kwargs: _delivery(),
-        session_starter=lambda plan: _session("FAILED_SAFELY"),
+        session_starter=lambda plan: terminal,
         status_reader=lambda **kwargs: {},
     )
     assert result["task_status"] == "FAILED"
     assert result["operation_status"] == "FAILED_SAFELY"
+    assert result["apply_last_error"] == "browser adapter failed closed"
+    task = _task(
+        operation["operation_id"], orchestrator.TASK_ATS_FORM_PREPARATION
+    )
+    assert "browser adapter failed closed" in str(task["error_message"])
 
 
 def test_poll_timeout_requeues_without_submission(worker_db, monkeypatch):
