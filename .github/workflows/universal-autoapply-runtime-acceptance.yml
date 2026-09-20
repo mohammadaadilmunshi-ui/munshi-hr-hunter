@@ -16,6 +16,13 @@ on:
       - "tests/test_prepare_worker_adapters_v1c.py"
       - "tests/test_universal_runtime_integration_v2.py"
       - "tests/test_initial_dashboard_single_approval_contract_v1.py"
+      - "scripts/staging_autoapply_canary.py"
+      - "deploy/netcup/run_staging_autoapply_canary.sh"
+      - "tests/test_staging_autoapply_canary.py"
+      - "compose.netcup-shadow.yaml"
+      - "deploy/netcup/deploy_staging_release.sh"
+      - ".github/workflows/deployment-ci-reusable.yml"
+      - ".github/workflows/staging-autoapply-preparation-canary.yml"
       - ".github/workflows/universal-autoapply-runtime-acceptance.yml"
   workflow_dispatch:
 
