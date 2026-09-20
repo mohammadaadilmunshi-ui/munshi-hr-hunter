@@ -15,6 +15,8 @@ on:
       - "tests/test_linkedin_link_contract_v2.py"
       - "app/api.py"
       - "app/runtime_recovery.py"
+      - "app/telegram_listener.py"
+      - "tests/test_telegram_polling_ownership.py"
       - "tests/test_runtime_recovery.py"
       - "tests/test_application_plan_v2.py"
       - "tests/test_prepare_worker_adapters_v1c.py"
@@ -77,6 +79,7 @@ jobs:
             app/product_pages.py \
             app/api.py \
             app/runtime_recovery.py \
+            app/telegram_listener.py \
             app/linkedin_recent_backfill.py \
             migrations/056_mandatory_mailbox_verification_v1.py \
             migrations/057_linkedin_recent_url_backfill_v1.py \
@@ -96,6 +99,7 @@ jobs:
             tests/test_linkedin_link_contract_v2.py \
             tests/test_linkedin_recent_backfill.py \
             tests/test_runtime_recovery.py \
+            tests/test_telegram_polling_ownership.py \
             tests/test_complete_loop_deployment_migrations.py \
             tests/test_application_execution_mandate_v1.py \
             tests/test_application_review_v2.py \
