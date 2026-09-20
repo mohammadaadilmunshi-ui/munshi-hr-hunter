@@ -10,6 +10,7 @@ from app import answer_brain
 from app import application_field_intelligence_v1 as field_intelligence
 from app import application_question_catalog_v2 as catalog
 from app import candidate_ontology_v1 as ontology
+from app import universal_semantic_embedding_v1 as semantic_embedding
 
 RESOLVER_VERSION = "universal-question-resolver-v1"
 
@@ -102,6 +103,18 @@ class QuestionObservation:
 
 def model_semantics_enabled() -> bool:
     return str(os.getenv("MUNSHI_UNIVERSAL_MODEL_SEMANTICS_ENABLED") or "").strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _embedding_thresholds() -> tuple[float, float]:
+    try:
+        minimum = float(os.getenv("MUNSHI_UNIVERSAL_EMBEDDING_MIN_SCORE") or "0.84")
+    except ValueError:
+        minimum = 0.84
+    try:
+        margin = float(os.getenv("MUNSHI_UNIVERSAL_EMBEDDING_MARGIN") or "0.05")
+    except ValueError:
+        margin = 0.05
+    return max(0.0, min(1.0, minimum)), max(0.0, min(0.5, margin))
 
 
 def _norm(value: Any) -> str:
@@ -435,6 +448,43 @@ def resolve_question(
                 lane="ONTOLOGY_RETRIEVAL", sensitivity=sensitivity,
                 reason_code="ALIAS_OR_SEMANTIC_RETRIEVAL", candidates=ranked, preclassification=pre,
             )
+
+    # Lane C: standalone local semantic embeddings. This is intentionally
+    # candidate-value-free and provider-local (Ollama). A fuzzy embedding match
+    # may resolve directly only for NORMAL fields and only above both a score and
+    # separation-margin gate. Otherwise it merely improves the candidate set used
+    # by context/model interpretation.
+    embedded = semantic_embedding.retrieve_fail_closed(obs.as_field_metadata(), top_k=8)
+    if embedded:
+        minimum, margin = _embedding_thresholds()
+        top_embed = embedded[0]
+        second_embed = float(embedded[1]["score"]) if len(embedded) > 1 else 0.0
+        if (
+            sensitivity_floor == "NORMAL"
+            and float(top_embed["score"]) >= minimum
+            and float(top_embed["score"]) - second_embed >= margin
+            and ontology.concept(str(top_embed["concept_id"])) is not None
+        ):
+            item = _resolved_concept(obs, str(top_embed["concept_id"]))
+            if item.sensitivity == "NORMAL":
+                return _result(
+                    state="RESOLVED", concept_id=item.concept_id,
+                    confidence=float(top_embed["score"]), lane="ONTOLOGY_EMBEDDING",
+                    sensitivity="NORMAL", reason_code="LOCAL_SEMANTIC_EMBEDDING",
+                    candidates=embedded, preclassification=pre,
+                )
+        merged: dict[str, dict[str, Any]] = {
+            str(row["concept_id"]): dict(row) for row in ranked
+        }
+        for row in embedded:
+            key = str(row["concept_id"])
+            current = merged.get(key)
+            if current is None or float(row["score"]) > float(current["score"]):
+                merged[key] = dict(row)
+        ranked = sorted(
+            merged.values(),
+            key=lambda row: (-float(row["score"]), str(row["concept_id"])),
+        )[:10]
 
     # Lane D: structural context disambiguation. This specifically handles forms
     # such as "State New Jersey" without learning a candidate value from the text.

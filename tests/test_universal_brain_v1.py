@@ -15,6 +15,7 @@ from app import candidate_knowledge_center_v1 as knowledge_center
 from app import candidate_ontology_v1 as ontology
 from app import universal_answer_resolver_v1 as answers
 from app import universal_question_resolver_v1 as questions
+from app import universal_semantic_embedding_v1 as semantic_embedding
 from app import universal_open_ended_generator_v1 as open_ended
 
 
@@ -931,3 +932,110 @@ def test_reason_for_leaving_is_never_invented_by_open_ended_generator() -> None:
     assert resolved["answer_status"] == "BLOCKED_BY_POLICY"
     assert resolved["autofill_allowed"] is False
     assert "value" not in resolved
+
+
+def test_embedding_lane_resolves_weird_wording_with_high_margin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_EMBEDDING_ENABLED", "true")
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_EMBEDDING_MIN_SCORE", "0.84")
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_EMBEDDING_MARGIN", "0.05")
+    monkeypatch.setattr(
+        semantic_embedding,
+        "retrieve_fail_closed",
+        lambda observation, top_k=8: [
+            {
+                "concept_id": "contact.region",
+                "score": 0.94,
+                "sensitivity": "NORMAL",
+                "answer_mode": "DIRECT_FACT",
+                "category": "CONTACT",
+                "description": "Candidate state or province of residence.",
+            },
+            {
+                "concept_id": "contact.city",
+                "score": 0.76,
+                "sensitivity": "NORMAL",
+                "answer_mode": "DIRECT_FACT",
+                "category": "CONTACT",
+                "description": "Candidate city of residence.",
+            },
+        ],
+    )
+    result = questions.resolve_question(
+        {
+            "rawText": "Primary domicile jurisdiction",
+            "label": "Home jurisdiction",
+            "sectionHeading": "Personal details",
+            "inputType": "select",
+            "role": "combobox",
+            "semanticType": "UNKNOWN",
+        }
+    )
+    assert result["state"] == "RESOLVED"
+    assert result["concept_id"] == "contact.region"
+    assert result["classification_lane"] == "ONTOLOGY_EMBEDDING"
+    assert result["candidate_values_exposed"] is False
+
+
+def test_embedding_lane_cannot_downgrade_protected_preclassification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_EMBEDDING_ENABLED", "true")
+    monkeypatch.setattr(
+        questions,
+        "_preclassification",
+        lambda _obs: {
+            "family": "work_authorization",
+            "sensitivity": "PROTECTED",
+            "catalog_match": {"matched": False},
+            "catalog_concept_id": None,
+        },
+    )
+    monkeypatch.setattr(
+        semantic_embedding,
+        "retrieve_fail_closed",
+        lambda observation, top_k=8: [
+            {
+                "concept_id": "contact.region",
+                "score": 0.99,
+                "sensitivity": "NORMAL",
+                "answer_mode": "DIRECT_FACT",
+                "category": "CONTACT",
+                "description": "Candidate state.",
+            }
+        ],
+    )
+    result = questions.resolve_question(
+        {"rawText": "Unfamiliar protected wording", "semanticType": "UNKNOWN"}
+    )
+    assert result["classification_lane"] != "ONTOLOGY_EMBEDDING"
+    assert result["sensitivity"] == "PROTECTED"
+
+
+def test_embedding_observation_projection_ignores_candidate_values() -> None:
+    text = semantic_embedding._observation_text(
+        {
+            "raw_question": "Home base",
+            "label": "Home base",
+            "section_heading": "Contact",
+            "execution_value": "New Jersey",
+            "canonical_answer": "New Jersey",
+            "password": "never-send-this",
+        }
+    )
+    assert "Home base" in text
+    assert "New Jersey" not in text
+    assert "never-send-this" not in text
+
+
+def test_embedding_status_declares_local_value_free_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_EMBEDDING_ENABLED", "true")
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_EMBEDDING_MODEL", "nomic-embed-text")
+    status = semantic_embedding.status()
+    assert status["enabled"] is True
+    assert status["provider"] == "ollama-local"
+    assert status["external_provider"] is False
+    assert status["candidate_values_exposed"] is False

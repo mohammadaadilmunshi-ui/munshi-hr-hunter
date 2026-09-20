@@ -190,46 +190,44 @@ def test_non_loopback_delivery_requires_https(monkeypatch: pytest.MonkeyPatch) -
     assert v1c.deliver_submit_authorization(_envelope())["delivered"] is True
 
 
-def test_approval_and_submit_records_delivery_outcome(
+def test_approval_and_submit_records_pre_browser_execution_mandate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The one-click path must surface delivery state, never re-ask the customer."""
-    from app import application_single_approval_v1
+    """The sole customer click records a mandate; browser submit authority comes later."""
+    from app import application_execution_mandate_v1 as mandate_v1
     from app import product_application_flow_v2 as flow
 
-    approved = {
-        "review_id": "review-v2-" + "b" * 32,
-        "approval_id": "review-approval-1",
-        "authorization_id": "submit-auth-1",
-        "status": "APPLYING_NOW",
-        "customer_approval_complete": True,
-        "additional_customer_approval_required": False,
-        "submit_authorization": _envelope(),
+    review = {
+        "preflight_package_id": "preflight-package-1",
+        "review_digest": "b" * 64,
     }
-    monkeypatch.setattr(
-        application_single_approval_v1,
-        "approve_and_authorize",
-        lambda **kwargs: dict(approved),
-    )
-    monkeypatch.setattr(
-        v1c,
-        "deliver_submit_authorization",
-        lambda envelope: {"attempted": True, "delivered": True, "error": None},
-    )
+    preflight = {
+        "preflight_package_id": "preflight-package-1",
+        "cover_letter_decision": "NOT_REQUIRED",
+    }
     monkeypatch.setattr(
         flow,
         "flow_for_job",
         lambda job_id: {
-            "state": "READY_TO_SUBMIT",
-            "customer_review": {
-                "review_id": "review-v2-" + "b" * 32,
-                "review_digest": "b" * 64,
-                "prepared_package_digest": "d" * 64,
-                "browser_form_digest": "e" * 64,
-            },
-            "artifacts": {"plan": {"apply_session_id": "apply-session-1"}},
+            "state": "READY_FOR_APPROVAL",
+            "package_review": dict(review),
+            "artifacts": {"preflight": dict(preflight)},
         },
     )
+    monkeypatch.setattr(
+        mandate_v1,
+        "approve_package",
+        lambda **kwargs: {
+            "mandate_id": "execution-mandate-1",
+            "preflight_package_id": kwargs["preflight_package_id"],
+            "review_digest": kwargs["expected_review_digest"],
+        },
+    )
+
     result = flow.approve_and_submit_for_job(42)
+    assert result["status"] == "APPLYING_NOW"
+    assert result["customer_approval_complete"] is True
     assert result["additional_customer_approval_required"] is False
-    assert result["authority_delivery"]["delivered"] is True
+    assert result["submit_authorization"] is None
+    assert result["submission_authority"] is False
+    assert "authority_delivery" not in result

@@ -106,33 +106,54 @@ def option_signature(options: Sequence[str]) -> str:
 
 
 def fingerprint_parts(observation: QuestionObservation | Mapping[str, Any]) -> dict[str, str]:
+    raw = dict(observation) if isinstance(observation, Mapping) else {}
+    scanner_inputs = raw.get("logical_field_fingerprint_inputs")
+    if not isinstance(scanner_inputs, Mapping):
+        scanner_inputs = raw.get("logicalFieldFingerprintInputs")
+    scanner_inputs = dict(scanner_inputs) if isinstance(scanner_inputs, Mapping) else {}
+
     obs = observation if isinstance(observation, QuestionObservation) else QuestionObservation.from_mapping(observation)
-    if obs.repeat_group and obs.repeat_index is None:
+
+    def scanner_or(key: str, fallback: Any) -> Any:
+        # Presence is authoritative even when the scanner intentionally emitted
+        # an empty string (e.g. custom SELECT shells with role=combobox).
+        return scanner_inputs[key] if key in scanner_inputs else fallback
+
+    repeat_group = scanner_or("repeatGroupId", obs.repeat_group)
+    repeat_index = scanner_or("repeatIndex", obs.repeat_index)
+    try:
+        repeat_index = int(repeat_index) if repeat_index is not None else None
+    except (TypeError, ValueError):
+        repeat_index = None
+    if repeat_group and repeat_index is None:
         raise ValueError("Repeated browser fields require an explicit repeat index before durable binding.")
+
     question_identity = {
         "raw_question": _norm(obs.raw_question),
-        "label": _norm(obs.label),
+        "label": _norm(scanner_or("label", obs.label)),
         "placeholder": _norm(obs.placeholder),
-        "name": _norm(obs.name),
+        "name": _norm(scanner_or("fieldName", obs.name)),
     }
     section_identity = {
-        "section": _norm(obs.section_heading),
+        "section": _norm(scanner_or("sectionHeading", obs.section_heading)),
         "previous": [_norm(item) for item in obs.previous_labels],
         "next": [_norm(item) for item in obs.next_labels],
     }
-    options = option_signature(obs.options)
+    scanner_option_signature = _norm(scanner_inputs.get("optionSignature"))
+    options = (
+        _sha({"scanner_option_signature": scanner_option_signature})
+        if scanner_option_signature
+        else option_signature(obs.options)
+    )
     logical = {
         "question": question_identity,
         "section": section_identity,
-        "input_type": _norm(obs.input_type),
-        "role": _norm(obs.role),
-        "autocomplete": _norm(obs.autocomplete),
-        # Browser semantic classifications are observations, not logical identity.
-        # They may legitimately change after a SPA rerender (e.g. STATE_PROVINCE
-        # -> UNKNOWN), so including them here would destroy the durable binding.
+        "input_type": _norm(scanner_or("inputType", obs.input_type)),
+        "role": _norm(scanner_or("role", obs.role)),
+        "autocomplete": _norm(scanner_or("autocomplete", obs.autocomplete)),
         "option_signature": options,
-        "repeat_group": _norm(obs.repeat_group),
-        "repeat_index": obs.repeat_index,
+        "repeat_group": _norm(repeat_group),
+        "repeat_index": repeat_index,
     }
     return {
         "logical_field_fingerprint": _sha(logical),
