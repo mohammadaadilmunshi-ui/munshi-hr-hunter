@@ -754,6 +754,57 @@ def _application_plan_idempotency_key(
     return f"{base}:provider-capability-v2", prior_plan_id
 
 
+def _runtime_replacement_plan(
+    *,
+    operation: Mapping[str, Any],
+    pending_task: Mapping[str, Any],
+    preflight: Mapping[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Return the exact immutable runtime replacement plan when one already exists.
+
+    Runtime NEEDS_INPUT is resolved by creating a distinct immutable Application
+    Plan revision.  Re-running the ATS task must never recreate or re-deliver the
+    superseded plan under its original idempotency key.  This is provider-neutral:
+    the only authority is the stored plan-supersession lineage.
+    """
+    raw_output = pending_task.get("output")
+    if not isinstance(raw_output, Mapping):
+        return None, None
+    prior_plan_id = str(raw_output.get("plan_id") or "").strip()
+    if not prior_plan_id:
+        return None, None
+
+    supersession = application_plan_v2.runtime_plan_supersession(prior_plan_id)
+    if not supersession:
+        return None, None
+    replacement_id = str(supersession.get("replacement_plan_id") or "").strip()
+    if not replacement_id:
+        raise RuntimeError("Runtime plan supersession has no replacement plan.")
+
+    replacement = application_plan_v2.get_application_plan(replacement_id)
+    snapshot = dict(replacement.get("snapshot") or {})
+    resume = dict(snapshot.get("resume") or {})
+    exact_binding = (
+        str(replacement.get("application_id") or "") == str(operation["application_id"])
+        and int(replacement.get("job_id") or 0) == int(operation["job_id"])
+        and str(replacement.get("preflight_package_id") or "")
+        == str(preflight["preflight_package_id"])
+        and str(resume.get("version_id") or "") == str(preflight["resume_version_id"])
+        and str(resume.get("artifact_sha256") or "")
+        == str(preflight["resume_pdf_sha256"])
+        and str(replacement.get("status") or "") == "READY_TO_APPLY"
+        and replacement.get("executable") is True
+        and replacement.get("submission_authority") is False
+        and application_plan_v2.application_plan_freshness(replacement_id).get("fresh")
+        is True
+    )
+    if not exact_binding:
+        raise RuntimeError(
+            "Runtime replacement Application Plan is stale or mismatched."
+        )
+    return replacement, prior_plan_id
+
+
 def run_ats_form_preparation_once(
     *,
     operation_id: str,
@@ -859,28 +910,38 @@ def run_ats_form_preparation_once(
     record_review = review_recorder or application_review_v2.create_review
 
     try:
-        plan_key, provider_capability_retry_from_plan_id = (
-            _application_plan_idempotency_key(
-                operation=operation,
-                pending_task=pending_ats_task,
-                preflight=preflight,
+        runtime_plan, runtime_supersession_from_plan_id = _runtime_replacement_plan(
+            operation=operation,
+            pending_task=pending_ats_task,
+            preflight=preflight,
+        )
+        provider_capability_retry_from_plan_id = None
+        if runtime_plan is not None:
+            plan = runtime_plan
+            plan_key = str(plan["idempotency_key"])
+        else:
+            plan_key, provider_capability_retry_from_plan_id = (
+                _application_plan_idempotency_key(
+                    operation=operation,
+                    pending_task=pending_ats_task,
+                    preflight=preflight,
+                )
             )
-        )
-        plan = application_plan_v2.prepare_application_plan(
-            preflight_package_id=str(preflight["preflight_package_id"]),
-            idempotency_key=plan_key,
-            # Initial plan intentionally contains only currently-known
-            # requirements. Runtime-discovered NORMAL questions use the already
-            # existing immutable replacement-plan flow.
-            answer_requirements=[],
-            permissions=_plan_permissions(
-                cover_letter_present=cover_letter is not None
-            ),
-            provider_policy=None,
-            secure_resolver_refs={},
-            resume_format="PDF",
-            cover_letter_id=cover_letter_id,
-        )
+            plan = application_plan_v2.prepare_application_plan(
+                preflight_package_id=str(preflight["preflight_package_id"]),
+                idempotency_key=plan_key,
+                # Initial plan intentionally contains only currently-known
+                # requirements. Runtime-discovered NORMAL questions use the
+                # immutable replacement-plan flow above on continuation.
+                answer_requirements=[],
+                permissions=_plan_permissions(
+                    cover_letter_present=cover_letter is not None
+                ),
+                provider_policy=None,
+                secure_resolver_refs={},
+                resume_format="PDF",
+                cover_letter_id=cover_letter_id,
+            )
         if (
             str(plan.get("status") or "") != "READY_TO_APPLY"
             or plan.get("executable") is not True
@@ -919,9 +980,14 @@ def run_ats_form_preparation_once(
         ):
             raise RuntimeError("Background preparation plan gained review/submit authority.")
 
+        handoff_key = (
+            f"prepare:{operation_id}:handoff:runtime:{plan['plan_id']}"
+            if runtime_supersession_from_plan_id
+            else f"prepare:{operation_id}:handoff:v1c"
+        )
         delivery = deliver(
             plan_id=str(plan["plan_id"]),
-            idempotency_key=f"prepare:{operation_id}:handoff:v1c",
+            idempotency_key=handoff_key,
         )
         if (
             str(getattr(delivery, "state", "")) != "PLAN_ACCEPTED"
@@ -1089,6 +1155,9 @@ def run_ats_form_preparation_once(
                 "provider": str(plan["provider"]),
                 "provider_capability_retry_from_plan_id": (
                     provider_capability_retry_from_plan_id
+                ),
+                "runtime_supersession_from_plan_id": (
+                    runtime_supersession_from_plan_id
                 ),
                 "handoff_id": str(getattr(delivery, "handoff_id", "")),
                 "handoff_state": "PLAN_ACCEPTED",
