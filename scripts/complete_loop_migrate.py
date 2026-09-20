@@ -286,6 +286,8 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     print("COMPLETE_LOOP_REQUIRED_TABLES=PASS")
     print("COMPLETE_LOOP_CALLBACK_COLUMNS=PASS")
+    print("COMPLETE_LOOP_MAILBOX_TABLES=PASS")
+    print("COMPLETE_LOOP_INBOUND_MAIL_ENCRYPTION_COLUMNS=PASS")
     print("COMPLETE_LOOP_FOREIGN_KEYS=PASS")
     print(f"COMPLETE_LOOP_QUICK_CHECK={result['quick_check']}")
     return 0
