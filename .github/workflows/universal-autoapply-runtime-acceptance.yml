@@ -11,6 +11,8 @@ on:
       - "app/application_workspace_page.py"
       - "app/application_execution_mandate_v1.py"
       - "app/product_application_flow_v2.py"
+      - "app/product_pages.py"
+      - "tests/test_linkedin_link_contract_v2.py"
       - "app/api.py"
       - "tests/test_application_plan_v2.py"
       - "tests/test_prepare_worker_adapters_v1c.py"
@@ -70,6 +72,7 @@ jobs:
             app/application_execution_mandate_v1.py \
             app/application_workspace_page.py \
             app/product_application_flow_v2.py \
+            app/product_pages.py \
             app/api.py \
             app/linkedin_recent_backfill.py \
             migrations/056_mandatory_mailbox_verification_v1.py \
