@@ -449,55 +449,10 @@ def test_prepared_package_digest_changes_when_material_review_changes(
     assert sha256_json(base) != sha256_json(changed)
 
 
-def test_one_customer_approval_mints_exact_submit_authority(
-    review_authority,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    review = reviews.create_review(
-        plan_id="application-plan-1",
-        prepared_package=_prepared(),
-        idempotency_key="review-key-single-approval",
-    )
-    monkeypatch.setattr(
-        single_approval,
-        "current_owner",
-        lambda _connection: SimpleNamespace(
-            tenant_id="default", user_id="local-owner"
-        ),
-    )
-    issued: list[dict] = []
-
-    def issue(payload):
-        issued.append(dict(payload))
-        return {
-            "authorization_id": "submit-auth-1",
-            "submission_authority": True,
-        }
-
-    monkeypatch.setattr(
-        single_approval.application_submit_authorization_v1,
-        "issue_authorization",
-        issue,
-    )
-
-    arguments = {
-        "review_id": review["review_id"],
-        "session_id": "apply-session-1",
-        "approval_idempotency_key": "customer-submit-click-1",
-        "authorization_idempotency_key": "customer-submit-click-1",
-        "expected_review_digest": review["review_digest"],
-        "expected_prepared_package_digest": review["prepared_package_digest"],
-        "expected_browser_form_digest": review["browser_form_digest"],
-    }
-    first = single_approval.approve_and_authorize(**arguments)
-    second = single_approval.approve_and_authorize(**arguments)
-
-    assert first["status"] == "APPLYING_NOW"
-    assert first["customer_approval_complete"] is True
-    assert first["additional_customer_approval_required"] is False
-    assert second["approval_id"] == first["approval_id"]
-    assert issued[0]["review_digest"] == review["review_digest"]
-    assert issued[0]["prepared_package_digest"] == review["prepared_package_digest"]
-    assert issued[0]["browser_form_digest"] == review["browser_form_digest"]
-    assert issued[0]["resume_sha256"] == "3" * 64
-    assert all(item["idempotency_key"] == "customer-submit-click-1" for item in issued)
+def test_retired_browser_bound_single_approval_fails_closed() -> None:
+    assert single_approval.LEGACY_RETIRED is True
+    with pytest.raises(RuntimeError, match="pre-browser application execution mandate"):
+        single_approval.approve_and_authorize(
+            review_id="legacy-review",
+            session_id="legacy-session",
+        )
