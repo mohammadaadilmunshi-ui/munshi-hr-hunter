@@ -165,6 +165,19 @@ def test_receipt_requires_a_currently_claimed_authorization(receipt_db) -> None:
 
 def test_verified_receipt_consumes_the_claim_exactly_once(receipt_db, monkeypatch) -> None:
     """Drive the real authority ledger to CLAIMED, then ingest its receipt."""
+    promoted = []
+    monkeypatch.setattr(
+        receipts.runtime_resolution,
+        "promote_runtime_resolutions_after_verified_submission",
+        lambda *, plan_id: promoted.append(plan_id)
+        or {
+            "promoted": 2,
+            "skipped_candidate_truth": 1,
+            "skipped_existing": 0,
+            "conflicts": [],
+            "teach_munshi_raw_value_writes": 0,
+        },
+    )
     issued = {
         "version": auth.AUTH_VERSION,
         "authorization_id": "submit-auth-0000000000000000000000000000000000000001",
@@ -313,10 +326,15 @@ def test_verified_receipt_consumes_the_claim_exactly_once(receipt_db, monkeypatc
     result = receipts.ingest_receipt(receipt)
     assert result["status"] == "INGESTED" and result["replayed"] is False
     assert result["application_state"] == "SUBMITTED"
+    assert result["runtime_answer_memory"]["promoted"] == 2
+    assert result["runtime_answer_memory"]["teach_munshi_raw_value_writes"] == 0
+    assert promoted == ["application-plan-1"]
 
     # Replay of the identical receipt is acknowledged, never re-counted.
     replay = receipts.ingest_receipt(receipt)
     assert replay["replayed"] is True
+    assert replay["runtime_answer_memory"]["teach_munshi_raw_value_writes"] == 0
+    assert promoted == ["application-plan-1", "application-plan-1"]
 
     connection = database.get_connection()
     try:

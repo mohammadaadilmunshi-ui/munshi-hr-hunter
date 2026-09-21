@@ -977,6 +977,13 @@ def n8n_status_update(
         "telegram_sync": telegram_sync_result,
     }
 
+# MUNSHI_INBOUND_MAIL_ROUTER_V2
+# Signed Cloudflare Email Routing ingress. This endpoint stores/classifies mail
+# only; it never carries review or submission authority.
+from app.inbound_mail import router as inbound_mail_router
+
+app.include_router(inbound_mail_router)
+
 # LOCAL_HR_AGENT_PROXY_ROUTER_V1
 from app.hr_agent_proxy import router as hr_agent_proxy_router
 
@@ -1077,14 +1084,13 @@ def revalidate_application_review(
     dependencies=[Depends(require_api_secret)],
 )
 def approve_application_review(review_id: str) -> dict[str, Any]:
-    """Retired second-approval surface; the single boundary is approve-and-submit."""
+    """Retired late browser-review approval surface."""
     del review_id
     raise HTTPException(
         status_code=status.HTTP_410_GONE,
         detail=(
-            "Separate review approval was retired. Use the single "
-            "POST /api/application-reviews/{review_id}/approve-and-submit action bound "
-            "to the frozen review digest."
+            "Late browser-review approval is retired. The only customer approval "
+            "is POST /api/jobs/{job_id}/approve-and-submit before ATS execution."
         ),
     )
 
@@ -1097,19 +1103,27 @@ def approve_and_submit_application_review(
     review_id: str,
     payload: ApplicationApproveAndSubmitRequest,
 ) -> dict[str, Any]:
-    """The sole customer approval boundary; no later review is permitted."""
-    from app import application_single_approval_v1
+    """Retired late approval route kept only as an explicit tombstone."""
+    del review_id, payload
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "Browser-bound approve-and-submit is retired. Use the pre-browser "
+            "POST /api/jobs/{job_id}/approve-and-submit package mandate."
+        ),
+    )
+
+
+@app.post(
+    "/api/jobs/{job_id}/approve-and-submit",
+    dependencies=[Depends(require_api_secret)],
+)
+def approve_and_submit_job_package(job_id: int) -> dict[str, Any]:
+    """The sole customer approval boundary, before unattended ATS execution."""
+    from app import product_application_flow_v2
 
     try:
-        return application_single_approval_v1.approve_and_authorize(
-            review_id=review_id,
-            session_id=payload.session_id,
-            approval_idempotency_key=payload.approval_idempotency_key,
-            authorization_idempotency_key=payload.authorization_idempotency_key,
-            expected_review_digest=payload.expected_review_digest,
-            expected_prepared_package_digest=payload.expected_prepared_package_digest,
-            expected_browser_form_digest=payload.expected_browser_form_digest,
-        )
+        return product_application_flow_v2.approve_and_submit_for_job(int(job_id))
     except (LookupError, PermissionError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 
@@ -1178,3 +1192,79 @@ async def application_execution_autoapply_credential(request: Request) -> Respon
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
     except (LookupError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+def _account_execution_response_error(error: Exception) -> HTTPException:
+    if isinstance(error, PermissionError):
+        return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error))
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
+
+
+@app.post("/api/application-execution/account/prepare")
+async def application_execution_account_prepare(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.account_prepare_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error
+
+
+@app.post("/api/application-execution/account/credential")
+async def application_execution_account_credential(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.account_credential_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error
+
+
+@app.post("/api/application-execution/mailbox/health")
+async def application_execution_mailbox_health(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.mailbox_health_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error
+
+
+@app.post("/api/application-execution/mailbox/begin")
+async def application_execution_mailbox_begin(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.mailbox_begin_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error
+
+
+@app.post("/api/application-execution/mailbox/claim")
+async def application_execution_mailbox_claim(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.mailbox_claim_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error
+
+
+@app.post("/api/application-execution/mailbox/consume")
+async def application_execution_mailbox_consume(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.mailbox_consume_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error
+
+
+@app.post("/api/application-execution/mailbox/cancel")
+async def application_execution_mailbox_cancel(request: Request) -> Response:
+    from app import application_account_transport_v1 as transport
+    try:
+        body, headers = transport.mailbox_cancel_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise _account_execution_response_error(error) from error

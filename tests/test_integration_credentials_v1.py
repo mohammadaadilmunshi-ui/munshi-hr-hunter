@@ -141,10 +141,11 @@ def test_auto_prepare_and_application_pages_explain_the_real_lifecycle() -> None
 
     assert "How Auto Prepare works" in pages
     assert "That does not disable automation" in pages
-    assert "The one-review submission gate is mandatory" in pages
+    assert "The one pre-browser approval gate is mandatory" in pages
     assert "Prefer review reminders during preparation" in pages
 
     assert "What happens to every application" in applications
     assert "You only need to intervene" in applications
     assert "**Your action now:**" in applications
-    assert "There is no second approval step" in applications
+    assert "This is the only customer review" in applications
+    assert "No second review follows" in applications

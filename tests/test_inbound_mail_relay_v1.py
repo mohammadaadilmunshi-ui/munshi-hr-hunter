@@ -10,7 +10,7 @@ from email.message import EmailMessage
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app import database, inbound_mail
+from app import database, inbound_mail, mail_intelligence_v2
 from app.ats_managed_identity import prepare_managed_account
 from app.ats_verification_orchestrator import begin_verification
 
@@ -197,7 +197,14 @@ def test_signed_known_alias_is_stored_and_uniquely_correlated(
         assert stored["application_key"] == "application-mail-1"
         assert stored["verification_request_id"] == verification["request_id"]
         assert stored["correlation_state"] == "UNIQUE"
-        assert "secure verification link" in stored["text_body"]
+        assert stored["subject"] == "[encrypted]"
+        assert stored["headers_json"] == "[]"
+        assert stored["text_body"] is None
+        assert stored["html_body"] is None
+        assert stored["content_ciphertext"] is not None
+        assert stored["content_nonce"] is not None
+        assert stored["content_algorithm"] == "aes-gcm-v1"
+        assert b"secure verification link" not in bytes(stored["content_ciphertext"])
         assert stored["attachment_count"] == 0
 
         assert request is not None
@@ -486,3 +493,87 @@ def test_inbound_route_is_registered_through_existing_proxy_router():
         for route in application_router.routes
     }
     assert "/api/mail/inbound" in paths
+
+
+def test_main_api_mounts_signed_inbound_mail_router(
+    hunter_db,
+    monkeypatch,
+):
+    monkeypatch.setenv("HUNTER_API_SECRET", "test-hunter-api-secret")
+
+    # Test the actual ASGI surface instead of FastAPI's internal route
+    # representation. Newer FastAPI versions may retain included routers as
+    # _IncludedRouter objects, which is an implementation detail and not
+    # evidence that the endpoint is missing.
+    from app.api import app
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/mail/inbound",
+            content=b"",
+            headers={"Content-Type": "message/rfc822"},
+        )
+
+    # The mounted route is reached and rejects the deliberately unsigned,
+    # empty probe at the mail-validation boundary. A missing/mis-mounted route
+    # would instead return 404/405.
+    assert response.status_code == 400
+    assert "protocol version" in response.json()["detail"].lower()
+
+
+def test_signed_v2_router_message_reaches_mail_intelligence(
+    hunter_db,
+    monkeypatch,
+):
+    account = _setup_active_identity(monkeypatch)
+    monkeypatch.setenv(
+        "MUNSHI_MAIL_ARTIFACT_HMAC_SECRET",
+        "test-mail-artifact-secret-" + ("z" * 40),
+    )
+    recipient = str(account["application_email"])
+    sender = "no-reply@example.test"
+    message_id = "<munshi-mail-v2-route@example.test>"
+    raw = _raw_email(
+        recipient=recipient,
+        sender=sender,
+        message_id=message_id,
+        subject="Application update",
+        body="This is an ordinary application mailbox message.",
+    )
+    timestamp_value = str(int(time.time()))
+    router_class = "OTHER"
+    digest = hashlib.sha256(raw).hexdigest()
+    material = mail_intelligence_v2.canonical_signature_material_v2(
+        timestamp_value=timestamp_value,
+        recipient=recipient,
+        sender=sender,
+        message_id=message_id,
+        router_class=router_class,
+        raw_sha256=digest,
+    )
+    signature = hmac.new(
+        MAIL_SECRET.encode("utf-8"),
+        material,
+        hashlib.sha256,
+    ).hexdigest()
+
+    response = _client().post(
+        "/api/mail/inbound",
+        content=raw,
+        headers={
+            "Content-Type": "message/rfc822",
+            "X-Munshi-Version": "v2",
+            "X-Munshi-Timestamp": timestamp_value,
+            "X-Munshi-Recipient": recipient,
+            "X-Munshi-Sender": sender,
+            "X-Munshi-Message-ID": message_id,
+            "X-Munshi-Mail-Class": router_class,
+            "X-Munshi-Signature": f"v2={signature}",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["classification"] == "OTHER"
+    assert payload["submission_triggered"] is False

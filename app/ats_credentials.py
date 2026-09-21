@@ -206,3 +206,67 @@ def _decrypt_for_integrity(*, connection: sqlite3.Connection, account_id: str, t
         return _aes()(_key()).decrypt(bytes(row["nonce"]), bytes(row["ciphertext"]), _aad(tenant_id=tenant_id, user_id=user_id, account_id=account_id, provider=row["provider"], secret_kind=kind))
     except Exception as error:
         raise CredentialError("Credential integrity verification failed.") from error
+
+
+def resolve_secret_for_execution(
+    *,
+    account_id: str,
+    tenant_id: str,
+    user_id: str,
+    secret_kind: str,
+    purpose: str,
+) -> str:
+    """Resolve a credential only for the authenticated application-execution bridge.
+
+    The caller must already have validated the immutable Application Plan owner
+    binding. This function performs a second owner/account check and returns the
+    secret only to the in-process bridge so it can be immediately re-encrypted
+    for Apply. It is intentionally not exposed through UI/settings APIs.
+    """
+    if purpose != "application-execution":
+        raise CredentialError("Credential execution resolution is unavailable.")
+    from app.database import get_connection
+
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        owner = current_owner(connection)
+        if owner.tenant_id != str(tenant_id) or owner.user_id != str(user_id):
+            raise CredentialError("Credential execution resolution is unavailable.")
+        row = _owned_account(connection, str(account_id), str(tenant_id), str(user_id))
+        kind = _valid_secret_kind(secret_kind)
+        secret_row = connection.execute(
+            """SELECT s.*,a.provider
+               FROM ats_credential_secrets s
+               JOIN ats_credential_accounts a ON a.account_id=s.account_id
+               WHERE s.account_id=? AND s.tenant_id=? AND s.user_id=?
+                 AND s.secret_kind=? AND a.state='AVAILABLE'""",
+            (str(account_id), str(tenant_id), str(user_id), kind),
+        ).fetchone()
+        if (
+            secret_row is None
+            or secret_row["algorithm_version"] != ALGORITHM
+            or secret_row["key_version"] != KEY_VERSION
+        ):
+            raise CredentialError("Credential execution resolution is unavailable.")
+        plaintext = _aes()(_key()).decrypt(
+            bytes(secret_row["nonce"]),
+            bytes(secret_row["ciphertext"]),
+            _aad(
+                tenant_id=str(tenant_id),
+                user_id=str(user_id),
+                account_id=str(account_id),
+                provider=str(row["provider"]),
+                secret_kind=kind,
+            ),
+        )
+        value = plaintext.decode("utf-8")
+        if not value:
+            raise CredentialError("Credential execution resolution is unavailable.")
+        return value
+    except CredentialError:
+        raise
+    except Exception as error:
+        raise CredentialError("Credential execution resolution is unavailable.") from error
+    finally:
+        connection.close()

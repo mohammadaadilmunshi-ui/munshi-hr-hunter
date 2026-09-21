@@ -243,6 +243,45 @@ def store_secret(
         connection.close()
 
 
+def read_secret_readonly(
+    credential_type: str, *, account_label: str = "default"
+) -> str | None:
+    """Decrypt a secret without schema installation, audit writes, or touch writes."""
+    credential_type, account_label = _normalized_identity(
+        credential_type, account_label
+    )
+    AESGCM = _aesgcm()
+    key = _key()
+    connection = get_connection()
+    try:
+        exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='credential_secret'"
+        ).fetchone()
+        if exists is None:
+            return None
+        row = connection.execute(
+            """
+            SELECT ciphertext,nonce,algorithm_version
+            FROM credential_secret
+            WHERE credential_type=? AND account_label=?
+            """,
+            (credential_type, account_label),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["algorithm_version"] != ALGORITHM_VERSION:
+            raise VaultError("Credential uses an unsupported encryption version.")
+        aad = f"{credential_type}:{account_label}:{ALGORITHM_VERSION}".encode("utf-8")
+        try:
+            return AESGCM(key).decrypt(
+                bytes(row["nonce"]), bytes(row["ciphertext"]), aad
+            ).decode("utf-8")
+        except Exception as error:
+            raise VaultError("Credential could not be decrypted.") from error
+    finally:
+        connection.close()
+
+
 def read_secret(credential_type: str, *, account_label: str = "default") -> str | None:
     credential_type, account_label = _normalized_identity(
         credential_type, account_label

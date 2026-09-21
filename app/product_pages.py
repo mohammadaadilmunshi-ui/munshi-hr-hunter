@@ -218,7 +218,7 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
                         "primary"
                         if flow.get("state") in {
                             "NEEDS_INPUT",
-                            "READY_FOR_REVIEW",
+                            "READY_FOR_APPROVAL",
                         }
                         else "secondary"
                     ),
@@ -557,7 +557,7 @@ def _render_auto_prepare_guide(
         ),
         (
             "3 · You review once",
-            "Only a completed package reaches you for the single final review.",
+            "Only the completed pre-browser package reaches you for the one customer review.",
         ),
         (
             "4 · Submit & verify",
@@ -587,7 +587,7 @@ def _render_auto_prepare_guide(
         )
 
     st.caption(
-        "The one-review submission gate is mandatory. The review preference below "
+        "The one pre-browser approval gate is mandatory. The review preference below "
         "changes reminders only; it never removes Approve & Submit."
     )
 
@@ -689,7 +689,7 @@ def auto_prepare() -> None:
                     value=policy["review_first"],
                     help=(
                         "This preference never removes the mandatory final "
-                        "Approve & Submit review."
+                        "pre-browser Approve & Submit package review."
                     ),
                 )
                 if st.form_submit_button("Save preference", type="primary", use_container_width=True):
@@ -748,7 +748,7 @@ def tracker() -> None:
     preferred = [
         "Preparing",
         "Needs input",
-        "Ready for review",
+        "Ready for approval",
         "Ready to submit",
         "Submitting",
         "Submitted",

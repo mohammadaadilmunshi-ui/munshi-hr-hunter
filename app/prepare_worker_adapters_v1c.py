@@ -33,13 +33,23 @@ from typing import Any
 from urllib import error, request
 from urllib.parse import urlsplit
 
+from app import application_execution_mandate_v1
 from app import application_plan_delivery_v2
 from app import application_review_v2
 from app import application_plan_v2
+from app import application_plan_resolution_v2
+from app import application_semantic_binding_v1 as universal_binding
+from app import candidate_knowledge_graph_v1 as universal_graph
+from app import candidate_ontology_v1 as universal_ontology
+from app import universal_answer_resolver_v1 as universal_answers
+from app import universal_question_resolver_v1 as universal_questions
+from app import application_submit_authorization_v1
 from app import application_preflight_package_v1 as preflight_v1
 from app import opportunity_intelligence_v3
 from app import relationship_intelligence_v3
 from app import native_cover_letter_writer_v1
+from app import phase67_common
+from app import universal_open_ended_generator_v1 as universal_open_ended
 from app import prepare_orchestrator_v1 as orchestrator
 
 
@@ -58,6 +68,7 @@ _APPLY_SESSION_PATH = "/v1/complete-loop/sessions"
 _APPLY_PREPARE_JOB_PATH = "/v1/complete-loop/preparation-jobs/{job_id}"
 _APPLY_RESOLUTION_TASK_PATH = "/v1/complete-loop/preparation-jobs/{job_id}/resolution-tasks"
 _APPLY_REVIEW_PATH = "/v1/complete-loop/sessions/{session_id}/review"
+_APPLY_UNIVERSAL_SEMANTIC_PATH = "/v1/universal-brain/semantic-interpretation"
 _APPLY_SUBMIT_AUTHORITY_PATH = (
     "/v1/complete-loop/sessions/{session_id}/submit-authority"
 )
@@ -356,6 +367,25 @@ def run_application_preflight_once(
                 "submission_authority": False,
             }
 
+        cover = _cover_decision(operation)
+        reviewed_cover_letter: dict[str, Any] | None = None
+        if str(cover.get("decision") or "") != "NOT_REQUIRED":
+            reviewed_cover_letter = native_cover_letter_writer_v1.generate(
+                preflight_package_id=str(package["package_id"]),
+            )
+            if (
+                int(reviewed_cover_letter.get("page_count") or 0) != 1
+                or reviewed_cover_letter.get("submission_authority") is not False
+                or str(reviewed_cover_letter.get("job_snapshot_sha256") or "")
+                != str(operation["job_snapshot_sha256"])
+                or str(reviewed_cover_letter.get("candidate_profile_digest") or "")
+                != str(operation["candidate_profile_digest"])
+                or not str(reviewed_cover_letter.get("cover_letter_id") or "")
+            ):
+                raise RuntimeError(
+                    "Reviewable cover-letter artifact is not exactly bound to the current application."
+                )
+
         output = {
             "version": WORKER_VERSION,
             "preflight_package_id": str(package["package_id"]),
@@ -366,6 +396,23 @@ def run_application_preflight_once(
             "relationship_strategy_id": relationship_strategy_id,
             "resume_version_id": str(resume["resume_version_id"]),
             "resume_pdf_sha256": str(dict(resume["pdf"])["artifact_sha256"]),
+            "cover_letter_decision": str(cover.get("decision") or ""),
+            "cover_letter_id": (
+                str(reviewed_cover_letter.get("cover_letter_id") or "")
+                if reviewed_cover_letter is not None
+                else None
+            ),
+            "cover_letter_artifact_sha256": (
+                str(reviewed_cover_letter.get("artifact_sha256") or "")
+                if reviewed_cover_letter is not None
+                else None
+            ),
+            "cover_letter_page_count": (
+                int(reviewed_cover_letter.get("page_count") or 0)
+                if reviewed_cover_letter is not None
+                else None
+            ),
+            "single_approval_package_ready": True,
             "answer_inventory_snapshot_complete": True,
             "known_requirement_set_complete": True,
             "live_form_discovery_pending": True,
@@ -546,6 +593,36 @@ def _read_apply_prepare_job(
     )
 
 
+def _interpret_apply_universal_semantics(
+    payload: Mapping[str, Any],
+    *,
+    tenant_id: str,
+    user_id: str,
+) -> dict[str, Any]:
+    """Ask Apply/Sonnet to choose among Hunter ontology candidates, value-free."""
+    if payload.get("candidate_values") is not None:
+        raise ValueError("Universal semantic interpretation must never send candidate values.")
+    base = _apply_base_url()
+    result = _json_request(
+        method="POST",
+        url=base + _APPLY_UNIVERSAL_SEMANTIC_PATH,
+        headers=_apply_headers(tenant_id=tenant_id, user_id=user_id),
+        body={"payload": dict(payload)},
+        timeout_seconds=30.0,
+    )
+    if (
+        result.get("candidate_values_sent") is not False
+        or result.get("secret_material_sent") is not False
+        or result.get("protected_values_sent") is not False
+    ):
+        raise RuntimeError("Apply semantic interpretation violated the value-free contract.")
+    return {
+        "concept_id": str(result.get("concept_id") or "").strip().casefold(),
+        "confidence": float(result.get("confidence") or 0.0),
+        "reason_code": str(result.get("reason_code") or "MODEL_SEMANTIC_INTERPRETATION")[:120],
+    }
+
+
 def _read_apply_resolution_tasks(
     *, job_id: str, tenant_id: str, user_id: str,
 ) -> dict[str, Any]:
@@ -572,7 +649,7 @@ _RUNTIME_TASK_STATUSES = frozenset({"PENDING", "RESOLVING", "WAITING_FOR_USER"})
 _RUNTIME_TASK_SAFE_FIELDS = (
     "schema_version", "task_id", "application_id", "session_id",
     "checkpoint_id", "page_id", "control_id", "question_id", "question",
-    "semantic_type", "category", "sensitivity_class", "status", "risk_level", "auto_resolvable",
+    "semantic_type", "question_observation", "category", "sensitivity_class", "status", "risk_level", "auto_resolvable",
     "requires_user", "grouping_scope", "group_key", "reason",
     "created_at", "updated_at",
 )
@@ -599,9 +676,16 @@ def _validate_runtime_resolution_sync(
         or payload.get("submission_authority") is not False
     ):
         raise RuntimeError("Apply runtime resolution read model is not exactly correlated.")
+    browser_form_digest = str(payload.get("browser_form_digest") or "").strip().lower()
+    checkpoint_id = str(payload.get("checkpoint_id") or "").strip()
     raw_tasks = payload.get("resolution_tasks")
     if not isinstance(raw_tasks, list):
         raise RuntimeError("Apply runtime resolution task list is invalid.")
+    if raw_tasks:
+        if len(browser_form_digest) != 64 or any(ch not in "0123456789abcdef" for ch in browser_form_digest):
+            raise RuntimeError("Apply runtime resolution browser form digest is invalid.")
+        if not checkpoint_id:
+            raise RuntimeError("Apply runtime resolution checkpoint binding is missing.")
     safe_tasks = []
     unresolved = []
     seen = set()
@@ -630,6 +714,282 @@ def _validate_runtime_resolution_sync(
     safe_tasks.sort(key=lambda row: str(row["task_id"]))
     unresolved.sort()
     return safe_tasks, unresolved
+
+
+def _universal_runtime_execution_text(value: Any) -> str:
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(str(item) for item in value)
+    if isinstance(value, Mapping):
+        return json.dumps(dict(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return str(value)
+
+
+def _runtime_binding_source(classification_lane: str) -> str:
+    lane = str(classification_lane or "").upper()
+    if lane == "BOUNDED_MODEL_INTERPRETATION":
+        return "MODEL"
+    if lane.startswith("DETERMINISTIC"):
+        return "DETERMINISTIC"
+    return "ONTOLOGY"
+
+
+def _universal_runtime_job_context(plan: Mapping[str, Any]) -> dict[str, Any]:
+    snapshot = dict(plan.get("snapshot") or {})
+    planned_job = dict(snapshot.get("job") or plan.get("job") or {})
+    job_id = planned_job.get("id") or plan.get("job_id")
+    if job_id in (None, ""):
+        return {}
+    tenant_id = str(plan.get("tenant_id") or "").strip()
+    user_id = str(plan.get("user_id") or "").strip()
+    if tenant_id and user_id:
+        owned = phase67_common.safe_owned_job_snapshot(
+            int(job_id), tenant_id=tenant_id, user_id=user_id
+        )
+    else:
+        owned = phase67_common.safe_owned_job_snapshot(int(job_id))
+    expected = str(planned_job.get("job_snapshot_digest") or "").strip().lower()
+    actual = str(owned.get("job_snapshot_sha256") or "").strip().lower()
+    if expected and expected != actual:
+        raise RuntimeError("Universal Brain job context no longer matches immutable Application Plan.")
+    return dict(owned.get("job") or {})
+
+
+def _resolve_universal_runtime_observation(
+    *,
+    plan: Mapping[str, Any],
+    session_id: str,
+    checkpoint_id: str,
+    observation: Mapping[str, Any],
+    job_context: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Resolve one value-free browser observation and maintain durable semantics."""
+    application_id = str(plan.get("application_id") or "").strip()
+    plan_id = str(plan.get("plan_id") or "").strip()
+    binding_row: dict[str, Any] | None = None
+
+    if universal_graph.universal_browser_binding_enabled() and application_id and session_id:
+        try:
+            binding_row = universal_binding.lookup(
+                application_id=application_id,
+                session_id=session_id,
+                observation=dict(observation),
+                allow_application_fallback=True,
+            )
+        except (LookupError, RuntimeError, ValueError):
+            binding_row = None
+
+    if binding_row is not None:
+        concept = universal_ontology.require_concept(str(binding_row.get("concept_id") or ""))
+        if concept.sensitivity != "NORMAL":
+            raise ValueError("Durable runtime semantic binding points to a protected concept.")
+        if binding_row.get("cross_session") is True:
+            binding_row = universal_binding.bind(
+                application_id=application_id,
+                session_id=session_id,
+                observation=dict(observation),
+                concept_id=concept.concept_id,
+                classification_source=str(binding_row.get("classification_source") or "ONTOLOGY"),
+                confidence=float(binding_row.get("confidence") or 0.0),
+                plan_id=plan_id or None,
+                checkpoint_id=checkpoint_id or None,
+            )
+        question = {
+            "state": "RESOLVED",
+            "concept_id": concept.concept_id,
+            "confidence": float(binding_row.get("confidence") or 0.0),
+            "classification_lane": "DURABLE_BROWSER_BINDING",
+            "sensitivity": "NORMAL",
+            "reason_code": "REUSED_LOGICAL_FIELD_BINDING",
+            "conditions": {},
+            "candidate_values_exposed": False,
+        }
+        return (
+            universal_answers.resolve_concept(
+                question,
+                open_ended_generator=universal_open_ended.generate,
+                job_context=dict(job_context or {}),
+            ),
+            universal_binding.public_binding(binding_row),
+        )
+
+    model_interpreter = None
+    if universal_questions.model_semantics_enabled():
+        tenant_id = str(plan.get("tenant_id") or "").strip()
+        user_id = str(plan.get("user_id") or "").strip()
+        if tenant_id and user_id:
+            def model_interpreter(payload: dict[str, Any]) -> Mapping[str, Any]:
+                try:
+                    return _interpret_apply_universal_semantics(
+                        payload, tenant_id=tenant_id, user_id=user_id
+                    )
+                except (RuntimeError, ValueError, TypeError):
+                    return {}
+
+    if model_interpreter is None:
+        resolved = universal_answers.resolve_observation(
+            dict(observation),
+            open_ended_generator=universal_open_ended.generate,
+            job_context=dict(job_context or {}),
+        )
+    else:
+        resolved = universal_answers.resolve_observation(
+            dict(observation), model_interpreter=model_interpreter,
+            open_ended_generator=universal_open_ended.generate,
+            job_context=dict(job_context or {}),
+        )
+
+    question = dict(resolved.get("question_resolution") or {})
+    if (
+        universal_graph.universal_browser_binding_enabled()
+        and application_id
+        and session_id
+        and question.get("state") == "RESOLVED"
+        and question.get("concept_id")
+        and str(question.get("sensitivity") or "NORMAL").upper() == "NORMAL"
+    ):
+        try:
+            bound = universal_binding.bind(
+                application_id=application_id,
+                session_id=session_id,
+                observation=dict(observation),
+                concept_id=str(question["concept_id"]),
+                classification_source=_runtime_binding_source(
+                    str(question.get("classification_lane") or "")
+                ),
+                confidence=float(question.get("confidence") or 0.0),
+                plan_id=plan_id or None,
+                checkpoint_id=checkpoint_id or None,
+            )
+            binding_row = universal_binding.public_binding(bound)
+        except (LookupError, RuntimeError, ValueError):
+            binding_row = None
+    return resolved, binding_row
+
+
+def _universal_runtime_auto_resolution(
+    *,
+    operation_id: str,
+    plan: Mapping[str, Any],
+    session_id: str,
+    resolution_payload: Mapping[str, Any],
+    runtime_tasks: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Resolve every NORMAL runtime field from Universal Brain or return None.
+
+    Partial automatic resolution is intentionally not committed. Either every
+    current normal runtime field is safely grounded and a single immutable
+    replacement plan is created, or the existing user-facing NEEDS_INPUT path
+    remains authoritative for the unresolved set.
+    """
+    if (
+        not universal_graph.universal_normal_autofill_enabled()
+        or not application_plan_v2.runtime_application_plan_resolution_enabled()
+        or not runtime_tasks
+    ):
+        return None
+
+    answers: list[dict[str, str]] = []
+    questions: list[dict[str, Any]] = []
+    traces: list[dict[str, Any]] = []
+    job_context = _universal_runtime_job_context(plan)
+    for task in runtime_tasks:
+        if str(task.get("sensitivity_class") or "").upper() != "NORMAL":
+            return None
+        observation = task.get("question_observation")
+        if not isinstance(observation, Mapping):
+            return None
+        resolved, binding = _resolve_universal_runtime_observation(
+            plan=plan,
+            session_id=str(session_id),
+            checkpoint_id=str(resolution_payload.get("checkpoint_id") or ""),
+            observation=dict(observation),
+            job_context=job_context,
+        )
+        trace = universal_answers.public_trace(resolved)
+        traces.append(
+            {
+                "task_id": str(task.get("task_id") or ""),
+                "concept_id": trace.get("concept_id"),
+                "answer_status": trace.get("answer_status"),
+                "answer_mode": trace.get("answer_mode"),
+                "classification_lane": dict(trace.get("question_resolution") or {}).get("classification_lane"),
+                "confidence": trace.get("confidence"),
+                "knowledge_revision": trace.get("knowledge_revision"),
+                "autofill_allowed": bool(trace.get("autofill_allowed")),
+                "browser_binding_id": (binding or {}).get("binding_id"),
+                "browser_binding_revision": (binding or {}).get("binding_revision"),
+                "value_exposed": False,
+            }
+        )
+        status = str(resolved.get("answer_status") or "")
+        if (
+            status not in {"ANSWERED", "DERIVED", "POLICY_RESOLVED", "GENERATED"}
+            or resolved.get("autofill_allowed") is not True
+            or resolved.get("value") is None
+        ):
+            return None
+        question_key = str(task.get("group_key") or task.get("question_id") or "").strip()
+        if not question_key:
+            return None
+        provenance = {
+            "ANSWERED": "universal_brain_existing_knowledge",
+            "DERIVED": "universal_brain_derived_evidence",
+            "POLICY_RESOLVED": "universal_brain_policy_resolution",
+            "GENERATED": "universal_brain_generated_evidence",
+        }[status]
+        answers.append(
+            {
+                "question_key": question_key,
+                "canonical_answer": _universal_runtime_execution_text(resolved.get("value")),
+                "provenance": provenance,
+            }
+        )
+        questions.append(
+            {
+                "question_key": question_key,
+                "control_id": str(task.get("control_id") or ""),
+                "question": str(task.get("question") or question_key),
+                "semantic_type": str(task.get("semantic_type") or "unknown"),
+                "sensitivity_class": "NORMAL",
+                "question_observation": dict(observation),
+            }
+        )
+
+    browser_form_digest = str(resolution_payload.get("browser_form_digest") or "")
+    checkpoint_id = str(resolution_payload.get("checkpoint_id") or "")
+    stable_material = json.dumps(
+        {
+            "plan_id": str(plan["plan_id"]),
+            "form_digest": browser_form_digest,
+            "questions": sorted((q["question_key"], q["control_id"]) for q in questions),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    import hashlib
+    token = hashlib.sha256(stable_material.encode("utf-8")).hexdigest()[:32]
+    revision_key = f"prepare:{operation_id}:universal-runtime:{token}"
+    replacement = application_plan_resolution_v2.resolve_runtime_needs_input(
+        prior_plan_id=str(plan["plan_id"]),
+        expected_prior_plan_digest=str(plan["plan_digest"]),
+        revision_idempotency_key=revision_key,
+        runtime_context={
+            "session_id": str(session_id),
+            "checkpoint_id": checkpoint_id,
+            "browser_form_digest": browser_form_digest,
+            "unresolved_questions": questions,
+        },
+        answer_resolutions=answers,
+    )
+    return {
+        "replacement": replacement,
+        "trace": traces,
+        "resolved_count": len(answers),
+        "revision_idempotency_key": revision_key,
+        "value_exposed": False,
+    }
 
 
 def _plan_permissions(
@@ -754,6 +1114,57 @@ def _application_plan_idempotency_key(
     return f"{base}:provider-capability-v2", prior_plan_id
 
 
+def _runtime_replacement_plan(
+    *,
+    operation: Mapping[str, Any],
+    pending_task: Mapping[str, Any],
+    preflight: Mapping[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Return the exact immutable runtime replacement plan when one already exists.
+
+    Runtime NEEDS_INPUT is resolved by creating a distinct immutable Application
+    Plan revision.  Re-running the ATS task must never recreate or re-deliver the
+    superseded plan under its original idempotency key.  This is provider-neutral:
+    the only authority is the stored plan-supersession lineage.
+    """
+    raw_output = pending_task.get("output")
+    if not isinstance(raw_output, Mapping):
+        return None, None
+    prior_plan_id = str(raw_output.get("plan_id") or "").strip()
+    if not prior_plan_id:
+        return None, None
+
+    supersession = application_plan_v2.runtime_plan_supersession(prior_plan_id)
+    if not supersession:
+        return None, None
+    replacement_id = str(supersession.get("replacement_plan_id") or "").strip()
+    if not replacement_id:
+        raise RuntimeError("Runtime plan supersession has no replacement plan.")
+
+    replacement = application_plan_v2.get_application_plan(replacement_id)
+    snapshot = dict(replacement.get("snapshot") or {})
+    resume = dict(snapshot.get("resume") or {})
+    exact_binding = (
+        str(replacement.get("application_id") or "") == str(operation["application_id"])
+        and int(replacement.get("job_id") or 0) == int(operation["job_id"])
+        and str(replacement.get("preflight_package_id") or "")
+        == str(preflight["preflight_package_id"])
+        and str(resume.get("version_id") or "") == str(preflight["resume_version_id"])
+        and str(resume.get("artifact_sha256") or "")
+        == str(preflight["resume_pdf_sha256"])
+        and str(replacement.get("status") or "") == "READY_TO_APPLY"
+        and replacement.get("executable") is True
+        and replacement.get("submission_authority") is False
+        and application_plan_v2.application_plan_freshness(replacement_id).get("fresh")
+        is True
+    )
+    if not exact_binding:
+        raise RuntimeError(
+            "Runtime replacement Application Plan is stale or mismatched."
+        )
+    return replacement, prior_plan_id
+
+
 def run_ats_form_preparation_once(
     *,
     operation_id: str,
@@ -802,6 +1213,18 @@ def run_ats_form_preparation_once(
 
     preflight = _succeeded_output(operation, orchestrator.TASK_APPLICATION_PREFLIGHT)
     cover = _cover_decision(operation)
+    mandate = application_execution_mandate_v1.current_for_preflight(
+        str(preflight["preflight_package_id"])
+    )
+    if mandate is None:
+        return {
+            "operation_id": str(operation_id),
+            "claimed": False,
+            "reason": "single_customer_approval_required",
+            "preflight_package_id": str(preflight["preflight_package_id"]),
+            "operation_status": str(operation["status"]),
+            "submission_authority": False,
+        }
 
     task = _claim_one(
         operation_id=str(operation_id),
@@ -818,32 +1241,36 @@ def run_ats_form_preparation_once(
         }
 
     cover_letter: dict[str, Any] | None = None
-    if str(cover.get("decision")) == "REQUIRED":
-        try:
-            cover_letter = native_cover_letter_writer_v1.generate(
-                preflight_package_id=str(preflight["preflight_package_id"]),
-            )
-            if (
-                int(cover_letter.get("page_count") or 0) != 1
-                or cover_letter.get("submission_authority") is not False
-                or str(cover_letter.get("job_snapshot_sha256") or "")
-                != str(operation["job_snapshot_sha256"])
-                or str(cover_letter.get("candidate_profile_digest") or "")
-                != str(operation["candidate_profile_digest"])
-                or not str(cover_letter.get("cover_letter_id") or "")
-            ):
-                raise RuntimeError(
-                    "Native cover-letter worker returned an invalid authority binding."
-                )
-        except Exception:
+    cover_decision = str(cover.get("decision") or "")
+    if cover_decision != "NOT_REQUIRED":
+        cover_letter_id_value = str(preflight.get("cover_letter_id") or "").strip()
+        cover_letter_sha = str(
+            preflight.get("cover_letter_artifact_sha256") or ""
+        ).strip()
+        if (
+            not cover_letter_id_value
+            or len(cover_letter_sha) != 64
+            or int(preflight.get("cover_letter_page_count") or 0) != 1
+        ):
             orchestrator.fail_task(
                 task_id=str(task["task_id"]),
                 worker_id=str(worker_id),
-                error_code="NATIVE_COVER_LETTER_PREPARE_FAILED",
-                error_message="Required Native cover-letter generation failed closed.",
-                retryable=True,
+                error_code="REVIEWED_COVER_LETTER_MISSING",
+                error_message=(
+                    "The cover-letter policy allowed a document, but no reviewed "
+                    "artifact was present before browser execution."
+                ),
+                retryable=False,
             )
-            raise
+            raise RuntimeError(
+                "Potential cover-letter artifact must be reviewed before unattended ATS execution."
+            )
+        cover_letter = {
+            "cover_letter_id": cover_letter_id_value,
+            "artifact_sha256": cover_letter_sha,
+            "page_count": 1,
+            "submission_authority": False,
+        }
 
     cover_letter_id = (
         str(cover_letter["cover_letter_id"])
@@ -859,28 +1286,38 @@ def run_ats_form_preparation_once(
     record_review = review_recorder or application_review_v2.create_review
 
     try:
-        plan_key, provider_capability_retry_from_plan_id = (
-            _application_plan_idempotency_key(
-                operation=operation,
-                pending_task=pending_ats_task,
-                preflight=preflight,
+        runtime_plan, runtime_supersession_from_plan_id = _runtime_replacement_plan(
+            operation=operation,
+            pending_task=pending_ats_task,
+            preflight=preflight,
+        )
+        provider_capability_retry_from_plan_id = None
+        if runtime_plan is not None:
+            plan = runtime_plan
+            plan_key = str(plan["idempotency_key"])
+        else:
+            plan_key, provider_capability_retry_from_plan_id = (
+                _application_plan_idempotency_key(
+                    operation=operation,
+                    pending_task=pending_ats_task,
+                    preflight=preflight,
+                )
             )
-        )
-        plan = application_plan_v2.prepare_application_plan(
-            preflight_package_id=str(preflight["preflight_package_id"]),
-            idempotency_key=plan_key,
-            # Initial plan intentionally contains only currently-known
-            # requirements. Runtime-discovered NORMAL questions use the already
-            # existing immutable replacement-plan flow.
-            answer_requirements=[],
-            permissions=_plan_permissions(
-                cover_letter_present=cover_letter is not None
-            ),
-            provider_policy=None,
-            secure_resolver_refs={},
-            resume_format="PDF",
-            cover_letter_id=cover_letter_id,
-        )
+            plan = application_plan_v2.prepare_application_plan(
+                preflight_package_id=str(preflight["preflight_package_id"]),
+                idempotency_key=plan_key,
+                # Initial plan intentionally contains only currently-known
+                # requirements. Runtime-discovered NORMAL questions use the
+                # immutable replacement-plan flow above on continuation.
+                answer_requirements=[],
+                permissions=_plan_permissions(
+                    cover_letter_present=cover_letter is not None
+                ),
+                provider_policy=None,
+                secure_resolver_refs={},
+                resume_format="PDF",
+                cover_letter_id=cover_letter_id,
+            )
         if (
             str(plan.get("status") or "") != "READY_TO_APPLY"
             or plan.get("executable") is not True
@@ -919,9 +1356,14 @@ def run_ats_form_preparation_once(
         ):
             raise RuntimeError("Background preparation plan gained review/submit authority.")
 
+        handoff_key = (
+            f"prepare:{operation_id}:handoff:runtime:{plan['plan_id']}"
+            if runtime_supersession_from_plan_id
+            else f"prepare:{operation_id}:handoff:v1c"
+        )
         delivery = deliver(
             plan_id=str(plan["plan_id"]),
-            idempotency_key=f"prepare:{operation_id}:handoff:v1c",
+            idempotency_key=handoff_key,
         )
         if (
             str(getattr(delivery, "state", "")) != "PLAN_ACCEPTED"
@@ -1007,6 +1449,46 @@ def run_ats_form_preparation_once(
                     "runtime_question_sync_pending": True,
                     "submission_authority": False,
                 }
+            universal_runtime = _universal_runtime_auto_resolution(
+                operation_id=str(operation_id),
+                plan=plan,
+                session_id=str(session["session_id"]),
+                resolution_payload=resolution_payload,
+                runtime_tasks=runtime_tasks,
+            )
+            if universal_runtime is not None:
+                replacement = dict(universal_runtime["replacement"])
+                result = orchestrator.requeue_task_after_internal_resolution(
+                    task_id=str(task["task_id"]),
+                    worker_id=str(worker_id),
+                    resolution_kind="UNIVERSAL_BRAIN_NORMAL_FIELDS",
+                    output={
+                        "version": WORKER_VERSION,
+                        "plan_id": str(plan["plan_id"]),
+                        "plan_digest": str(plan["plan_digest"]),
+                        "apply_session_id": str(session["session_id"]),
+                        "apply_prepare_job_id": prepare_job_id,
+                        "apply_prepare_state": state,
+                        "runtime_resolution_tasks": runtime_tasks,
+                        "universal_brain_auto_resolved": True,
+                        "universal_brain_resolution_trace": universal_runtime["trace"],
+                        "universal_brain_resolved_count": int(universal_runtime["resolved_count"]),
+                        "replacement_plan_id": str(replacement["replacement_plan_id"]),
+                        "replacement_plan_digest": str(replacement["replacement_plan_digest"]),
+                        "replacement_plan_authority": "application_plan_resolution_v2",
+                        "runtime_resolution_values_persisted": False,
+                        "submission_authority": False,
+                    },
+                )
+                return {
+                    **result,
+                    "claimed": True,
+                    "universal_brain_auto_resolved": True,
+                    "universal_brain_resolved_count": int(universal_runtime["resolved_count"]),
+                    "replacement_plan_id": str(replacement["replacement_plan_id"]),
+                    "submission_authority": False,
+                }
+
             result = orchestrator.task_needs_input(
                 task_id=str(task["task_id"]),
                 worker_id=str(worker_id),
@@ -1079,9 +1561,47 @@ def run_ats_form_preparation_once(
                 record_review(
                     plan_id=str(plan["plan_id"]),
                     prepared_package=prepared_package,
-                    idempotency_key=f"prepare:{operation_id}:customer-review:v1",
+                    idempotency_key=f"prepare:{operation_id}:internal-integrity-review:v2",
                 )
             )
+            technical_approval = application_review_v2.approve_review_from_execution_mandate(
+                review_id=str(hunter_review["review_id"]),
+                execution_mandate_id=str(mandate["mandate_id"]),
+                idempotency_key=(
+                    f"prepare:{operation_id}:mandate-derived-internal-approval:v1"
+                ),
+            )
+            internal_snapshot = dict(hunter_review.get("review") or {})
+            internal_bindings = dict(internal_snapshot.get("bindings") or {})
+            authority = application_submit_authorization_v1.issue_authorization(
+                {
+                    "idempotency_key": (
+                        f"prepare:{operation_id}:autonomous-submit-authority:v1"
+                    ),
+                    "tenant_id": str(plan["tenant_id"]),
+                    "user_id": str(plan["user_id"]),
+                    "application_id": str(hunter_review["application_id"]),
+                    "plan_id": str(plan["plan_id"]),
+                    "session_id": str(session["session_id"]),
+                    "review_id": str(hunter_review["review_id"]),
+                    "approval_id": str(technical_approval["approval_id"]),
+                    "provider": str(internal_snapshot["provider"]),
+                    "target_url": str(internal_snapshot["destination_url"]),
+                    "checkpoint_id": str(internal_bindings["checkpoint_id"]),
+                    "plan_digest": str(hunter_review["plan_digest"]),
+                    "review_digest": str(hunter_review["review_digest"]),
+                    "approval_digest": str(technical_approval["approval_digest"]),
+                    "prepared_package_digest": str(
+                        hunter_review["prepared_package_digest"]
+                    ),
+                    "browser_form_digest": str(hunter_review["browser_form_digest"]),
+                    "resume_sha256": str(hunter_review["resume_artifact_sha256"]),
+                    "cover_letter_sha256": internal_bindings.get(
+                        "cover_letter_artifact_sha256"
+                    ),
+                }
+            )
+            authority_delivery = deliver_submit_authorization(authority)
             output = {
                 "version": WORKER_VERSION,
                 "plan_id": str(plan["plan_id"]),
@@ -1089,6 +1609,9 @@ def run_ats_form_preparation_once(
                 "provider": str(plan["provider"]),
                 "provider_capability_retry_from_plan_id": (
                     provider_capability_retry_from_plan_id
+                ),
+                "runtime_supersession_from_plan_id": (
+                    runtime_supersession_from_plan_id
                 ),
                 "handoff_id": str(getattr(delivery, "handoff_id", "")),
                 "handoff_state": "PLAN_ACCEPTED",
@@ -1109,16 +1632,26 @@ def run_ats_form_preparation_once(
                     if cover_letter is not None
                     else None
                 ),
+                "internal_integrity_review_id": str(hunter_review["review_id"]),
+                "internal_integrity_review_digest": str(hunter_review["review_digest"]),
+                # Compatibility aliases remain read-only during migration. Product
+                # UI must never render them as a second customer review.
                 "customer_review_id": str(hunter_review["review_id"]),
                 "customer_review_digest": str(hunter_review["review_digest"]),
+                "execution_mandate_id": str(mandate["mandate_id"]),
+                "single_customer_approval_complete": True,
+                "technical_approval_id": str(technical_approval["approval_id"]),
+                "submit_authorization_id": str(authority["authorization_id"]),
+                "authority_delivery": authority_delivery,
                 "prepared_package_digest": str(
                     hunter_review["prepared_package_digest"]
                 ),
                 "browser_form_digest": str(
                     hunter_review["browser_form_digest"]
                 ),
-                "customer_review_approved": bool(hunter_review.get("approved")),
+                "customer_review_approved": True,
                 "additional_customer_approval_required": False,
+                "post_approval_user_review_required": False,
                 "final_submit_executed": False,
                 "submission_authority": False,
             }
@@ -1135,11 +1668,25 @@ def run_ats_form_preparation_once(
             }
 
         if state in {"BLOCKED", "FAILED_SAFELY", "CANCELLED"}:
+            # Preserve Apply's bounded terminal diagnostic instead of collapsing
+            # every browser/runtime failure into the same opaque Hunter error.
+            # This is observability only: it grants no retry or submission authority.
+            apply_last_error = " ".join(
+                str(latest.get("last_error") or "").split()
+            )[:1000]
+            terminal_message = (
+                f"Apply background preparation ended in {state}."
+                + (
+                    f" Apply diagnostic: {apply_last_error}"
+                    if apply_last_error
+                    else ""
+                )
+            )
             orchestrator.fail_task(
                 task_id=str(task["task_id"]),
                 worker_id=str(worker_id),
                 error_code=f"APPLY_PREPARE_{state}",
-                error_message=f"Apply background preparation ended in {state}.",
+                error_message=terminal_message,
                 retryable=False,
             )
             return {
@@ -1149,6 +1696,7 @@ def run_ats_form_preparation_once(
                 "operation_status": "FAILED_SAFELY",
                 "apply_prepare_job_id": prepare_job_id,
                 "apply_prepare_state": state,
+                "apply_last_error": apply_last_error or None,
                 "submission_authority": False,
             }
 

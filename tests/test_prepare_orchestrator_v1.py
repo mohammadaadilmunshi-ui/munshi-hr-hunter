@@ -193,6 +193,29 @@ def test_dependencies_unlock_preflight_then_ats(prepare_db):
     assert ats["task_kind"] == prepare.TASK_ATS_FORM_PREPARATION
 
 
+def test_internal_resolution_requeues_without_user_facing_needs_input(prepare_db):
+    operation = _start(key="prepare-internal-resolution")
+    answer = _claim_one(
+        operation["operation_id"],
+        prepare.TASK_ANSWER_RESOLUTION,
+        "brain-worker",
+    )
+    result = prepare.requeue_task_after_internal_resolution(
+        task_id=answer["task_id"],
+        worker_id="brain-worker",
+        output={"universal_brain_auto_resolved": True, "value_exposed": False},
+        resolution_kind="UNIVERSAL_BRAIN_NORMAL_FIELDS",
+    )
+    assert result["task_status"] == "PENDING"
+    assert result["operation_status"] == "RUNNING"
+    read = prepare.prepare_operation(operation["operation_id"])
+    task = _by_kind(read)[prepare.TASK_ANSWER_RESOLUTION]
+    assert task["status"] == "PENDING"
+    assert read["unresolved"] == []
+    assert task["output"]["universal_brain_auto_resolved"] is True
+    assert task["output"]["submission_authority"] is False
+
+
 def test_needs_input_pauses_operation_and_resolution_requeues_task(prepare_db):
     operation = _start()
     answer = _claim_one(

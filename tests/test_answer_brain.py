@@ -8,6 +8,9 @@ from pathlib import Path
 
 import pytest
 
+from app import answer_brain as answer_brain_module
+from app import database
+
 from app import database
 from app.answer_brain import (
     AnswerBrainError,
@@ -59,6 +62,9 @@ def test_answer_brain_is_disabled_by_default(hunter_db) -> None:
     ("Are you authorized to work in the United States?", "work_authorization"),
     ("What salary range are you seeking?", "salary"),
     ("Where are you located?", "location"),
+    ("Zip Code", "location"),
+    ("Street Address", "location"),
+    ("State / Province", "location"),
     ("When can you start?", "availability"),
     ("How many years of experience with SQL do you have?", "experience_skill"),
     ("Why are you interested in this company?", "open_ended_job_specific"),
@@ -189,3 +195,37 @@ def test_migration_is_additive_and_installs_plaintext_defense(tmp_path) -> None:
         connection.close()
     assert {"application_answer_vault", "sensitive_self_identification_vault"} <= tables
     assert {"answer_vault_reject_non_plaintext_insert", "answer_vault_reject_non_plaintext_update"} <= triggers
+
+
+def test_answer_brain_reads_do_not_request_sqlite_write_lock(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MUNSHI_APPLICATION_ANSWER_BRAIN_ENABLED", "true")
+    writer = database.get_connection()
+    try:
+        answer_brain_module.ensure_schema(writer)
+        writer.commit()
+        writer.execute("BEGIN IMMEDIATE")
+
+        original_get_connection = answer_brain_module.get_connection
+
+        def short_reader():
+            connection = original_get_connection()
+            connection.execute("PRAGMA busy_timeout=50")
+            return connection
+
+        monkeypatch.setattr(answer_brain_module, "get_connection", short_reader)
+        assert answer_brain_module.normal_answer_projection() == []
+        assert answer_brain_module.resolve_answer(
+            question_family="location", conditions={}
+        ) == {"status": "NEEDS_INPUT", "reason": "no_safe_answer"}
+        assert answer_brain_module.read_sensitive_self_identification(
+            category="veteran_status"
+        ) is None
+        assert answer_brain_module.resolve_sensitive_self_identification(
+            category="veteran_status"
+        ) == {"status": "NEEDS_INPUT", "reason": "no_sensitive_policy"}
+    finally:
+        if writer.in_transaction:
+            writer.rollback()
+        writer.close()

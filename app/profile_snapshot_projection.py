@@ -18,6 +18,7 @@ from typing import Any
 from app import native_resume_service_v3 as v3
 from app import profile_truth_overrides_v1 as overrides
 from app import resume_profile_details_v31 as profile_details
+from app.tenant_foundation import current_owner_readonly
 from app.cross_repo_contract import (
     PROFILE_AUTHORITY,
     PROFILE_REVISION_SCOPE,
@@ -33,8 +34,7 @@ def _now() -> str:
 def _owner() -> tuple[str, str]:
     connection = v3.v2.v1.get_connection()
     try:
-        v3.ensure_schema(connection)
-        owner = v3.v2.v1.current_owner(connection)
+        owner = current_owner_readonly(connection)
         return str(owner.tenant_id), str(owner.user_id)
     finally:
         connection.close()
@@ -158,6 +158,12 @@ def _add_resume_profile_facts(
     contact_categories = {
         "full_name": "IDENTITY",
         "location": "ADDRESS",
+        "address_line1": "ADDRESS",
+        "address_line2": "ADDRESS",
+        "city": "ADDRESS",
+        "region": "ADDRESS",
+        "postal_code": "ADDRESS",
+        "country": "ADDRESS",
         "email": "CONTACT",
         "phone": "CONTACT",
         "linkedin": "CONTACT",
@@ -346,12 +352,36 @@ def _add_candidate_detail_facts(
 
 
 def _verify_immutable_profile_hash(extracted: dict[str, Any]) -> None:
+    # Native Resume V3 hashes the exact persisted JSON payload at extraction
+    # time. Additive schema evolution can make a later model_dump include new
+    # blank/default fields that were not present in that historical payload.
+    #
+    # Verify both identities:
+    # 1) the exact stored payload still matches its immutable historical hash;
+    # 2) the current in-memory profile still matches the current-schema object
+    #    produced when that stored payload was decoded.
+    expected = str(extracted.get("profile_sha256") or "").strip()
+    stored = str(extracted.get("stored_profile_payload_sha256") or "").strip()
     profile = v3.CandidateProfileExtract.model_validate(extracted.get("profile") or {})
     encoded = json.dumps(profile.model_dump(), ensure_ascii=False, sort_keys=True)
-    actual = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-    expected = str(extracted.get("profile_sha256") or "").strip()
-    if not expected or actual != expected:
-        raise RuntimeError("Confirmed Master Resume profile evidence hash does not match its stored metadata.")
+    current_profile_sha = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    decoded_profile_sha = str(extracted.get("decoded_profile_sha256") or "").strip()
+
+    if stored:
+        if not expected or stored != expected:
+            raise RuntimeError(
+                "Confirmed Master Resume profile evidence hash does not match its stored metadata."
+            )
+        if decoded_profile_sha and current_profile_sha != decoded_profile_sha:
+            raise RuntimeError(
+                "Confirmed Master Resume profile evidence hash does not match its stored metadata."
+            )
+        return
+
+    if not expected or current_profile_sha != expected:
+        raise RuntimeError(
+            "Confirmed Master Resume profile evidence hash does not match its stored metadata."
+        )
 
 
 def build_candidate_profile_snapshot(extracted: dict[str, Any]) -> dict[str, Any]:

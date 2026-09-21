@@ -3,6 +3,7 @@ from __future__ import annotations
 from app import job_store
 from app import jobspy_board_common
 from app import linkedin_url_contract as contract
+from app import product_pages
 from app import product_state
 from tools.runners import jobspy_runner
 
@@ -214,3 +215,89 @@ def test_browse_jobs_query_fail_closes_broken_linkedin_rows(monkeypatch) -> None
 def test_link_health_threshold_flags_below_effectively_complete() -> None:
     assert contract.linkedin_link_health_degraded(total=1000, working=999) is False
     assert contract.linkedin_link_health_degraded(total=1000, working=998) is True
+
+
+
+class _UIContext:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+class _LinkedInCardUI:
+    def __init__(self) -> None:
+        self.links: list[tuple[str, str]] = []
+        self.session_state: dict[str, object] = {}
+
+    def container(self, **_kwargs):
+        return _UIContext()
+
+    def columns(self, count, **_kwargs):
+        size = int(count) if isinstance(count, int) else len(count)
+        return [_UIContext() for _ in range(size)]
+
+    def markdown(self, *_args, **_kwargs):
+        return None
+
+    def button(self, *_args, **_kwargs):
+        return False
+
+    def link_button(self, label, url, **_kwargs):
+        self.links.append((str(label), str(url)))
+        return False
+
+
+def test_jobspy_linkedin_result_reaches_clickable_card_with_separate_apply(
+    monkeypatch,
+) -> None:
+    direct = "https://boards.greenhouse.io/example/jobs/123"
+    normalized = jobspy_runner.normalize_record(
+        {
+            "id": "4466640197",
+            "title": "People Analytics Specialist",
+            "company": "Example Corp",
+            "location": "New York, NY, US",
+            "job_url": None,
+            "job_url_direct": direct,
+            "description": "Example role",
+        },
+        "linkedin",
+    )
+    assert normalized is not None
+
+    row = dict(normalized)
+    row.update(
+        {
+            "id": 77,
+            "ats_job_id": "4466640197",
+            "saved": 0,
+            "skipped": 0,
+            "hunter_score": 90,
+            "first_seen_at": "2026-09-19T12:00:00+00:00",
+        }
+    )
+
+    fake_ui = _LinkedInCardUI()
+    monkeypatch.setattr(product_pages, "st", fake_ui)
+    monkeypatch.setattr(
+        product_pages,
+        "_application_flow",
+        lambda _job_id: {
+            "state": None,
+            "display_status": None,
+            "cta": "prepare",
+            "cta_label": "Prepare",
+        },
+    )
+    monkeypatch.setattr(product_pages, "pastel_for", lambda _job_id: "#ffffff")
+    monkeypatch.setattr(product_pages, "score_ring", lambda *_args, **_kwargs: "")
+
+    product_pages._job_card(row, key_prefix="acceptance")
+
+    assert (
+        "Open LinkedIn job",
+        "https://www.linkedin.com/jobs/view/4466640197",
+    ) in fake_ui.links
+    assert ("Apply", direct) in fake_ui.links

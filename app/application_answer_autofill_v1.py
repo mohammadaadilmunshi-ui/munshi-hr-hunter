@@ -26,10 +26,15 @@ _DERIVED_PROJECTIONS: tuple[tuple[str, str, str], ...] = (
     ("contact.first_name", "contact.full_name", "first_name"),
     ("contact.middle_name", "contact.full_name", "middle_name"),
     ("contact.last_name", "contact.full_name", "last_name"),
-    ("contact.city", "contact.location", "location_city"),
-    ("contact.region", "contact.location", "location_region"),
-    ("contact.postal_code", "contact.location", "location_postal"),
-    ("contact.country", "contact.location", "location_country"),
+    # Structured address facts are first-class Candidate Truth.  The field
+    # resolver still supports legacy contact.location projections for older
+    # confirmed profiles, but new profiles never depend on parsing one string.
+    ("contact.address_line1", "contact.address_line1", "identity"),
+    ("contact.address_line2", "contact.address_line2", "identity"),
+    ("contact.city", "contact.city", "identity"),
+    ("contact.region", "contact.region", "identity"),
+    ("contact.postal_code", "contact.postal_code", "identity"),
+    ("contact.country", "contact.country", "identity"),
 )
 
 # These concepts are meaningful only in the context of a real job or concrete

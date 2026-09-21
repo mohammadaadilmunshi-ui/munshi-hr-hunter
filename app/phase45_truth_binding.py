@@ -13,7 +13,7 @@ from typing import Any
 from app import native_resume_service_v3 as v3
 from app import profile_snapshot_projection
 from app.database import get_connection
-from app.tenant_foundation import current_owner
+from app.tenant_foundation import current_owner, current_owner_readonly
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 QUESTION_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,159}$")
@@ -88,17 +88,22 @@ def _digest(value: Any, label: str) -> str:
 
 
 def current_candidate_profile_snapshot() -> dict[str, Any]:
-    """Return the snapshot for the active Master Resume's latest confirmed profile."""
+    """Return the active confirmed profile through a strictly read-only path."""
     connection = v3.v2.v1.get_connection()
     row_payload: dict[str, Any] | None = None
     try:
-        v3.ensure_schema(connection)
-        if connection.in_transaction:
-            connection.commit()
-        owner = v3.v2.v1.current_owner(connection)
-        source = v3.v2.v1.active_source(connection=connection)
-        if not source:
-            raise RuntimeError("Save a confirmed Master Resume source before using the strengthened engine.")
+        owner = current_owner_readonly(connection)
+        source = connection.execute(
+            """SELECT source_id,label,source_kind,content_sha256,created_at,updated_at
+                 FROM native_resume_sources
+                WHERE tenant_id=? AND user_id=? AND active=1
+                ORDER BY updated_at DESC LIMIT 1""",
+            (owner.tenant_id, owner.user_id),
+        ).fetchone()
+        if source is None:
+            raise RuntimeError(
+                "Save a confirmed Master Resume source before using the strengthened engine."
+            )
         row = connection.execute(
             """SELECT * FROM native_resume_profile_extracts
                WHERE tenant_id=? AND user_id=? AND source_id=? AND status='CONFIRMED'

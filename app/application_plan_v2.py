@@ -30,6 +30,11 @@ from app import (
     native_resume_artifact_v5,
 )
 from app import application_preflight_package_v1 as preflight_v1
+from app import candidate_knowledge_graph_v1 as universal_graph
+from app import candidate_ontology_v1 as universal_ontology
+from app import universal_answer_resolver_v1 as universal_answers
+from app import universal_question_resolver_v1 as universal_questions
+from app import application_semantic_binding_v1 as universal_binding
 from app import native_resume_service_v5 as resume_v5
 from app.database import get_connection
 from app.phase45_truth_binding import canonical_question_key
@@ -42,9 +47,11 @@ PLAN_ENV = "MUNSHI_APPLICATION_PLAN_V2_ENABLED"
 RUNTIME_RESOLUTION_ENV = "MUNSHI_APPLICATION_PLAN_RUNTIME_RESOLUTION_ENABLED"
 RUNTIME_SUPERSESSION_VERSION = "munshi-application-plan-supersession-v1"
 _RUNTIME_REVISION_KIND = "runtime_apply_needs_input_v1"
-SUPPORTED_PROVIDERS = frozenset(
+KNOWN_PROVIDER_RECIPES = frozenset(
     {"GREENHOUSE", "LEVER", "ASHBY", "SMARTRECRUITERS", "WORKDAY", "AGILE_ATS"}
 )
+# Backward-compatible export: this is now a recipe catalog, not an eligibility gate.
+SUPPORTED_PROVIDERS = KNOWN_PROVIDER_RECIPES
 SENSITIVITY_CLASSES = frozenset(
     {"NORMAL", "PROTECTED", "SELF_ID", "CREDENTIAL", "POST_OFFER"}
 )
@@ -244,6 +251,35 @@ def _normalize_requirement(raw: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError(
             "Non-normal application questions cannot carry plaintext conditions."
         )
+
+    universal_concept_id = str(raw.get("universal_concept_id") or "").strip().casefold() or None
+    universal_confidence: float | None = None
+    universal_lane: str | None = None
+    universal_reason: str | None = None
+    universal_binding_fingerprint: str | None = None
+    if universal_concept_id is not None:
+        concept = universal_ontology.require_concept(universal_concept_id)
+        try:
+            universal_confidence = float(raw.get("universal_semantic_confidence") or 0.0)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Universal semantic confidence must be numeric.") from error
+        if not 0.0 <= universal_confidence <= 1.0:
+            raise ValueError("Universal semantic confidence must be between 0 and 1.")
+        universal_lane = _text(raw.get("universal_classification_lane") or "UNKNOWN", "Universal classification lane", 120)
+        universal_reason = _text(raw.get("universal_reason_code") or "UNKNOWN", "Universal reason code", 160)
+        ub_sensitivity = str(raw.get("universal_sensitivity") or concept.sensitivity).strip().upper()
+        ranks = {"NORMAL": 0, "PROTECTED": 1, "SELF_ID": 2, "CREDENTIAL": 3, "POST_OFFER": 4}
+        if ub_sensitivity not in ranks:
+            raise ValueError("Unsupported Universal Brain sensitivity.")
+        # Semantic metadata may make a requirement stricter, never less sensitive.
+        if ranks[ub_sensitivity] > ranks[sensitivity]:
+            sensitivity = ub_sensitivity
+        fingerprint = str(raw.get("universal_binding_fingerprint") or "").strip().lower()
+        if fingerprint:
+            if len(fingerprint) != 64 or any(ch not in "0123456789abcdef" for ch in fingerprint):
+                raise ValueError("Universal browser binding fingerprint must be SHA-256.")
+            universal_binding_fingerprint = fingerprint
+
     return {
         "question_key": key,
         "question_family": family,
@@ -252,6 +288,11 @@ def _normalize_requirement(raw: Mapping[str, Any]) -> dict[str, Any]:
         "profile_fact_key": profile_fact_key,
         "conditions": conditions,
         "sensitivity_class": sensitivity,
+        "universal_concept_id": universal_concept_id,
+        "universal_semantic_confidence": universal_confidence,
+        "universal_classification_lane": universal_lane,
+        "universal_reason_code": universal_reason,
+        "universal_binding_fingerprint": universal_binding_fingerprint,
     }
 
 
@@ -354,33 +395,57 @@ def _scoped_secure_refs(
     return dict(refs)
 
 
-def _provider_from_job(job: Mapping[str, Any]) -> str:
+def _application_target_host(job: Mapping[str, Any]) -> str:
     for field in ("apply_url", "job_url"):
         value = str(job.get(field) or "").strip()
         if not value:
             continue
         parsed = urlsplit(value)
-        if parsed.scheme.casefold() != "https" or parsed.username or parsed.password:
+        if (
+            parsed.scheme.casefold() != "https"
+            or parsed.username
+            or parsed.password
+            or parsed.fragment
+        ):
             continue
         host = (parsed.hostname or "").casefold().rstrip(".")
-        for provider, suffixes in _PROVIDER_HOSTS.items():
-            if any(
-                host == suffix or host.endswith("." + suffix) for suffix in suffixes
-            ):
-                return provider
-    return "UNSUPPORTED"
+        if host:
+            return host
+    return ""
+
+
+def _provider_from_job(job: Mapping[str, Any]) -> str:
+    host = _application_target_host(job)
+    if not host:
+        return "GENERIC"
+    for provider, suffixes in _PROVIDER_HOSTS.items():
+        if any(host == suffix or host.endswith("." + suffix) for suffix in suffixes):
+            return provider
+    return "GENERIC"
 
 
 def _normalize_provider_policy(
     value: Mapping[str, Any] | None,
     *,
     provider: str,
+    allowed_hosts: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     raw = dict(value or {})
     unknown = sorted(set(raw) - {"permitted", "authentication_mode", "captcha_policy"})
     if unknown:
         raise ValueError("Unsupported provider policy fields: " + ", ".join(unknown))
-    permitted = raw.get("permitted", provider in SUPPORTED_PROVIDERS)
+    effective_hosts = tuple(
+        dict.fromkeys(
+            str(host).casefold().rstrip(".")
+            for host in (
+                _PROVIDER_HOSTS.get(provider, ())
+                if provider in KNOWN_PROVIDER_RECIPES
+                else allowed_hosts
+            )
+            if str(host).strip()
+        )
+    )
+    permitted = raw.get("permitted", bool(effective_hosts))
     if not isinstance(permitted, bool):
         raise ValueError("Provider policy permitted must be boolean.")
     authentication_mode = (
@@ -395,12 +460,13 @@ def _normalize_provider_policy(
         )
     return {
         "provider": provider,
+        "provider_recipe": provider if provider in KNOWN_PROVIDER_RECIPES else None,
         "permitted": permitted,
         "authentication_mode": authentication_mode,
         "captcha_policy": "PAUSE",
         "mfa_policy": "PAUSE",
         "credentials_authority": False,
-        "allowed_hosts": list(_PROVIDER_HOSTS.get(provider, ())),
+        "allowed_hosts": list(effective_hosts),
     }
 
 
@@ -451,6 +517,8 @@ def _resolve_requirement(
         "conditions": copy.deepcopy(requirement["conditions"]),
         "sensitivity_class": sensitivity,
         "required": required,
+        "universal_concept_id": requirement.get("universal_concept_id"),
+        "universal_binding_fingerprint": requirement.get("universal_binding_fingerprint"),
     }
 
     if sensitivity in {"CREDENTIAL", "POST_OFFER"}:
@@ -540,6 +608,83 @@ def _resolve_requirement(
             if permitted or not required
             else "normal_answer_autofill_permission_missing",
         )
+
+    universal_concept_id = str(requirement.get("universal_concept_id") or "").strip().casefold()
+    if (
+        sensitivity == "NORMAL"
+        and universal_concept_id
+        and universal_graph.universal_normal_autofill_enabled()
+    ):
+        universal_question = {
+            "state": "RESOLVED",
+            "concept_id": universal_concept_id,
+            "confidence": float(requirement.get("universal_semantic_confidence") or 0.0),
+            "classification_lane": str(requirement.get("universal_classification_lane") or "UNKNOWN"),
+            "sensitivity": "NORMAL",
+            "reason_code": str(requirement.get("universal_reason_code") or "UNKNOWN"),
+            "conditions": copy.deepcopy(requirement.get("conditions") or {}),
+            "candidate_values_exposed": False,
+        }
+        universal = universal_answers.resolve_concept(universal_question)
+        status = str(universal.get("answer_status") or "MISSING_FACT")
+        if status in {"ANSWERED", "DERIVED", "POLICY_RESOLVED"}:
+            permitted = bool(permissions.get("normal_answer_autofill"))
+            approved = bool(universal.get("autofill_allowed")) and permitted
+            value = universal.get("value") if approved else None
+            reason = None
+            if required and not approved:
+                reason = (
+                    "normal_answer_autofill_permission_missing"
+                    if not permitted
+                    else "universal_answer_not_autofill_approved"
+                )
+            return (
+                {
+                    **common,
+                    "execution_value": value,
+                    "secure_resolver_ref": None,
+                    "universal_value_ref": universal.get("value_ref"),
+                    "universal_answer_status": status,
+                    "universal_answer_mode": universal.get("answer_mode"),
+                    "knowledge_revision": universal.get("knowledge_revision"),
+                    "display_value": _display_value(universal.get("value")),
+                    "source": universal.get("answer_source") or "universal_brain",
+                    "confidence": universal.get("confidence"),
+                    "provenance": universal.get("reason"),
+                    "autofill_allowed": approved,
+                    "requires_review": not approved or family in {"salary", "open_ended_job_specific"},
+                    "current_truth_binding": None,
+                    "evidence_ids": list(universal.get("evidence_ids") or []),
+                },
+                reason,
+            )
+        # Once a high-confidence normal concept is owned by Universal Brain, a
+        # conflict or exhausted knowledge search must fail closed. Do not bypass
+        # it through a weaker legacy answer path.
+        if status in {
+            "CONFLICT", "MISSING_FACT", "REQUIRES_EXPLICIT_USER",
+            "BLOCKED_BY_POLICY", "AMBIGUOUS_CONCEPT",
+        }:
+            return (
+                {
+                    **common,
+                    "execution_value": None,
+                    "secure_resolver_ref": None,
+                    "universal_value_ref": universal.get("value_ref"),
+                    "universal_answer_status": status,
+                    "universal_answer_mode": universal.get("answer_mode"),
+                    "knowledge_revision": universal.get("knowledge_revision"),
+                    "display_value": None,
+                    "source": "universal_brain",
+                    "confidence": universal.get("confidence"),
+                    "provenance": universal.get("reason"),
+                    "autofill_allowed": False,
+                    "requires_review": True,
+                    "current_truth_binding": None,
+                    "evidence_ids": list(universal.get("evidence_ids") or []),
+                },
+                str(universal.get("reason") or status.casefold()) if required else None,
+            )
 
     resolved = answer_brain_v2.resolve_answer(
         question_family=family,
@@ -741,7 +886,12 @@ def _capture(
         }
 
     provider = _provider_from_job(job)
-    policy = _normalize_provider_policy(provider_policy, provider=provider)
+    target_host = _application_target_host(job)
+    policy = _normalize_provider_policy(
+        provider_policy,
+        provider=provider,
+        allowed_hosts=((target_host,) if target_host else ()),
+    )
     answers: list[dict[str, Any]] = []
     unresolved: list[dict[str, str]] = []
     for requirement in requirements:
@@ -764,8 +914,8 @@ def _capture(
         global_blockers.append("resume_upload_permission_missing")
     if cover_letter is not None and not permissions.get("cover_letter_upload"):
         global_blockers.append("cover_letter_upload_permission_missing")
-    if provider not in SUPPORTED_PROVIDERS or not policy["permitted"]:
-        global_blockers.append("provider_not_permitted_or_supported")
+    if not policy["permitted"] or not policy["allowed_hosts"]:
+        global_blockers.append("provider_not_permitted_or_target_invalid")
 
     connection = get_connection()
     try:
@@ -1229,13 +1379,14 @@ def reprepare_needs_input_plan(
 
 def _runtime_question_requirement(
     raw: Mapping[str, Any],
-) -> tuple[dict[str, str], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     allowed = {
         "question_key",
         "control_id",
         "question",
         "semantic_type",
         "sensitivity_class",
+        "question_observation",
     }
     unknown = sorted(set(raw) - allowed)
     if unknown:
@@ -1253,42 +1404,82 @@ def _runtime_question_requirement(
     explicit_sensitivity = _text(
         raw.get("sensitivity_class"), "Runtime sensitivity class", 32
     ).upper()
-    family = answer_brain_v2.classify_question(question)
-    # A browser may report arbitrary labels.  Until a separate candidate
-    # confirmation authority exists, only an already classified normal family
-    # can enter the plaintext runtime-resolution path.
-    if (
-        explicit_sensitivity != "NORMAL"
-        or family not in answer_brain_v2.NORMAL_QUESTION_FAMILIES
-        or family == "unknown"
-    ):
+    if explicit_sensitivity != "NORMAL":
         raise ValueError(
-            "Runtime protected, sensitive, or unclassified questions require their separate policy."
+            "Runtime protected, self-ID, credential, work-authorization, and "
+            "post-offer questions require their separate policy."
         )
-    requirement = _normalize_requirement(
-        {
-            "question_key": key,
-            "question_family": family,
-            "normalized_question": question,
-            "required": True,
-            "sensitivity_class": explicit_sensitivity,
-        }
-    )
+
+    raw_observation = raw.get("question_observation")
+    observation = dict(raw_observation) if isinstance(raw_observation, Mapping) else {}
+    observation.setdefault("raw_question", question)
+    observation.setdefault("label", question)
+    observation.setdefault("control_id", control_id)
+    observation.setdefault("apply_semantic_type", semantic_type)
+    semantic = universal_questions.resolve_question(observation)
+
+    legacy_family = answer_brain_v2.classify_question(question)
+    universal_concept_id: str | None = None
+    if semantic.get("state") == "RESOLVED":
+        universal_concept_id = str(semantic.get("concept_id") or "").strip().casefold() or None
+        semantic_sensitivity = str(semantic.get("sensitivity") or "NORMAL").upper()
+        if semantic_sensitivity != "NORMAL":
+            raise ValueError(
+                "Runtime protected or sensitive question requires its separate policy after Universal Brain classification."
+            )
+        if universal_concept_id:
+            legacy_family = universal_ontology.legacy_question_family(universal_concept_id)
+
+    # Legacy classification remains accepted. Truly unclassified normal wording is
+    # accepted only when Universal Brain has produced a safe canonical concept.
+    if (
+        legacy_family not in answer_brain_v2.NORMAL_QUESTION_FAMILIES
+        or legacy_family == "unknown"
+    ) and universal_concept_id is None:
+        raise ValueError(
+            "Runtime unclassified normal question remains unresolved after Universal Brain."
+        )
+
+    requirement_payload: dict[str, Any] = {
+        "question_key": key,
+        "question_family": legacy_family,
+        "normalized_question": question,
+        "required": True,
+        "sensitivity_class": "NORMAL",
+    }
+    if universal_concept_id:
+        requirement_payload.update(
+            {
+                "universal_concept_id": universal_concept_id,
+                "universal_semantic_confidence": float(semantic.get("confidence") or 0.0),
+                "universal_classification_lane": str(semantic.get("classification_lane") or "UNKNOWN"),
+                "universal_reason_code": str(semantic.get("reason_code") or "UNKNOWN"),
+                "universal_sensitivity": "NORMAL",
+            }
+        )
+        try:
+            requirement_payload["universal_binding_fingerprint"] = universal_binding.fingerprint_parts(observation)[
+                "logical_field_fingerprint"
+            ]
+        except ValueError:
+            requirement_payload["universal_binding_fingerprint"] = None
+
+    requirement = _normalize_requirement(requirement_payload)
     if str(requirement["sensitivity_class"]) != "NORMAL":
         raise ValueError(
             "Runtime protected, self-ID, credential, work-authorization, and "
             "post-offer questions require their separate policy."
         )
-    return (
-        {
-            "question_key": key,
-            "control_id": control_id,
-            "question": question,
-            "semantic_type": semantic_type,
-            "sensitivity_class": "NORMAL",
-        },
-        requirement,
-    )
+    question_record: dict[str, Any] = {
+        "question_key": key,
+        "control_id": control_id,
+        "question": question,
+        "semantic_type": semantic_type,
+        "sensitivity_class": "NORMAL",
+    }
+    if observation:
+        question_record["question_observation"] = observation
+    return question_record, requirement
 
 
 def _normalize_runtime_needs_input_context(
@@ -1362,12 +1553,23 @@ def _runtime_resolution_inputs(
         for item in list(runtime_context.get("unresolved_questions") or [])
         if isinstance(item, Mapping)
     }
+    allowed_provenance = {
+        "candidate_explicit_runtime_resolution",
+        "universal_brain_existing_knowledge",
+        "universal_brain_derived_evidence",
+        "universal_brain_policy_resolution",
+        "universal_brain_generated_evidence",
+    }
     result: list[dict[str, str]] = []
     for raw in values:
-        if not isinstance(raw, Mapping) or set(raw) != {
-            "question_key",
-            "canonical_answer",
-        }:
+        if not isinstance(raw, Mapping):
+            raise ValueError("Each runtime answer resolution must be an object.")
+        unknown = sorted(set(raw) - {"question_key", "canonical_answer", "provenance"})
+        if unknown:
+            raise ValueError(
+                "Unsupported runtime answer resolution fields: " + ", ".join(unknown)
+            )
+        if "question_key" not in raw or "canonical_answer" not in raw:
             raise ValueError(
                 "Each runtime answer resolution must contain question_key and canonical_answer."
             )
@@ -1378,20 +1580,25 @@ def _runtime_resolution_inputs(
             raise ValueError(
                 "Runtime answer resolution is not for the current browser question set."
             )
+        provenance = str(
+            raw.get("provenance") or "candidate_explicit_runtime_resolution"
+        ).strip()
+        if provenance not in allowed_provenance:
+            raise ValueError("Unsupported runtime answer provenance.")
         result.append(
             {
                 "question_key": key,
                 "canonical_answer": _text(
                     raw.get("canonical_answer"), "Canonical answer", 8000
                 ),
-                "provenance": "candidate_explicit_runtime_resolution",
+                "provenance": provenance,
             }
         )
     if {item["question_key"] for item in result} != unresolved or len(result) != len(
         unresolved
     ):
         raise ValueError(
-            "Every current runtime unresolved question requires one explicit answer."
+            "Every current runtime unresolved question requires one answer."
         )
     return sorted(result, key=lambda item: item["question_key"])
 

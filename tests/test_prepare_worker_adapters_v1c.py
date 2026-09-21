@@ -19,6 +19,45 @@ PROFILE_DIGEST = "c" * 64
 def worker_db(hunter_db, monkeypatch):
     monkeypatch.setenv(workers.WORKERS_ENV, "1")
     monkeypatch.setenv(workers.ATS_RUNTIME_ENV, "1")
+    monkeypatch.setattr(
+        workers.application_execution_mandate_v1,
+        "current_for_preflight",
+        lambda package_id: {
+            "mandate_id": "execution-mandate-94",
+            "preflight_package_id": package_id,
+        },
+    )
+    monkeypatch.setattr(
+        workers.application_review_v2,
+        "approve_review_from_execution_mandate",
+        lambda **kwargs: {
+            "approval_id": "technical-approval-94",
+            "approval_digest": "6" * 64,
+            "approval_source": "EXECUTION_MANDATE",
+            "execution_mandate_id": kwargs["execution_mandate_id"],
+            "approved": True,
+            "submission_authority": False,
+        },
+    )
+    monkeypatch.setattr(
+        workers.application_submit_authorization_v1,
+        "issue_authorization",
+        lambda payload: {
+            **dict(payload),
+            "authorization_id": "submit-auth-94",
+            "authority_digest": "7" * 64,
+            "submission_authority": True,
+        },
+    )
+    monkeypatch.setattr(
+        workers,
+        "deliver_submit_authorization",
+        lambda envelope, timeout_seconds=5.0: {
+            "delivered": True,
+            "authorization_id": envelope["authorization_id"],
+            "submission_authority": False,
+        },
+    )
     monkeypatch.setattr(orchestrator, "current_owner", lambda _connection: OWNER)
     monkeypatch.setattr(
         orchestrator,
@@ -400,9 +439,23 @@ def _frozen_review(*, cover_sha256=None):
 def _recorded_review(**kwargs):
     return {
         "review_id": "hunter-review-94",
+        "application_id": "application-94",
+        "plan_id": "plan-94",
+        "plan_digest": "1" * 64,
         "review_digest": "4" * 64,
         "prepared_package_digest": "5" * 64,
         "browser_form_digest": "2" * 64,
+        "resume_artifact_sha256": "8" * 64,
+        "review": {
+            "provider": "GREENHOUSE",
+            "destination_url": "https://boards.example.test/submit",
+            "bindings": {
+                "checkpoint_id": "checkpoint-94",
+                "cover_letter_artifact_sha256": (
+                    "9" * 64 if kwargs.get("prepared_package", {}).get("cover_letter_sha256") else None
+                ),
+            },
+        },
         "approved": False,
     }
 
@@ -460,12 +513,6 @@ def test_ats_runtime_default_off_does_not_claim(worker_db, monkeypatch):
 def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
     worker_db, monkeypatch
 ):
-    operation = _ready_ats(
-        worker_db,
-        monkeypatch,
-        "v1c-cover-required",
-        cover="REQUIRED",
-    )
     seen = {}
 
     monkeypatch.setattr(
@@ -483,6 +530,12 @@ def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
             "candidate_profile_digest": PROFILE_DIGEST,
             "submission_authority": False,
         },
+    )
+    operation = _ready_ats(
+        worker_db,
+        monkeypatch,
+        "v1c-cover-required",
+        cover="REQUIRED",
     )
 
     def prepare_plan(**kwargs):
@@ -521,21 +574,17 @@ def test_required_cover_letter_generates_exact_artifact_and_enters_plan(
     assert result["output"]["cover_letter_id"] == "cover-letter-required-94"
     assert result["output"]["cover_letter_artifact_sha256"] == "9" * 64
     assert result["output"]["cover_letter_page_count"] == 1
-    assert result["output"]["customer_review_approved"] is False
+    assert result["output"]["customer_review_approved"] is True
     assert result["output"]["additional_customer_approval_required"] is False
     assert result["output"]["final_submit_executed"] is False
     assert result["output"]["submission_authority"] is False
 
 
-def test_required_cover_letter_writer_failure_requeues_safely(
+def test_required_cover_letter_writer_failure_requeues_preflight_safely(
     worker_db, monkeypatch
 ):
-    operation = _ready_ats(
-        worker_db,
-        monkeypatch,
-        "v1c-cover-required-failure",
-        cover="REQUIRED",
-    )
+    operation = _start("v1c-cover-required-failure")
+    _ready_dependencies(operation["operation_id"], cover="REQUIRED")
 
     monkeypatch.setattr(
         workers.native_cover_letter_writer_v1,
@@ -546,14 +595,11 @@ def test_required_cover_letter_writer_failure_requeues_safely(
     )
 
     with pytest.raises(RuntimeError, match="writer unavailable"):
-        workers.run_ats_form_preparation_once(
-            operation_id=operation["operation_id"],
-            worker_id="ats-worker",
-        )
+        _run_preflight_ready(operation, monkeypatch)
 
     task = _task(
         operation["operation_id"],
-        orchestrator.TASK_ATS_FORM_PREPARATION,
+        orchestrator.TASK_APPLICATION_PREFLIGHT,
     )
     assert task["status"] == "PENDING"
     assert task["attempts"] == 1
@@ -591,7 +637,7 @@ def test_ats_ready_for_review_completes_orchestrator(worker_db, monkeypatch):
     assert result["task_status"] == "SUCCEEDED"
     assert result["operation_status"] == "READY_FOR_REVIEW"
     assert result["output"]["apply_prepare_state"] == "READY_FOR_REVIEW"
-    assert result["output"]["customer_review_approved"] is False
+    assert result["output"]["customer_review_approved"] is True
     assert result["output"]["additional_customer_approval_required"] is False
     assert result["output"]["final_submit_executed"] is False
     assert seen["requirements"] == []
@@ -631,16 +677,23 @@ def test_apply_terminal_failure_fails_safely(worker_db, monkeypatch):
         lambda **kwargs: _fake_plan(),
     )
 
+    terminal = _session("FAILED_SAFELY")
+    terminal["preparation_job"]["last_error"] = "browser adapter failed closed"
     result = workers.run_ats_form_preparation_once(
         operation_id=operation["operation_id"],
         worker_id="ats-worker",
         poll_interval_seconds=0,
         plan_delivery=lambda **kwargs: _delivery(),
-        session_starter=lambda plan: _session("FAILED_SAFELY"),
+        session_starter=lambda plan: terminal,
         status_reader=lambda **kwargs: {},
     )
     assert result["task_status"] == "FAILED"
     assert result["operation_status"] == "FAILED_SAFELY"
+    assert result["apply_last_error"] == "browser adapter failed closed"
+    task = _task(
+        operation["operation_id"], orchestrator.TASK_ATS_FORM_PREPARATION
+    )
+    assert "browser adapter failed closed" in str(task["error_message"])
 
 
 def test_poll_timeout_requeues_without_submission(worker_db, monkeypatch):
@@ -695,7 +748,13 @@ def _runtime_resolution_payload(*, include_resolution=False, session_id="session
         "application_id": "application-94", "session_id": session_id,
         "checkpoint_id": "checkpoint-runtime", "page_id": "page-runtime",
         "control_id": "portfolio", "question_id": "portfolio",
-        "question": "Portfolio URL", "semantic_type": "URL", "category": "MISSING_FACT",
+        "question": "Portfolio URL", "semantic_type": "URL",
+        "question_observation": {
+            "raw_question": "Portfolio URL", "label": "Portfolio URL",
+            "section_heading": "Links", "control_id": "portfolio",
+            "apply_semantic_type": "UNKNOWN", "options": [],
+        },
+        "category": "MISSING_FACT",
         "sensitivity_class": "NORMAL", "status": "WAITING_FOR_USER", "risk_level": "LOW",
         "auto_resolvable": False, "requires_user": True,
         "grouping_scope": "APPLICATION", "group_key": "application-94",
@@ -711,6 +770,7 @@ def _runtime_resolution_payload(*, include_resolution=False, session_id="session
         "job_id": "prepare-job-94", "session_id": "session-94",
         "application_id": "application-94", "plan_id": "plan-94",
         "provider": "GREENHOUSE", "prepare_state": "WAITING_INPUT",
+        "browser_form_digest": "f" * 64, "checkpoint_id": "checkpoint-runtime",
         "resolution_tasks": [task], "open_task_count": 1,
         "resolution_values_exposed": False, "final_review_authority": False,
         "submission_authority": False,
@@ -1060,4 +1120,234 @@ def test_provider_capability_retry_fails_closed_on_non_provider_semantic_drift(
             operation=operation,
             pending_task=pending,
             preflight=preflight,
+        )
+
+
+def test_ats_browser_waits_for_single_prebrowser_mandate(
+    worker_db, monkeypatch
+):
+    operation = _ready_ats(
+        worker_db,
+        monkeypatch,
+        "v1c-single-mandate-gate",
+    )
+    monkeypatch.setattr(
+        workers.application_execution_mandate_v1,
+        "current_for_preflight",
+        lambda package_id: None,
+    )
+
+    def browser_must_not_start(**kwargs):
+        raise AssertionError("ATS plan/browser must not start before customer mandate")
+
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "prepare_application_plan",
+        browser_must_not_start,
+    )
+
+    result = workers.run_ats_form_preparation_once(
+        operation_id=operation["operation_id"],
+        worker_id="ats-worker",
+    )
+
+    assert result["claimed"] is False
+    assert result["reason"] == "single_customer_approval_required"
+    assert _task(
+        operation["operation_id"],
+        orchestrator.TASK_ATS_FORM_PREPARATION,
+    )["status"] == "PENDING"
+    assert result["submission_authority"] is False
+
+
+def test_universal_runtime_auto_resolution_creates_one_immutable_replacement(monkeypatch):
+    payload = _runtime_resolution_payload()
+    task = dict(payload["resolution_tasks"][0])
+    task["group_key"] = "unknown.portfolio"
+    task["question_observation"] = {
+        "raw_question": "State New Jersey",
+        "label": "State",
+        "section_heading": "Contact Information",
+        "control_id": "portfolio",
+        "apply_semantic_type": "UNKNOWN",
+        "options": ["New Jersey", "New York", "Pennsylvania"],
+    }
+    seen = {}
+    monkeypatch.setattr(workers.universal_graph, "universal_normal_autofill_enabled", lambda: True)
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "runtime_application_plan_resolution_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        workers.universal_answers,
+        "resolve_observation",
+        lambda observation, **_kwargs: {
+            "answer_status": "ANSWERED",
+            "answer_mode": "DIRECT_FACT",
+            "concept_id": "contact.region",
+            "value": "New Jersey",
+            "value_ref": "hunter-value://universal-brain/region",
+            "confidence": 0.99,
+            "autofill_allowed": True,
+            "knowledge_revision": 27,
+            "question_resolution": {
+                "classification_lane": "ONTOLOGY_CONTEXT",
+                "confidence": 0.99,
+            },
+            "evidence_ids": [],
+        },
+    )
+    monkeypatch.setattr(
+        workers.universal_answers,
+        "public_trace",
+        lambda result: {key: value for key, value in result.items() if key != "value"},
+    )
+
+    def resolve_runtime_needs_input(**kwargs):
+        seen.update(kwargs)
+        return {
+            "success": True,
+            "prior_plan_id": "plan-94",
+            "replacement_plan_id": "plan-95",
+            "replacement_plan_digest": "9" * 64,
+            "handoff_id": "handoff-95",
+            "state": "PLAN_ACCEPTED",
+            "replayed": False,
+            "submission_authority": False,
+        }
+
+    monkeypatch.setattr(
+        workers.application_plan_resolution_v2,
+        "resolve_runtime_needs_input",
+        resolve_runtime_needs_input,
+    )
+    result = workers._universal_runtime_auto_resolution(
+        operation_id="operation-94",
+        plan={"plan_id": "plan-94", "plan_digest": "8" * 64},
+        session_id="session-94",
+        resolution_payload=payload,
+        runtime_tasks=[task],
+    )
+    assert result is not None
+    assert result["replacement"]["replacement_plan_id"] == "plan-95"
+    assert result["resolved_count"] == 1
+    assert result["value_exposed"] is False
+    assert seen["runtime_context"]["unresolved_questions"][0]["question_observation"]["label"] == "State"
+    assert seen["answer_resolutions"] == [
+        {
+            "question_key": "unknown.portfolio",
+            "canonical_answer": "New Jersey",
+            "provenance": "universal_brain_existing_knowledge",
+        }
+    ]
+    assert "New Jersey" not in repr(result["trace"])
+
+
+def test_universal_runtime_auto_resolution_falls_through_when_any_fact_is_missing(monkeypatch):
+    payload = _runtime_resolution_payload()
+    task = dict(payload["resolution_tasks"][0])
+    task["group_key"] = "unknown.portfolio"
+    monkeypatch.setattr(workers.universal_graph, "universal_normal_autofill_enabled", lambda: True)
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "runtime_application_plan_resolution_enabled",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        workers.universal_answers,
+        "resolve_observation",
+        lambda observation, **_kwargs: {
+            "answer_status": "MISSING_FACT",
+            "concept_id": "contact.portfolio",
+            "autofill_allowed": False,
+            "confidence": 0.9,
+            "knowledge_revision": 27,
+            "question_resolution": {"classification_lane": "ONTOLOGY_RETRIEVAL"},
+        },
+    )
+    monkeypatch.setattr(workers.universal_answers, "public_trace", lambda result: dict(result))
+    assert workers._universal_runtime_auto_resolution(
+        operation_id="operation-94",
+        plan={"plan_id": "plan-94", "plan_digest": "8" * 64},
+        session_id="session-94",
+        resolution_payload=payload,
+        runtime_tasks=[task],
+    ) is None
+
+
+def test_apply_semantic_interpretation_bridge_is_value_free(monkeypatch):
+    seen = {}
+
+    def fake_request(**kwargs):
+        seen.update(kwargs)
+        return {
+            "concept_id": "contact.region",
+            "confidence": 0.97,
+            "reason_code": "STATE_SELECTION_CONTEXT",
+            "candidate_values_sent": False,
+            "secret_material_sent": False,
+            "protected_values_sent": False,
+        }
+
+    monkeypatch.setattr(workers, "_apply_base_url", lambda: "http://apply.internal")
+    monkeypatch.setattr(
+        workers,
+        "_apply_headers",
+        lambda **kwargs: {"X-Munshi-Tenant-Id": kwargs["tenant_id"], "X-Munshi-User-Id": kwargs["user_id"]},
+    )
+    monkeypatch.setattr(workers, "_json_request", fake_request)
+    payload = {
+        "resolver_version": "universal-question-resolver-v1",
+        "observation": {"raw_question": "Home base", "label": "Home base"},
+        "ontology_candidates": [
+            {
+                "concept_id": "contact.region",
+                "score": 0.72,
+                "sensitivity": "NORMAL",
+                "answer_mode": "DIRECT_FACT",
+                "category": "CONTACT",
+            }
+        ],
+        "candidate_values": None,
+    }
+    result = workers._interpret_apply_universal_semantics(
+        payload, tenant_id="tenant-a", user_id="user-a"
+    )
+    assert result == {
+        "concept_id": "contact.region",
+        "confidence": 0.97,
+        "reason_code": "STATE_SELECTION_CONTEXT",
+    }
+    assert seen["url"].endswith("/v1/universal-brain/semantic-interpretation")
+    sent = seen["body"]["payload"]
+    assert sent["candidate_values"] is None
+    assert "canonical_answer" not in repr(sent)
+    assert "execution_value" not in repr(sent)
+
+
+def test_apply_semantic_bridge_rejects_provider_contract_leak(monkeypatch):
+    monkeypatch.setattr(workers, "_apply_base_url", lambda: "http://apply.internal")
+    monkeypatch.setattr(workers, "_apply_headers", lambda **kwargs: {})
+    monkeypatch.setattr(
+        workers,
+        "_json_request",
+        lambda **kwargs: {
+            "concept_id": "contact.region",
+            "confidence": 0.99,
+            "candidate_values_sent": True,
+            "secret_material_sent": False,
+            "protected_values_sent": False,
+        },
+    )
+    with pytest.raises(RuntimeError, match="value-free"):
+        workers._interpret_apply_universal_semantics(
+            {
+                "resolver_version": "v1",
+                "observation": {"label": "Home base"},
+                "ontology_candidates": [],
+                "candidate_values": None,
+            },
+            tenant_id="tenant-a",
+            user_id="user-a",
         )

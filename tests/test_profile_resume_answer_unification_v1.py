@@ -216,7 +216,10 @@ def test_one_page_guard_rejects_bullet_that_old_budget_allowed() -> None:
     assert resume_contract.ats_readiness_issues(document) == []
     density = one_page.density_metrics(document)
     assert density["safe"] is False
-    assert any("bullet(s)_over_30_safe_words" in issue for issue in density["issues"])
+    assert any(
+        f"bullet(s)_over_{one_page.MAX_SAFE_BULLET_WORDS}_safe_words" in issue
+        for issue in density["issues"]
+    )
 
 
 def test_one_page_guard_accepts_compact_readable_document() -> None:

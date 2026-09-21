@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
 import base64
 import os
 
 import pytest
 
 from app import native_resume_service_v3 as v3
+from app import phase45_truth_binding as truth_binding
+from app import secure_vault
 from app import profile_snapshot_projection as projection
 from app import profile_truth_overrides_v1 as overrides
 from app import resume_profile_details_v31 as details
@@ -180,3 +185,82 @@ def test_projection_fails_closed_when_encrypted_truth_store_is_unavailable(hunte
     monkeypatch.delenv("MUNSHI_VAULT_KEY", raising=False)
     with pytest.raises(RuntimeError, match="Encrypted Candidate Truth Profile"):
         projection.build_candidate_profile_snapshot(extracted)
+
+
+def test_historical_profile_payload_hash_survives_additive_schema_defaults() -> None:
+    historical_payload = json.dumps(
+        {
+            "professional_summary": "Evidence-backed profile.",
+            "contact": {
+                "full_name": "Candidate Example",
+                "location": "New Jersey",
+                "email": "candidate@example.com",
+                "phone": "",
+                "linkedin": "",
+                "github": "",
+                "portfolio": "",
+            },
+            "education": [],
+            "experience": [],
+            "projects": [],
+            "skills": [],
+            "certifications": [],
+            "languages": [],
+            "application_defaults": {
+                "work_authorization_country": "",
+                "authorization_basis": "",
+                "visa_or_permit": "",
+                "sponsorship_required": None,
+                "willing_to_relocate": None,
+                "work_modes": [],
+            },
+            "extraction_warnings": [],
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    historical_sha = hashlib.sha256(historical_payload.encode("utf-8")).hexdigest()
+    current_profile = v3.CandidateProfileExtract.model_validate_json(
+        historical_payload
+    ).model_dump()
+    assert "region" in current_profile["contact"]
+    current_profile_json = json.dumps(
+        current_profile, ensure_ascii=False, sort_keys=True
+    )
+    projection._verify_immutable_profile_hash(
+        {
+            "profile": current_profile,
+            "profile_sha256": historical_sha,
+            "stored_profile_payload_sha256": historical_sha,
+            "decoded_profile_sha256": hashlib.sha256(
+                current_profile_json.encode("utf-8")
+            ).hexdigest(),
+        }
+    )
+
+
+def test_stored_profile_payload_digest_still_fails_closed_on_mismatch() -> None:
+    with pytest.raises(RuntimeError, match="evidence hash"):
+        projection._verify_immutable_profile_hash(
+            {
+                "profile": {},
+                "profile_sha256": "a" * 64,
+                "stored_profile_payload_sha256": "b" * 64,
+            }
+        )
+
+
+def test_current_snapshot_read_path_never_runs_schema_installers(
+    hunter_db, monkeypatch
+) -> None:
+    extracted = _profile_extract(hunter_db, monkeypatch)
+
+    def forbidden_schema_install(*_args, **_kwargs):
+        raise AssertionError("read-only Candidate Truth path attempted schema installation")
+
+    monkeypatch.setattr(v3, "ensure_schema", forbidden_schema_install)
+    monkeypatch.setattr(secure_vault, "ensure_schema", forbidden_schema_install)
+
+    snapshot = truth_binding.current_candidate_profile_snapshot()
+    assert snapshot["source_extraction_id"] == extracted["extraction_id"]
+    assert snapshot["projection_mode"] == "READ_ONLY"

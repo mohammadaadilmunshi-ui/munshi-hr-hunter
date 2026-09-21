@@ -116,6 +116,35 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
             connection.close()
 
 
+def current_owner_readonly(
+    connection: sqlite3.Connection | None = None,
+) -> OwnerContext:
+    """Resolve the current owner without installing or mutating schema.
+
+    Read-only projections must never acquire a SQLite write lock merely to
+    identify the active tenant/user. Schema creation remains the responsibility
+    of startup/migration and mutation paths.
+    """
+    candidate = _owner_context.get()
+    if not tenant_foundation_enabled() or candidate is None:
+        return OwnerContext(DEFAULT_TENANT_ID, DEFAULT_USER_ID)
+    tenant_id = _valid_identifier(candidate.tenant_id)
+    user_id = _valid_identifier(candidate.user_id)
+    owns_connection = connection is None
+    connection = connection or get_connection()
+    try:
+        membership = connection.execute(
+            "SELECT 1 FROM tenant_memberships WHERE tenant_id=? AND user_id=?",
+            (tenant_id, user_id),
+        ).fetchone()
+        if membership is None:
+            raise LookupError("Current user is not a member of the current tenant.")
+        return OwnerContext(tenant_id, user_id)
+    finally:
+        if owns_connection:
+            connection.close()
+
+
 def current_owner(connection: sqlite3.Connection | None = None) -> OwnerContext:
     """Return the current owner, falling back to the stable singleton principal.
 

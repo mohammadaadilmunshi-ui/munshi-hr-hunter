@@ -1,0 +1,72 @@
+name: Predeploy Hunter Acceptance
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Hunter dependencies
+        run: python -m pip install -r requirements.lock.txt
+
+      - name: Compile critical predeploy surfaces
+        run: |
+          python -m py_compile \
+            app/inbound_mail.py \
+            app/mailbox_verification_service.py \
+            app/application_account_transport_v1.py \
+            app/application_production_submission_receipt_v1.py \
+            app/linkedin_url_contract.py \
+            app/job_store.py \
+            app/jobspy_board_common.py \
+            app/product_pages.py
+
+      - name: Run mailbox account LinkedIn receipt and migration acceptance
+        run: |
+          python -m pytest -q \
+            tests/test_mailbox_verification_service_v1.py \
+            tests/test_inbound_mail_relay_v1.py \
+            tests/test_ats_credentials.py \
+            tests/test_ats_managed_identity.py \
+            tests/test_ats_verification_orchestrator.py \
+            tests/test_application_production_submission_receipt_v1.py \
+            tests/test_verified_submission_receipt_v1.py \
+            tests/test_linkedin_direct_apply_url_v1.py \
+            tests/test_linkedin_link_contract_v2.py \
+            tests/test_complete_loop_deployment_migrations.py
+
+      - name: Validate Docker and Compose release candidate
+        env:
+          HUNTER_API_SECRET: ci-placeholder-only
+          N8N_ENCRYPTION_KEY: ci-placeholder-only
+        run: |
+          python scripts/validate_docker_foundation.py
+          python scripts/validate_netcup_shadow.py
+          docker compose -f compose.yaml -f compose.netcup-shadow.yaml config
+          docker build --tag munshi-hunter:predeploy .
+
+      - name: Inspect Hunter image
+        run: |
+          docker run --rm --entrypoint python munshi-hunter:predeploy --version
+          docker run --rm --entrypoint /usr/bin/chromium munshi-hunter:predeploy --version
+          docker run --rm --entrypoint test munshi-hunter:predeploy -f /app/hunter/integrations/hr_agent/n8n_hr_score.py
+
+      - name: Require private repository before release
+        env:
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          test "${REPOSITORY_PRIVATE}" = "true" || {
+            echo "PREDEPLOY_BLOCKED: munshi-hr-hunter must be private before release."
+            exit 1
+          }

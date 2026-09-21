@@ -149,6 +149,35 @@ def create_signed_plan_transport(
                 raise RuntimeError("Stored Application Plan handoff body digest is invalid.")
             return apply_handoff.sign_transport(payload, timestamp=timestamp)
 
+        # One immutable plan has one transport identity. Runtime continuation may
+        # reach the same already-delivered replacement plan through a different
+        # worker idempotency key after the original resolution handoff. Reuse the
+        # existing plan-bound envelope instead of attempting a second ledger row.
+        existing_plan_handoff = connection.execute(
+            """SELECT * FROM apply_plan_handoffs_v2
+               WHERE tenant_id=? AND user_id=? AND plan_id=?""",
+            (owner.tenant_id, owner.user_id, str(plan_id)),
+        ).fetchone()
+        if existing_plan_handoff is not None:
+            if (
+                str(existing_plan_handoff["application_id"])
+                != str(plan["application_id"])
+                or str(existing_plan_handoff["plan_digest"])
+                != str(plan["plan_digest"])
+            ):
+                raise RuntimeError(
+                    "Existing Application Plan handoff binding is invalid."
+                )
+            payload = json.loads(str(existing_plan_handoff["envelope_json"]))
+            expected_body = _canonical(payload)
+            if hashlib.sha256(expected_body).hexdigest() != str(
+                existing_plan_handoff["body_sha256"]
+            ):
+                raise RuntimeError(
+                    "Stored Application Plan handoff body digest is invalid."
+                )
+            return apply_handoff.sign_transport(payload, timestamp=timestamp)
+
         handoff_id = f"plan-handoff-{uuid4()}"
         payload = _envelope(plan, handoff_id)
         body = _canonical(payload)
