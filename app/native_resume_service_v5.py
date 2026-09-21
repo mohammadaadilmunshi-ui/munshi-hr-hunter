@@ -308,6 +308,57 @@ def list_versions(*, job_id: int | None = None, limit: int = 100) -> list[dict[s
     return records
 
 
+_MALFORMED_WRITER_JSON_MARKERS = (
+    "model response was not valid json",
+    "model response was not valid resume json",
+    "model response must be a json object",
+)
+
+
+def _malformed_writer_json(error: BaseException) -> bool:
+    if not isinstance(error, RuntimeError):
+        return False
+    text = str(error or "").strip().casefold()
+    return any(marker in text for marker in _MALFORMED_WRITER_JSON_MARKERS)
+
+
+def _call_writer_with_json_retry(
+    *,
+    prompt_payload: dict[str, Any],
+    config: dict[str, Any],
+    rewrite_mode: str,
+) -> tuple[dict[str, Any], str, str, int, dict[str, Any] | None]:
+    """Retry one malformed structured-output response within the configured call budget."""
+    try:
+        payload, response_id, model = v4.v2._call_openai_v2(
+            prompt_payload=prompt_payload,
+            config=config,
+            rewrite_mode=rewrite_mode,
+        )
+        return payload, response_id, model, 1, None
+    except RuntimeError as error:
+        if (
+            not _malformed_writer_json(error)
+            or int(config["max_calls_per_generation"]) < 2
+        ):
+            raise
+
+    retry_payload = dict(prompt_payload)
+    retry_payload["task"] = "repair_resume_json_transport"
+    retry_payload["instruction"] = (
+        str(prompt_payload.get("instruction") or "").strip()
+        + "\n\nThe previous writer response could not be parsed as the required resume JSON. "
+        "Return exactly one complete JSON object matching the supplied schema. "
+        "Do not use Markdown fences, commentary, prefixes, suffixes, or truncated JSON."
+    ).strip()
+    payload, response_id, model = v4.v2._call_openai_v2(
+        prompt_payload=retry_payload,
+        config=config,
+        rewrite_mode=rewrite_mode,
+    )
+    return payload, response_id, model, 2, retry_payload
+
+
 def generate_resume(
     *,
     job_id: int,
@@ -400,24 +451,29 @@ def generate_resume(
         "current_resume": parent_document.model_dump() if parent_document else None,
     }
 
-    candidate_payload, response_id, model = v4.v2._call_openai_v2(
+    (
+        candidate_payload,
+        response_id,
+        model,
+        calls_used,
+        transport_repair_payload,
+    ) = _call_writer_with_json_retry(
         prompt_payload=prompt_payload,
         config=config,
         rewrite_mode=mode,
     )
-    calls_used = 1
     proposed = v4.v1._apply_locks(
         v4.v1.ResumeDocument.model_validate(candidate_payload), parent_document, locks
     )
     diagnostics = v4.v1.analyze_document(proposed, context, bundle)
     stage_b_guard = _stage_b_claim_guard(document=proposed, bundle=bundle, plan=plan)
-    repair_payload: dict[str, Any] | None = None
+    repair_payload: dict[str, Any] | None = transport_repair_payload
 
     if diagnostics["content_budget_issues"]:
-        if int(config["max_calls_per_generation"]) < 2:
+        if calls_used >= int(config["max_calls_per_generation"]):
             raise ValueError(
-                "The generated resume needs one repair pass to meet the one-page content budget, but your GPT call limit is 1. "
-                "Increase the per-resume call limit to 2 or try a more conservative rewrite."
+                "The generated resume needs a content-budget repair pass, but no writer call remains in the configured per-resume limit. "
+                "Retry the preparation or use a more conservative rewrite."
             )
         repair_payload = dict(prompt_payload)
         repair_payload["task"] = "repair_resume_content_budget"
@@ -565,6 +621,7 @@ def generate_resume(
             "writer_reasoning_effort": config["reasoning_effort"],
             "writer_api_calls": calls_used,
             "writer_api_call_limit": int(config["max_calls_per_generation"]),
+            "writer_json_transport_retry_used": bool(transport_repair_payload),
             "writer_key_source": config["key_source"],
             "candidate_truth_binding": public_truth_binding,
             "job_snapshot_sha256": job_snapshot_sha256,
