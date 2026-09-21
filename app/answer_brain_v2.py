@@ -242,13 +242,6 @@ def save_profile_projection_answer(
         raise ValueError("Profile-derived memory requires a normal Answer Brain family.")
     key = truth_binding.canonical_question_key(question_key)
     snapshot = truth_binding.current_candidate_profile_snapshot()
-    fact = truth_binding.profile_fact(snapshot, profile_fact_key)
-    if fact is None:
-        raise LookupError("Candidate Truth Profile fact was not found.")
-    if fact.get("protected") is True:
-        raise ValueError(
-            "Protected Candidate Truth facts cannot be copied into the normal answer vault."
-        )
 
     from app import application_field_intelligence_v1 as field_intelligence
 
@@ -261,6 +254,21 @@ def save_profile_projection_answer(
             str(resolved.get("reason") or "Candidate Truth projection is unavailable.")
         )
     projected = dict(resolved.get("answer") or {})
+    binding = dict(projected.get("candidate_truth_binding") or {})
+    if not truth_binding.binding_matches_snapshot(binding, snapshot):
+        raise RuntimeError("Candidate Truth changed during profile projection.")
+
+    source_fact_key = str(
+        projected.get("source_fact_key") or profile_fact_key
+    ).strip().casefold()
+    fact = truth_binding.profile_fact(snapshot, source_fact_key)
+    if fact is None:
+        raise LookupError("Candidate Truth Profile source fact was not found.")
+    if fact.get("protected") is True:
+        raise ValueError(
+            "Protected Candidate Truth facts cannot be copied into the normal answer vault."
+        )
+
     answer = str(projected.get("canonical_answer") or "").strip()
     if not answer:
         raise ValueError("Candidate Truth projection has no usable answer value.")
@@ -278,7 +286,7 @@ def save_profile_projection_answer(
         autofill_allowed=bool(autofill_allowed),
         scoped_conditions=scoped,
         question_key=key,
-        profile_fact_key=str(profile_fact_key),
+        profile_fact_key=source_fact_key,
         snapshot=snapshot,
     )
 
