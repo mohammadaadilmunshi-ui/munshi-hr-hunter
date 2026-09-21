@@ -590,7 +590,21 @@ def resolve_question(
             reason_code=reason, preclassification=pre,
         )
 
-    # Lane B/C: retrieve over aliases/descriptions independently for each visible
+    # Lane B: provider-neutral structural context. Run this before embedding so
+    # obvious controls (address/region/city/postal/country) stay deterministic
+    # and fast instead of paying local-model latency.
+    contextual = _context_candidate(obs)
+    if contextual is not None:
+        key, score, reason = contextual
+        item = _resolved_concept(obs, key)
+        sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
+        return _result(
+            state="RESOLVED", concept_id=item.concept_id, confidence=score,
+            lane="ONTOLOGY_CONTEXT", sensitivity=sensitivity, reason_code=reason,
+            preclassification=pre,
+        )
+
+    # Lane C/D: retrieve over aliases/descriptions independently for each visible
     # fragment, then retain the best score per concept. Candidate values are never
     # part of this retrieval.
     best: dict[str, dict[str, Any]] = {}
@@ -648,19 +662,6 @@ def resolve_question(
             merged.values(),
             key=lambda row: (-float(row["score"]), str(row["concept_id"])),
         )[:10]
-
-    # Lane D: structural context disambiguation. This specifically handles forms
-    # such as "State New Jersey" without learning a candidate value from the text.
-    contextual = _context_candidate(obs)
-    if contextual is not None:
-        key, score, reason = contextual
-        item = _resolved_concept(obs, key)
-        sensitivity = ontology.sensitivity_at_least(item.sensitivity, sensitivity_floor)
-        return _result(
-            state="RESOLVED", concept_id=item.concept_id, confidence=score,
-            lane="ONTOLOGY_CONTEXT", sensitivity=sensitivity, reason_code=reason,
-            candidates=ranked, preclassification=pre,
-        )
 
     # Lane E: bounded model semantic interpretation. The callback receives only
     # browser structure and ontology candidates; candidate values/secrets are absent.
