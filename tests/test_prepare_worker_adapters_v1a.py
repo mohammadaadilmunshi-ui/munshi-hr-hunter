@@ -398,4 +398,3 @@ def test_native_resume_sqlite_contention_does_not_consume_attempt(
     assert task["status"] == "PENDING"
     assert task["attempts"] == 0
     assert task["error_code"] == "SQLITE_WRITER_BUSY"
-
