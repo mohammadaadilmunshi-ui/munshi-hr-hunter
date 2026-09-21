@@ -238,3 +238,32 @@ def test_resume_writer_does_not_exceed_single_call_budget(monkeypatch) -> None:
         )
 
     assert len(calls) == 1
+
+def test_staging_deploy_safety_override_is_last_compose_layer() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    script = (root / "deploy" / "netcup" / "deploy_staging_release.sh").read_text()
+
+    assert 'STAGING_SAFETY_OVERRIDE="$STAGING_ROOT/staging.safety.override.yaml"' in script
+    assert 'STAGING_SAFETY_OVERRIDE=ENFORCED' in script
+    assert 'compose+=(-f "$STAGING_OPERATIONAL_OVERRIDE")' in script
+    assert 'compose+=(-f "$STAGING_SAFETY_OVERRIDE")' in script
+    assert script.index('compose+=(-f "$STAGING_OPERATIONAL_OVERRIDE")') < script.index(
+        'compose+=(-f "$STAGING_SAFETY_OVERRIDE")'
+    )
+
+    for token in (
+        'HUNTER_ENABLE_TELEGRAM: "false"',
+        'HUNTER_ENABLE_DISCOVERY_SCHEDULER: "false"',
+        'HUNTER_ENABLE_COORDINATOR: "false"',
+        'TELEGRAM_ENABLED: "false"',
+        'DISCOVERY_ENABLED: "false"',
+        'SCHEDULER_ENABLED: "false"',
+        'COORDINATOR_ENABLED: "false"',
+        'PRODUCTION_CALLBACKS_ENABLED: "false"',
+        'PRODUCTION_STATE_IMPORTED: "false"',
+        'CLOUD_SHADOW_MODE: "true"',
+    ):
+        assert token in script
+
