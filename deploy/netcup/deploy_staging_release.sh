@@ -7,6 +7,7 @@ STAGING_ROOT="${MUNSHI_STAGING_ROOT:-/home/munshi/munshi-staging-v1}"
 STAGING_REPO="$STAGING_ROOT/repo"
 STAGING_ENV="$STAGING_ROOT/staging.env"
 STAGING_OVERRIDE="$STAGING_ROOT/staging.override.yaml"
+STAGING_OPERATIONAL_OVERRIDE="$STAGING_ROOT/operational.override.yaml"
 VERIFY="/opt/munshi/bin/verify-staging-runtime-contract"
 VERIFY_PROD="/opt/munshi/bin/verify-production-runtime-contract"
 
@@ -56,6 +57,12 @@ compose=(
   -f "$STAGING_REPO/compose.netcup-shadow.yaml"
   -f "$STAGING_OVERRIDE"
 )
+if [[ -f "$STAGING_OPERATIONAL_OVERRIDE" ]]; then
+  compose+=(-f "$STAGING_OPERATIONAL_OVERRIDE")
+  echo "STAGING_OPERATIONAL_OVERRIDE=ENABLED"
+else
+  echo "STAGING_OPERATIONAL_OVERRIDE=ABSENT"
+fi
 
 cd "$STAGING_REPO"
 
