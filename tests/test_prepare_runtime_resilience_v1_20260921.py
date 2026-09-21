@@ -266,3 +266,27 @@ def test_staging_deploy_safety_override_is_last_compose_layer() -> None:
         'CLOUD_SHADOW_MODE: "true"',
     ):
         assert token in script
+
+def test_staging_deploy_requires_guarded_maintenance_repair() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    deploy = (root / "deploy" / "netcup" / "deploy_staging_release.sh").read_text()
+    helper = (root / "deploy" / "netcup" / "ensure_staging_maintenance_mode.sh").read_text()
+
+    assert 'STAGING_MAINTENANCE_HELPER=' in deploy
+    assert '=== ENSURE STAGING MAINTENANCE MODE ===' in deploy
+    assert '"$STAGING_MAINTENANCE_HELPER"' in deploy
+
+    for token in (
+        'HUNTER_ENABLE_DISCOVERY_SCHEDULER=false',
+        'HUNTER_ENABLE_COORDINATOR=false',
+        'HUNTER_ENABLE_TELEGRAM=false',
+        'PRODUCTION_CALLBACKS_ENABLED=false',
+        'PRODUCTION_STATE_IMPORTED=false',
+    ):
+        assert token in helper
+
+    assert 'payload["maintenance_mode"] = True' in helper
+    assert 'STAGING_MAINTENANCE_REPAIR=PASS' in helper
+
