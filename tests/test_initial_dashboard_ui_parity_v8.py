@@ -165,4 +165,3 @@ def test_failed_prepare_does_not_navigate_to_not_started_workspace() -> None:
         'st.session_state["product_view"] = "prepare-application"'
     )
     assert error_index < return_index < navigate_index
-
