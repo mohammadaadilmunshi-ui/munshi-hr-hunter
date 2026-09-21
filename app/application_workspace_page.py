@@ -19,6 +19,19 @@ from app import product_application_flow_v2 as complete_loop
 from app.phase67_common import safe_owned_job_snapshot
 
 
+_LIVE_PROGRESS_STATES = frozenset({
+    "QUEUED",
+    "RUNNING",
+    "OPTIMIZING",
+    "PREPARING",
+    "PLAN_ACCEPTED",
+    "READY_TO_APPLY",
+    "PREPARING_ATS",
+    "SUBMITTING",
+})
+_LIVE_PROGRESS_INTERVAL = "2s"
+
+
 def _job_options(limit: int = 250) -> list[dict[str, Any]]:
     """Return only jobs visible through the Phase 6/7 ownership contract."""
     from app.database import get_connection
@@ -813,6 +826,31 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
     return flow
 
 
+def _live_progress_state(flow: dict[str, Any]) -> bool:
+    return str(flow.get("state") or "").strip().upper() in _LIVE_PROGRESS_STATES
+
+
+def _render_complete_loop_live(job_id: int) -> dict[str, Any]:
+    """Refresh only the durable Complete Loop panel while background work is active."""
+    initial = complete_loop.flow_for_job(int(job_id))
+    run_every = _LIVE_PROGRESS_INTERVAL if _live_progress_state(initial) else None
+
+    @st.fragment(run_every=run_every)
+    def _fragment() -> dict[str, Any]:
+        flow = _render_complete_loop(int(job_id))
+        if run_every is not None:
+            st.caption(
+                "Live progress · updates automatically while MUNSHI is working."
+            )
+            if not _live_progress_state(flow):
+                # Re-render the whole page once so the periodic fragment stops as
+                # soon as user action or a terminal state is reached.
+                st.rerun(scope="app")
+        return flow
+
+    return _fragment()
+
+
 
 def _render_opportunity(job_id: int, current: dict[str, Any] | None) -> dict[str, Any] | None:
     from app import opportunity_intelligence_v3 as opportunity
@@ -1063,7 +1101,7 @@ def render() -> None:
 
     snapshot = safe_owned_job_snapshot(job_id)
     _render_job_header(snapshot)
-    _render_complete_loop(job_id)
+    _render_complete_loop_live(job_id)
     st.divider()
 
     opportunity = _latest_opportunity(job_id)
