@@ -12,6 +12,7 @@ from app import application_plan_v2 as plans
 from app import application_question_catalog_v2 as catalog
 from app import candidate_derivation_engine_v1 as derivation
 from app import candidate_knowledge_graph_v1 as graph
+from app import database
 from app import candidate_knowledge_ingestion_v1 as ingestion
 from app import candidate_knowledge_center_v1 as knowledge_center
 from app import candidate_ontology_v1 as ontology
@@ -1247,3 +1248,25 @@ def test_embedding_retrieve_with_persisted_cache_only_embeds_current_question(
     assert calls == [["Where is your home jurisdiction? ; Personal details"]]
     assert result[0]["concept_id"] == "contact.region"
     assert result[0]["score"] > result[1]["score"]
+
+
+def test_candidate_knowledge_reads_do_not_request_sqlite_write_lock(hunter_db) -> None:
+    writer = database.get_connection()
+    reader = database.get_connection()
+    try:
+        graph.ensure_schema(writer)
+        writer.commit()
+        writer.execute("BEGIN IMMEDIATE")
+        reader.execute("PRAGMA busy_timeout=50")
+
+        assert graph.current_revision(connection=reader) >= 0
+        assert isinstance(graph.current_facts(connection=reader), list)
+        assert isinstance(graph.open_conflicts(connection=reader), list)
+        assert graph.evidence_for_fact(
+            "synthetic-nonexistent-fact", connection=reader
+        ) == []
+    finally:
+        if writer.in_transaction:
+            writer.rollback()
+        reader.close()
+        writer.close()

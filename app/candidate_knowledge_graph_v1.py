@@ -19,7 +19,12 @@ from uuid import uuid4
 
 from app import candidate_ontology_v1 as ontology
 from app.database import get_connection
-from app.tenant_foundation import OwnerContext, current_owner, ensure_schema as ensure_tenant_schema
+from app.tenant_foundation import (
+    OwnerContext,
+    current_owner,
+    current_owner_readonly,
+    ensure_schema as ensure_tenant_schema,
+)
 
 GRAPH_VERSION = "candidate-knowledge-graph-v1"
 
@@ -215,6 +220,10 @@ def _owner(connection: sqlite3.Connection) -> OwnerContext:
     return current_owner(connection)
 
 
+def _owner_readonly(connection: sqlite3.Connection) -> OwnerContext:
+    return current_owner_readonly(connection)
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -256,8 +265,7 @@ def current_revision(connection: sqlite3.Connection | None = None) -> int:
     owns = connection is None
     connection = connection or get_connection()
     try:
-        ensure_schema(connection)
-        owner = _owner(connection)
+        owner = _owner_readonly(connection)
         row = connection.execute(
             "SELECT revision FROM candidate_knowledge_revisions WHERE tenant_id=? AND user_id=?",
             (owner.tenant_id, owner.user_id),
@@ -520,8 +528,7 @@ def evidence_for_fact(
     owns = connection is None
     connection = connection or get_connection()
     try:
-        ensure_schema(connection)
-        owner = _owner(connection)
+        owner = _owner_readonly(connection)
         rows = connection.execute(
             """SELECT evidence_id,source_kind,source_ref,source_digest,evidence_text,
                       metadata_json,confidence,created_at
@@ -604,8 +611,7 @@ def current_facts(concept_id: str | None = None, *, entity_ref: str | None = Non
     owns = connection is None
     connection = connection or get_connection()
     try:
-        ensure_schema(connection)
-        owner = _owner(connection)
+        owner = _owner_readonly(connection)
         params: list[Any] = [owner.tenant_id, owner.user_id]
         where = "tenant_id=? AND user_id=? AND superseded_at IS NULL"
         if concept_id:
@@ -629,8 +635,7 @@ def open_conflicts(concept_id: str | None = None, *, connection: sqlite3.Connect
     owns = connection is None
     connection = connection or get_connection()
     try:
-        ensure_schema(connection)
-        owner = _owner(connection)
+        owner = _owner_readonly(connection)
         params: list[Any] = [owner.tenant_id, owner.user_id]
         where = "tenant_id=? AND user_id=? AND status='OPEN'"
         if concept_id:
