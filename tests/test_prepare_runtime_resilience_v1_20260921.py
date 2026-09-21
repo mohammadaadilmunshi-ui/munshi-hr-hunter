@@ -289,4 +289,3 @@ def test_staging_deploy_requires_guarded_maintenance_repair() -> None:
 
     assert 'payload["maintenance_mode"] = True' in helper
     assert 'STAGING_MAINTENANCE_REPAIR=PASS' in helper
-
