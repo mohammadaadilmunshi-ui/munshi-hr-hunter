@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.database import get_connection
+from app.sources.public_ats import provider_for_url
 
 
 MARKER = "AADIL_HR_HUNTER_BROAD_MARKET_COVERAGE_V2_6"
@@ -38,28 +39,26 @@ def classify_url(url: str) -> dict[str, str]:
             "source_kind": "career_page",
             "board_locator": path.strip("/").split("/", 1)[0],
         }
-    if any(
-        token in host
-        for token in (
-            "teamtailor.com",
-            "bamboohr.com",
-            "jobvite.com",
-            "icims.com",
-            "myworkdayjobs.com",
-            "oraclecloud.com",
-            "successfactors.com",
-            "ultipro.com",
-            "ukg.com",
-            "adp.com",
-            "jazz.co",
-            "breezy.hr",
-            "freshteam.com",
-            "zohorecruit.com",
-            "rippling.com",
-            "taleo.net",
-            "avature.net",
-        )
-    ):
+    if "bamboohr.com" in host:
+        return {
+            "provider": "BambooHR",
+            "source_kind": "career_page",
+            "board_locator": host,
+        }
+    if "myworkdayjobs.com" in host:
+        return {
+            "provider": "Workday",
+            "source_kind": "career_page",
+            "board_locator": host,
+        }
+    public_provider = provider_for_url(url)
+    if public_provider:
+        return {
+            "provider": public_provider,
+            "source_kind": "career_page",
+            "board_locator": host,
+        }
+    if any(token in host for token in ("freshteam.com", "avature.net")):
         return {
             "provider": "generic_ats",
             "source_kind": "career_page",
@@ -106,6 +105,8 @@ def initialize_market_tables(connection) -> None:
         ON market_public_boards(enabled, source_kind, provider)
         """
     )
+
+
 
 
 def import_existing_career_urls() -> dict[str, Any]:

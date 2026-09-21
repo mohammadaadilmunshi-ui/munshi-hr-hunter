@@ -16,6 +16,16 @@ from urllib.parse import parse_qs, unquote, urlparse, urlunparse
 import requests
 
 from app.database import get_connection
+from app.sources.public_ats import (
+    PUBLIC_ATS_PROVIDER_KEYS,
+    PUBLIC_ATS_PROVIDER_NAMES,
+    canonical_board_url,
+    inspect_public_page,
+    provider_for_url,
+    provider_host_allowed,
+    provider_key,
+    render_public_page,
+)
 
 
 MARKER = "AADIL_EMPLOYER_BOARD_AUTO_DISCOVERY_V2_7"
@@ -152,7 +162,11 @@ def _safe_provider_url(provider: str, url: str) -> bool:
     except ValueError:
         pass
     rule = PROVIDER_HOST_RULES.get(provider)
-    return bool(rule and rule(host))
+    if rule:
+        return bool(rule(host))
+    if provider in PUBLIC_ATS_PROVIDER_KEYS:
+        return provider_host_allowed(provider, host)
+    return False
 
 
 def _extract_token(value: str) -> str | None:
@@ -249,6 +263,18 @@ def detect_candidate(
             discovery_source=discovery_source,
             company_uid=company_uid,
             public_token=_extract_token(raw_url),
+        )
+
+    public_provider = provider_for_url(raw_url)
+    if public_provider:
+        return Candidate(
+            provider=provider_key(public_provider),
+            company_name=company or _slug_to_company(host.split(".", 1)[0]),
+            board_locator=host,
+            board_url=canonical_board_url(public_provider, raw_url),
+            raw_url=raw_url,
+            discovery_source=discovery_source,
+            source_kind="career_page",
         )
 
     return None
@@ -887,6 +913,79 @@ def validate_candidate(
             "board_url": api_url,
         }
 
+    if provider in PUBLIC_ATS_PROVIDER_KEYS:
+        response, body = _request_limited(
+            session,
+            board_url,
+            accept="text/html,application/xhtml+xml,*/*",
+        )
+        page_html = body.decode("utf-8", errors="replace")
+        inspection = inspect_public_page(
+            PUBLIC_ATS_PROVIDER_KEYS[provider],
+            board_url,
+            page_html,
+        )
+        if inspection["blocked"]:
+            return {
+                "valid": False,
+                "unresolved": True,
+                "error": "Public ATS page exposed an anti-bot/CAPTCHA challenge.",
+                "http_status": response.status_code,
+                "visible_jobs": 0,
+                "company_name": company,
+            }
+        visible_jobs = max(
+            int(inspection["structured_jobs"]),
+            int(inspection["job_links"]),
+        )
+        if visible_jobs <= 0:
+            rendered = render_public_page(
+                board_url,
+                timeout_seconds=min(DEFAULT_TIMEOUT, 20),
+                wait_ms=900,
+                user_agent=USER_AGENT,
+            )
+            if rendered:
+                rendered_inspection = inspect_public_page(
+                    PUBLIC_ATS_PROVIDER_KEYS[provider],
+                    board_url,
+                    rendered,
+                )
+                if rendered_inspection["blocked"]:
+                    return {
+                        "valid": False,
+                        "unresolved": True,
+                        "error": (
+                            "Rendered public ATS page exposed an "
+                            "anti-bot/CAPTCHA challenge."
+                        ),
+                        "http_status": response.status_code,
+                        "visible_jobs": 0,
+                        "company_name": company,
+                    }
+                visible_jobs = max(
+                    int(rendered_inspection["structured_jobs"]),
+                    int(rendered_inspection["job_links"]),
+                )
+        if visible_jobs <= 0:
+            return {
+                "valid": False,
+                "unresolved": True,
+                "error": (
+                    "Public ATS page returned no structured JobPosting "
+                    "or recognizable provider job links after bounded render."
+                ),
+                "http_status": response.status_code,
+                "visible_jobs": 0,
+                "company_name": company,
+            }
+        return {
+            "valid": True,
+            "http_status": response.status_code,
+            "visible_jobs": visible_jobs,
+            "company_name": company,
+        }
+
     raise RuntimeError(f"Unsupported provider: {provider}")
 
 
@@ -1126,33 +1225,111 @@ def _upsert_market_board(
     return True, False
 
 
+
+def _upsert_provider_board(
+    connection,
+    row: dict[str, Any],
+) -> tuple[bool, bool]:
+    provider_key_value = str(row["provider"]).casefold()
+    source_name = PUBLIC_ATS_PROVIDER_KEYS[provider_key_value]
+    board_url = str(row["board_url"] or "").strip()
+    existing = connection.execute(
+        """
+        SELECT id
+        FROM provider_board_registry
+        WHERE lower(provider)=lower(?)
+          AND lower(company_name)=lower(?)
+          AND lower(COALESCE(board_url,''))=lower(?)
+        """,
+        (source_name, row["company_name"], board_url),
+    ).fetchone()
+    notes = (
+        "Auto-discovered and live-validated by Employer Board Discovery "
+        f"from {row['discovery_source']}"
+    )
+    if existing:
+        connection.execute(
+            """
+            UPDATE provider_board_registry
+            SET board_url=?,careers_url=?,enabled=1,
+                priority_weight=MAX(priority_weight,10),
+                health_status=CASE
+                    WHEN health_status='failed' THEN health_status
+                    ELSE 'not_tested'
+                END,
+                notes=?,updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+            """,
+            (board_url, board_url, notes, existing["id"]),
+        )
+        return False, True
+    connection.execute(
+        """
+        INSERT INTO provider_board_registry(
+            company_name,provider,board_url,careers_url,us_relevance,
+            enabled,priority_weight,health_status,notes
+        ) VALUES(?,?,?,?,'unknown',1,10,'not_tested',?)
+        """,
+        (
+            row["company_name"],
+            source_name,
+            board_url,
+            board_url,
+            notes,
+        ),
+    )
+    return True, False
+
+
+
 def _source_board_counts(connection) -> dict[str, int]:
     counts = {
         "Personio": 0,
         "Pinpoint": 0,
         "Comeet": 0,
         "Recruitee": 0,
+        **{name: 0 for name in PUBLIC_ATS_PROVIDER_NAMES},
     }
-    for row in connection.execute(
-        """
-        SELECT source_name,COUNT(*) AS count_value
-        FROM public_adapter_boards
-        WHERE enabled=1
-        GROUP BY source_name
-        """
-    ).fetchall():
-        name = str(row["source_name"])
-        if name in counts:
-            counts[name] = int(row["count_value"])
-    counts["Recruitee"] = int(
-        connection.execute(
+    tables = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "public_adapter_boards" in tables:
+        for row in connection.execute(
             """
-            SELECT COUNT(*)
-            FROM market_public_boards
-            WHERE enabled=1 AND lower(provider)='recruitee'
+            SELECT source_name,COUNT(*) AS count_value
+            FROM public_adapter_boards
+            WHERE enabled=1
+            GROUP BY source_name
             """
-        ).fetchone()[0]
-    )
+        ).fetchall():
+            name = str(row["source_name"])
+            if name in counts:
+                counts[name] = int(row["count_value"])
+    if "market_public_boards" in tables:
+        counts["Recruitee"] = int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM market_public_boards
+                WHERE enabled=1 AND lower(provider)='recruitee'
+                """
+            ).fetchone()[0]
+        )
+    if "provider_board_registry" in tables:
+        for row in connection.execute(
+            """
+            SELECT provider,COUNT(*) AS count_value
+            FROM provider_board_registry
+            WHERE enabled=1
+            GROUP BY provider
+            """
+        ).fetchall():
+            name = str(row["provider"])
+            if name in counts:
+                counts[name] = int(row["count_value"])
     return counts
 
 
@@ -1182,7 +1359,7 @@ def _update_runtime_source_states(
             "enabled_pending_first_run" if enabled and count > 0
             else "configured_disabled" if not enabled and count > 0
             else "discovery_active_no_validated_boards"
-            if source_name in {"Personio", "Pinpoint", "Comeet"}
+            if source_name in {"Personio", "Pinpoint", "Comeet", *PUBLIC_ATS_PROVIDER_NAMES}
             else "installed_disabled"
         )
         message = (
@@ -1192,7 +1369,7 @@ def _update_runtime_source_states(
                 "Automatic public employer-board discovery is active. "
                 "No live-validated public board has been found yet."
             )
-            if source_name in {"Personio", "Pinpoint", "Comeet"}
+            if source_name in {"Personio", "Pinpoint", "Comeet", *PUBLIC_ATS_PROVIDER_NAMES}
             else "No live-validated public boards discovered yet."
         )
         connection.execute(
@@ -1242,6 +1419,11 @@ def sync_validated_boards_to_runtime(
                 )
             elif provider in MARKET_ADAPTER_PROVIDERS:
                 was_inserted, was_updated = _upsert_market_board(
+                    connection,
+                    row,
+                )
+            elif provider in PUBLIC_ATS_PROVIDER_KEYS:
+                was_inserted, was_updated = _upsert_provider_board(
                     connection,
                     row,
                 )
@@ -1576,8 +1758,8 @@ def self_test() -> dict[str, Any]:
 def cli_main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Automatic public employer-board discovery "
-            "for Personio, Pinpoint, Comeet, and Recruitee"
+            "Automatic public employer-board discovery for canonical "
+            "provider adapters and public ATS career pages"
         )
     )
     parser.add_argument("--run-now", action="store_true")
@@ -1594,7 +1776,17 @@ def cli_main() -> None:
     parser.add_argument(
         "--provider",
         action="append",
-        choices=("personio", "pinpoint", "comeet", "recruitee"),
+        choices=tuple(
+            sorted(
+                {
+                    "personio",
+                    "pinpoint",
+                    "comeet",
+                    "recruitee",
+                    *PUBLIC_ATS_PROVIDER_KEYS,
+                }
+            )
+        ),
     )
     parser.add_argument("--quiet-start", action="store_true")
     parser.add_argument("--chat-id", default="")

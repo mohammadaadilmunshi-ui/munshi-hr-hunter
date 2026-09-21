@@ -26,6 +26,8 @@
   "provider_board_run_limit": 10,
   "fetch_job_details": true,
   "max_detail_requests_per_board": 60,
+  "public_ats_browser_fallback_enabled": true,
+  "public_ats_render_wait_ms": 900,
   "dice": {
     "browser_executable": "",
     "results_limit": 30,
