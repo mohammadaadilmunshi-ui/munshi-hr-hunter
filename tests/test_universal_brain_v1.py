@@ -490,12 +490,12 @@ def test_bounded_model_semantics_can_resolve_weird_wording_without_candidate_val
 
     result = questions.resolve_question(
         {
-            "rawText": "Your home base jurisdiction",
-            "label": "Home base",
+            "rawText": "Where should we consider your base?",
+            "label": "Base",
             "sectionHeading": "Personal details",
-            "inputType": "select",
-            "role": "combobox",
-            "options": ["New Jersey", "New York", "Pennsylvania"],
+            "inputType": "text",
+            "role": "textbox",
+            "options": [],
             "semanticType": "UNKNOWN",
         },
         model_interpreter=interpret,
@@ -1039,3 +1039,86 @@ def test_embedding_status_declares_local_value_free_provider(
     assert status["provider"] == "ollama-local"
     assert status["external_provider"] is False
     assert status["candidate_values_exposed"] is False
+
+
+def test_subdivision_option_shape_resolves_weird_region_wording_without_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_MODEL_SEMANTICS_ENABLED", "true")
+    calls = []
+
+    def should_not_run(payload):
+        calls.append(payload)
+        raise AssertionError("structural subdivision context should resolve before model")
+
+    result = questions.resolve_question(
+        {
+            "rawText": "Primary domicile jurisdiction",
+            "label": "Home jurisdiction",
+            "sectionHeading": "Personal details",
+            "inputType": "select",
+            "role": "combobox",
+            "options": ["New Jersey", "New York", "Pennsylvania", "Delaware"],
+            "semanticType": "UNKNOWN",
+        },
+        model_interpreter=should_not_run,
+    )
+    assert result["state"] == "RESOLVED"
+    assert result["concept_id"] == "contact.region"
+    assert result["classification_lane"] == "ONTOLOGY_CONTEXT"
+    assert result["reason_code"] == "SUBDIVISION_OPTION_CONTEXT"
+    assert result["candidate_values_exposed"] is False
+    assert calls == []
+
+
+def test_normal_contact_model_candidates_exclude_protected_and_employment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_MODEL_SEMANTICS_ENABLED", "true")
+    captured = {}
+
+    def capture(payload):
+        captured.update(payload)
+        return {}
+
+    result = questions.resolve_question(
+        {
+            "rawText": "Where is your home base recorded?",
+            "label": "Home base",
+            "sectionHeading": "Personal details",
+            "inputType": "text",
+            "semanticType": "UNKNOWN",
+        },
+        model_interpreter=capture,
+    )
+    assert result["state"] in {"AMBIGUOUS_CONCEPT", "UNKNOWN"}
+    rows = list(captured["ontology_candidates"])
+    assert rows
+    assert any(row["concept_id"] == "contact.region" for row in rows)
+    assert all(row["sensitivity"] == "NORMAL" for row in rows)
+    assert all(row["category"] not in {"EMPLOYMENT", "WORK_AUTHORIZATION", "SELF_ID"} for row in rows)
+    assert captured["candidate_values"] is None
+
+
+def test_subdivision_option_shape_does_not_cross_into_employment_repeat_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_MODEL_SEMANTICS_ENABLED", "false")
+    result = questions.resolve_question(
+        {
+            "rawText": "Jurisdiction",
+            "label": "Jurisdiction",
+            "sectionHeading": "Work Experience",
+            "inputType": "select",
+            "role": "combobox",
+            "options": ["New Jersey", "New York", "Pennsylvania", "Delaware"],
+            "semanticType": "UNKNOWN",
+            "repeatGroupId": "employment",
+            "repeatIndex": 1,
+        }
+    )
+    assert not (
+        result["state"] == "RESOLVED"
+        and result["concept_id"] == "contact.region"
+        and result["reason_code"] == "SUBDIVISION_OPTION_CONTEXT"
+    )

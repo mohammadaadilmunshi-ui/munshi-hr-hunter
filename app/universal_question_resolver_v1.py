@@ -122,6 +122,148 @@ def _norm(value: Any) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9+/#. ]+", " ", text)).strip()
 
 
+
+_US_CA_SUBDIVISIONS = frozenset(
+    {
+        "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+        "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+        "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
+        "maine", "maryland", "massachusetts", "michigan", "minnesota",
+        "mississippi", "missouri", "montana", "nebraska", "nevada",
+        "new hampshire", "new jersey", "new mexico", "new york",
+        "north carolina", "north dakota", "ohio", "oklahoma", "oregon",
+        "pennsylvania", "rhode island", "south carolina", "south dakota",
+        "tennessee", "texas", "utah", "vermont", "virginia", "washington",
+        "west virginia", "wisconsin", "wyoming", "district of columbia",
+        "washington dc", "puerto rico", "guam", "american samoa",
+        "northern mariana islands", "us virgin islands",
+        "alberta", "british columbia", "manitoba", "new brunswick",
+        "newfoundland and labrador", "northwest territories", "nova scotia",
+        "nunavut", "ontario", "prince edward island", "quebec",
+        "saskatchewan", "yukon",
+        "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi",
+        "id", "il", "in", "ia", "ks", "ky", "la", "me", "md", "ma", "mi",
+        "mn", "ms", "mo", "mt", "ne", "nv", "nh", "nj", "nm", "ny", "nc",
+        "nd", "oh", "ok", "or", "pa", "ri", "sc", "sd", "tn", "tx", "ut",
+        "vt", "va", "wa", "wv", "wi", "wy", "dc", "ab", "bc", "mb", "nb",
+        "nl", "nt", "ns", "nu", "on", "pe", "qc", "sk", "yt",
+    }
+)
+
+_OPTION_PLACEHOLDERS = frozenset(
+    {
+        "", "select", "select one", "choose", "choose one", "please select",
+        "please choose", "not applicable", "n a", "na", "other",
+    }
+)
+
+
+def _looks_like_subdivision_options(options: Sequence[str]) -> bool:
+    usable = [
+        _norm(item)
+        for item in options
+        if _norm(item) not in _OPTION_PLACEHOLDERS
+    ][:120]
+    if len(usable) < 3:
+        return False
+    hits = sum(item in _US_CA_SUBDIVISIONS for item in usable)
+    return hits >= 3 and hits / len(usable) >= 0.60
+
+
+def _context_flags(obs: QuestionObservation) -> dict[str, bool]:
+    section = _norm(obs.section_heading)
+    visible = _norm(_visible_text(obs))
+    repeat = _norm(obs.repeat_group or "")
+    employment = (
+        repeat in {"employment", "experience", "work history", "work experience"}
+        or any(
+            token in section
+            for token in ("employment", "work experience", "work history", "job history")
+        )
+        or bool(re.search(r"\b(employer|job title|work history|employment)\b", visible))
+    )
+    education = (
+        repeat in {"education", "education history", "schools"}
+        or any(token in section for token in ("education", "school", "academic"))
+    )
+    contact = (
+        not employment
+        and not education
+        and any(
+            token in section
+            for token in (
+                "address", "contact", "location", "personal information",
+                "personal details", "candidate information", "basic information",
+            )
+        )
+    )
+    return {"employment": employment, "education": education, "contact": contact}
+
+
+def _candidate_row(concept_id: str, score: float) -> dict[str, Any]:
+    item = ontology.require_concept(concept_id)
+    return {
+        "concept_id": item.concept_id,
+        "score": round(float(score), 6),
+        "sensitivity": item.sensitivity,
+        "answer_mode": item.answer_mode,
+        "category": item.category,
+        "description": item.description,
+    }
+
+
+def _model_candidates(
+    obs: QuestionObservation,
+    ranked: Sequence[Mapping[str, Any]],
+    *,
+    sensitivity_floor: str,
+) -> list[dict[str, Any]]:
+    """Prepare a closed semantic candidate set using browser structure only."""
+    rows: dict[str, dict[str, Any]] = {}
+    for raw in ranked:
+        concept_id = str(raw.get("concept_id") or "").strip().casefold()
+        item = ontology.concept(concept_id)
+        if item is None:
+            continue
+        if sensitivity_floor == "NORMAL" and item.sensitivity != "NORMAL":
+            continue
+        if sensitivity_floor != "NORMAL" and item.sensitivity != sensitivity_floor:
+            continue
+        row = dict(raw)
+        rows[item.concept_id] = row
+
+    flags = _context_flags(obs)
+    if sensitivity_floor == "NORMAL" and flags["contact"]:
+        # Personal/contact fields should be offered contact concepts even when
+        # embedding retrieval uses unusual wording. Employment/education
+        # concepts are structurally out of scope unless their own section/repeat
+        # context says otherwise.
+        rows = {
+            key: row
+            for key, row in rows.items()
+            if str(row.get("category") or "").upper()
+            not in {"EMPLOYMENT", "EDUCATION", "WORK_AUTHORIZATION", "SELF_ID"}
+        }
+        for concept_id, score in (
+            ("contact.region", 0.82),
+            ("contact.city", 0.80),
+            ("contact.country", 0.78),
+            ("contact.postal_code", 0.76),
+            ("contact.address_line1", 0.74),
+            ("contact.address_line2", 0.72),
+        ):
+            if ontology.concept(concept_id) is not None:
+                current = rows.get(concept_id)
+                if current is None or float(current.get("score") or 0.0) < score:
+                    rows[concept_id] = _candidate_row(concept_id, score)
+
+    ordered = sorted(
+        rows.values(),
+        key=lambda row: (-float(row.get("score") or 0.0), str(row.get("concept_id") or "")),
+    )
+    return ordered[:8]
+
+
 def _visible_text(obs: QuestionObservation) -> str:
     return " ".join(
         part for part in (
@@ -316,9 +458,16 @@ def _dynamic_capability_concept(obs: QuestionObservation) -> tuple[str, float, s
 def _context_candidate(obs: QuestionObservation) -> tuple[str, float, str] | None:
     text = _norm(" ".join((obs.label, obs.raw_question, obs.placeholder, obs.name)))
     section = _norm(obs.section_heading)
-    option_text = [_norm(item) for item in obs.options]
-    control_is_choice = _norm(obs.role) in {"combobox", "listbox", "radio", "radiogroup"} or _norm(obs.input_type) in {"select", "select-one", "radio"} or bool(obs.options)
-    address_context = any(token in section for token in ("address", "contact", "location", "personal information", "personal details"))
+    control_is_choice = (
+        _norm(obs.role) in {"combobox", "listbox", "radio", "radiogroup"}
+        or _norm(obs.input_type) in {"select", "select-one", "radio"}
+        or bool(obs.options)
+    )
+    flags = _context_flags(obs)
+    address_context = flags["contact"] or any(
+        token in section for token in ("address", "contact", "location")
+    )
+
     if re.search(r"\b(state|province|region)\b", text):
         score = 0.98 if address_context or control_is_choice else 0.92
         return "contact.region", score, "ADDRESS_REGION_CONTEXT"
@@ -332,12 +481,26 @@ def _context_candidate(obs: QuestionObservation) -> tuple[str, float, str] | Non
         return "contact.address_line1", 0.98, "ADDRESS_LINE1_CONTEXT"
     if re.search(r"\b(address\s*(line)?\s*2|apt|apartment|suite|unit)\b", text):
         return "contact.address_line2", 0.98, "ADDRESS_LINE2_CONTEXT"
-    # Option sets can disambiguate a weak region label without relying on a
-    # candidate-selected value. Require multiple region-looking labels.
-    if control_is_choice and len(option_text) >= 8 and address_context:
-        region_tokens = sum(bool(re.fullmatch(r"[a-z .'-]{2,32}", item)) for item in option_text[:80])
-        if region_tokens >= min(8, len(option_text)) and "state" in _norm(obs.nearby_text):
-            return "contact.region", 0.91, "OPTION_SET_REGION_CONTEXT"
+
+    # Provider-neutral option-shape recognition. If a non-employment personal
+    # field offers a set dominated by known state/province labels, the control is
+    # a region selector regardless of employer wording such as "domicile
+    # jurisdiction" or "home jurisdiction". No candidate-selected value is used.
+    region_options = control_is_choice and _looks_like_subdivision_options(obs.options)
+    residence_cue = bool(
+        re.search(
+            r"\b(home|residen(?:ce|tial|cy)?|domicil(?:e|iary)?|jurisdiction|address)\b",
+            text,
+        )
+    )
+    if (
+        region_options
+        and not flags["employment"]
+        and not flags["education"]
+        and (address_context or residence_cue)
+    ):
+        return "contact.region", 0.97, "SUBDIVISION_OPTION_CONTEXT"
+
     return None
 
 
@@ -518,7 +681,9 @@ def resolve_question(
                 "repeat_group": obs.repeat_group,
                 "repeat_index": obs.repeat_index,
             },
-            "ontology_candidates": ranked[:8],
+            "ontology_candidates": _model_candidates(
+                obs, ranked, sensitivity_floor=sensitivity_floor
+            ),
             "candidate_values": None,
         }
         response = dict(model_interpreter(payload) or {})
