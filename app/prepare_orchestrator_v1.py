@@ -1097,6 +1097,96 @@ def resolve_task_input(
         connection.close()
 
 
+def sqlite_writer_busy(error: BaseException) -> bool:
+    if not isinstance(error, sqlite3.OperationalError):
+        return False
+    text = str(error or "").casefold()
+    return any(
+        marker in text
+        for marker in (
+            "database is locked",
+            "database table is locked",
+            "database is busy",
+        )
+    )
+
+
+def defer_task_for_contention(
+    *,
+    task_id: str,
+    worker_id: str,
+    reason_code: str = "SQLITE_WRITER_BUSY",
+) -> dict[str, Any]:
+    """Return one claimed task to PENDING without consuming its retry budget.
+
+    This transition is reserved for infrastructure writer contention. Business,
+    model, truth, and provider failures must continue through fail_task and
+    consume attempts normally.
+    """
+    task_id = _text(task_id, "Task id", 240)
+    worker_id = _text(worker_id, "Worker id", 160)
+    reason_code = _text(reason_code, "Reason code", 120)
+
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        owner = current_owner(connection)
+        if connection.in_transaction:
+            connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        row = _task_for_worker(
+            connection,
+            owner=owner,
+            task_id=task_id,
+            worker_id=worker_id,
+        )
+        operation_id = str(row["operation_id"])
+        attempts_before = int(row["attempts"])
+        attempts_after = max(0, attempts_before - 1)
+
+        connection.execute(
+            """UPDATE prepare_tasks_v1
+                  SET status='PENDING',
+                      attempts=?,
+                      error_code=?,
+                      error_message='Deferred without consuming an attempt because the SQLite writer was busy.',
+                      lease_owner=NULL,
+                      lease_expires_at=NULL,
+                      completed_at=NULL,
+                      updated_at=CURRENT_TIMESTAMP
+                WHERE task_id=? AND tenant_id=? AND user_id=?""",
+            (
+                attempts_after,
+                reason_code,
+                task_id,
+                owner.tenant_id,
+                owner.user_id,
+            ),
+        )
+        status = _refresh_operation(
+            connection,
+            owner=owner,
+            operation_id=operation_id,
+        )
+        connection.commit()
+        return {
+            "task_id": task_id,
+            "operation_id": operation_id,
+            "task_status": "PENDING",
+            "operation_status": status,
+            "attempts_before": attempts_before,
+            "attempts_after": attempts_after,
+            "attempt_refunded": attempts_after < attempts_before,
+            "reason": reason_code,
+            "submission_authority": False,
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def fail_task(
     *,
     task_id: str,
