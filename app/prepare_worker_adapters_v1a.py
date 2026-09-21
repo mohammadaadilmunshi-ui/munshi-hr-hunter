@@ -293,7 +293,13 @@ def run_native_resume_once(
             "reused_generated_version": reused_generated_version,
             "submission_authority": False,
         }
-    except Exception:
+    except Exception as error:
+        if orchestrator.sqlite_writer_busy(error):
+            orchestrator.defer_task_for_contention(
+                task_id=str(task["task_id"]),
+                worker_id=str(worker_id),
+            )
+            raise
         # A retry may safely create a new immutable resume version. The
         # orchestrator caps attempts. Never reinterpret a failed preparation as
         # submission success.
@@ -450,7 +456,13 @@ def run_recruiter_evidence_once(
             "output": output,
             "submission_authority": False,
         }
-    except Exception:
+    except Exception as error:
+        if orchestrator.sqlite_writer_busy(error):
+            orchestrator.defer_task_for_contention(
+                task_id=str(task["task_id"]),
+                worker_id=str(worker_id),
+            )
+            raise
         orchestrator.fail_task(
             task_id=str(task["task_id"]),
             worker_id=str(worker_id),
