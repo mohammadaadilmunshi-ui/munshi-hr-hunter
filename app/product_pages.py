@@ -592,10 +592,74 @@ def _render_auto_prepare_guide(
     )
 
 
+def _render_auto_prepare_live_activity() -> None:
+    """Read-only live projection of durable preparation activity."""
+
+    @st.fragment(run_every="5s")
+    def _fragment() -> None:
+        activity = activity_summary()
+        with st.container(key="product_auto_metrics"):
+            counters = st.columns(4, gap="small")
+            counters[0].metric("Prepared today", activity["prepared_today"])
+            counters[1].metric(
+                "Submitted today",
+                activity["submitted_today"],
+                help="Requires recorded external submission evidence.",
+            )
+            counters[2].metric("Needs review", activity["needs_you"])
+            counters[3].metric("In progress", activity["in_progress"])
+
+        try:
+            from app import product_application_flow_v2 as complete_loop
+
+            rows = complete_loop.pipeline_rows(limit=20)
+        except Exception:
+            rows = []
+
+        active = []
+        for row in rows:
+            prepare_state = str(row.get("prepare_status") or "").upper()
+            lifecycle_state = str(row.get("lifecycle_state") or "").upper()
+            if prepare_state in {"QUEUED", "RUNNING"} or lifecycle_state in {
+                "PREPARING",
+                "PLAN_ACCEPTED",
+                "READY_TO_APPLY",
+                "PREPARING_ATS",
+                "SUBMITTING",
+            }:
+                active.append(row)
+
+        if active:
+            st.markdown("#### Live preparation activity")
+            st.caption(
+                "Updates automatically every few seconds from durable server state."
+            )
+            for row in active[:6]:
+                with st.container(border=True):
+                    left, middle, right = st.columns((2.6, 1.2, 1.2), gap="small")
+                    left.markdown(
+                        f"**{esc(row.get('company_name'), 'Company')} · "
+                        f"{esc(row.get('title'), 'Untitled role')}**"
+                    )
+                    middle.metric(
+                        "Status",
+                        str(row.get("display_status") or "Preparing"),
+                    )
+                    progress = int(row.get("progress_percent") or 0)
+                    right.metric("Progress", f"{progress}%")
+                    st.progress(progress / 100)
+                    st.link_button(
+                        "Open live application",
+                        f"?view=prepare-application&job={int(row['job_id'])}",
+                        use_container_width=False,
+                    )
+
+    _fragment()
+
+
 def auto_prepare() -> None:
     page_intro("AUTOMATION", "Auto Prepare, under your control.", "Choose the global preparation volume and use lanes to narrow role types. Opening this page never creates work.")
     policy = volume_policy()
-    activity = activity_summary()
     current_lanes = lanes()
     enabled_count = sum(bool(lane["enabled"]) for lane in current_lanes)
     mode_label = {"unlimited": "Unlimited", "custom_limit": f"Custom daily target · {policy.get('daily_limit')}", "pause_after_batch": "Pause after current batch", "paused": "Paused"}[policy["mode"]]
@@ -608,12 +672,7 @@ def auto_prepare() -> None:
         enabled_count=enabled_count,
         total_lanes=len(current_lanes),
     )
-    with st.container(key="product_auto_metrics"):
-        counters = st.columns(4, gap="small")
-        counters[0].metric("Prepared today", activity["prepared_today"])
-        counters[1].metric("Submitted today", activity["submitted_today"], help="Requires recorded external submission evidence.")
-        counters[2].metric("Needs review", activity["needs_you"])
-        counters[3].metric("In progress", activity["in_progress"])
+    _render_auto_prepare_live_activity()
     with st.container(key="product_auto_split"):
         left, right = st.columns((1.6, 1), gap="large")
     with left:
