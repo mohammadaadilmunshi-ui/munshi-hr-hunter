@@ -35,6 +35,11 @@ print(json.dumps(get_setting("orchestration", {}) or {}, sort_keys=True))
 PY
 )"
 
+[[ -n "$old_json" ]] || {
+  echo "staging orchestration JSON read returned empty output" >&2
+  exit 6
+}
+
 current="$(
   printf '%s' "$old_json" | python3 -c 'import json,sys; print(str(bool(json.load(sys.stdin).get("maintenance_mode", False))).lower())'
 )"
