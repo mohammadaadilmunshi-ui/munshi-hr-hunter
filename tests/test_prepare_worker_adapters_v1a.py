@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import sqlite3
 import pytest
 
 from app import database
@@ -373,3 +374,28 @@ def test_workers_disabled_before_any_claim(worker_db, monkeypatch):
 
 def test_adapter_constants_never_grant_submission(worker_db):
     assert workers.SUBMISSION_AUTHORITY is False
+
+def test_native_resume_sqlite_contention_does_not_consume_attempt(
+    worker_db, monkeypatch
+):
+    operation = _start(key="workers-native-sqlite-contention")
+
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "generate_resume",
+        lambda **kwargs: (_ for _ in ()).throw(
+            sqlite3.OperationalError("database is locked")
+        ),
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        workers.run_native_resume_once(
+            operation_id=operation["operation_id"],
+            worker_id="native-sqlite-worker",
+        )
+
+    task = _task(operation["operation_id"], orchestrator.TASK_RESUME)
+    assert task["status"] == "PENDING"
+    assert task["attempts"] == 0
+    assert task["error_code"] == "SQLITE_WRITER_BUSY"
+
