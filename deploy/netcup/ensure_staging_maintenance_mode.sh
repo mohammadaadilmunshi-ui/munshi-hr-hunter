@@ -28,7 +28,7 @@ do
 done
 
 old_json="$(
-  docker exec "$H" python - <<'PY'
+  docker exec -i "$H" python - <<'PY'
 import json
 from app.database import get_setting
 print(json.dumps(get_setting("orchestration", {}) or {}, sort_keys=True))
@@ -45,7 +45,7 @@ if [[ "$current" == "true" ]]; then
 fi
 
 image_id="$(docker inspect "$H" -f '{{.Image}}')"
-db_path="$(docker exec "$H" python - <<'PY'
+db_path="$(docker exec -i "$H" python - <<'PY'
 from app.database import DB_PATH
 print(DB_PATH)
 PY
@@ -124,7 +124,7 @@ docker start "$H" >/dev/null
 stopped=0
 wait_healthy
 
-docker exec "$H" python - <<'PY'
+docker exec -i "$H" python - <<'PY'
 from app.database import get_connection, get_setting
 value = get_setting("orchestration", {}) or {}
 assert bool(value.get("maintenance_mode")) is True, value
