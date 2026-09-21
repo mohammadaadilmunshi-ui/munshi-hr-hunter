@@ -266,4 +266,3 @@ def test_staging_deploy_safety_override_is_last_compose_layer() -> None:
         'CLOUD_SHADOW_MODE: "true"',
     ):
         assert token in script
-
