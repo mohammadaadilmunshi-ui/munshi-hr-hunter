@@ -10,7 +10,12 @@ from typing import Any
 from uuid import uuid4
 
 from app.database import get_connection
-from app.tenant_foundation import OwnerContext, current_owner, ensure_schema as ensure_tenant_schema
+from app.tenant_foundation import (
+    OwnerContext,
+    current_owner,
+    current_owner_readonly,
+    ensure_schema as ensure_tenant_schema,
+)
 
 ANSWER_VERSION = "application-answer-v1"
 ENCRYPTION_VERSION = "aes-gcm-v1"
@@ -73,8 +78,15 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
         if own: connection.close()
 
 def _owner(connection: sqlite3.Connection) -> OwnerContext:
-    if not application_answer_brain_enabled(): raise RuntimeError("Application Answer Brain is disabled.")
+    if not application_answer_brain_enabled():
+        raise RuntimeError("Application Answer Brain is disabled.")
     return current_owner(connection)
+
+
+def _owner_readonly(connection: sqlite3.Connection) -> OwnerContext:
+    if not application_answer_brain_enabled():
+        raise RuntimeError("Application Answer Brain is disabled.")
+    return current_owner_readonly(connection)
 
 def _choice(value: str, allowed: frozenset[str], label: str) -> str:
     value = str(value or "").strip().casefold()
@@ -191,9 +203,13 @@ def save_answer(*, question_family: str, canonical_answer: str, source: str, use
 def normal_answer_projection() -> list[dict[str, Any]]:
     connection = get_connection()
     try:
-        ensure_schema(connection); owner = _owner(connection)
-        return [_payload(row) for row in connection.execute("SELECT * FROM application_answer_vault WHERE tenant_id=? AND user_id=? ORDER BY question_family,conditions_json", (owner.tenant_id,owner.user_id)).fetchall()]
-    finally: connection.close()
+        owner = _owner_readonly(connection)
+        return [_payload(row) for row in connection.execute(
+            "SELECT * FROM application_answer_vault WHERE tenant_id=? AND user_id=? ORDER BY question_family,conditions_json",
+            (owner.tenant_id, owner.user_id),
+        ).fetchall()]
+    finally:
+        connection.close()
 
 def planning_input() -> dict[str, Any]:
     """Normal-answer-only boundary; self-ID never reaches a planner/model prompt."""
@@ -205,7 +221,8 @@ def resolve_answer(*, question_family: str, conditions: dict[str, Any] | None = 
         return {"status":"NEEDS_INPUT", "reason":"non_plaintext_answer_requires_separate_policy"}
     connection = get_connection()
     try:
-        ensure_schema(connection); owner = _owner(connection); condition_json = _conditions(conditions)
+        owner = _owner_readonly(connection)
+        condition_json = _conditions(conditions)
         row = connection.execute("SELECT * FROM application_answer_vault WHERE tenant_id=? AND user_id=? AND question_family=? AND conditions_json=? AND user_confirmed=1 AND autofill_allowed=1", (owner.tenant_id,owner.user_id,family,condition_json)).fetchone()
         if row: return {"status":"ANSWERED", "resolution":"stored_verified", "answer":_payload(row)}
         if profile_fact_key and family in {"candidate_fact","experience_skill","work_authorization","availability","location"}:
@@ -262,7 +279,7 @@ def store_sensitive_self_identification(*, category: str, response: str | None =
 def read_sensitive_self_identification(*, category: str) -> str | None:
     category=_choice(category,SELF_ID_CATEGORIES,"sensitive self-identification category"); connection=get_connection()
     try:
-        ensure_schema(connection); owner=_owner(connection); row=connection.execute("SELECT * FROM sensitive_self_identification_vault WHERE tenant_id=? AND user_id=? AND category=?",(owner.tenant_id,owner.user_id,category)).fetchone()
+        owner=_owner_readonly(connection); row=connection.execute("SELECT * FROM sensitive_self_identification_vault WHERE tenant_id=? AND user_id=? AND category=?",(owner.tenant_id,owner.user_id,category)).fetchone()
         if row is None or row["autofill_policy"] != "use_saved_response": return None
         if row["algorithm_version"] != ENCRYPTION_VERSION: raise AnswerBrainError("Sensitive self-identification record uses an unsupported encryption version.")
         try: return _aesgcm()(_key()).decrypt(bytes(row["nonce"]),bytes(row["ciphertext"]),_aad(owner,str(row["self_id_id"]),category)).decode()
@@ -275,7 +292,7 @@ def resolve_sensitive_self_identification(*, category: str) -> dict[str, Any]:
     category = _choice(category, SELF_ID_CATEGORIES, "sensitive self-identification category")
     connection = get_connection()
     try:
-        ensure_schema(connection); owner = _owner(connection)
+        owner = _owner_readonly(connection)
         row = connection.execute(
             "SELECT * FROM sensitive_self_identification_vault WHERE tenant_id=? AND user_id=? AND category=?",
             (owner.tenant_id, owner.user_id, category),
