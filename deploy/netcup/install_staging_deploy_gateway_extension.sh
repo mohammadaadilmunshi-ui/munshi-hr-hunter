@@ -31,6 +31,7 @@ grep -qx 'STATE=PASS' "$STATUS_FILE" || { echo "Stage 13 is not PASS" >&2; exit 
 for rel in \
   deploy/netcup/deploy_staging_release.sh \
   deploy/netcup/verify_staging_runtime_contract.sh \
+  deploy/netcup/ensure_staging_maintenance_mode.sh \
   deploy/netcup/github_deploy_gateway.sh
 do
   [[ -f "$SOURCE_ROOT/$rel" ]] || { echo "missing approved source: $rel" >&2; exit 17; }
@@ -42,6 +43,7 @@ prod_deploy="$ROOT/bin/deploy-production-release"
 gateway_target="$ROOT/bin/github-deploy-gateway"
 staging_deploy="$ROOT/bin/deploy-staging-release"
 staging_verify="$ROOT/bin/verify-staging-runtime-contract"
+staging_maintenance="$ROOT/bin/ensure-staging-maintenance-mode"
 
 for path in "$prod_verify" "$prod_deploy" "$gateway_target"; do
   [[ -x "$path" ]] || { echo "existing hardened production gateway component missing: $path" >&2; exit 18; }
@@ -53,10 +55,12 @@ backup_dir="$(mktemp -d /tmp/munshi-staging-gateway-extension.XXXXXX)"
 gateway_had=0
 staging_deploy_had=0
 staging_verify_had=0
+staging_maintenance_had=0
 
 [[ -e "$gateway_target" ]] && { cp -a "$gateway_target" "$backup_dir/github-deploy-gateway"; gateway_had=1; }
 [[ -e "$staging_deploy" ]] && { cp -a "$staging_deploy" "$backup_dir/deploy-staging-release"; staging_deploy_had=1; }
 [[ -e "$staging_verify" ]] && { cp -a "$staging_verify" "$backup_dir/verify-staging-runtime-contract"; staging_verify_had=1; }
+[[ -e "$staging_maintenance" ]] && { cp -a "$staging_maintenance" "$backup_dir/ensure-staging-maintenance-mode"; staging_maintenance_had=1; }
 
 rollback() {
   rc=$?
@@ -65,6 +69,7 @@ rollback() {
   if (( gateway_had )); then cp -a "$backup_dir/github-deploy-gateway" "$gateway_target" || true; fi
   if (( staging_deploy_had )); then cp -a "$backup_dir/deploy-staging-release" "$staging_deploy" || true; else rm -f "$staging_deploy" || true; fi
   if (( staging_verify_had )); then cp -a "$backup_dir/verify-staging-runtime-contract" "$staging_verify" || true; else rm -f "$staging_verify" || true; fi
+  if (( staging_maintenance_had )); then cp -a "$backup_dir/ensure-staging-maintenance-mode" "$staging_maintenance" || true; else rm -f "$staging_maintenance" || true; fi
   "$prod_verify" || true
   rm -rf "$backup_dir"
   echo "RESULT=STAGING_GATEWAY_EXTENSION_ROLLED_BACK" >&2
@@ -74,10 +79,12 @@ trap rollback ERR
 
 install -o root -g root -m 0755 "$SOURCE_ROOT/deploy/netcup/deploy_staging_release.sh" "$ROOT/bin/.deploy-staging-release.new"
 install -o root -g root -m 0755 "$SOURCE_ROOT/deploy/netcup/verify_staging_runtime_contract.sh" "$ROOT/bin/.verify-staging-runtime-contract.new"
+install -o root -g root -m 0755 "$SOURCE_ROOT/deploy/netcup/ensure_staging_maintenance_mode.sh" "$ROOT/bin/.ensure-staging-maintenance-mode.new"
 install -o root -g root -m 0755 "$SOURCE_ROOT/deploy/netcup/github_deploy_gateway.sh" "$ROOT/bin/.github-deploy-gateway.new"
 
 mv -f "$ROOT/bin/.deploy-staging-release.new" "$staging_deploy"
 mv -f "$ROOT/bin/.verify-staging-runtime-contract.new" "$staging_verify"
+mv -f "$ROOT/bin/.ensure-staging-maintenance-mode.new" "$staging_maintenance"
 mv -f "$ROOT/bin/.github-deploy-gateway.new" "$gateway_target"
 
 "$prod_verify"
@@ -91,6 +98,7 @@ echo "APPROVED_SOURCE_SHA=$SOURCE_SHA"
 echo "PRODUCTION_GATEWAY_PRESERVED=PASS"
 echo "STAGING_DEPLOY_WRAPPER=$staging_deploy"
 echo "STAGING_VERIFIER=$staging_verify"
+echo "STAGING_MAINTENANCE_HELPER=$staging_maintenance"
 echo "GATEWAY=$gateway_target"
 echo "AUTHORIZED_KEYS_CHANGED=NO"
 echo "PRODUCTION_DEPLOYMENT_PERFORMED=NO"
