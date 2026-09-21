@@ -156,3 +156,13 @@ def test_auto_prepare_live_activity_is_read_only_projection() -> None:
     assert 'subprocess' not in source
     assert 'docker' not in source
 
+
+def test_failed_prepare_does_not_navigate_to_not_started_workspace() -> None:
+    source = inspect.getsource(product_pages._prepare_job)
+    error_index = source.index('except Exception as error:')
+    return_index = source.index('return', error_index)
+    navigate_index = source.index(
+        'st.session_state["product_view"] = "prepare-application"'
+    )
+    assert error_index < return_index < navigate_index
+
