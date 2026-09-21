@@ -11,6 +11,7 @@ STAGING_OPERATIONAL_OVERRIDE="$STAGING_ROOT/operational.override.yaml"
 STAGING_SAFETY_OVERRIDE="$STAGING_ROOT/staging.safety.override.yaml"
 VERIFY="/opt/munshi/bin/verify-staging-runtime-contract"
 VERIFY_PROD="/opt/munshi/bin/verify-production-runtime-contract"
+STAGING_MAINTENANCE_HELPER="${MUNSHI_STAGING_MAINTENANCE_HELPER:-/opt/munshi/bin/ensure-staging-maintenance-mode}"
 
 H="$PROJECT-hunter-1"
 N="$PROJECT-n8n-1"
@@ -91,6 +92,13 @@ cd "$STAGING_REPO"
 
 echo "=== PREDEPLOY PRODUCTION NON-REGRESSION CONTRACT ==="
 "$VERIFY_PROD"
+
+if [[ -x "$STAGING_MAINTENANCE_HELPER" ]]; then
+  echo "=== ENSURE STAGING MAINTENANCE MODE ==="
+  "$STAGING_MAINTENANCE_HELPER"
+else
+  echo "STAGING_MAINTENANCE_HELPER=ABSENT"
+fi
 
 echo "=== PREDEPLOY STAGING CONTRACT ==="
 "$VERIFY"
