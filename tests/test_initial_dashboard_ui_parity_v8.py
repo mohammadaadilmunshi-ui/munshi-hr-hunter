@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import inspect
 
+from app import application_workspace_page
 from app import ats_account_readiness_ui_v1 as ats_ui
 from app import auto_prepare_readiness_ui_v1 as auto_ready
 from app import master_resume_visual_ui_v2 as master_ui
 from app import native_resume_presentation_v1 as presentation
+from app import product_pages
 from app import product_shell
 from app import resume_studio_page_v6 as studio_v6
 
@@ -129,3 +131,28 @@ def test_product_shell_rebinds_settings_wrappers_after_autoapply_reset() -> None
     assert source.index(reset) < source.index(install_integration)
     assert source.index(install_integration) < source.index(install_ats)
     assert install_auto in source
+
+
+def test_application_workspace_live_progress_is_fragment_only() -> None:
+    source = inspect.getsource(application_workspace_page._render_complete_loop_live)
+    assert 'st.fragment(run_every=run_every)' in source
+    assert '_LIVE_PROGRESS_INTERVAL' in source
+    assert 'st.rerun(scope="app")' in source
+    assert 'start_prepare_for_job' not in source
+    assert 'approve_and_submit_for_job' not in source
+    assert 'subprocess' not in source
+    assert 'docker' not in source
+
+
+def test_auto_prepare_live_activity_is_read_only_projection() -> None:
+    source = inspect.getsource(product_pages._render_auto_prepare_live_activity)
+    assert 'st.fragment(run_every="5s")' in source
+    assert 'activity_summary()' in source
+    assert 'pipeline_rows(limit=20)' in source
+    assert 'start_prepare_for_job' not in source
+    assert 'approve_and_submit_for_job' not in source
+    assert 'set_lane_enabled' not in source
+    assert 'save_volume_policy' not in source
+    assert 'subprocess' not in source
+    assert 'docker' not in source
+
