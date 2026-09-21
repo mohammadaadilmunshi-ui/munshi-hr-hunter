@@ -383,6 +383,7 @@ def resolve_profile_projection(
             "detail": str(error),
         }
 
+    source_fact_key = str(profile_fact_key or "").strip().casefold()
     fact = _snapshot_fact(snapshot, profile_fact_key)
     if fact is None:
         # Backward-compatible structural fallback for profiles confirmed before
@@ -400,6 +401,7 @@ def resolve_profile_projection(
             if legacy is not None and legacy.get("protected") is not True:
                 projected = _project(legacy.get("value"), fallback_projection)
                 if projected:
+                    source_fact_key = str(legacy.get("key") or "contact.location").strip().casefold()
                     fact = {
                         **legacy,
                         "key": profile_fact_key,
@@ -442,6 +444,7 @@ def resolve_profile_projection(
             "user_confirmed": True,
             "autofill_allowed": True,
             "fact_key": fact.get("key"),
+            "source_fact_key": source_fact_key,
             "projection": projection,
             "candidate_truth_binding": truth_binding.public_binding_state(snapshot),
         },

@@ -391,3 +391,35 @@ def test_owner_isolation(prepare_db, monkeypatch):
     )
     with pytest.raises(LookupError):
         prepare.prepare_operation(operation["operation_id"])
+
+def test_sqlite_contention_refunds_claim_attempt(prepare_db):
+    operation = _start(key="prepare-sqlite-contention")
+    task = _claim_one(
+        operation["operation_id"],
+        prepare.TASK_RESUME,
+        "sqlite-worker",
+    )
+    assert task["attempts"] == 1
+
+    deferred = prepare.defer_task_for_contention(
+        task_id=task["task_id"],
+        worker_id="sqlite-worker",
+    )
+    assert deferred["task_status"] == "PENDING"
+    assert deferred["operation_status"] == "RUNNING"
+    assert deferred["attempts_before"] == 1
+    assert deferred["attempts_after"] == 0
+    assert deferred["attempt_refunded"] is True
+
+    read = prepare.prepare_operation(operation["operation_id"])
+    resume = _by_kind(read)[prepare.TASK_RESUME]
+    assert resume["status"] == "PENDING"
+    assert resume["attempts"] == 0
+    assert resume["error_code"] == "SQLITE_WRITER_BUSY"
+
+    claimed_again = _claim_one(
+        operation["operation_id"],
+        prepare.TASK_RESUME,
+        "sqlite-worker-2",
+    )
+    assert claimed_again["attempts"] == 1

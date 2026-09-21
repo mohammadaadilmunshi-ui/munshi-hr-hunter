@@ -431,7 +431,13 @@ def run_application_preflight_once(
             "output": output,
             "submission_authority": False,
         }
-    except Exception:
+    except Exception as error:
+        if orchestrator.sqlite_writer_busy(error):
+            orchestrator.defer_task_for_contention(
+                task_id=str(task["task_id"]),
+                worker_id=str(worker_id),
+            )
+            raise
         orchestrator.fail_task(
             task_id=str(task["task_id"]),
             worker_id=str(worker_id),
@@ -1701,7 +1707,18 @@ def run_ats_form_preparation_once(
             }
 
         raise RuntimeError(f"Unexpected Apply preparation state: {state or 'EMPTY'}")
-    except Exception:
+    except Exception as error:
+        # Infrastructure SQLite contention is not a customer/model attempt. If
+        # this worker still owns the task, refund the claim before deferring.
+        if orchestrator.sqlite_writer_busy(error):
+            try:
+                orchestrator.defer_task_for_contention(
+                    task_id=str(task["task_id"]),
+                    worker_id=str(worker_id),
+                )
+            except (LookupError, PermissionError, RuntimeError, ValueError):
+                pass
+            raise
         # If the task is still RUNNING and owned by this worker, return it to the
         # orchestrator retry budget. If a branch above already completed/paused/
         # failed it, fail_task itself will reject and we preserve the original.

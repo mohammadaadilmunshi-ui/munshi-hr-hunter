@@ -7,8 +7,11 @@ STAGING_ROOT="${MUNSHI_STAGING_ROOT:-/home/munshi/munshi-staging-v1}"
 STAGING_REPO="$STAGING_ROOT/repo"
 STAGING_ENV="$STAGING_ROOT/staging.env"
 STAGING_OVERRIDE="$STAGING_ROOT/staging.override.yaml"
+STAGING_OPERATIONAL_OVERRIDE="$STAGING_ROOT/operational.override.yaml"
+STAGING_SAFETY_OVERRIDE="$STAGING_ROOT/staging.safety.override.yaml"
 VERIFY="/opt/munshi/bin/verify-staging-runtime-contract"
 VERIFY_PROD="/opt/munshi/bin/verify-production-runtime-contract"
+STAGING_MAINTENANCE_HELPER="${MUNSHI_STAGING_MAINTENANCE_HELPER:-/opt/munshi/bin/ensure-staging-maintenance-mode}"
 
 H="$PROJECT-hunter-1"
 N="$PROJECT-n8n-1"
@@ -48,6 +51,26 @@ bundle_file="$(mktemp /tmp/munshi-github-staging-deploy.XXXXXX.bundle)"
 timeout 120s cat > "$bundle_file" || { echo "staging deployment bundle transfer timed out" >&2; exit 7; }
 [[ -s "$bundle_file" ]] || { echo "staging deployment bundle is empty" >&2; exit 8; }
 
+safety_tmp="$(mktemp "$STAGING_ROOT/.staging-safety.XXXXXX.yaml")"
+cat > "$safety_tmp" <<'YAML'
+services:
+  hunter:
+    environment:
+      HUNTER_ENABLE_TELEGRAM: "false"
+      HUNTER_ENABLE_DISCOVERY_SCHEDULER: "false"
+      HUNTER_ENABLE_COORDINATOR: "false"
+      TELEGRAM_ENABLED: "false"
+      DISCOVERY_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      COORDINATOR_ENABLED: "false"
+      PRODUCTION_CALLBACKS_ENABLED: "false"
+      PRODUCTION_STATE_IMPORTED: "false"
+      CLOUD_SHADOW_MODE: "true"
+YAML
+chmod 600 "$safety_tmp"
+mv -f "$safety_tmp" "$STAGING_SAFETY_OVERRIDE"
+echo "STAGING_SAFETY_OVERRIDE=ENFORCED"
+
 compose=(
   docker compose
   --project-name "$PROJECT"
@@ -56,11 +79,26 @@ compose=(
   -f "$STAGING_REPO/compose.netcup-shadow.yaml"
   -f "$STAGING_OVERRIDE"
 )
+if [[ -f "$STAGING_OPERATIONAL_OVERRIDE" ]]; then
+  compose+=(-f "$STAGING_OPERATIONAL_OVERRIDE")
+  echo "STAGING_OPERATIONAL_OVERRIDE=ENABLED"
+else
+  echo "STAGING_OPERATIONAL_OVERRIDE=ABSENT"
+fi
+compose+=(-f "$STAGING_SAFETY_OVERRIDE")
+echo "STAGING_SAFETY_OVERRIDE_LAST=PASS"
 
 cd "$STAGING_REPO"
 
 echo "=== PREDEPLOY PRODUCTION NON-REGRESSION CONTRACT ==="
 "$VERIFY_PROD"
+
+if [[ -x "$STAGING_MAINTENANCE_HELPER" ]]; then
+  echo "=== ENSURE STAGING MAINTENANCE MODE ==="
+  "$STAGING_MAINTENANCE_HELPER"
+else
+  echo "STAGING_MAINTENANCE_HELPER=ABSENT"
+fi
 
 echo "=== PREDEPLOY STAGING CONTRACT ==="
 "$VERIFY"
