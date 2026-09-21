@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
+import json
 import importlib
 
 import pytest
@@ -1122,3 +1124,126 @@ def test_subdivision_option_shape_does_not_cross_into_employment_repeat_group(
         and result["concept_id"] == "contact.region"
         and result["reason_code"] == "SUBDIVISION_OPTION_CONTEXT"
     )
+
+
+def test_embedding_ontology_cache_persists_across_fresh_worker_memory(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_EMBEDDING_ENABLED", "true")
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_EMBEDDING_MODEL", "test-embed-model")
+    monkeypatch.setenv(
+        "MUNSHI_UNIVERSAL_EMBEDDING_CACHE_DIR", str(tmp_path / "embed-cache")
+    )
+    rows = [
+        {
+            "concept_id": "contact.region",
+            "text": "Candidate state or province of residence",
+            "sensitivity": "NORMAL",
+            "answer_mode": "DIRECT_FACT",
+            "category": "CONTACT",
+            "description": "Candidate state or province of residence.",
+        },
+        {
+            "concept_id": "contact.city",
+            "text": "Candidate city of residence",
+            "sensitivity": "NORMAL",
+            "answer_mode": "DIRECT_FACT",
+            "category": "CONTACT",
+            "description": "Candidate city of residence.",
+        },
+    ]
+    monkeypatch.setattr(semantic_embedding, "_concept_rows", lambda: rows)
+    calls: list[list[str]] = []
+
+    def build_embed(texts, *, timeout_seconds=None):
+        calls.append(list(texts))
+        return [[1.0, 0.0], [0.0, 1.0]][: len(texts)]
+
+    monkeypatch.setattr(semantic_embedding, "_embed_batch", build_embed)
+    semantic_embedding.reset_cache(persistent=True)
+    first = semantic_embedding.warm_cache()
+    assert first["ready"] is True
+    assert first["concept_count"] == 2
+    assert calls == [[rows[0]["text"], rows[1]["text"]]]
+
+    cache_path = Path(str(first["cache_path"]))
+    payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert payload["candidate_values_stored"] is False
+    assert set(payload) == {
+        "schema",
+        "embedding_version",
+        "model",
+        "ontology_fingerprint",
+        "concept_ids",
+        "vector_dimension",
+        "vectors",
+        "candidate_values_stored",
+    }
+
+    # Simulate a brand-new short-lived worker: process memory is gone, but the
+    # shared runtime file remains. Rewarming must not call Ollama again.
+    semantic_embedding.reset_cache()
+
+    def forbidden_embed(*_args, **_kwargs):
+        raise AssertionError("fresh worker attempted to rebuild persisted ontology vectors")
+
+    monkeypatch.setattr(semantic_embedding, "_embed_batch", forbidden_embed)
+    second = semantic_embedding.warm_cache()
+    assert second["ready"] is True
+    assert second["ontology_fingerprint"] == first["ontology_fingerprint"]
+
+
+def test_embedding_retrieve_with_persisted_cache_only_embeds_current_question(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_EMBEDDING_ENABLED", "true")
+    monkeypatch.setenv("MUNSHI_UNIVERSAL_EMBEDDING_MODEL", "test-embed-model")
+    monkeypatch.setenv(
+        "MUNSHI_UNIVERSAL_EMBEDDING_CACHE_DIR", str(tmp_path / "embed-cache")
+    )
+    rows = [
+        {
+            "concept_id": "contact.region",
+            "text": "Candidate state or province of residence",
+            "sensitivity": "NORMAL",
+            "answer_mode": "DIRECT_FACT",
+            "category": "CONTACT",
+            "description": "Candidate state or province of residence.",
+        },
+        {
+            "concept_id": "contact.city",
+            "text": "Candidate city of residence",
+            "sensitivity": "NORMAL",
+            "answer_mode": "DIRECT_FACT",
+            "category": "CONTACT",
+            "description": "Candidate city of residence.",
+        },
+    ]
+    monkeypatch.setattr(semantic_embedding, "_concept_rows", lambda: rows)
+
+    def build_embed(texts, *, timeout_seconds=None):
+        return [[1.0, 0.0], [0.0, 1.0]][: len(texts)]
+
+    monkeypatch.setattr(semantic_embedding, "_embed_batch", build_embed)
+    semantic_embedding.reset_cache(persistent=True)
+    semantic_embedding.warm_cache()
+    semantic_embedding.reset_cache()
+
+    calls: list[list[str]] = []
+
+    def query_only(texts, *, timeout_seconds=None):
+        calls.append(list(texts))
+        assert len(texts) == 1
+        return [[0.95, 0.05]]
+
+    monkeypatch.setattr(semantic_embedding, "_embed_batch", query_only)
+    result = semantic_embedding.retrieve(
+        {
+            "rawText": "Where is your home jurisdiction?",
+            "sectionHeading": "Personal details",
+        },
+        top_k=2,
+    )
+    assert calls == [["Where is your home jurisdiction? ; Personal details"]]
+    assert result[0]["concept_id"] == "contact.region"
+    assert result[0]["score"] > result[1]["score"]
