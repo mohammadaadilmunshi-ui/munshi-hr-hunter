@@ -124,6 +124,10 @@ def _prepare_job(job_id: int) -> None:
             "tone": "error",
             "message": message,
         }
+        # Keep the user on the current jobs surface when no durable operation
+        # was started. Navigating to Applications here previously made a failed
+        # Prepare click look like a successful transition to "Not started".
+        return
 
     st.session_state["product_view"] = "prepare-application"
     try:
