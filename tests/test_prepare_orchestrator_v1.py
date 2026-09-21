@@ -423,4 +423,3 @@ def test_sqlite_contention_refunds_claim_attempt(prepare_db):
         "sqlite-worker-2",
     )
     assert claimed_again["attempts"] == 1
-
