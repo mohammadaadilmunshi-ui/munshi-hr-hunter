@@ -281,7 +281,13 @@ def run_answer_resolution_once(
             "output": output,
             "submission_authority": False,
         }
-    except Exception:
+    except Exception as error:
+        if orchestrator.sqlite_writer_busy(error):
+            orchestrator.defer_task_for_contention(
+                task_id=str(task["task_id"]),
+                worker_id=str(worker_id),
+            )
+            raise
         orchestrator.fail_task(
             task_id=str(task["task_id"]),
             worker_id=str(worker_id),
@@ -387,7 +393,13 @@ def run_cover_letter_decision_once(
             "output": output,
             "submission_authority": False,
         }
-    except Exception:
+    except Exception as error:
+        if orchestrator.sqlite_writer_busy(error):
+            orchestrator.defer_task_for_contention(
+                task_id=str(task["task_id"]),
+                worker_id=str(worker_id),
+            )
+            raise
         orchestrator.fail_task(
             task_id=str(task["task_id"]),
             worker_id=str(worker_id),
