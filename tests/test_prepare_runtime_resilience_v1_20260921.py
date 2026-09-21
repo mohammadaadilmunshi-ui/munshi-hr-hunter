@@ -289,3 +289,5 @@ def test_staging_deploy_requires_guarded_maintenance_repair() -> None:
 
     assert 'payload["maintenance_mode"] = True' in helper
     assert 'STAGING_MAINTENANCE_REPAIR=PASS' in helper
+    assert helper.count('docker exec -i "$H" python - <<\\'PY\\'') >= 3
+    assert 'staging orchestration JSON read returned empty output' in helper
