@@ -32,7 +32,11 @@ from typing import Any
 from app.database import get_connection
 from app.phase67_common import safe_owned_job_snapshot, sha256_json
 from app.phase8_application_truth import current_application_truth_projection
-from app.tenant_foundation import current_owner, ensure_schema as ensure_tenant_schema
+from app.tenant_foundation import (
+    current_owner,
+    current_owner_readonly,
+    ensure_schema as ensure_tenant_schema,
+)
 
 
 ORCHESTRATOR_VERSION = "munshi-prepare-orchestrator-v1"
@@ -1431,8 +1435,7 @@ def prepare_operation(operation_id: str) -> dict[str, Any]:
     operation_id = _text(operation_id, "Operation id", 240)
     connection = get_connection()
     try:
-        ensure_schema(connection)
-        owner = current_owner(connection)
+        owner = current_owner_readonly(connection)
         operation = _operation_row(
             connection,
             owner=owner,

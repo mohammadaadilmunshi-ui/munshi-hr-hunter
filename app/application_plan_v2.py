@@ -39,8 +39,11 @@ from app import native_resume_service_v5 as resume_v5
 from app.database import get_connection
 from app.phase45_truth_binding import canonical_question_key
 from app.phase67_common import safe_owned_job_snapshot, sha256_json
-from app.tenant_foundation import current_owner
-from app.tenant_foundation import ensure_schema as ensure_tenant_schema
+from app.tenant_foundation import (
+    current_owner,
+    current_owner_readonly,
+    ensure_schema as ensure_tenant_schema,
+)
 
 PLAN_VERSION = "munshi-application-plan-v2"
 PLAN_ENV = "MUNSHI_APPLICATION_PLAN_V2_ENABLED"
@@ -1983,8 +1986,7 @@ def get_application_plan(
     owns = connection is None
     connection = connection or get_connection()
     try:
-        ensure_schema(connection)
-        owner = current_owner(connection)
+        owner = current_owner_readonly(connection)
         row = connection.execute(
             """SELECT * FROM application_plans_v2
                WHERE plan_id=? AND tenant_id=? AND user_id=?""",

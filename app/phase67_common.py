@@ -16,8 +16,7 @@ from app.tenant_foundation import (
     DEFAULT_TENANT_ID,
     DEFAULT_USER_ID,
     OwnerContext,
-    current_owner,
-    ensure_schema as ensure_tenant_schema,
+    current_owner_readonly,
     tenant_foundation_enabled,
 )
 
@@ -124,8 +123,6 @@ def safe_owned_job_snapshot(
     owns_connection = connection is None
     connection = connection or get_connection()
     try:
-        if owns_connection:
-            ensure_tenant_schema(connection)
         if tenant_id is not None and user_id is not None:
             owner = OwnerContext(str(tenant_id), str(user_id))
             membership = connection.execute(
@@ -135,7 +132,7 @@ def safe_owned_job_snapshot(
             if membership is None:
                 raise LookupError("Explicit job owner is not a current tenant member.")
         else:
-            owner = current_owner(connection)
+            owner = current_owner_readonly(connection)
         row = connection.execute("SELECT * FROM jobs WHERE id=?", (resolved_job_id,)).fetchone()
         if row is None:
             raise LookupError("Job is unavailable.")

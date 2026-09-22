@@ -17,6 +17,7 @@ PROFILE_DIGEST = "c" * 64
 @pytest.fixture()
 def prepare_db(hunter_db, monkeypatch):
     monkeypatch.setattr(prepare, "current_owner", lambda _connection: OWNER)
+    monkeypatch.setattr(prepare, "current_owner_readonly", lambda _connection: OWNER)
     monkeypatch.setattr(
         prepare,
         "safe_owned_job_snapshot",
@@ -420,6 +421,14 @@ def test_owner_isolation(prepare_db, monkeypatch):
     monkeypatch.setattr(
         prepare,
         "current_owner",
+        lambda _connection: SimpleNamespace(
+            tenant_id="default",
+            user_id="other",
+        ),
+    )
+    monkeypatch.setattr(
+        prepare,
+        "current_owner_readonly",
         lambda _connection: SimpleNamespace(
             tenant_id="default",
             user_id="other",

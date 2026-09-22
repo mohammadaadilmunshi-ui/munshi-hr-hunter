@@ -59,6 +59,7 @@ def worker_db(hunter_db, monkeypatch):
         },
     )
     monkeypatch.setattr(orchestrator, "current_owner", lambda _connection: OWNER)
+    monkeypatch.setattr(orchestrator, "current_owner_readonly", lambda _connection: OWNER)
     monkeypatch.setattr(
         orchestrator,
         "safe_owned_job_snapshot",

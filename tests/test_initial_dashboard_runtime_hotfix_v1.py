@@ -47,6 +47,12 @@ def test_runtime_hotfix_installs_every_declared_guard() -> None:
     assert result["dynamic_advanced_renderer"] is True
     assert result["schema_guards"]
     assert all(result["schema_guards"].values())
+    assert {
+        "opportunity_intelligence_v2",
+        "opportunity_intelligence_v3",
+        "relationship_intelligence_v2",
+        "relationship_intelligence_v3",
+    }.issubset(result["schema_guards"])
 
 
 def test_ready_product_and_tenant_schema_checks_are_read_only(hunter_db) -> None:

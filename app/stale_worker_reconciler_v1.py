@@ -16,6 +16,11 @@ LOCK_PATH = Path(
 MARKER = "AADIL_DASHBOARD_STALE_WORKER_RECONCILER_V1"
 
 
+def _sqlite_writer_busy(error: BaseException) -> bool:
+    message = str(error).casefold()
+    return "database is locked" in message or "database table is locked" in message
+
+
 def _clean(value: Any) -> str:
     return str(value or "").strip()
 
@@ -57,7 +62,7 @@ def reconcile_dashboard_stale_workers() -> dict[str, Any]:
             timeout=10,
             check=False,
         ).stdout
-    except Exception:
+    except Exception:  # noqa: BLE001 - process telemetry must not block recovery
         process_text = ""
 
     # Runtime import avoids a module cycle when the runner invokes us.
@@ -268,15 +273,36 @@ def reconcile_dashboard_stale_workers() -> dict[str, Any]:
                         "running_age_seconds": running_age,
                     })
 
-                integrity = str(
-                    connection.execute("PRAGMA integrity_check").fetchone()[0]
-                )
-                if integrity.casefold() != "ok":
-                    raise RuntimeError("Hunter database integrity failed.")
                 connection.commit()
+            except sqlite3.OperationalError as error:
+                connection.rollback()
+                if _sqlite_writer_busy(error):
+                    return {
+                        "success": True,
+                        "marker": "AADIL_PROCESS_AWARE_STALE_WORKER_RECONCILER_V2",
+                        "recovered": [],
+                        "preserved": preserved,
+                        "deferred": True,
+                        "reason": "sqlite_writer_busy",
+                        "process_aware": True,
+                        "orphan_grace_seconds": 120,
+                        "source_names_hardcoded": False,
+                        "dashboard_enabled_only": True,
+                        "cadence_changed": False,
+                        "jitter_changed": False,
+                        "source_enablement_changed": False,
+                        "database_integrity": "deferred",
+                    }
+                raise
             except Exception:
                 connection.rollback()
                 raise
+            else:
+                integrity = str(
+                    connection.execute("PRAGMA quick_check").fetchone()[0]
+                )
+                if integrity.casefold() != "ok":
+                    raise RuntimeError("Hunter database integrity failed.")
             finally:
                 connection.close()
         finally:

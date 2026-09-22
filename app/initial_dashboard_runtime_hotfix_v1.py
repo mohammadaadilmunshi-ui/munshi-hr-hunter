@@ -131,6 +131,10 @@ def install() -> dict[str, Any]:
     from app import native_resume_service_v2
     from app import native_resume_service_v3
     from app import native_resume_service_v4
+    from app import opportunity_intelligence_v2
+    from app import opportunity_intelligence_v3
+    from app import relationship_intelligence_v2
+    from app import relationship_intelligence_v3
     from app import phase4_job_binding
     from app import phase45_truth_binding
     from app import product_state
@@ -237,6 +241,22 @@ def install() -> dict[str, Any]:
                 "native_resume_job_bindings",
             ),
             connection_factory=db_factory,
+        ),
+        "opportunity_intelligence_v2": _install_read_first_guard(
+            opportunity_intelligence_v2,
+            required_tables=("opportunity_intelligence_evaluations",),
+        ),
+        "opportunity_intelligence_v3": _install_read_first_guard(
+            opportunity_intelligence_v3,
+            required_tables=("opportunity_intelligence_evaluations",),
+        ),
+        "relationship_intelligence_v2": _install_read_first_guard(
+            relationship_intelligence_v2,
+            required_tables=("relationship_strategy_snapshots",),
+        ),
+        "relationship_intelligence_v3": _install_read_first_guard(
+            relationship_intelligence_v3,
+            required_tables=("relationship_strategy_snapshots",),
         ),
     }
 

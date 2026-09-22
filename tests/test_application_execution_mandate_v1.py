@@ -88,6 +88,11 @@ def mandate_authority(hunter_db, monkeypatch: pytest.MonkeyPatch):
         "current_owner",
         lambda connection: SimpleNamespace(tenant_id="default", user_id="owner"),
     )
+    monkeypatch.setattr(
+        mandate,
+        "current_owner_readonly",
+        lambda connection: SimpleNamespace(tenant_id="default", user_id="owner"),
+    )
     return package
 
 

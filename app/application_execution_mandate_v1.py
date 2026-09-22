@@ -20,8 +20,11 @@ from app import application_plan_v2
 from app import application_preflight_package_v1 as preflight_v1
 from app.database import get_connection
 from app.phase67_common import sha256_json
-from app.tenant_foundation import current_owner
-from app.tenant_foundation import ensure_schema as ensure_tenant_schema
+from app.tenant_foundation import (
+    current_owner,
+    current_owner_readonly,
+    ensure_schema as ensure_tenant_schema,
+)
 
 MANDATE_VERSION = "munshi-application-execution-mandate-v1"
 
@@ -283,8 +286,7 @@ def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
 def current_for_preflight(preflight_package_id: str) -> dict[str, Any] | None:
     connection = get_connection()
     try:
-        ensure_schema(connection)
-        owner = current_owner(connection)
+        owner = current_owner_readonly(connection)
         row = connection.execute(
             """SELECT * FROM application_execution_mandates_v1
                WHERE tenant_id=? AND user_id=? AND preflight_package_id=?

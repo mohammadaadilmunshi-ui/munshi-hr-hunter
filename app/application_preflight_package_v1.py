@@ -29,7 +29,11 @@ from app.phase8_application_truth import (
     current_application_truth_projection,
     projection_digest_payload,
 )
-from app.tenant_foundation import current_owner, ensure_schema as ensure_tenant_schema
+from app.tenant_foundation import (
+    current_owner,
+    current_owner_readonly,
+    ensure_schema as ensure_tenant_schema,
+)
 
 PREFLIGHT_PACKAGE_VERSION = "munshi-application-preflight-package-v1"
 PREFLIGHT_STATUSES = frozenset({"PREPARED", "NEEDS_INPUT", "READY_TO_APPLY"})
@@ -409,8 +413,7 @@ def get_preflight_package(
     owns = connection is None
     connection = connection or get_connection()
     try:
-        ensure_schema(connection)
-        owner = current_owner(connection)
+        owner = current_owner_readonly(connection)
         row = connection.execute(
             """SELECT * FROM application_preflight_packages
                  WHERE package_id=? AND tenant_id=? AND user_id=?""",
