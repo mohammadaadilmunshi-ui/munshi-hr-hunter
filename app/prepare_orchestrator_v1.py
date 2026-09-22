@@ -1257,9 +1257,98 @@ def fail_task(
         connection.close()
 
 
-def recover_expired_leases(*, limit: int = 100) -> dict[str, int]:
+def cancel_prepare(
+    *,
+    operation_id: str,
+    reason_code: str = "CANCELLED_BY_USER",
+) -> dict[str, Any]:
+    """Cancel one pre-submit Prepare operation without deleting its history."""
+    operation_id = _text(operation_id, "Operation id", 240)
+    reason_code = _text(reason_code, "Reason code", 120)
+
+    connection = get_connection()
+    try:
+        ensure_schema(connection)
+        owner = current_owner(connection)
+        if connection.in_transaction:
+            connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        operation = _operation_row(
+            connection,
+            owner=owner,
+            operation_id=operation_id,
+        )
+        if operation is None:
+            raise LookupError("Prepare operation was not found for this owner.")
+        if str(operation["status"]) == "CANCELLED":
+            connection.commit()
+            return {
+                "operation_id": operation_id,
+                "status": "CANCELLED",
+                "replayed": True,
+                "submission_authority": False,
+            }
+        if str(operation["status"]) == "READY_FOR_REVIEW":
+            raise ValueError("A review-ready operation cannot be cancelled here.")
+
+        connection.execute(
+            """UPDATE prepare_operations_v1
+                  SET status='CANCELLED',
+                      completed_at=COALESCE(completed_at,CURRENT_TIMESTAMP),
+                      updated_at=CURRENT_TIMESTAMP
+                WHERE operation_id=? AND tenant_id=? AND user_id=?""",
+            (operation_id, owner.tenant_id, owner.user_id),
+        )
+        cancelled = connection.execute(
+            """UPDATE prepare_tasks_v1
+                  SET status='CANCELLED',
+                      error_code=?,
+                      error_message='Preparation was safely cancelled before approval.',
+                      lease_owner=NULL,
+                      lease_expires_at=NULL,
+                      completed_at=COALESCE(completed_at,CURRENT_TIMESTAMP),
+                      updated_at=CURRENT_TIMESTAMP
+                WHERE operation_id=? AND tenant_id=? AND user_id=?
+                  AND status IN ('PENDING','RUNNING','NEEDS_INPUT')""",
+            (
+                reason_code,
+                operation_id,
+                owner.tenant_id,
+                owner.user_id,
+            ),
+        )
+        _refresh_operation(
+            connection,
+            owner=owner,
+            operation_id=operation_id,
+        )
+        connection.commit()
+        return {
+            "operation_id": operation_id,
+            "status": "CANCELLED",
+            "cancelled_tasks": int(cancelled.rowcount or 0),
+            "replayed": False,
+            "submission_authority": False,
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def recover_expired_leases(
+    *,
+    limit: int = 100,
+    operation_id: str | None = None,
+    job_id: int | None = None,
+) -> dict[str, int]:
     if int(limit) < 1 or int(limit) > 1000:
         raise ValueError("Recovery limit must be between 1 and 1000.")
+    if operation_id is not None:
+        operation_id = _text(operation_id, "Operation id", 240)
+    if job_id is not None and int(job_id) <= 0:
+        raise ValueError("Job id must be positive.")
 
     connection = get_connection()
     try:
@@ -1269,15 +1358,29 @@ def recover_expired_leases(*, limit: int = 100) -> dict[str, int]:
             connection.commit()
         connection.execute("BEGIN IMMEDIATE")
         now_text = _now_text()
+        filters = [
+            "t.tenant_id=?",
+            "t.user_id=?",
+            "t.status='RUNNING'",
+            "t.lease_expires_at IS NOT NULL",
+            "t.lease_expires_at < ?",
+        ]
+        params: list[Any] = [owner.tenant_id, owner.user_id, now_text]
+        if operation_id is not None:
+            filters.append("t.operation_id=?")
+            params.append(operation_id)
+        if job_id is not None:
+            filters.append("o.job_id=?")
+            params.append(int(job_id))
+        params.append(int(limit))
         rows = connection.execute(
-            """SELECT * FROM prepare_tasks_v1
-               WHERE tenant_id=? AND user_id=?
-                 AND status='RUNNING'
-                 AND lease_expires_at IS NOT NULL
-                 AND lease_expires_at < ?
-               ORDER BY lease_expires_at
-               LIMIT ?""",
-            (owner.tenant_id, owner.user_id, now_text, int(limit)),
+            f"""SELECT t.* FROM prepare_tasks_v1 AS t
+                 JOIN prepare_operations_v1 AS o
+                   ON o.operation_id=t.operation_id
+                WHERE {' AND '.join(filters)}
+                ORDER BY t.lease_expires_at
+                LIMIT ?""",
+            tuple(params),
         ).fetchall()
 
         requeued = 0

@@ -1,6 +1,18 @@
 from __future__ import annotations
 
-from app import prepare_runtime_worker
+import pytest
+
+from app import autonomous_prepare_v1, prepare_runtime_worker
+
+
+@pytest.fixture(autouse=True)
+def isolate_runtime_health(monkeypatch):
+    monkeypatch.setattr(
+        prepare_runtime_worker.prepare_orchestrator_v1,
+        "recover_expired_leases",
+        lambda **_kwargs: {"expired": 0, "requeued": 0, "failed": 0},
+    )
+    monkeypatch.setattr(prepare_runtime_worker, "_write_heartbeat", lambda _result: None)
 
 
 def test_run_once_delegates_only_to_open_prepare_runtime(monkeypatch) -> None:
@@ -75,13 +87,13 @@ def test_run_once_passes_activation_watermark(monkeypatch) -> None:
     prepare_runtime_worker.run_once()
 
     assert calls == [{
-        "limit": 1,
+        "limit": 5,
         "newest_first": True,
         "min_created_at": "2026-09-18T19:45:00+00:00",
     }]
 
 
-def test_run_once_defers_cleanly_while_discovery_owns_source_lock(monkeypatch) -> None:
+def test_run_once_does_not_serialize_prepare_behind_source_discovery(monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(
         prepare_runtime_worker,
@@ -91,19 +103,50 @@ def test_run_once_defers_cleanly_while_discovery_owns_source_lock(monkeypatch) -
     monkeypatch.setattr(
         prepare_runtime_worker.autonomous_prepare_v1,
         "drive_open_operations",
-        lambda **kwargs: calls.append(kwargs),
+        lambda **kwargs: calls.append(kwargs) or {
+            "success": True,
+            "operation_count": 2,
+            "results": [],
+            "errors": [],
+            "submission_authority": False,
+        },
     )
 
     result = prepare_runtime_worker.run_once(limit=3)
 
-    assert calls == []
-    assert result == {
-        "success": True,
-        "status": "deferred",
-        "reason": "source_discovery_active",
-        "source_runner_pid": 4321,
-        "operation_count": 0,
-        "results": [],
-        "errors": [],
-        "submission_authority": False,
-    }
+    assert calls == [{"limit": 3, "newest_first": True, "min_created_at": None}]
+    assert result["success"] is True
+    assert result["operation_count"] == 2
+    assert result["source_runner"] == {"state": "active", "pid": 4321}
+
+
+def test_one_bad_operation_does_not_prevent_next_operation(monkeypatch) -> None:
+    class Connection:
+        def execute(self, _sql, _params):
+            return self
+
+        def fetchall(self):
+            return [("prepare-a",), ("prepare-b",)]
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(autonomous_prepare_v1, "get_connection", lambda: Connection())
+    monkeypatch.setattr(
+        autonomous_prepare_v1,
+        "current_owner",
+        lambda _connection: type("Owner", (), {"tenant_id": "t", "user_id": "u"})(),
+    )
+    monkeypatch.setattr(autonomous_prepare_v1.orchestrator, "ensure_schema", lambda: None)
+
+    def drive(operation_id):
+        if operation_id == "prepare-a":
+            raise RuntimeError("malformed fixture")
+        return {"operation_id": operation_id, "status": "RUNNING"}
+
+    monkeypatch.setattr(autonomous_prepare_v1, "drive_operation_once", drive)
+
+    result = autonomous_prepare_v1.drive_open_operations(limit=5)
+
+    assert [item["operation_id"] for item in result["results"]] == ["prepare-b"]
+    assert result["errors"][0]["operation_id"] == "prepare-a"

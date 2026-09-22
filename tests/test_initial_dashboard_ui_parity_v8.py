@@ -120,17 +120,19 @@ def test_auto_prepare_readiness_surfaces_dispatcher_required_keys(monkeypatch) -
     assert snapshot["missing"] == []
 
 
-def test_product_shell_rebinds_settings_wrappers_after_autoapply_reset() -> None:
+def test_product_shell_rebinds_settings_wrappers_without_auto_prepare_wrapper() -> None:
     source = inspect.getsource(product_shell.render)
     reset = "product_pages._integration_credentials_ui_v1_installed = False"
     install_integration = "install_integration_credentials_ui(product_pages)"
     install_ats = "install_ats_account_readiness_ui(product_pages)"
-    install_auto = "install_auto_prepare_readiness_ui(product_pages)"
 
     assert reset in source
     assert source.index(reset) < source.index(install_integration)
     assert source.index(install_integration) < source.index(install_ats)
-    assert install_auto in source
+    assert "install_auto_prepare_readiness_ui(product_pages)" not in source
+    auto_source = inspect.getsource(product_pages.auto_prepare)
+    assert "control_center_snapshot" in auto_source
+    assert "readiness_snapshot" in auto_source
 
 
 def test_application_workspace_live_progress_is_fragment_only() -> None:
@@ -158,7 +160,8 @@ def test_auto_prepare_live_activity_is_read_only_projection() -> None:
 
 
 def test_failed_prepare_does_not_navigate_to_not_started_workspace() -> None:
-    source = inspect.getsource(product_pages._prepare_job)
+    source = inspect.getsource(product_pages)
+    source = source[source.index("def _prepare_job"):source.index("_PRODUCT_JOB_DIALOG_STATE_KEY")]
     error_index = source.index('except Exception as error:')
     return_index = source.index('return', error_index)
     navigate_index = source.index(

@@ -4,14 +4,14 @@ from app import product_application_flow_v2 as flow
 
 
 def test_state_labels_cover_complete_loop_states():
-    assert flow.STATE_LABELS["NEEDS_INPUT"] == "Needs input"
-    assert flow.STATE_LABELS["READY_FOR_APPROVAL"] == "Ready for approval"
-    assert flow.STATE_LABELS["READY_FOR_REVIEW"] == "Applying"
+    assert flow.STATE_LABELS["NEEDS_INPUT"] == "Action required"
+    assert flow.STATE_LABELS["READY_FOR_APPROVAL"] == "Needs review"
+    assert flow.STATE_LABELS["READY_FOR_REVIEW"] == "Needs review"
     assert (
         flow.STATE_LABELS["SUBMISSION_UNVERIFIED"]
         == "Submission needs verification"
     )
-    assert flow.STATE_LABELS["VERIFIED"] == "Submission verified"
+    assert flow.STATE_LABELS["VERIFIED"] == "Submitted"
     assert flow.STATE_LABELS["AWAITING_RESPONSE"] == "Awaiting response"
 
 

@@ -316,16 +316,17 @@ def _human_unresolved(value: str) -> str:
     return aliases.get(text, text.replace('_', ' ').title())
 
 
-def _render_complete_loop(job_id: int) -> dict[str, Any]:
+def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, Any]:
     flow = complete_loop.flow_for_job(int(job_id))
     state = str(flow.get('state') or '')
 
-    _render_current_action(state)
-    st.markdown('### Application progress')
-    st.caption(
-        'The source of truth across package preparation, the one pre-browser customer '
-        'approval, unattended ATS execution, submission verification, and CRM.'
-    )
+    if not compact:
+        _render_current_action(state)
+        st.markdown('### Application progress')
+        st.caption(
+            'The source of truth across package preparation, the one pre-browser customer '
+            'approval, unattended ATS execution, submission verification, and CRM.'
+        )
 
     if not state:
         st.info(
@@ -378,24 +379,25 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
     prepare = flow.get('prepare') or {}
     lifecycle = flow.get('lifecycle') or {}
 
-    metrics = st.columns(4)
-    metrics[0].metric('Status', flow['display_status'])
-    metrics[1].metric(
-        'Progress',
-        f"{int(flow.get('progress_percent') or 0)}%",
-    )
-    metrics[2].metric(
-        'Resume engine',
-        str(prepare.get('engine') or '—').title(),
-    )
-    metrics[3].metric(
-        'Questions',
-        len(flow.get('runtime_questions') or []),
-    )
-    st.progress(int(flow.get('progress_percent') or 0) / 100)
+    if not compact:
+        metrics = st.columns(4)
+        metrics[0].metric('Status', flow['display_status'])
+        metrics[1].metric(
+            'Progress',
+            f"{int(flow.get('progress_percent') or 0)}%",
+        )
+        metrics[2].metric(
+            'Resume engine',
+            str(prepare.get('engine') or '—').title(),
+        )
+        metrics[3].metric(
+            'Questions',
+            len(flow.get('runtime_questions') or []),
+        )
+        st.progress(int(flow.get('progress_percent') or 0) / 100)
 
     tasks = list(flow.get('tasks') or [])
-    if tasks:
+    if tasks and not compact:
         rows = []
         for task in tasks:
             raw_status = str(task.get('status') or '')
@@ -480,21 +482,19 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
     artifacts = flow.get('artifacts') or {}
     resume = artifacts.get('resume') or {}
     preflight = artifacts.get('preflight') or {}
-    cover = artifacts.get('cover_letter') or {}
-    plan = artifacts.get('plan') or {}
 
     if state == 'READY_FOR_APPROVAL':
+        import streamlit.components.v1 as components
+
         from app import application_review_card_v1 as review_card
         from app import native_resume_presentation_v1 as resume_presentation
-        import streamlit.components.v1 as components
 
         review = flow.get('package_review') or {}
         review_record = review
-        st.markdown('### Review application package')
+        st.markdown('### Review tailored resume')
         st.caption(
-            'This is the only customer review. It happens before the employer ATS browser '
-            'starts. Approve & Submit records one execution mandate; later form filling, '
-            'internal digest checks, and final submission are unattended.'
+            'This is the one customer review. Check the truthful, job-specific resume; '
+            'Approve & Submit then starts unattended application execution.'
         )
 
         job = dict(review.get('job') or safe_owned_job_snapshot(int(job_id))['job'])
@@ -621,7 +621,7 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
                     components.html(preview, height=900, scrolling=True)
                 except (RuntimeError, TypeError, ValueError):
                     st.caption('Resume preview is temporarily unavailable.')
-        else:
+        elif not compact:
             artifact_cols = st.columns(3)
             pdf = resume.get('pdf') or {}
             artifact_cols[0].metric(
@@ -638,42 +638,50 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
             )
             artifact_cols[2].metric('ATS browser', 'Starts after approval')
 
-        with st.expander('Application details', expanded=False):
-            destination = str(
-                (review.get('job') or {}).get('apply_url')
-                or (review.get('job') or {}).get('job_url')
-                or '—'
-            )
-            st.write(f"Exact destination: {destination}")
-            policy = dict(review.get('execution_policy') or {})
-            st.write(
-                'Normal employer questions: '
-                + str(policy.get('normal_runtime_questions') or 'AUTONOMOUS')
-            )
-            st.write(
-                'Account creation: '
-                + str(policy.get('account_creation') or 'AUTONOMOUS')
-            )
-            st.write(
-                'Email verification: '
-                + str(policy.get('email_verification') or 'AUTONOMOUS')
-            )
-            checkpoints = list(policy.get('protected_human_checkpoints') or [])
-            if checkpoints:
-                st.write(
-                    'Protected human checkpoints only: '
-                    + ', '.join(value.replace('_', ' ').title() for value in checkpoints)
+        if not compact:
+            with st.expander('Application details', expanded=False):
+                destination = str(
+                    (review.get('job') or {}).get('apply_url')
+                    or (review.get('job') or {}).get('job_url')
+                    or '—'
                 )
-            answers = dict(review.get('application_answers') or {})
-            reusable = list(answers.get('reusable_answer_metadata') or [])
-            st.caption(
-                f"{len(reusable)} reusable answer record(s) are bound to the current "
-                'Candidate Truth profile. Protected values are never exposed here.'
-            )
-            st.caption(
-                'The later browser/form digest is an internal integrity snapshot only. '
-                'It cannot create another customer review or approval prompt.'
-            )
+                st.write(f"Exact destination: {destination}")
+                policy = dict(review.get('execution_policy') or {})
+                st.write(
+                    'Normal employer questions: '
+                    + str(policy.get('normal_runtime_questions') or 'AUTONOMOUS')
+                )
+                st.write(
+                    'Account creation: '
+                    + str(policy.get('account_creation') or 'AUTONOMOUS')
+                )
+                st.write(
+                    'Email verification: '
+                    + str(policy.get('email_verification') or 'AUTONOMOUS')
+                )
+                checkpoints = list(
+                    policy.get('protected_human_checkpoints') or []
+                )
+                if checkpoints:
+                    st.write(
+                        'Protected human checkpoints only: '
+                        + ', '.join(
+                            value.replace('_', ' ').title()
+                            for value in checkpoints
+                        )
+                    )
+                answers = dict(review.get('application_answers') or {})
+                reusable = list(
+                    answers.get('reusable_answer_metadata') or []
+                )
+                st.caption(
+                    f"{len(reusable)} reusable answer record(s) are bound to the current "
+                    'Candidate Truth profile. Protected values are never exposed here.'
+                )
+                st.caption(
+                    'The later browser/form digest is an internal integrity snapshot only. '
+                    'It cannot create another customer review or approval prompt.'
+                )
 
         if not review_record:
             st.warning(
@@ -718,9 +726,8 @@ def _render_complete_loop(job_id: int) -> dict[str, Any]:
                         )
                         st.rerun()
         st.caption(
-            'No second review follows. Chromium, account/login handling, employer '
-            'questions, internal form hashing, one-use submit authority, verification, '
-            'and receipts continue automatically.'
+            'No second review follows. Normal employer questions and submission '
+            'verification continue automatically; protected checkpoints remain protected.'
         )
 
     if state == 'SUBMITTING':

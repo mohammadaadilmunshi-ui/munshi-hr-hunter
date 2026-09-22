@@ -15,7 +15,6 @@ def test_unified_layer_reuses_dashboard_job_card_renderer() -> None:
     assert "product_pages._job_card" in source
     assert 'key_prefix="tracker_unified"' in source
     assert 'key_prefix="research_opportunity"' in source
-    assert 'key_prefix="application_current"' in source
     assert "job-card" not in source
     assert "score_ring" not in source
 
@@ -43,18 +42,20 @@ def test_research_is_decision_intelligence_not_duplicate_system_telemetry() -> N
         assert decision_surface in source
 
 
-def test_applications_are_lazy_sections_instead_of_one_long_phase_page() -> None:
+def test_applications_are_an_application_center_instead_of_recent_job_search() -> None:
     source = (ROOT / "app" / "unified_job_workspaces_v1.py").read_text(encoding="utf-8")
-    assert '_APPLICATION_SECTIONS = (' in source
-    for label in ("Overview", "Resume", "Answers", "Intelligence", "Readiness"):
-        assert f'"{label}"' in source
     assert "st.tabs(" not in source
     assert "Phase 4" not in source
     assert "Phase 5" not in source
     assert "Phase 6" not in source
     assert "Phase 7" not in source
-    assert "Choose another job" in source
-    assert "Work on this application" in source
+    assert "Choose another job" not in source
+    assert "Application Center" in source
+    assert "application_views(limit=None)" in source
+    assert '"Application page"' in source
+    for label in ("Needs you", "Preparing", "Applying", "Needs attention", "Submitted", "All"):
+        assert f'"{label}"' in source
+    assert "jobs[0]" not in source
 
 
 def test_product_shell_installs_unified_workspaces_last() -> None:

@@ -132,6 +132,11 @@ def test_prepare_runtime_defers_thrown_sqlite_writer_lock(monkeypatch) -> None:
         lambda: {"state": "idle"},
     )
     monkeypatch.setattr(
+        prepare_runtime_worker.prepare_orchestrator_v1,
+        "recover_expired_leases",
+        lambda **_kwargs: {"expired": 0, "requeued": 0, "failed": 0},
+    )
+    monkeypatch.setattr(
         prepare_runtime_worker.autonomous_prepare_v1,
         "drive_open_operations",
         lambda **_kwargs: (_ for _ in ()).throw(
@@ -153,6 +158,11 @@ def test_prepare_runtime_defers_only_all_busy_operation_errors(monkeypatch) -> N
         prepare_runtime_worker,
         "_source_runner_status",
         lambda: {"state": "idle"},
+    )
+    monkeypatch.setattr(
+        prepare_runtime_worker.prepare_orchestrator_v1,
+        "recover_expired_leases",
+        lambda **_kwargs: {"expired": 0, "requeued": 0, "failed": 0},
     )
     monkeypatch.setattr(
         prepare_runtime_worker.autonomous_prepare_v1,
@@ -179,6 +189,40 @@ def test_prepare_runtime_defers_only_all_busy_operation_errors(monkeypatch) -> N
     assert result["reason"] == "sqlite_writer_busy"
     assert result["operation_count"] == 1
     assert result["deferred_operation_ids"] == ["prepare-op-test"]
+
+
+def test_prepare_runtime_recovers_leases_and_does_not_serialize_behind_discovery(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        prepare_runtime_worker,
+        "_source_runner_status",
+        lambda: {"state": "active", "pid": 123},
+    )
+    monkeypatch.setattr(
+        prepare_runtime_worker.prepare_orchestrator_v1,
+        "recover_expired_leases",
+        lambda **_kwargs: {"expired": 1, "requeued": 1, "failed": 0},
+    )
+    monkeypatch.setattr(prepare_runtime_worker, "_write_heartbeat", lambda result: calls.append(result))
+    monkeypatch.setattr(
+        prepare_runtime_worker.autonomous_prepare_v1,
+        "drive_open_operations",
+        lambda **_kwargs: {
+            "success": True,
+            "operation_count": 1,
+            "results": [{"operation_id": "prepare-b"}],
+            "errors": [],
+            "submission_authority": False,
+        },
+    )
+
+    result = prepare_runtime_worker.run_once(limit=1)
+
+    assert result["success"] is True
+    assert result["operation_count"] == 1
+    assert result["lease_recovery"]["requeued"] == 1
+    assert result["source_runner"]["state"] == "active"
+    assert calls and calls[0] is result
 
 
 def test_resume_writer_retries_one_malformed_json_response(monkeypatch) -> None:

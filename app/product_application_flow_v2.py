@@ -55,9 +55,9 @@ TASK_LABELS = {
 STATE_LABELS = {
     'QUEUED': 'Queued',
     'RUNNING': 'Preparing',
-    'NEEDS_INPUT': 'Needs input',
-    'READY_FOR_APPROVAL': 'Ready for approval',
-    'READY_FOR_REVIEW': 'Applying',
+    'NEEDS_INPUT': 'Action required',
+    'READY_FOR_APPROVAL': 'Needs review',
+    'READY_FOR_REVIEW': 'Needs review',
     'FAILED_SAFELY': 'Needs attention',
     'CANCELLED': 'Cancelled',
     'DISCOVERED': 'Discovered',
@@ -67,11 +67,11 @@ STATE_LABELS = {
     'READY_TO_APPLY': 'Package ready',
     'PLAN_ACCEPTED': 'Application plan accepted',
     'PREPARING_ATS': 'Preparing application',
-    'READY_TO_SUBMIT': 'Ready to submit',
-    'SUBMITTING': 'Submitting',
+    'READY_TO_SUBMIT': 'Applying now',
+    'SUBMITTING': 'Applying now',
     'SUBMITTED': 'Submitted',
     'SUBMISSION_UNVERIFIED': 'Submission needs verification',
-    'VERIFIED': 'Submission verified',
+    'VERIFIED': 'Submitted',
     'AWAITING_RESPONSE': 'Awaiting response',
     'ASSESSMENT': 'Assessment',
     'INTERVIEW': 'Interview',
@@ -125,6 +125,7 @@ def _public_task(row: Mapping[str, Any]) -> dict[str, Any]:
         ],
         'error_code': row.get('error_code'),
         'error_message': row.get('error_message'),
+        'lease_expires_at': row.get('lease_expires_at'),
         'updated_at': row.get('updated_at'),
     }
 
@@ -545,29 +546,32 @@ def flow_for_job(job_id: int) -> dict[str, Any]:
         progress = 100
 
     if not state:
-        cta = 'prepare'
-        cta_label = 'Prepare'
+        cta, cta_label = 'prepare', 'Prepare'
+    elif state in {'QUEUED', 'RUNNING', 'PREPARING', 'PREPARING_ATS'}:
+        cta, cta_label = 'workspace', 'Preparing'
+    elif state in {'READY_FOR_APPROVAL', 'READY_FOR_REVIEW'}:
+        cta, cta_label = 'workspace', 'Review resume'
+    elif state == 'NEEDS_INPUT':
+        cta, cta_label = 'workspace', (
+            'Complete checkpoint'
+            if authority == 'protected_human_checkpoint'
+            else 'Fix issue'
+        )
     elif state in {'FAILED_SAFELY', 'CANCELLED', 'BLOCKED'}:
-        cta = 'prepare'
-        cta_label = 'Retry prepare'
-    elif state in {
-        'AWAITING_RESPONSE',
-        'ASSESSMENT',
-        'INTERVIEW',
-        'OFFER',
-        'REJECTED',
-        'WITHDRAWN',
-    }:
+        cta, cta_label = 'workspace', 'Fix issue'
+    elif state in {'READY_TO_SUBMIT', 'SUBMITTING'}:
+        cta, cta_label = 'workspace', 'Applying now'
+    elif state in {'SUBMITTED', 'VERIFIED', 'AWAITING_RESPONSE'}:
+        cta, cta_label = 'workspace', 'View receipt'
+    elif state == 'SUBMISSION_UNVERIFIED':
+        cta, cta_label = 'workspace', 'Verify submission'
+    elif state in {'ASSESSMENT', 'INTERVIEW', 'OFFER', 'REJECTED', 'WITHDRAWN'}:
         cta = 'tracker'
         cta_label = STATE_LABELS.get(state, state.title())
     else:
         cta = 'workspace'
-        cta_label = (
-            'Review package'
-            if state == 'READY_FOR_APPROVAL'
-            else STATE_LABELS.get(
-                state, state.replace('_', ' ').title()
-            )
+        cta_label = STATE_LABELS.get(
+            state, state.replace('_', ' ').title()
         )
 
     return {
@@ -734,27 +738,29 @@ def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
     }
 
 
-def pipeline_rows(limit: int = 250) -> list[dict[str, Any]]:
-    '''Lifecycle-first candidate pipeline without requiring an n8n result row.'''
+def _pipeline_candidate_jobs(limit: int | None) -> list[dict[str, Any]]:
+    """Fetch the durable application index in one short read connection."""
     connection = get_connection()
     try:
         owner = current_owner(connection)
         candidate_ids: list[int] = []
 
+        limit_clause = ' LIMIT ?' if limit is not None else ''
+        limit_params: tuple[int, ...] = (int(limit),) if limit is not None else ()
+
         if _table_exists(connection, 'prepare_operations_v1'):
             candidate_ids.extend(
                 int(row['job_id'])
                 for row in connection.execute(
-                    '''SELECT job_id, MAX(updated_at) AS updated
+                    f'''SELECT job_id, MAX(updated_at) AS updated
                          FROM prepare_operations_v1
                         WHERE tenant_id=? AND user_id=?
                         GROUP BY job_id
-                        ORDER BY datetime(updated) DESC
-                        LIMIT ?''',
+                        ORDER BY datetime(updated) DESC{limit_clause}''',
                     (
                         owner.tenant_id,
                         owner.user_id,
-                        int(limit),
+                        *limit_params,
                     ),
                 ).fetchall()
             )
@@ -763,65 +769,91 @@ def pipeline_rows(limit: int = 250) -> list[dict[str, Any]]:
             candidate_ids.extend(
                 int(row['job_id'])
                 for row in connection.execute(
-                    '''SELECT job_id, MAX(updated_at) AS updated
+                    f'''SELECT job_id, MAX(updated_at) AS updated
                          FROM application_lifecycle_records
                         WHERE tenant_id=? AND user_id=?
                         GROUP BY job_id
-                        ORDER BY datetime(updated) DESC
-                        LIMIT ?''',
+                        ORDER BY datetime(updated) DESC{limit_clause}''',
                     (
                         owner.tenant_id,
                         owner.user_id,
-                        int(limit),
+                        *limit_params,
                     ),
                 ).fetchall()
             )
+        unique_ids = list(dict.fromkeys(candidate_ids))
+        if limit is not None:
+            unique_ids = unique_ids[: int(limit)]
+        if not unique_ids:
+            return []
+        placeholders = ','.join('?' for _ in unique_ids)
+        jobs = connection.execute(
+            f'''SELECT id, company_name, title, location_raw, remote_type,
+                       hunter_score, apply_url
+                  FROM jobs WHERE id IN ({placeholders})''',
+            tuple(unique_ids),
+        ).fetchall()
+        by_id = {int(row['id']): dict(row) for row in jobs}
+        return [by_id[job_id] for job_id in unique_ids if job_id in by_id]
+    finally:
+        connection.close()
 
-        unique_ids = list(dict.fromkeys(candidate_ids))[: int(limit)]
-        result: list[dict[str, Any]] = []
 
-        for job_id in unique_ids:
-            job = connection.execute(
-                '''SELECT id, company_name, title, hunter_score, apply_url
-                     FROM jobs WHERE id=?''',
-                (int(job_id),),
-            ).fetchone()
-            if job is None:
-                continue
-
-            state = flow_for_job(int(job_id))
-            prepare = state.get('prepare') or {}
-            lifecycle = state.get('lifecycle') or {}
+def pipeline_rows(limit: int | None = 250) -> list[dict[str, Any]]:
+    '''Lifecycle-first candidate pipeline without requiring an n8n result row.'''
+    result: list[dict[str, Any]] = []
+    for job in _pipeline_candidate_jobs(None if limit is None else int(limit)):
+        job_id = int(job['id'])
+        try:
+            state = flow_for_job(job_id)
+        except Exception as error:  # noqa: BLE001 - isolate one malformed application
+            # One corrupt or partially migrated application must not make the
+            # remaining Application Center disappear. Keep the projection
+            # value-free and let the shared view model render a safe issue.
             result.append(
                 {
                     **dict(job),
-                    'job_id': int(job_id),
-                    'display_status': state['display_status'],
-                    'lifecycle_state': lifecycle.get('state'),
-                    'prepare_status': prepare.get('status'),
-                    'progress_percent': state['progress_percent'],
-                    'application_id': (
-                        lifecycle.get('application_id')
-                        or prepare.get('application_id')
-                    ),
-                    'updated_at': (
-                        lifecycle.get('updated_at')
-                        or prepare.get('updated_at')
-                    ),
-                    'status_evidence': (
-                        f"lifecycle={lifecycle.get('state')}"
-                        if lifecycle.get('state')
-                        else f"prepare={prepare.get('status')}"
-                    ),
-                    'runtime_question_count': len(
-                        state['runtime_questions']
-                    ),
-                    'verified_receipt_id': lifecycle.get(
-                        'verified_receipt_id'
-                    ),
+                    'job_id': job_id,
+                    'display_status': 'Needs attention',
+                    'lifecycle_state': None,
+                    'prepare_status': None,
+                    'progress_percent': 0,
+                    'application_id': None,
+                    'updated_at': None,
+                    'status_evidence': 'projection_error',
+                    'runtime_question_count': 0,
+                    'verified_receipt_id': None,
+                    'projection_error': type(error).__name__,
                     'submission_authority': False,
                 }
             )
-        return result
-    finally:
-        connection.close()
+            continue
+        prepare = state.get('prepare') or {}
+        lifecycle = state.get('lifecycle') or {}
+        result.append(
+            {
+                **dict(job),
+                'job_id': job_id,
+                'display_status': state['display_status'],
+                'lifecycle_state': lifecycle.get('state'),
+                'prepare_status': prepare.get('status'),
+                'progress_percent': state['progress_percent'],
+                'application_id': (
+                    lifecycle.get('application_id')
+                    or prepare.get('application_id')
+                ),
+                'updated_at': (
+                    lifecycle.get('updated_at')
+                    or prepare.get('updated_at')
+                ),
+                'status_evidence': (
+                    f"lifecycle={lifecycle.get('state')}"
+                    if lifecycle.get('state')
+                    else f"prepare={prepare.get('status')}"
+                ),
+                'runtime_question_count': len(state['runtime_questions']),
+                'verified_receipt_id': lifecycle.get('verified_receipt_id'),
+                'submission_authority': False,
+            }
+        )
+    return result

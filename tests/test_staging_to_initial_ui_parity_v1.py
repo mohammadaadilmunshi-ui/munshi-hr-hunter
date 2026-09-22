@@ -102,11 +102,14 @@ def test_product_shell_contains_current_staging_feature_installers() -> None:
         "install_application_notification_ui(product_pages)",
         "install_integration_credentials_ui(product_pages)",
         "install_ats_account_readiness_ui(product_pages)",
-        "install_auto_prepare_readiness_ui(product_pages)",
         "render_n8n_live_console()",
     )
     for marker in required:
         assert marker in source, marker
+
+    pages_source = (ROOT / "app" / "product_pages.py").read_text(encoding="utf-8")
+    assert "control_center_snapshot(limit=250)" in pages_source
+    assert "readiness_snapshot()" in pages_source
 
     advanced_source = (
         ROOT / "app" / "autoapply_settings_ui.py"

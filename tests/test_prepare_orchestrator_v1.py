@@ -138,6 +138,42 @@ def test_initial_parallel_claims_only_dependency_free_tasks(prepare_db):
     assert prepare.TASK_ATS_FORM_PREPARATION not in kinds
 
 
+def test_expired_lease_recovery_can_be_scoped_to_one_job(prepare_db):
+    operation = _start(key="lease-scope")
+    claimed = _claim_one(operation["operation_id"], prepare.TASK_RESUME)
+    connection = database.get_connection()
+    try:
+        connection.execute(
+            "UPDATE prepare_tasks_v1 SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE task_id=?",
+            (claimed["task_id"],),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    result = prepare.recover_expired_leases(job_id=91, limit=10)
+
+    assert result == {"expired": 1, "requeued": 1, "failed": 0}
+    recovered = prepare.prepare_operation(operation["operation_id"])
+    assert _by_kind(recovered)[prepare.TASK_RESUME]["status"] == "PENDING"
+
+
+def test_cancel_prepare_preserves_auditable_rows(prepare_db):
+    operation = _start(key="cancel-preserves-history")
+    _claim_one(operation["operation_id"], prepare.TASK_RESUME)
+
+    result = prepare.cancel_prepare(operation_id=operation["operation_id"])
+
+    assert result["status"] == "CANCELLED"
+    cancelled = prepare.prepare_operation(operation["operation_id"])
+    assert cancelled["status"] == "CANCELLED"
+    assert len(cancelled["tasks"]) == len(prepare.TASK_KINDS)
+    assert all(
+        task["status"] in {"CANCELLED", "SUCCEEDED"}
+        for task in cancelled["tasks"]
+    )
+
+
 def test_dependencies_unlock_preflight_then_ats(prepare_db):
     operation = _start()
     op_id = operation["operation_id"]

@@ -203,9 +203,6 @@ def render() -> None:
     from app.ats_account_readiness_ui_v1 import (
         install_ats_account_readiness_ui,
     )
-    from app.auto_prepare_readiness_ui_v1 import (
-        install_auto_prepare_readiness_ui,
-    )
     from app.application_notification_ui_v1 import (
         install_application_notification_ui,
     )
@@ -280,10 +277,6 @@ def render() -> None:
     # is replaced on every rerun, so this wrapper is deliberately reattached too.
     product_pages._ats_account_readiness_ui_v1_installed = False
     install_ats_account_readiness_ui(product_pages)
-
-    # Auto Prepare itself is not replaced on rerun. Install this once so the
-    # canonical-scoring gate is visible before automatic admission is attempted.
-    install_auto_prepare_readiness_ui(product_pages)
 
     pages: dict[str, Callable[[], None]] = {
         "dashboard": product_pages.dashboard,

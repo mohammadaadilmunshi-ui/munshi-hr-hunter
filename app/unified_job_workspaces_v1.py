@@ -17,13 +17,6 @@ from app.product_state import research_snapshot, tracker_rows
 from app.product_ui import esc, page_intro
 
 
-_APPLICATION_SECTIONS = (
-    "Overview",
-    "Resume",
-    "Answers",
-    "Intelligence",
-    "Readiness",
-)
 _RESEARCH_SECTIONS = (
     "Opportunities",
     "Companies",
@@ -458,11 +451,6 @@ def render_research(product_pages: Any) -> None:
     product_pages._job_detail()
 
 
-def _application_job_choices(app_workspace: Any) -> list[dict[str, Any]]:
-    options = list(app_workspace._job_options(limit=250))
-    return _fetch_job_rows([int(row["id"]) for row in options])
-
-
 def _requested_job_id() -> int | None:
     try:
         raw = str(st.query_params.get("job") or "").strip()
@@ -472,223 +460,315 @@ def _requested_job_id() -> int | None:
     return value if value > 0 else None
 
 
-def _application_picker(product_pages: Any, jobs: list[dict[str, Any]], selected_id: int) -> None:
-    with st.expander("Choose another job", expanded=False):
-        query = st.text_input(
-            "Find a job",
-            placeholder="Search company or role…",
-            key="unified_application_search",
-            label_visibility="collapsed",
-        )
-        needle = query.strip().casefold()
-        matches = [
-            row
-            for row in jobs
-            if not needle
-            or needle in f"{row.get('company_name') or ''} {row.get('title') or ''}".casefold()
-        ]
-        _card_grid(
-            product_pages,
-            matches,
-            key_prefix="applications_picker",
-            columns=3,
-            limit=9,
-            application_links=True,
-        )
-        if len(matches) > 9:
-            st.caption(f"Showing 9 of {len(matches)} matches. Refine the search to find another job.")
+_APPLICATION_FILTERS = {
+    "Needs you": "needs_you",
+    "Preparing": "preparing",
+    "Applying": "applying",
+    "Needs attention": "needs_attention",
+    "Submitted": "submitted",
+    "All": "all",
+}
 
 
-def _render_selected_job(product_pages: Any, job: dict[str, Any], flow: dict[str, Any]) -> None:
-    st.markdown("### Current application")
-    columns = st.columns((1.25, 1), gap="large")
-    with columns[0]:
-        product_pages._job_card(job, key_prefix="application_current")
-    with columns[1]:
-        with st.container(border=True):
-            st.markdown(f"**{esc(job.get('company_name'), 'Company')}**", unsafe_allow_html=True)
-            st.markdown(f"### {esc(job.get('title'), 'Untitled role')}", unsafe_allow_html=True)
-            st.caption(str(job.get("location_raw") or "Location not recorded"))
-            st.metric("Application status", str(flow.get("display_status") or "Not started"))
-            progress = int(flow.get("progress_percent") or 0)
-            st.progress(progress / 100)
-            st.caption(f"{progress}% of recorded preparation complete")
-            if int(flow.get("runtime_question_count") or 0):
-                st.warning(f"{int(flow['runtime_question_count'])} employer question(s) need your attention.")
+def _select_application(job_id: int) -> None:
+    st.query_params["view"] = "prepare-application"
+    st.query_params["job"] = str(int(job_id))
 
 
-def _render_resume_panel(app_workspace: Any, job_id: int) -> None:
-    versions = app_workspace._resume_versions(job_id)
-    st.markdown("### Resume for this application")
-    st.caption("Review the truth-bound resume version associated with this job.")
-    if not versions:
-        st.info("No strengthened resume is stored for this job yet.")
-        st.link_button("Open Resume Studio", "?view=resume-studio", use_container_width=False)
-        return
-    labels = {
-        f"Version {row.get('version_number', '?')} · {str(row.get('version_id'))[:12]}…": row
-        for row in versions
-    }
-    chosen_label = st.selectbox(
-        "Resume version",
-        list(labels),
-        key=f"unified_application_resume_{job_id}",
-    )
-    chosen = labels[chosen_label]
-    cols = st.columns(3)
-    cols[0].metric("Candidate Truth", "Bound" if chosen.get("candidate_truth_bound") is True else "Review")
-    cols[1].metric("Job evidence", "Bound" if chosen.get("job_snapshot_bound") is True else "Review")
-    cols[2].metric("Version", f"v{chosen.get('version_number', '?')}")
-    if not (chosen.get("candidate_truth_bound") is True and chosen.get("job_snapshot_bound") is True):
-        st.warning("Regenerate this resume before treating it as current application evidence.")
-    st.link_button("Open Resume Studio", "?view=resume-studio", use_container_width=False)
-
-
-def _render_answers_panel(app_workspace: Any) -> None:
-    planning = app_workspace._safe_planning_input()
-    answers = list(planning.get("answers") or [])
-    excluded = list(planning.get("excluded_answers") or [])
-    ready = [row for row in answers if row.get("planning_use") == "autofill_ready"]
-    context = [row for row in answers if row.get("planning_use") == "context_only"]
-    st.markdown("### Application answers")
-    st.caption("Only planner-safe reusable answers are shown here. Protected values stay on their secure resolver path.")
-    cols = st.columns(3)
-    cols[0].metric("Autofill ready", len(ready))
-    cols[1].metric("Context only", len(context))
-    cols[2].metric("Stale excluded", len(excluded))
-    if not answers and not excluded:
-        st.info("No reusable Answer Brain memories are stored yet. Missing evidence remains unresolved rather than guessed.")
-    if answers:
-        with st.expander("Review reusable answer inventory", expanded=False):
-            st.dataframe(
-                [
-                    {
-                        "Meaning": row.get("question_key") or row.get("question_family") or "—",
-                        "Use": row.get("planning_use"),
-                        "Source": row.get("source"),
-                        "Confidence": row.get("confidence"),
-                    }
-                    for row in answers
-                ],
-                hide_index=True,
-                use_container_width=True,
-            )
-    st.link_button("Manage reusable answers", "?view=profile&tab=details", use_container_width=False)
-
-
-def _render_intelligence_panel(app_workspace: Any, job_id: int) -> None:
-    st.markdown("### Opportunity intelligence")
-    st.caption("Evidence-backed fit, policy gates, unresolved facts, and relationship evidence for this job.")
-    current = app_workspace._latest_opportunity(job_id)
+def _clear_application_selection() -> None:
     try:
-        from app import opportunity_intelligence_v3 as opportunity
+        del st.query_params["job"]
+    except (KeyError, TypeError):
+        pass
 
-        enabled = opportunity.opportunity_intelligence_enabled()
-    except Exception:
-        enabled = False
-        opportunity = None
-    if not enabled:
-        st.info("Opportunity Intelligence is not enabled in this environment.")
+
+def _updated_label(value: str | None) -> str:
+    if not value:
+        return "Update time unavailable"
+    return str(value).replace("T", " ").replace("+00:00", " UTC")
+
+
+def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
+    st.markdown("### Application Center")
+    choice = st.selectbox(
+        "Filter applications",
+        list(_APPLICATION_FILTERS),
+        index=len(_APPLICATION_FILTERS) - 1,
+        key="application_center_filter",
+    )
+    query = st.text_input(
+        "Search applications",
+        placeholder="Optional company or role search…",
+        key="application_center_search",
+    )
+    group = _APPLICATION_FILTERS[choice]
+    needle = query.strip().casefold()
+    visible = [
+        item
+        for item in views
+        if (group == "all" or item.state_group == group)
+        and (
+            not needle
+            or needle in f"{item.company} {item.title}".casefold()
+        )
+    ]
+    st.caption(f"{len(visible)} application{'s' if len(visible) != 1 else ''}")
+    if not visible:
+        st.info("No applications match this view.")
+        return
+    page_size = 25
+    page_count = max(1, (len(visible) + page_size - 1) // page_size)
+    page = 1
+    if page_count > 1:
+        page = st.selectbox(
+            "Application page",
+            list(range(1, page_count + 1)),
+            format_func=lambda value: f"Page {value} of {page_count}",
+            key="application_center_page",
+        )
+    start = (int(page) - 1) * page_size
+    for item in visible[start : start + page_size]:
+        with st.container(border=True):
+            st.markdown(
+                f"**{esc(item.company, 'Company')}**  \n{esc(item.title, 'Untitled role')}",
+                unsafe_allow_html=True,
+            )
+            score = "—" if item.match is None else f"{item.match:.0f}% match"
+            st.caption(f"{score} · {item.human_state}")
+            st.caption(f"Next: {item.next_action}")
+            st.button(
+                "Selected" if selected_id == item.job_id else "Open application",
+                key=f"application_rail_{item.job_id}",
+                type="primary" if selected_id == item.job_id else "secondary",
+                disabled=selected_id == item.job_id,
+                use_container_width=True,
+                on_click=_select_application,
+                args=(item.job_id,),
+            )
+
+
+def _render_lifecycle(model: Any) -> None:
+    stages = (
+        "Job intelligence",
+        "Resume tailoring",
+        "Package checks",
+        "Needs review",
+        "Applying now",
+        "Submitted",
+    )
+    columns = st.columns(len(stages), gap="small")
+    for index, (column, label) in enumerate(zip(columns, stages), 1):
+        marker = "●" if index == model.stage_index else "✓" if index < model.stage_index else "○"
+        column.markdown(f"**{marker} {label}**" if index == model.stage_index else f"{marker} {label}")
+
+
+def _render_application_header(model: Any) -> None:
+    match = "Match not scored" if model.match is None else f"{model.match:.0f}% match"
+    st.markdown(
+        f"""<div class="product-callout"><div>
+        <strong>{esc(model.company, 'Company')} · {esc(model.title, 'Untitled role')}</strong>
+        <span>{esc(model.location, 'Location not recorded')} · {esc(model.work_arrangement)} · {match}</span>
+        <span>Updated {_updated_label(model.last_update)} · Next: {esc(model.next_action)}</span>
+        </div><span class="status-chip">{esc(model.human_state)}</span></div>""",
+        unsafe_allow_html=True,
+    )
+    _render_lifecycle(model)
+
+
+def _run_recovery(action: str, job_id: int) -> None:
+    from app import application_recovery_v1
+
+    try:
+        application_recovery_v1.execute(action, job_id=int(job_id))
+    except Exception as error:
+        st.session_state["application_recovery_error"] = str(error)
     else:
-        if st.button("Refresh opportunity evaluation", type="primary", key=f"unified_evaluate_{job_id}"):
+        st.session_state["application_recovery_success"] = action
+
+
+def _render_recovery_center(model: Any) -> None:
+    labels = {
+        "recover_expired_lease": "Recover expired task lease",
+        "retry_preparation": "Retry preparation",
+        "cancel_preparation": "Cancel preparation",
+        "restart_stale_preparation": "Restart stale preparation",
+        "quarantine_application": "Quarantine this application",
+    }
+    with st.expander("Recovery Center", expanded=model.stale or model.state_group == "needs_attention"):
+        st.caption(
+            "Recovery is state-aware and audited. Submitted, ambiguous-submission, and consumed-authority records cannot be reset or re-submitted here."
+        )
+        feedback_error = st.session_state.pop("application_recovery_error", None)
+        feedback_success = st.session_state.pop("application_recovery_success", None)
+        if feedback_error:
+            st.error(str(feedback_error))
+        if feedback_success:
+            st.success("Recovery action completed. Refreshing durable state.")
+        read_actions = st.columns(2, gap="small")
+        read_actions[0].button(
+            "Refresh state",
+            key=f"application_refresh_{model.job_id}",
+            use_container_width=True,
+        )
+        read_actions[1].button(
+            "Clear local selection",
+            key=f"application_clear_{model.job_id}",
+            use_container_width=True,
+            on_click=_clear_application_selection,
+        )
+        durable = [
+            action
+            for action in model.allowed_recovery_actions
+            if action not in {"refresh_state", "clear_local_selection"}
+        ]
+        if not durable:
+            st.info("No durable recovery action is safe for this application state.")
+            return
+        st.markdown("**Safe actions for this state**")
+        for action in durable:
+            destructive = action in {
+                "cancel_preparation",
+                "restart_stale_preparation",
+                "quarantine_application",
+            }
+            if destructive:
+                confirmed = st.checkbox(
+                    f"Confirm {labels[action].casefold()}",
+                    key=f"application_confirm_{action}_{model.job_id}",
+                )
+            else:
+                confirmed = True
+            st.button(
+                labels[action],
+                key=f"application_recovery_{action}_{model.job_id}",
+                disabled=not confirmed,
+                use_container_width=True,
+                on_click=_run_recovery,
+                args=(action, model.job_id),
+            )
+
+
+def _render_advanced_diagnostics(model: Any) -> None:
+    with st.expander("Advanced diagnostics", expanded=False):
+        st.caption("Technical identifiers and task state are intentionally kept out of the normal application flow.")
+        st.write(f"Canonical state: `{model.canonical_state or 'NOT_STARTED'}`")
+        st.write(f"Application ID: `{model.application_id or 'not created'}`")
+        heartbeat = model.worker_heartbeat
+        st.write(
+            f"Prepare worker: {heartbeat.get('label') or 'Unavailable'} · "
+            f"last heartbeat {_updated_label(heartbeat.get('recorded_at'))}"
+        )
+        if model.projection_error:
+            st.write(f"Projection error type: `{model.projection_error}`")
+
+
+def _render_application_state(app_workspace: Any, model: Any) -> None:
+    from app import product_application_flow_v2 as complete_loop
+
+    state = model.canonical_state
+    st.markdown(f"### {model.human_state}")
+    if model.degraded:
+        st.error(model.issue_summary)
+    elif not state:
+        st.write("MUNSHI will tailor a truthful resume and run package checks in the background. Nothing is submitted until you review the resume and choose Approve & Submit.")
+        if st.button(
+            "Prepare application",
+            type="primary",
+            key=f"application_prepare_{model.job_id}",
+            use_container_width=True,
+        ):
             try:
-                current = opportunity.evaluate_job(job_id)
-                st.success("Opportunity evaluation refreshed from current evidence.")
+                complete_loop.start_prepare_for_job(model.job_id, engine="NATIVE")
             except Exception as error:
                 st.error(str(error))
-        if current:
-            cols = st.columns(3)
-            cols[0].metric("Decision", str(current.get("status") or "Review"))
-            score = current.get("opportunity_score")
-            cols[1].metric("Evidence score", "Unknown" if score is None else f"{float(score):.0f}%")
-            pursuit = current.get("pursuit_strategy") or {}
-            cols[2].metric("Pursuit", str(pursuit.get("pursuit_state") or "Review"))
-            failures = list(current.get("hard_failures") or [])
-            unknowns = list(current.get("unknowns") or [])
-            if failures:
-                st.error("Recorded blockers: " + ", ".join(map(str, failures)))
-            if unknowns:
-                st.warning("Still unresolved: " + ", ".join(map(str, unknowns)))
-            if not failures and not unknowns:
-                st.success("No unresolved opportunity-policy items are recorded.")
-        else:
-            st.info("No saved opportunity evaluation exists for this job yet.")
-
-    relationship = app_workspace._latest_relationship(job_id)
-    with st.expander("People and relationship evidence", expanded=False):
-        if relationship:
-            strategy = relationship.get("combined_strategy") or relationship.get("strategy") or {}
-            st.write(f"Recommended relationship approach: **{strategy.get('pursuit_state') or relationship.get('pursuit_state') or 'Review'}**")
-            score = relationship.get("relationship_score")
-            if score is not None:
-                st.metric("Relationship score", f"{float(score):.0f}%")
-        else:
-            st.caption("No saved relationship strategy is attached to this application yet.")
-
-
-def _render_readiness_panel(app_workspace: Any, job_id: int) -> None:
-    opportunity = app_workspace._latest_opportunity(job_id)
-    relationship = app_workspace._latest_relationship(job_id)
-    versions = app_workspace._resume_versions(job_id)
-    resume_version_id = str(versions[0].get("version_id") or "") if versions else None
-    result = app_workspace._readiness(
-        job_id=job_id,
-        resume_version_id=resume_version_id,
-        opportunity_evaluation_id=str((opportunity or {}).get("evaluation_id") or "") or None,
-        relationship_strategy_id=str((relationship or {}).get("strategy_id") or "") or None,
-    )
-    st.markdown("### Application readiness")
-    status = str(result.get("status") or "HOLD")
-    blockers = list(result.get("blockers") or result.get("reasons") or [])
-    if status == "READY":
-        st.success("Ready for the next preparation/review step based on the currently bound evidence.")
+            else:
+                st.rerun()
+    elif model.state_group == "preparing":
+        st.info(f"MUNSHI is working in the background: **{model.safe_progress_stage}**.")
+        st.caption(f"Last durable update: {_updated_label(model.last_update)}")
+        if model.stale:
+            st.warning("This application has not updated recently. Other applications remain independent; safe recovery is available below.")
+    elif model.resume_review_available:
+        app_workspace._render_complete_loop(model.job_id, compact=True)
+    elif model.state_group == "applying":
+        st.info("Your approval is recorded. MUNSHI is applying now and will continue without another review or submit prompt.")
+        st.caption("Current safe stage: opening the employer application, completing the form, uploading the approved resume, or verifying submission.")
+    elif model.protected_checkpoint:
+        st.warning("Action required: the employer requires a protected human checkpoint such as CAPTCHA, MFA, passkey, biometrics, or identity verification.")
+        st.caption("Complete the checkpoint in this same application session. Normal employer questions remain automated from truthful stored data.")
+    elif model.state_group == "needs_attention":
+        st.warning(model.issue_summary or "MUNSHI stopped safely before claiming success.")
+        st.write(f"Stopped at: **{model.stopped_at or model.safe_progress_stage}**")
+        st.write(f"Employer submission attempted: **{'Possibly — verify first' if model.submission_attempted else 'No evidence of an attempt'}**")
+    elif model.state_group == "submitted":
+        receipt = model.receipt_summary or {}
+        st.success("Submitted · independently verified evidence is recorded.")
+        details = st.columns(3, gap="small")
+        details[0].metric("Provider", str(receipt.get("provider") or "Recorded"))
+        details[1].metric("Provider application ID", str(receipt.get("provider_application_id") or "Recorded"))
+        details[2].metric("Verification", str(receipt.get("verification_status") or "Verified"))
+        st.caption(f"Submitted {receipt.get('submitted_at') or model.last_update or 'time recorded'} · Resume {receipt.get('resume_version_id') or 'binding recorded'}")
     else:
-        st.warning("This application still has evidence or preparation items to resolve.")
-    for blocker in blockers:
-        st.write(f"• {blocker}")
-    st.info("Preparation only · Submission authority remains OFF in this staging tranche.")
+        st.info("This application is recorded. Open Tracker for later hiring-stage updates.")
+    _render_recovery_center(model)
+    _render_advanced_diagnostics(model)
 
 
 def render_applications(product_pages: Any, app_workspace: Any) -> None:
+    from app.application_view_model_v1 import application_views, view_for_job
+
     page_intro(
         "APPLICATIONS",
         "Applications",
-        "Choose a job card, prepare its package, and move through one clear workspace instead of a long technical page.",
+        "Every active application, its exact next action, and what MUNSHI is doing now.",
     )
     if hasattr(product_pages, "_show_action_feedback"):
         product_pages._show_action_feedback()
-    jobs = _application_job_choices(app_workspace)
-    if not jobs:
-        st.info("No stored jobs are available yet. Discover or add a job first.")
+
+    try:
+        # Pagination bounds the rendered rail; the read projection includes every
+        # durable application so older items never require name recall or search.
+        views = application_views(limit=None)
+    except Exception:
+        views = list(st.session_state.get("_application_center_last_good") or [])
+        st.warning(
+            "Live application state is temporarily busy. Showing the last successful read; no application action was changed."
+        )
+    else:
+        st.session_state["_application_center_last_good"] = views
+    requested = _requested_job_id()
+    selected = next((item for item in views if item.job_id == requested), None)
+    if requested is not None and selected is None:
+        try:
+            selected = view_for_job(requested)
+            views = [selected, *views]
+        except (LookupError, ValueError):
+            st.warning("The selected application is no longer available.")
+
+    if not views and selected is None:
+        st.markdown(
+            '<div class="empty-product"><h3>No applications yet</h3><p>Prepare a job from Dashboard or Browse Jobs and it will stay connected here.</p></div>',
+            unsafe_allow_html=True,
+        )
+        st.link_button("Browse jobs", "?view=jobs", type="primary")
         return
 
-    by_id = {int(row["id"]): row for row in jobs}
-    requested = _requested_job_id()
-    selected_id = requested if requested in by_id else int(jobs[0]["id"])
-    selected_job = by_id[selected_id]
-
-    _application_picker(product_pages, jobs, selected_id)
-    flow = app_workspace._render_complete_loop.__globals__.get("complete_loop").flow_for_job(selected_id)
-    _render_selected_job(product_pages, selected_job, flow)
-
-    section = st.radio(
-        "Application workspace section",
-        _APPLICATION_SECTIONS,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="unified_application_section",
-    )
-    if section == "Overview":
-        app_workspace._render_complete_loop(selected_id)
-    elif section == "Resume":
-        _render_resume_panel(app_workspace, selected_id)
-    elif section == "Answers":
-        _render_answers_panel(app_workspace)
-    elif section == "Intelligence":
-        _render_intelligence_panel(app_workspace, selected_id)
-    else:
-        _render_readiness_panel(app_workspace, selected_id)
-    product_pages._job_detail()
+    rail, workspace = st.columns((0.9, 2.1), gap="large")
+    with rail:
+        _render_application_rail(views, selected.job_id if selected else None)
+    with workspace:
+        if selected is None:
+            st.markdown("### Select an application")
+            st.info("Action-required applications are listed first. Select one to open its exact durable context; search is optional.")
+            counts = Counter(item.state_group for item in views)
+            metrics = st.columns(4, gap="small")
+            metrics[0].metric("Needs you", counts.get("needs_you", 0))
+            metrics[1].metric("Preparing", counts.get("preparing", 0))
+            metrics[2].metric("Applying", counts.get("applying", 0))
+            metrics[3].metric("Needs attention", counts.get("needs_attention", 0))
+        else:
+            _render_application_header(selected)
+            _render_application_state(app_workspace, selected)
 
 
 def install_unified_job_workspaces(product_pages: Any, application_workspace_page: Any) -> None:

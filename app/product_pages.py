@@ -661,8 +661,7 @@ def _render_auto_prepare_live_activity() -> None:
     _fragment()
 
 
-def auto_prepare() -> None:
-    page_intro("AUTOMATION", "Auto Prepare, under your control.", "Choose the global preparation volume and use lanes to narrow role types. Opening this page never creates work.")
+def _render_auto_prepare_rules() -> None:
     policy = volume_policy()
     current_lanes = lanes()
     enabled_count = sum(bool(lane["enabled"]) for lane in current_lanes)
@@ -759,6 +758,107 @@ def auto_prepare() -> None:
                     save_volume_policy(mode, limit, review)
                     st.success("Preference saved. Canonical safeguards remain separate.")
         st.markdown("<div class='muted-panel'><b>What Unlimited means</b><br>No MUNSHI business quota. Provider throttles, targeting, authorization, dedupe, ATS, and risk controls still apply.<br><br><b>Pause after current batch</b><br>The active batch can finish; a later batch must not start.</div>", unsafe_allow_html=True)
+
+
+def auto_prepare() -> None:
+    from app.application_view_model_v1 import control_center_snapshot
+    from app.auto_prepare_readiness_ui_v1 import readiness_snapshot
+
+    page_intro(
+        "AUTOMATION",
+        "Auto Prepare control center",
+        "Live application work, worker health, and action-required items. Rules and limits are secondary controls.",
+    )
+    policy = volume_policy()
+    mode = {
+        "paused": "Paused",
+        "pause_after_batch": "Draining",
+        "unlimited": "On",
+        "custom_limit": "On",
+    }[policy["mode"]]
+    try:
+        snapshot = control_center_snapshot(limit=250)
+    except Exception:
+        snapshot = st.session_state.get("_auto_prepare_last_good") or {
+            "applications": [],
+            "counts": {
+                "preparing": 0,
+                "needs_review": 0,
+                "applying": 0,
+                "needs_attention": 0,
+                "submitted_today": 0,
+            },
+            "worker": {
+                "state": "degraded",
+                "label": "Live state temporarily unavailable",
+                "recorded_at": None,
+            },
+        }
+        st.warning(
+            "Live automation state is temporarily busy. Showing the last successful read; no queue state was changed."
+        )
+    else:
+        st.session_state["_auto_prepare_last_good"] = snapshot
+    worker = snapshot["worker"]
+    counts = snapshot["counts"]
+    readiness = readiness_snapshot()
+
+    st.markdown(
+        f'<div class="product-callout"><div><strong>Auto Prepare: {esc(mode)}</strong>'
+        f'<span>{esc(worker.get("label"), "Worker status unavailable")} · '
+        f'last heartbeat {esc(worker.get("recorded_at"), "not available")}</span></div>'
+        f'<span class="status-chip">{esc(worker.get("state"), "unavailable").title()}</span></div>',
+        unsafe_allow_html=True,
+    )
+    if worker.get("state") != "healthy":
+        st.warning(
+            "Automation settings may be configured, but worker health is not currently proven. Existing application state remains available below."
+        )
+    elif not readiness.get("ready"):
+        st.warning("The worker is healthy, but automatic admission is blocked by incomplete scoring prerequisites.")
+
+    metrics = st.columns(6, gap="small")
+    metrics[0].metric("Worker", str(worker.get("label") or "Unavailable"))
+    metrics[1].metric("Preparing", counts["preparing"])
+    metrics[2].metric("Needs review", counts["needs_review"])
+    metrics[3].metric("Applying", counts["applying"])
+    metrics[4].metric("Needs attention", counts["needs_attention"])
+    metrics[5].metric("Submitted today", counts["submitted_today"])
+
+    groups = (
+        ("Needs review", lambda item: item.state_group == "needs_you"),
+        ("Preparing now", lambda item: item.state_group == "preparing"),
+        ("Applying now", lambda item: item.state_group == "applying"),
+        ("Needs attention", lambda item: item.state_group == "needs_attention"),
+        ("Recently submitted", lambda item: item.state_group == "submitted"),
+    )
+    rendered = 0
+    for heading, predicate in groups:
+        rows = [item for item in snapshot["applications"] if predicate(item)]
+        if not rows:
+            continue
+        rendered += len(rows)
+        st.markdown(f"### {heading}")
+        for item in rows[:12]:
+            with st.container(border=True):
+                left, status, action = st.columns((2.4, 1.1, 1), gap="small")
+                left.markdown(f"**{esc(item.company)} · {esc(item.title)}**")
+                left.caption(f"{item.location} · {item.safe_progress_stage}")
+                status.markdown(f"**{item.human_state}**")
+                status.caption(f"Updated {item.last_update or 'time unavailable'}")
+                action.link_button(
+                    item.next_action,
+                    f"?view=prepare-application&job={item.job_id}",
+                    type="primary" if item.state_group in {"needs_you", "needs_attention"} else "secondary",
+                    use_container_width=True,
+                )
+    if not rendered:
+        st.info("No durable application activity is recorded yet.")
+
+    st.markdown("### Rules & limits")
+    st.caption("Volume, lanes, and scoring readiness affect future admission; they do not prove worker health.")
+    if st.toggle("Show rules & limits", key="auto_prepare_show_rules"):
+        _render_auto_prepare_rules()
 
 
 def _pipeline_list(records: list[dict[str, Any]]) -> None:
