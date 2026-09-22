@@ -248,16 +248,51 @@ def test_v5_generation_atomically_binds_plan_and_claim_trace(
     assert (version_count, truth_count, job_count, stage_b_count, trace_count) == (1, 1, 1, 1, 1)
 
 
-def test_v5_rejects_unsupported_jd_only_language_before_persistence(
+def test_v5_removes_unsupported_jd_only_language_before_persistence(
     hunter_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _confirmed_profile(hunter_db, monkeypatch)
     _fake_writer(monkeypatch, inject_workday=True)
     job_id = _job()
 
-    with pytest.raises(ValueError, match="unsupported JD-only language"):
+    result = resume_v5.generate_resume(job_id=job_id)
+
+    assert "Workday" not in str(result["document"])
+    guard = result["diagnostics"]["stage_b"]["claim_guard"]
+    assert guard["status"] == "PASS"
+    assert guard["repair_applied"] is True
+    assert guard["removed_claim_ids"]
+
+    connection = database.get_connection()
+    try:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM native_resume_versions WHERE job_id=?",
+            (job_id,),
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    assert count == 1
+
+
+def test_v5_fails_closed_with_customer_safe_message_when_repair_cannot_validate(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _confirmed_profile(hunter_db, monkeypatch)
+    _fake_writer(monkeypatch, inject_workday=True)
+    job_id = _job()
+
+    monkeypatch.setattr(
+        resume_v5,
+        "_remove_unsupported_claims",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("CLAIM-SECRET→JDREQ-SECRET")),
+    )
+    with pytest.raises(ValueError) as caught:
         resume_v5.generate_resume(job_id=job_id)
 
+    message = str(caught.value)
+    assert message == resume_v5._SAFE_TRUTH_FAILURE
+    assert "CLAIM-" not in message
+    assert "JDREQ-" not in message
     connection = database.get_connection()
     try:
         count = connection.execute(

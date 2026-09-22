@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+from urllib.parse import urlparse
 
 from app.database import ROOT_DIR, get_connection
 from app.job_detail import build_manual_job_text, enrich_job_details
@@ -341,6 +343,99 @@ def missing_required_fields(parsed: dict[str, Any]) -> list[str]:
     return missing
 
 
+def analyze_job_url(
+    url: str,
+    *,
+    greenhouse_fetcher: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Fetch one supported ATS posting without accepting arbitrary network hosts."""
+    cleaned = str(url or "").strip()
+    parsed_url = urlparse(cleaned)
+    host = (parsed_url.hostname or "").casefold()
+    path = [part for part in parsed_url.path.split("/") if part]
+    if host not in {"job-boards.greenhouse.io", "boards.greenhouse.io"}:
+        return {
+            "supported": False,
+            "message": "Paste the job description below; automatic retrieval is not available for this provider.",
+        }
+    if len(path) < 3 or path[-2] != "jobs" or not path[-1].isdigit():
+        raise ValueError("This Greenhouse URL does not contain a valid board and job identity.")
+
+    board_token = path[-3]
+    ats_job_id = path[-1]
+    company_name = re.sub(r"[-_]+", " ", board_token).strip().title()
+    if greenhouse_fetcher is None:
+        from app.sources.greenhouse import fetch_greenhouse_jobs
+
+        greenhouse_fetcher = fetch_greenhouse_jobs
+    payload = greenhouse_fetcher(
+        company_name=company_name,
+        board_token=board_token,
+        timeout_seconds=12,
+    )
+    job = next(
+        (
+            dict(item)
+            for item in payload.get("jobs") or []
+            if str(item.get("ats_job_id") or "") == ats_job_id
+        ),
+        None,
+    )
+    if job is None:
+        raise LookupError("The selected Greenhouse job was not found on its current board.")
+    job["job_url"] = cleaned
+    job["apply_url"] = cleaned
+    job = enrich_job_details(job)
+    job["manual_job_text"] = build_manual_job_text(job)
+    shaped = {"job": job}
+    return {
+        "supported": True,
+        "job": job,
+        "missing": missing_required_fields(shaped),
+        "source": "Greenhouse",
+    }
+
+
+def persist_analyzed_job(
+    job: dict[str, Any], *, actor: str = "product_manual_input"
+) -> dict[str, Any]:
+    """Persist one reviewed normalized job through the canonical duplicate guard."""
+    normalized = enrich_job_details(dict(job))
+    normalized["manual_job_text"] = normalized.get("manual_job_text") or build_manual_job_text(
+        normalized
+    )
+    missing = missing_required_fields({"job": normalized})
+    if missing:
+        return {"success": False, "missing_fields": missing, "job": normalized}
+
+    delays = (0.05, 0.1, 0.2)
+    for attempt in range(len(delays) + 1):
+        connection = get_connection()
+        try:
+            connection.execute("PRAGMA busy_timeout=250")
+            connection.execute("BEGIN IMMEDIATE")
+            result = save_job(connection, normalized, actor=actor)
+            connection.commit()
+            return {
+                "success": True,
+                "job_id": int(result["job_id"]),
+                "inserted": bool(result.get("inserted")),
+                "duplicate_reason": result.get("duplicate_reason"),
+                "job": normalized,
+            }
+        except Exception as error:
+            connection.rollback()
+            busy = isinstance(error, sqlite3.OperationalError) and "lock" in str(error).casefold()
+            if busy and attempt < len(delays):
+                time.sleep(delays[attempt])
+                continue
+            raise
+        finally:
+            connection.close()
+
+    raise RuntimeError("Job persistence exhausted its bounded retry budget.")
+
+
 def persist_manual_job(raw_text: str, *, actor: str = "product_manual_input") -> dict[str, Any]:
     """Persist a confirmed manual posting through the canonical job store.
 
@@ -351,23 +446,8 @@ def persist_manual_job(raw_text: str, *, actor: str = "product_manual_input") ->
     missing = missing_required_fields(parsed)
     if missing:
         return {"success": False, "missing_fields": missing, "parsed": parsed}
-    connection = get_connection()
-    try:
-        connection.execute("BEGIN IMMEDIATE")
-        result = save_job(connection, parsed["job"], actor=actor)
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
-    return {
-        "success": True,
-        "job_id": int(result["job_id"]),
-        "inserted": bool(result.get("inserted")),
-        "duplicate_reason": result.get("duplicate_reason"),
-        "parsed": parsed,
-    }
+    result = persist_analyzed_job(parsed["job"], actor=actor)
+    return {**result, "parsed": parsed}
 
 
 def _spawn_worker(run_id: int) -> dict[str, Any]:

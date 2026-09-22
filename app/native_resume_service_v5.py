@@ -55,6 +55,21 @@ _PRIORITY_WEIGHTS = {
 _SUPPORTED_MATCH_STATUSES = frozenset({"DIRECT", "STRONG_TRANSFERABLE", "PARTIAL"})
 
 
+class UnsupportedJDClaimError(ValueError):
+    """Internal truth-guard signal; customer UI must not render raw IDs."""
+
+    def __init__(self, violations: list[dict[str, Any]]) -> None:
+        self.violations = [dict(item) for item in violations]
+        details = ", ".join(
+            f"{item['claim_id']}→{item['requirement_id']}"
+            for item in self.violations[:8]
+        )
+        super().__init__(
+            "Generated resume contains unsupported JD-only language for do-not-claim requirements: "
+            + details
+        )
+
+
 def ensure_schema(connection=None) -> None:
     v4.ensure_schema(connection)
     planner.ensure_schema(connection)
@@ -133,20 +148,135 @@ def _stage_b_claim_guard(
                     }
                 )
     if violations:
-        details = ", ".join(
-            f"{item['claim_id']}→{item['requirement_id']}"
-            for item in violations[:8]
-        )
-        raise ValueError(
-            "Generated resume contains unsupported JD-only language for do-not-claim requirements: "
-            + details
-        )
+        raise UnsupportedJDClaimError(violations)
     return {
         "status": "PASS",
         "forbidden_requirements_checked": len(forbidden_refs),
         "claims_checked": len(claims),
         "violations": [],
     }
+
+
+def _remove_unsupported_claims(
+    *,
+    document: Any,
+    bundle: Mapping[str, Any],
+    violations: list[dict[str, Any]],
+) -> Any:
+    """Deterministically remove unsafe claims using only cited Candidate Truth.
+
+    A model is not asked to improvise around a failed guard. Whole unsafe skill,
+    education, certification, or bullet claims are removed. An unsafe summary is
+    replaced with bounded text taken directly from its cited evidence.
+    """
+    payload = document.model_dump()
+    forbidden_claims = {
+        str(item.get("claim_id") or "") for item in violations
+    }
+    evidence = v4.v1._evidence_map(dict(bundle))
+
+    if "CLAIM-SUMMARY-001" in forbidden_claims:
+        summary = dict(payload.get("summary") or {})
+        support = v4.v1._support_text(summary.get("evidence_ids") or [], evidence)
+        words = [part for part in support.split() if part][:58]
+        if not words:
+            raise ValueError("No Candidate Truth evidence remains for a safe summary.")
+        summary["text"] = " ".join(words)
+        payload["summary"] = summary
+
+    payload["education"] = [
+        item
+        for index, item in enumerate(payload.get("education") or [], 1)
+        if f"CLAIM-EDU-{index:03d}" not in forbidden_claims
+    ]
+    payload["skills"] = [
+        item
+        for index, item in enumerate(payload.get("skills") or [], 1)
+        if f"CLAIM-SKILLS-{index:03d}" not in forbidden_claims
+    ]
+    payload["certifications"] = [
+        item
+        for index, item in enumerate(payload.get("certifications") or [], 1)
+        if f"CLAIM-CERT-{index:03d}" not in forbidden_claims
+    ]
+
+    cleaned_experience = []
+    for item_index, item in enumerate(payload.get("experience") or [], 1):
+        candidate = dict(item)
+        candidate["bullets"] = [
+            bullet
+            for bullet_index, bullet in enumerate(candidate.get("bullets") or [], 1)
+            if f"CLAIM-EXP-{item_index:03d}-BULLET-{bullet_index:03d}"
+            not in forbidden_claims
+        ]
+        if candidate["bullets"]:
+            cleaned_experience.append(candidate)
+    payload["experience"] = cleaned_experience
+
+    cleaned_projects = []
+    for item_index, item in enumerate(payload.get("projects") or [], 1):
+        candidate = dict(item)
+        candidate["bullets"] = [
+            bullet
+            for bullet_index, bullet in enumerate(candidate.get("bullets") or [], 1)
+            if f"CLAIM-PROJECT-{item_index:03d}-BULLET-{bullet_index:03d}"
+            not in forbidden_claims
+        ]
+        if candidate["bullets"]:
+            cleaned_projects.append(candidate)
+    payload["projects"] = cleaned_projects
+    return v4.v1.ResumeDocument.model_validate(payload)
+
+
+_SAFE_TRUTH_FAILURE = (
+    "Resume needs attention. MUNSHI removed unsupported job-description claims "
+    "but could not complete a valid version."
+)
+
+
+def _truth_check_with_safe_repair(
+    *,
+    document: Any,
+    context: Mapping[str, Any],
+    bundle: Mapping[str, Any],
+    plan: Mapping[str, Any],
+) -> tuple[Any, dict[str, Any], dict[str, Any]]:
+    """Truth-check once, remove unsafe claims once, then fail closed."""
+    diagnostics = v4.v1.analyze_document(document, context, bundle)
+    try:
+        guard = _stage_b_claim_guard(document=document, bundle=bundle, plan=plan)
+        return document, diagnostics, guard
+    except UnsupportedJDClaimError as error:
+        violations = list(error.violations)
+
+    try:
+        repaired = _remove_unsupported_claims(
+            document=document,
+            bundle=bundle,
+            violations=violations,
+        )
+        repaired_diagnostics = v4.v1.analyze_document(repaired, context, bundle)
+        repaired_guard = _stage_b_claim_guard(
+            document=repaired,
+            bundle=bundle,
+            plan=plan,
+        )
+    except Exception as error:
+        raise ValueError(_SAFE_TRUTH_FAILURE) from error
+
+    repaired_guard = dict(repaired_guard)
+    repaired_guard.update(
+        {
+            "repair_applied": True,
+            "removed_claim_ids": sorted(
+                {str(item.get("claim_id") or "") for item in violations}
+            ),
+            "blocked_requirement_ids": sorted(
+                {str(item.get("requirement_id") or "") for item in violations}
+            ),
+        }
+    )
+    return repaired, repaired_diagnostics, repaired_guard
 
 
 def _coverage_target(mode: str) -> float:
@@ -465,8 +595,12 @@ def generate_resume(
     proposed = v4.v1._apply_locks(
         v4.v1.ResumeDocument.model_validate(candidate_payload), parent_document, locks
     )
-    diagnostics = v4.v1.analyze_document(proposed, context, bundle)
-    stage_b_guard = _stage_b_claim_guard(document=proposed, bundle=bundle, plan=plan)
+    proposed, diagnostics, stage_b_guard = _truth_check_with_safe_repair(
+        document=proposed,
+        context=context,
+        bundle=bundle,
+        plan=plan,
+    )
     repair_payload: dict[str, Any] | None = transport_repair_payload
 
     if diagnostics["content_budget_issues"]:
@@ -494,8 +628,12 @@ def generate_resume(
         proposed = v4.v1._apply_locks(
             v4.v1.ResumeDocument.model_validate(candidate_payload), parent_document, locks
         )
-        diagnostics = v4.v1.analyze_document(proposed, context, bundle)
-        stage_b_guard = _stage_b_claim_guard(document=proposed, bundle=bundle, plan=plan)
+        proposed, diagnostics, stage_b_guard = _truth_check_with_safe_repair(
+            document=proposed,
+            context=context,
+            bundle=bundle,
+            plan=plan,
+        )
         if diagnostics["content_budget_issues"]:
             raise ValueError(
                 "Generated resume still exceeds the ATS content budget after one repair pass."

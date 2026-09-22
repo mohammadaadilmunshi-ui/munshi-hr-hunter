@@ -15,7 +15,7 @@ def test_prepare_from_job_card_opens_application_workspace() -> None:
     drawer = _source("app/product_v22.py")
 
     assert 'st.query_params["view"] = "prepare-application"' in pages
-    assert 'st.query_params["job"] = str(int(job_id))' in pages
+    assert 'st.query_params["job"] = str(resolved_job_id)' in pages
     assert 'st.session_state["application_workspace_notice"]' in pages
     assert 'notice = st.session_state.pop("application_workspace_notice", None)' in workspace
     assert 'on_click=_PAGES._prepare_job' in drawer
@@ -42,7 +42,7 @@ def test_resume_studio_hides_internal_repair_ancestors_from_normal_history() -> 
     assert "_ONE_PAGE_REPAIR_PREFIX" in resume
     assert "def _user_facing_versions" in resume
     assert "repair_parent_ids" in resume
-    assert "internal one-page repair pass(es) are hidden" in resume
+    assert "intermediate one-page repair pass(es) are hidden" in resume
     assert 'st.markdown("### Current resume")' in resume
     assert "Revision history · {len(prior_versions)} prior" in resume
 

@@ -222,6 +222,48 @@ def test_native_retry_reuses_validated_version_without_second_model_call(
     assert result["reused_generated_version"] is True
     assert _task(operation["operation_id"], orchestrator.TASK_RESUME)["status"] == "SUCCEEDED"
 
+
+def test_native_first_attempt_reuses_exact_validated_version_without_model_call(
+    worker_db, monkeypatch
+):
+    operation = _start(key="workers-native-first-attempt-reuse")
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "list_versions",
+        lambda **kwargs: [{"version_id": "resume-existing"}],
+    )
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "get_version",
+        lambda version_id: {
+            "version_id": version_id,
+            "version_number": 7,
+            "stage_b_bound": True,
+            "candidate_truth_binding": {"profile_digest": PROFILE_DIGEST},
+            "job_snapshot_binding": {"job_snapshot_sha256": JOB_DIGEST},
+        },
+    )
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "generate_resume",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("exact validated resume must be reused")
+        ),
+    )
+    monkeypatch.setattr(
+        workers.native_resume_artifact_v5,
+        "materialize",
+        lambda version_id: _bundle(),
+    )
+
+    result = workers.run_native_resume_once(
+        operation_id=operation["operation_id"],
+        worker_id="native-worker-first",
+    )
+
+    assert result["task_status"] == "SUCCEEDED"
+    assert result["reused_generated_version"] is True
+
 def test_native_worker_never_claims_n8n_resume(worker_db):
     operation = _start(engine="N8N", key="workers-n8n")
     result = workers.run_native_resume_once(

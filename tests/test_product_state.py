@@ -53,6 +53,8 @@ def test_job_search_scope_is_truthful_and_parameterized(hunter_db) -> None:
     assert count == 0 and rows == []
     rows, count = fetch_jobs(query="Scope", search_scope="title_company", page_size=10)
     assert count == 1 and rows[0]["company_name"] == "Scope Co"
+    rows, count = fetch_jobs(query="New York", search_scope="all_fields", page_size=10)
+    assert count == 1 and rows[0]["location_raw"] == "New York, NY"
 
 
 def test_new_lanes_are_disabled_and_unlimited_is_valid(hunter_db) -> None:

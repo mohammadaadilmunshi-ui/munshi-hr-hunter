@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.resume_studio_page_v4 import _filter_resume_jobs
+from app.resume_studio_page_v4 import _filter_resume_jobs, _filter_resume_library
 
 
 def _rows() -> list[dict]:
@@ -66,3 +66,38 @@ def test_resume_job_finder_has_compact_search_ui_not_giant_job_selectbox() -> No
     assert "job ID" in source
     assert 'st.session_state["native_resume_job_id"] = int(job_id)' in selector
     assert 'st.selectbox(\n        "Job",' not in source
+
+
+def test_tailored_resume_library_searches_and_filters_versions() -> None:
+    rows = [
+        {
+            "version_id": "oklo-current",
+            "company_name": "Oklo",
+            "title": "People Operations Associate",
+            "application_status": "Preparing",
+            "created_at": "2026-09-22T12:00:00-04:00",
+            "is_current": True,
+            "application_id": "application-oklo",
+        },
+        {
+            "version_id": "acme-old",
+            "company_name": "Acme",
+            "title": "HR Analyst",
+            "application_status": "No application",
+            "created_at": "2026-01-01T12:00:00-05:00",
+            "is_current": False,
+            "application_id": "",
+        },
+    ]
+    assert [
+        row["version_id"]
+        for row in _filter_resume_library(
+            rows, query="Oklo people", status="all", date_range="all"
+        )
+    ] == ["oklo-current"]
+    assert [
+        row["version_id"]
+        for row in _filter_resume_library(
+            rows, query="", status="linked", date_range="all"
+        )
+    ] == ["oklo-current"]

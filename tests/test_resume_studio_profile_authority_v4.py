@@ -33,8 +33,8 @@ def test_model_and_api_details_are_advanced_only() -> None:
 
     assert "Advanced resume settings" in page
     assert "_writer_settings_panel()" in page
-    marker = 'with st.expander("Advanced diagnostics"'
-    assert marker in page
-    assert page.index("writer_model") > page.index(marker)
+    assert 'with st.expander("JD match details"' in page
+    assert '"Open system diagnostics"' in page
+    assert 'with st.expander("Advanced diagnostics"' not in page
     assert "status.get('model')" not in selector
     assert 'status.get("model")' not in selector

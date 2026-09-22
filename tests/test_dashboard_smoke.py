@@ -202,7 +202,7 @@ def test_complete_loop_product_ui_uses_durable_prepare_not_legacy_n8n():
         "from app.stored_job_n8n_worker import start_stored_job_run"
         not in pages
     )
-    assert "Prepare persisted job" in pages
+    assert "Prepare application" in pages
 
     assert "Application progress" in workspace
     assert "READY_FOR_REVIEW" in workspace

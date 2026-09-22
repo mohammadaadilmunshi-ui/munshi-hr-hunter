@@ -351,12 +351,14 @@ def render_resume_engine_selector() -> None:
 
 
 def install_resume_engine_selector(pages_module: Any) -> None:
-    """Wrap the current Prepare action without deleting the proven n8n path."""
+    """Keep the optional selector available without replacing Prepare authority.
+
+    Job cards must always create the canonical durable application operation
+    first. Engine-specific tools remain available to internal workers and Resume
+    Studio, but they may not intercept the product's Prepare action.
+    """
     global _PAGES
     _PAGES = pages_module
     if getattr(pages_module, "_resume_engine_selector_installed", False):
         return
-
-    pages_module._resume_engine_original_n8n_prepare = pages_module._prepare_job
-    pages_module._prepare_job = _request_engine_choice
     pages_module._resume_engine_selector_installed = True

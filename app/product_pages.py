@@ -6,6 +6,7 @@ shown as Prepared, never as an externally submitted application.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -25,6 +26,10 @@ from app.linkedin_url_contract import (
     direct_application_url,
     is_linkedin_source,
 )
+
+
+_LOGGER = logging.getLogger(__name__)
+_PREPARE_ERROR_KEY_PREFIX = "product_prepare_error_"
 
 
 def _sync_subroute(parameter: str, state_key: str, values: dict[str, str]) -> None:
@@ -98,15 +103,29 @@ def _application_flow(job_id: int) -> dict[str, Any]:
         }
 
 
-def _prepare_job(job_id: int) -> None:
+def _clear_prepare_error(job_id: int) -> None:
+    st.session_state.pop(f"{_PREPARE_ERROR_KEY_PREFIX}{int(job_id)}", None)
+
+
+def _prepare_job(job_id: int) -> dict[str, Any] | None:
     """Start/replay preparation and open the canonical Applications workspace."""
+    resolved_job_id = int(job_id)
+    _clear_prepare_error(resolved_job_id)
+    _LOGGER.info("PREPARE_CLICK job_id=%s", resolved_job_id)
+    st.toast("Starting preparation…", icon="⏳")
     try:
         from app import product_application_flow_v2 as complete_loop
 
         result = complete_loop.start_prepare_for_job(
-            int(job_id),
+            resolved_job_id,
             engine="NATIVE",
         )
+        operation_id = str(result.get("operation_id") or "").strip()
+        application_id = str(result.get("application_id") or "").strip()
+        if not operation_id or not application_id:
+            raise RuntimeError(
+                "Preparation did not return its durable operation identity."
+            )
         message = (
             "Application preparation is already in progress."
             if result.get("replayed")
@@ -118,23 +137,72 @@ def _prepare_job(job_id: int) -> None:
             "message": message,
         }
     except Exception as error:
-        message = "Preparation could not start safely: " + str(error)
-        _set_action_feedback("error", message)
-        st.session_state["application_workspace_notice"] = {
-            "tone": "error",
+        detail = " ".join(str(error).split())[:1500]
+        busy = any(
+            marker in detail.casefold()
+            for marker in ("database is locked", "database is busy", "table is locked")
+        )
+        message = (
+            "MUNSHI is briefly busy saving other work. Retry preparation; no application was duplicated."
+            if busy
+            else "Preparation could not start safely. No application was submitted."
+        )
+        st.session_state[f"{_PREPARE_ERROR_KEY_PREFIX}{resolved_job_id}"] = {
             "message": message,
+            "error_type": type(error).__name__,
+            "detail": detail,
         }
+        _set_action_feedback("error", message)
+        _LOGGER.exception(
+            "PREPARE_OPERATION_CREATE_FAILED job_id=%s operation_id=none application_id=none error_type=%s",
+            resolved_job_id,
+            type(error).__name__,
+        )
         # Keep the user on the current jobs surface when no durable operation
         # was started. Navigating to Applications here previously made a failed
         # Prepare click look like a successful transition to "Not started".
-        return
+        return None
 
     st.session_state["product_view"] = "prepare-application"
     try:
         st.query_params["view"] = "prepare-application"
-        st.query_params["job"] = str(int(job_id))
+        st.query_params["job"] = str(resolved_job_id)
     except Exception:
         pass
+    _LOGGER.info(
+        "PREPARE_ROUTE_APPLICATION job_id=%s operation_id=%s application_id=%s",
+        resolved_job_id,
+        result.get("operation_id"),
+        result.get("application_id"),
+    )
+    return result
+
+
+def _render_prepare_error(job_id: int, *, key_prefix: str) -> None:
+    error = st.session_state.get(f"{_PREPARE_ERROR_KEY_PREFIX}{int(job_id)}")
+    if not isinstance(error, dict):
+        return
+    st.error(str(error.get("message") or "Preparation could not start safely."))
+    retry, back = st.columns(2, gap="small")
+    retry.button(
+        "Retry",
+        key=f"{key_prefix}_prepare_retry_{int(job_id)}",
+        type="primary",
+        use_container_width=True,
+        on_click=_prepare_job,
+        args=(int(job_id),),
+    )
+    back.button(
+        "Back to job",
+        key=f"{key_prefix}_prepare_back_{int(job_id)}",
+        use_container_width=True,
+        on_click=_clear_prepare_error,
+        args=(int(job_id),),
+    )
+    with st.expander("Technical details", expanded=False):
+        st.code(
+            f"{error.get('error_type') or 'Error'}: {error.get('detail') or 'No additional detail'}"
+        )
 
 
 
@@ -207,7 +275,7 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
         with actions[2]:
             if flow.get("cta") == "prepare":
                 st.button(
-                    str(flow.get("cta_label") or "Prepare"),
+                    "Prepare application",
                     key=f"{key_prefix}_prepare_{job_id}",
                     type="primary",
                     use_container_width=True,
@@ -228,6 +296,7 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
                     ),
                     use_container_width=True,
                 )
+        _render_prepare_error(job_id, key_prefix=key_prefix)
 
 def _clear_job_query() -> None:
     try:
@@ -292,7 +361,7 @@ def _job_detail_dialog(job_id: int) -> None:
     with action_columns[2]:
         if flow.get("cta") == "prepare":
             st.button(
-                str(flow.get("cta_label") or "Prepare"),
+                "Prepare application",
                 key=f"dialog_prepare_{job_id}",
                 type="primary",
                 use_container_width=True,
@@ -311,6 +380,7 @@ def _job_detail_dialog(job_id: int) -> None:
             st.link_button("Open application", safe_link(row["apply_url"]), use_container_width=True)
         else:
             st.button("No application URL", disabled=True, use_container_width=True)
+    _render_prepare_error(job_id, key_prefix="dialog")
     with st.expander("Advanced decision evidence", expanded=False):
         st.caption("Stored evidence only; missing values are not inferred.")
         st.dataframe([{"Source": row.get("source"), "Remote type": row.get("remote_type"), "Date posted": row.get("date_posted"), "Target track": row.get("target_track"), "Hard rejection reason": row.get("hard_rejection_reason")}], hide_index=True, use_container_width=True)
@@ -374,11 +444,24 @@ def _search_filters(namespace: str) -> dict[str, Any]:
     for key, default in defaults.items():
         st.session_state.setdefault(f"{namespace}_filter_{key}", stored.get(key, default))
     with st.container(key=f"product_{namespace}_search"):
-        search_left, search_right = st.columns((1, 3.8), gap="small")
+        search_left, search_right = st.columns((3.8, 1.2), gap="small")
         with search_left:
-            scope = st.selectbox("Search scope", ["all_fields", "title_description", "title_company"], format_func=lambda value: {"all_fields": "Title + company + JD", "title_description": "Title + description", "title_company": "Title + company"}[value], key=f"{namespace}_filter_search_scope", label_visibility="collapsed")
+            query = st.text_input(
+                "Search jobs, companies, or locations",
+                placeholder="Try Techtronic, HR Coordinator, People Operations, or Philadelphia",
+                key=f"{namespace}_filter_query",
+            )
         with search_right:
-            query = st.text_input("Search jobs", placeholder="Search title, company, or job-description keyword…", key=f"{namespace}_filter_query", label_visibility="collapsed")
+            scope = st.selectbox(
+                "Search in",
+                ["all_fields", "title_description", "title_company"],
+                format_func=lambda value: {
+                    "all_fields": "All job fields",
+                    "title_description": "Title + description",
+                    "title_company": "Title + company",
+                }[value],
+                key=f"{namespace}_filter_search_scope",
+            )
         exclude = st.text_input("Exclude terms", placeholder="Exclude terms — separate multiple terms with commas…", key=f"{namespace}_filter_exclude", label_visibility="collapsed")
         controls = st.columns((1.15, 1, 1, 1.1), gap="small")
         with controls[0]:
@@ -488,35 +571,115 @@ def browse_jobs() -> None:
 
 
 def _manual_add() -> None:
-    from app.manual_input import missing_required_fields, parse_manual_job_text, persist_manual_job
-    with st.expander("Add your own job", expanded=True):
-        st.caption("Paste an application URL and full labeled job text. MUNSHI will show parsed data and missing fields; it will not fabricate them.")
+    from app.manual_input import (
+        analyze_job_url,
+        missing_required_fields,
+        parse_manual_job_text,
+        persist_analyzed_job,
+    )
+
+    with st.expander("Add job", expanded=True):
+        st.caption(
+            "Paste an application URL. MUNSHI can fetch supported ATS postings; "
+            "if retrieval is unavailable, add the labeled job description below."
+        )
         with st.form("product_manual_analyze"):
-            url = st.text_input("Job URL", placeholder="https://careers.example.com/jobs/…")
-            description = st.text_area("Full labeled job text", height=220, placeholder="Job Title: ...\nCompany Name: ...\nLocation: ...\nJob Description: ...")
-            analyze = st.form_submit_button("Analyze job", type="primary")
+            url = st.text_input(
+                "Job URL",
+                placeholder="https://job-boards.greenhouse.io/company/jobs/123",
+            )
+            description = st.text_area(
+                "Job details if automatic retrieval is unavailable",
+                height=180,
+                placeholder="Job Title: ...\nCompany Name: ...\nLocation: ...\nJob Description: ...",
+            )
+            analyze = st.form_submit_button("Fetch & analyze", type="primary")
         if analyze:
-            raw = f"Application: {url}\n{description}".strip()
-            parsed = parse_manual_job_text(raw)
-            missing = missing_required_fields(parsed)
-            st.session_state["manual_analysis"] = {"missing": missing, "fields": parsed.get("fields", {}), "raw": raw}
-        result = st.session_state.get("manual_analysis")
-        if result:
-            if result["missing"]:
-                st.warning("Missing required fields: " + ", ".join(result["missing"]) + ". Add labeled title, company, location, URL, and full job description to continue through the existing canonical manual path.")
+            st.session_state.pop("manual_analysis_error", None)
+            st.session_state.pop("product_manual_saved_job_id", None)
+            try:
+                fetched = analyze_job_url(url)
+                if fetched.get("supported"):
+                    analysis = fetched
+                else:
+                    raw = f"Application: {url}\n{description}".strip()
+                    parsed = parse_manual_job_text(raw)
+                    analysis = {
+                        "supported": False,
+                        "job": parsed["job"],
+                        "missing": missing_required_fields(parsed),
+                        "source": "Manual",
+                    }
+            except Exception as error:  # noqa: BLE001 - actionable form error
+                st.session_state["manual_analysis_error"] = str(error)
             else:
-                st.success("The pasted job contains required fields. Review the parsed values, then explicitly confirm persistence through the canonical manual-job store.")
-            st.json(result["fields"])
-            if not result["missing"]:
-                confirmed = st.checkbox("I confirm these parsed fields are accurate and should be persisted.", key="product_manual_confirm")
-                if st.button("Persist job", key="product_manual_persist", type="primary", disabled=not confirmed):
-                    saved = persist_manual_job(result["raw"])
+                st.session_state["manual_analysis"] = analysis
+
+        analysis_error = st.session_state.get("manual_analysis_error")
+        if analysis_error:
+            st.error(f"MUNSHI could not fetch this posting: {analysis_error}")
+            st.caption("Paste the labeled job details above and analyze again.")
+
+        result = st.session_state.get("manual_analysis")
+        if isinstance(result, dict) and isinstance(result.get("job"), dict):
+            job = dict(result["job"])
+            missing = list(result.get("missing") or [])
+            st.markdown("### Review job")
+            identity = st.columns(3, gap="small")
+            identity[0].metric("Company", str(job.get("company_name") or "Not available"))
+            identity[1].metric("Job title", str(job.get("title") or "Not available"))
+            identity[2].metric("Location", str(job.get("location_raw") or "Not available"))
+            details = st.columns(3, gap="small")
+            details[0].metric("Work arrangement", str(job.get("remote_type") or "Not specified"))
+            details[1].metric("Employment", str(job.get("employment_type") or "Not specified"))
+            details[2].metric("ATS / source", str(job.get("source") or result.get("source") or "Manual"))
+            st.markdown("**Job description**")
+            st.write(job.get("description_raw") or "Description not available.")
+            blocker = str(job.get("hard_rejection_reason") or "").strip()
+            if blocker:
+                st.warning(f"Eligibility needs attention: {blocker}")
+            else:
+                st.success("Eligibility: no explicit blocker is recorded.")
+            if missing:
+                st.warning(
+                    "Add the missing information before saving: " + ", ".join(missing)
+                )
+            if st.button(
+                "Add job",
+                key="product_manual_persist",
+                type="primary",
+                use_container_width=True,
+                disabled=bool(missing),
+            ):
+                try:
+                    saved = persist_analyzed_job(job)
+                except Exception as error:  # noqa: BLE001
+                    st.error(f"Job could not be added safely: {error}")
+                else:
                     st.session_state["product_manual_saved_job_id"] = saved["job_id"]
-                    st.success(f"Job {saved['job_id']} was persisted through the canonical manual path.")
+                    st.session_state["product_manual_saved_inserted"] = bool(saved.get("inserted"))
             job_id = st.session_state.get("product_manual_saved_job_id")
-            if job_id and st.button("Prepare persisted job", key="product_manual_prepare"):
-                _prepare_job(int(job_id))
-                st.rerun()
+            if job_id:
+                if st.session_state.get("product_manual_saved_inserted"):
+                    st.success("Job added")
+                else:
+                    st.info("Already in MUNSHI")
+                next_actions = st.columns(2, gap="small")
+                next_actions[0].button(
+                    "Prepare application",
+                    key="product_manual_prepare",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=_prepare_job,
+                    args=(int(job_id),),
+                )
+                next_actions[1].link_button(
+                    "View in Browse Jobs",
+                    f"?view=jobs&job={int(job_id)}",
+                    use_container_width=True,
+                )
+            with st.expander("Advanced diagnostics", expanded=False):
+                st.json(job)
 
 
 def _render_auto_prepare_guide(
@@ -760,6 +923,19 @@ def _render_auto_prepare_rules() -> None:
         st.markdown("<div class='muted-panel'><b>What Unlimited means</b><br>No MUNSHI business quota. Provider throttles, targeting, authorization, dedupe, ATS, and risk controls still apply.<br><br><b>Pause after current batch</b><br>The active batch can finish; a later batch must not start.</div>", unsafe_allow_html=True)
 
 
+def _set_auto_prepare_mode(mode: str) -> None:
+    policy = volume_policy()
+    save_volume_policy(
+        mode,
+        policy.get("daily_limit"),
+        bool(policy.get("review_first")),
+    )
+    _set_action_feedback(
+        "success",
+        "Auto Prepare is running." if mode == "unlimited" else "Auto Prepare is paused.",
+    )
+
+
 def auto_prepare() -> None:
     from app.application_view_model_v1 import control_center_snapshot
     from app.auto_prepare_readiness_ui_v1 import readiness_snapshot
@@ -810,6 +986,30 @@ def auto_prepare() -> None:
         f'<span class="status-chip">{esc(worker.get("state"), "unavailable").title()}</span></div>',
         unsafe_allow_html=True,
     )
+    control, explanation = st.columns((1.15, 2.85), gap="small")
+    with control:
+        if policy["mode"] in {"paused", "pause_after_batch"}:
+            st.button(
+                "Resume Auto Prepare" if policy["mode"] == "pause_after_batch" else "Start Auto Prepare",
+                key="auto_prepare_start",
+                type="primary",
+                use_container_width=True,
+                on_click=_set_auto_prepare_mode,
+                args=("unlimited",),
+            )
+        else:
+            st.button(
+                "Pause Auto Prepare",
+                key="auto_prepare_pause",
+                use_container_width=True,
+                on_click=_set_auto_prepare_mode,
+                args=("paused",),
+            )
+    with explanation:
+        st.caption(
+            "Auto Prepare admits eligible jobs into the same durable Application Center. "
+            "It prepares in the background and stops at the one resume-review boundary."
+        )
     if worker.get("state") != "healthy":
         st.warning(
             "Automation settings may be configured, but worker health is not currently proven. Existing application state remains available below."
@@ -817,13 +1017,26 @@ def auto_prepare() -> None:
     elif not readiness.get("ready"):
         st.warning("The worker is healthy, but automatic admission is blocked by incomplete scoring prerequisites.")
 
-    metrics = st.columns(6, gap="small")
+    try:
+        from app.autonomous_prepare_admission_v1 import eligible_unprepared_count
+
+        eligible_count = eligible_unprepared_count()
+    except Exception:  # noqa: BLE001 - operational count must not break the page
+        eligible_count = None
+    queued_count = sum(
+        str(getattr(item, "canonical_state", "") or "") == "QUEUED"
+        for item in snapshot["applications"]
+    )
+
+    metrics = st.columns(8, gap="small")
     metrics[0].metric("Worker", str(worker.get("label") or "Unavailable"))
-    metrics[1].metric("Preparing", counts["preparing"])
-    metrics[2].metric("Needs review", counts["needs_review"])
-    metrics[3].metric("Applying", counts["applying"])
-    metrics[4].metric("Needs attention", counts["needs_attention"])
-    metrics[5].metric("Submitted today", counts["submitted_today"])
+    metrics[1].metric("Eligible", eligible_count if eligible_count is not None else "—")
+    metrics[2].metric("Queued", queued_count)
+    metrics[3].metric("Preparing", counts["preparing"])
+    metrics[4].metric("Needs review", counts["needs_review"])
+    metrics[5].metric("Applying", counts["applying"])
+    metrics[6].metric("Needs attention", counts["needs_attention"])
+    metrics[7].metric("Submitted today", counts["submitted_today"])
 
     groups = (
         ("Needs review", lambda item: item.state_group == "needs_you"),

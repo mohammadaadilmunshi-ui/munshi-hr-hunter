@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import inspect
+from types import SimpleNamespace
 
 from app import product_application_flow_v2 as flow
+from app import prepare_orchestrator_v1 as prepare
 
 
 def test_state_labels_cover_complete_loop_states():
@@ -171,3 +173,54 @@ def test_summary_projection_skips_full_review_reconstruction(monkeypatch):
 
     assert result["state"] == "READY_FOR_APPROVAL"
     assert result["package_review"] == {"summary_projection": True}
+
+
+def test_committed_prepare_identity_survives_secondary_projection_failure(monkeypatch):
+    class Connection:
+        def close(self):
+            return None
+
+    monkeypatch.setattr(flow, "_latest_prepare", lambda _job_id: None)
+    monkeypatch.setattr(
+        flow,
+        "safe_owned_job_snapshot",
+        lambda _job_id: {"job_snapshot_sha256": "a" * 64},
+    )
+    monkeypatch.setattr(
+        flow,
+        "current_application_truth_projection",
+        lambda **_kwargs: {
+            "candidate_profile_binding": {"profile_digest": "b" * 64}
+        },
+    )
+    monkeypatch.setattr(flow, "get_connection", lambda: Connection())
+    monkeypatch.setattr(
+        flow,
+        "current_owner",
+        lambda _connection: SimpleNamespace(tenant_id="default", user_id="owner"),
+    )
+    monkeypatch.setattr(flow, "_latest_lifecycle", lambda _job_id: None)
+    monkeypatch.setattr(
+        prepare,
+        "start_prepare",
+        lambda **kwargs: {
+            "operation_id": "operation-4134",
+            "application_id": kwargs["application_id"],
+            "status": "RUNNING",
+            "replayed": False,
+        },
+    )
+    monkeypatch.setattr(
+        flow,
+        "flow_for_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("secondary projection temporarily unavailable")
+        ),
+    )
+
+    result = flow.start_prepare_for_job(4134)
+
+    assert result["operation_id"] == "operation-4134"
+    assert result["application_id"].startswith("application-")
+    assert result["display_status"] == "Preparing"
+    assert result["replayed"] is False

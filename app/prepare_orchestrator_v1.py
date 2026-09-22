@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
+import time
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -40,6 +42,10 @@ from app.tenant_foundation import (
 
 
 ORCHESTRATOR_VERSION = "munshi-prepare-orchestrator-v1"
+
+_LOGGER = logging.getLogger(__name__)
+_CREATE_BUSY_TIMEOUT_MS = 250
+_CREATE_BUSY_BACKOFF_SECONDS = (0.05, 0.1, 0.2, 0.35)
 
 ENGINES = frozenset({"NATIVE", "N8N"})
 OPERATION_STATUSES = frozenset(
@@ -454,107 +460,174 @@ def start_prepare(
     graph = _graph(resolved_engine, bindings)
     graph_digest = sha256_json(graph)
 
-    connection = get_connection()
+    # Production startup owns schema installation. The click path probes first so
+    # an already-ready dashboard never executes DDL while competing with workers.
+    schema_connection = get_connection()
     try:
-        ensure_schema(connection)
-        owner = current_owner(connection)
-        if connection.in_transaction:
-            connection.commit()
-        connection.execute("BEGIN IMMEDIATE")
-
-        operation_id = _operation_id(
-            owner,
-            application_id=application_id,
-            job_id=resolved_job_id,
-            engine=resolved_engine,
-            idempotency_key=idempotency_key,
-        )
-
-        prior = connection.execute(
-            """SELECT * FROM prepare_operations_v1
-               WHERE tenant_id=? AND user_id=? AND idempotency_key=?""",
-            (owner.tenant_id, owner.user_id, idempotency_key),
-        ).fetchone()
-        if prior is not None:
-            exact = (
-                str(prior["operation_id"]) == operation_id
-                and str(prior["application_id"]) == application_id
-                and int(prior["job_id"]) == resolved_job_id
-                and str(prior["engine"]) == resolved_engine
-                and str(prior["job_snapshot_sha256"])
-                == bindings["job_snapshot_sha256"]
-                and str(prior["application_truth_projection_digest"])
-                == bindings["application_truth_projection_digest"]
-                and str(prior["candidate_profile_digest"])
-                == bindings["candidate_profile_digest"]
-                and str(prior["graph_digest"]) == graph_digest
+        tables = {
+            str(row[0])
+            for row in schema_connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+                "('prepare_operations_v1','prepare_tasks_v1','tenant_memberships')"
             )
-            if not exact:
-                raise ValueError(
-                    "Prepare idempotency key belongs to different or stale inputs."
+        }
+        if tables != {
+            "prepare_operations_v1",
+            "prepare_tasks_v1",
+            "tenant_memberships",
+        }:
+            ensure_schema(schema_connection)
+            schema_connection.commit()
+            owner = current_owner(schema_connection)
+            if schema_connection.in_transaction:
+                schema_connection.commit()
+        else:
+            owner = current_owner_readonly(schema_connection)
+    finally:
+        schema_connection.close()
+
+    operation_id = _operation_id(
+        owner,
+        application_id=application_id,
+        job_id=resolved_job_id,
+        engine=resolved_engine,
+        idempotency_key=idempotency_key,
+    )
+    _LOGGER.info(
+        "PREPARE_OPERATION_CREATE_BEGIN job_id=%s operation_id=%s application_id=%s",
+        resolved_job_id,
+        operation_id,
+        application_id,
+    )
+
+    attempts = len(_CREATE_BUSY_BACKOFF_SECONDS) + 1
+    for attempt in range(attempts):
+        connection = get_connection()
+        try:
+            # This transaction only inserts the immutable operation/task graph.
+            # It must fail fast enough for bounded retries instead of inheriting
+            # the general 30-second worker timeout.
+            connection.execute(f"PRAGMA busy_timeout={_CREATE_BUSY_TIMEOUT_MS}")
+            connection.execute("BEGIN IMMEDIATE")
+
+            prior = connection.execute(
+                """SELECT * FROM prepare_operations_v1
+                   WHERE tenant_id=? AND user_id=? AND idempotency_key=?""",
+                (owner.tenant_id, owner.user_id, idempotency_key),
+            ).fetchone()
+            if prior is not None:
+                exact = (
+                    str(prior["operation_id"]) == operation_id
+                    and str(prior["application_id"]) == application_id
+                    and int(prior["job_id"]) == resolved_job_id
+                    and str(prior["engine"]) == resolved_engine
+                    and str(prior["job_snapshot_sha256"])
+                    == bindings["job_snapshot_sha256"]
+                    and str(prior["application_truth_projection_digest"])
+                    == bindings["application_truth_projection_digest"]
+                    and str(prior["candidate_profile_digest"])
+                    == bindings["candidate_profile_digest"]
+                    and str(prior["graph_digest"]) == graph_digest
                 )
-            connection.commit()
-            result = prepare_operation(str(prior["operation_id"]))
-            result["replayed"] = True
-            return result
+                if not exact:
+                    raise ValueError(
+                        "Prepare idempotency key belongs to different or stale inputs."
+                    )
+                connection.commit()
+                result = prepare_operation(str(prior["operation_id"]))
+                result["replayed"] = True
+                _LOGGER.info(
+                    "PREPARE_OPERATION_REPLAYED job_id=%s operation_id=%s application_id=%s",
+                    resolved_job_id,
+                    operation_id,
+                    application_id,
+                )
+                return result
 
-        connection.execute(
-            """INSERT INTO prepare_operations_v1(
-                   operation_id,tenant_id,user_id,application_id,job_id,engine,
-                   status,idempotency_key,orchestrator_version,
-                   job_snapshot_sha256,application_truth_projection_digest,
-                   candidate_profile_digest,graph_digest
-               ) VALUES(?,?,?,?,?,?,'QUEUED',?,?,?,?,?,?)""",
-            (
-                operation_id,
-                owner.tenant_id,
-                owner.user_id,
-                application_id,
-                resolved_job_id,
-                resolved_engine,
-                idempotency_key,
-                ORCHESTRATOR_VERSION,
-                bindings["job_snapshot_sha256"],
-                bindings["application_truth_projection_digest"],
-                bindings["candidate_profile_digest"],
-                graph_digest,
-            ),
-        )
-
-        for task in graph:
             connection.execute(
-                """INSERT INTO prepare_tasks_v1(
-                       task_id,tenant_id,user_id,operation_id,task_kind,status,
-                       required,depends_on_json,input_json,input_digest,max_attempts
-                   ) VALUES(?,?,?,?,?,'PENDING',?,?,?,?,?)""",
+                """INSERT INTO prepare_operations_v1(
+                       operation_id,tenant_id,user_id,application_id,job_id,engine,
+                       status,idempotency_key,orchestrator_version,
+                       job_snapshot_sha256,application_truth_projection_digest,
+                       candidate_profile_digest,graph_digest
+                   ) VALUES(?,?,?,?,?,?,'QUEUED',?,?,?,?,?,?)""",
                 (
-                    _task_id(operation_id, str(task["task_kind"])),
+                    operation_id,
                     owner.tenant_id,
                     owner.user_id,
-                    operation_id,
-                    task["task_kind"],
-                    1 if task["required"] else 0,
-                    _canonical(task["depends_on"]),
-                    _canonical(task["input"]),
-                    task["input_digest"],
-                    int(task["max_attempts"]),
+                    application_id,
+                    resolved_job_id,
+                    resolved_engine,
+                    idempotency_key,
+                    ORCHESTRATOR_VERSION,
+                    bindings["job_snapshot_sha256"],
+                    bindings["application_truth_projection_digest"],
+                    bindings["candidate_profile_digest"],
+                    graph_digest,
                 ),
             )
 
-        _refresh_operation(
-            connection,
-            owner=owner,
-            operation_id=operation_id,
-        )
-        connection.commit()
-        result = prepare_operation(operation_id)
-        result["replayed"] = False
-        return result
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
+            for task in graph:
+                connection.execute(
+                    """INSERT INTO prepare_tasks_v1(
+                           task_id,tenant_id,user_id,operation_id,task_kind,status,
+                           required,depends_on_json,input_json,input_digest,max_attempts
+                       ) VALUES(?,?,?,?,?,'PENDING',?,?,?,?,?)""",
+                    (
+                        _task_id(operation_id, str(task["task_kind"])),
+                        owner.tenant_id,
+                        owner.user_id,
+                        operation_id,
+                        task["task_kind"],
+                        1 if task["required"] else 0,
+                        _canonical(task["depends_on"]),
+                        _canonical(task["input"]),
+                        task["input_digest"],
+                        int(task["max_attempts"]),
+                    ),
+                )
+
+            _refresh_operation(
+                connection,
+                owner=owner,
+                operation_id=operation_id,
+            )
+            connection.commit()
+            result = prepare_operation(operation_id)
+            result["replayed"] = False
+            _LOGGER.info(
+                "PREPARE_OPERATION_CREATED job_id=%s operation_id=%s application_id=%s",
+                resolved_job_id,
+                operation_id,
+                application_id,
+            )
+            return result
+        except Exception as error:
+            connection.rollback()
+            if sqlite_writer_busy(error) and attempt < attempts - 1:
+                delay = _CREATE_BUSY_BACKOFF_SECONDS[attempt]
+                _LOGGER.warning(
+                    "PREPARE_OPERATION_CREATE_BUSY job_id=%s operation_id=%s application_id=%s attempt=%s retry_in_seconds=%.2f",
+                    resolved_job_id,
+                    operation_id,
+                    application_id,
+                    attempt + 1,
+                    delay,
+                )
+                time.sleep(delay)
+                continue
+            _LOGGER.exception(
+                "PREPARE_OPERATION_CREATE_FAILED job_id=%s operation_id=%s application_id=%s error_type=%s",
+                resolved_job_id,
+                operation_id,
+                application_id,
+                type(error).__name__,
+            )
+            raise
+        finally:
+            connection.close()
+
+    raise RuntimeError("Prepare operation creation exhausted its bounded retry budget.")
 
 
 def _dependency_states(

@@ -183,8 +183,13 @@ def fetch_jobs(
             conditions.append("(j.title LIKE ? COLLATE NOCASE OR j.description_raw LIKE ? COLLATE NOCASE)")
             params.extend((needle, needle))
         else:
-            conditions.append("(j.title LIKE ? COLLATE NOCASE OR j.company_name LIKE ? COLLATE NOCASE OR j.description_raw LIKE ? COLLATE NOCASE)")
-            params.extend((needle, needle, needle))
+            conditions.append(
+                "(j.title LIKE ? COLLATE NOCASE "
+                "OR j.company_name LIKE ? COLLATE NOCASE "
+                "OR j.description_raw LIKE ? COLLATE NOCASE "
+                "OR j.location_raw LIKE ? COLLATE NOCASE)"
+            )
+            params.extend((needle, needle, needle, needle))
 
     excluded_terms = tuple(dict.fromkeys(
         term.strip()

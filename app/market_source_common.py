@@ -37,6 +37,7 @@ except Exception:
 
 MARKER = "AADIL_HR_HUNTER_BROAD_MARKET_COVERAGE_V2_6"
 MAX_DESCRIPTION = 40000
+STORE_COMMIT_BATCH_SIZE = 10
 
 
 @dataclass(frozen=True)
@@ -1252,7 +1253,7 @@ def cli_main(source_key: str) -> None:
         if not args.no_store_probe:
             connection = get_connection()
             try:
-                for job in eligible:
+                for index, job in enumerate(eligible, 1):
                     stored_results.append(
                         save_job(
                             connection,
@@ -1260,6 +1261,12 @@ def cli_main(source_key: str) -> None:
                             actor=f"{source_key}_worker",
                         )
                     )
+                    # Keep discovery's writer occupancy bounded. Fetching,
+                    # filtering, and provider work already happen before this
+                    # connection opens; small commits let interactive Prepare
+                    # operation creation acquire the single SQLite writer.
+                    if index % STORE_COMMIT_BATCH_SIZE == 0:
+                        connection.commit()
                 connection.commit()
             except Exception:
                 connection.rollback()

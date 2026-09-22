@@ -43,6 +43,17 @@ def _set_view(view: str) -> None:
         return
 
 
+def _open_job_view(job_id: int, *, application: bool = False) -> None:
+    view = "prepare-application" if application else "jobs"
+    st.session_state["product_view"] = view
+    st.session_state["last_viewed_job_id"] = int(job_id)
+    try:
+        st.query_params["view"] = view
+        st.query_params["job"] = str(int(job_id))
+    except Exception:  # noqa: BLE001
+        return
+
+
 def _profile_snapshot() -> tuple[dict[str, Any] | None, str | None]:
     try:
         return truth_binding.current_candidate_profile_snapshot(), None
@@ -520,6 +531,36 @@ def _style_selector(key: str, default: str = "medium") -> str:
     return mode
 
 
+def _reusable_exact_resume(job_id: int) -> dict[str, Any] | None:
+    """Return a valid exact-job/current-truth version without a model call."""
+    from app.phase67_common import safe_owned_job_snapshot
+
+    try:
+        truth = truth_binding.current_candidate_profile_snapshot()
+        job = safe_owned_job_snapshot(int(job_id))
+    except Exception:  # noqa: BLE001
+        return None
+    for summary in resume_v5.list_versions(job_id=int(job_id), limit=12):
+        if summary.get("stage_b_bound") is not True or _is_internal_one_page_repair(summary):
+            continue
+        try:
+            record = resume_v5.get_version(str(summary["version_id"]))
+        except Exception:  # noqa: BLE001
+            continue
+        candidate_binding = dict(record.get("candidate_truth_binding") or {})
+        job_binding = dict(record.get("job_snapshot_binding") or {})
+        if str(candidate_binding.get("profile_digest") or "") != str(
+            truth.get("profile_digest") or ""
+        ):
+            continue
+        if str(job_binding.get("job_snapshot_sha256") or "") != str(
+            job.get("job_snapshot_sha256") or ""
+        ):
+            continue
+        return record
+    return None
+
+
 def _generate_checked(
     *,
     job_id: int,
@@ -549,6 +590,50 @@ def _generation_panel(
     writer_ready: bool,
 ) -> None:
     st.markdown("### Create tailored resume")
+    existing = _reusable_exact_resume(job_id)
+    regenerate_key = f"resume_regenerate_requested_{job_id}"
+    regenerate_requested = bool(st.session_state.get(regenerate_key))
+    if existing and not regenerate_requested:
+        current = existing
+        st.success(
+            f"A validated tailored resume already exists for this exact job "
+            f"(v{int(current.get('version_number') or 0)}). MUNSHI will reuse it."
+        )
+        open_resume, regenerate = st.columns((2.2, 1), gap="small")
+        if open_resume.button(
+            "Open existing resume",
+            key=f"resume_studio_reuse_{job_id}",
+            type="primary",
+            use_container_width=True,
+        ):
+            version_id = str(current["version_id"])
+            try:
+                bundle = artifacts.materialize(version_id)
+            except Exception as error:  # noqa: BLE001
+                st.error(f"The saved resume needs attention: {error}")
+            else:
+                st.session_state["native_resume_selected_version"] = version_id
+                st.session_state[
+                    f"native_resume_page_verification_{version_id}"
+                ] = bundle["page_verification"]
+                st.rerun()
+        if regenerate.button(
+            "Regenerate",
+            key=f"resume_studio_request_regenerate_{job_id}",
+            use_container_width=True,
+        ):
+            st.session_state[regenerate_key] = True
+            st.rerun()
+        st.caption(
+            "Regenerate is optional and creates a new immutable version; the current version is preserved."
+        )
+        return
+
+    if regenerate_requested:
+        st.info("Regenerating will create a new version and preserve the current resume.")
+    st.caption(
+        "Analyzing job → Tailoring resume → Truth-checking → Fitting to one page → Ready"
+    )
     mode = _style_selector(f"resume_studio_v4_mode_{job_id}")
 
     with st.expander("Optional tailoring note", expanded=False):
@@ -572,7 +657,7 @@ def _generation_panel(
         )
 
     if st.button(
-        "Generate resume",
+        "Regenerate resume" if regenerate_requested else "Generate resume",
         type="primary",
         use_container_width=True,
         key=f"resume_studio_v4_generate_{job_id}",
@@ -592,6 +677,7 @@ def _generation_panel(
             st.error(str(error))
         else:
             version_id = str(record["version_id"])
+            st.session_state.pop(regenerate_key, None)
             st.session_state["native_resume_selected_version"] = version_id
             st.session_state[
                 f"native_resume_page_verification_{version_id}"
@@ -682,6 +768,187 @@ def _user_facing_versions(
         if str(row.get("version_id") or "") not in repair_parent_ids
     ]
     return visible, max(0, len(versions) - len(visible))
+
+
+def _resume_library_rows(limit: int = 200) -> list[dict[str, Any]]:
+    """Build a customer-safe cross-job resume library with isolated status reads."""
+    from app import product_application_flow_v2 as application_flow
+
+    versions = [
+        row
+        for row in resume_v5.list_versions(limit=limit)
+        if row.get("stage_b_bound") is True and not _is_internal_one_page_repair(row)
+    ]
+    jobs = {int(row["id"]): row for row in _resume_job_catalog(limit=500)}
+    current_by_job: dict[int, str] = {}
+    application_state: dict[int, tuple[str, str]] = {}
+    result: list[dict[str, Any]] = []
+    for version in versions:
+        job_id = int(version["job_id"])
+        job = jobs.get(job_id)
+        if job is None:
+            try:
+                job = dict(resume_v5.job_context(job_id))
+            except Exception:  # noqa: BLE001 - one stale job must not break library
+                job = {"id": job_id, "company_name": "Company", "title": "Stored job"}
+        current_by_job.setdefault(job_id, str(version["version_id"]))
+        if job_id not in application_state:
+            try:
+                flow = application_flow.flow_for_job(job_id, summary=True)
+                application_state[job_id] = (
+                    str(flow.get("display_status") or "No application"),
+                    str(flow.get("application_id") or ""),
+                )
+            except Exception:  # noqa: BLE001 - preserve access to healthy resumes
+                application_state[job_id] = ("Application status unavailable", "")
+        status, application_id = application_state[job_id]
+        diagnostics = dict(version.get("diagnostics") or {})
+        result.append(
+            {
+                **version,
+                "company_name": job.get("company_name") or "Company",
+                "title": job.get("title") or "Stored job",
+                "hunter_score": job.get("hunter_score"),
+                "coverage": diagnostics.get("jd_term_coverage_percent"),
+                "truth_status": str(
+                    (diagnostics.get("truth_audit") or {}).get("status") or "PASS"
+                ),
+                "engine": "MUNSHI Native",
+                "is_current": str(version["version_id"]) == current_by_job[job_id],
+                "application_status": status,
+                "application_id": application_id,
+            }
+        )
+    return result
+
+
+def _filter_resume_library(
+    rows: list[dict[str, Any]],
+    *,
+    query: str,
+    status: str,
+    date_range: str,
+) -> list[dict[str, Any]]:
+    terms = [term for term in str(query or "").casefold().split() if term]
+    now = datetime.now().astimezone()
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        blob = " ".join(
+            str(row.get(key) or "")
+            for key in ("company_name", "title", "application_status", "created_at")
+        ).casefold()
+        if terms and not all(term in blob for term in terms):
+            continue
+        if status == "current" and not row.get("is_current"):
+            continue
+        if status == "superseded" and row.get("is_current"):
+            continue
+        if status == "linked" and not row.get("application_id"):
+            continue
+        if date_range != "all":
+            try:
+                created = datetime.fromisoformat(
+                    str(row.get("created_at") or "").replace("Z", "+00:00")
+                )
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=now.tzinfo)
+                days = 30 if date_range == "30d" else 90
+                if (now - created.astimezone(now.tzinfo)).days > days:
+                    continue
+            except (TypeError, ValueError):
+                continue
+        result.append(row)
+    return result
+
+
+def _resume_library() -> None:
+    rows = _resume_library_rows()
+    st.markdown("### Tailored resumes")
+    if not rows:
+        st.info("Your generated, truth-checked resumes will appear here.")
+        return
+
+    controls = st.columns((3, 1.2, 1.2), gap="small")
+    query = controls[0].text_input(
+        "Search tailored resumes",
+        placeholder="Search company or job title, such as Oklo…",
+        key="resume_library_search",
+    )
+    status = controls[1].selectbox(
+        "Status",
+        ("all", "current", "superseded", "linked"),
+        format_func=lambda value: {
+            "all": "All versions",
+            "current": "Current",
+            "superseded": "Superseded",
+            "linked": "Linked application",
+        }[value],
+        key="resume_library_status",
+    )
+    date_range = controls[2].selectbox(
+        "Generated",
+        ("all", "30d", "90d"),
+        format_func=lambda value: {"all": "Any date", "30d": "Last 30 days", "90d": "Last 90 days"}[value],
+        key="resume_library_date",
+    )
+    filtered = _filter_resume_library(
+        rows,
+        query=query,
+        status=status,
+        date_range=date_range,
+    )
+    st.caption(f"{len(filtered)} saved tailored resume{'s' if len(filtered) != 1 else ''}.")
+    for row in filtered[:12]:
+        version_id = str(row["version_id"])
+        job_id = int(row["job_id"])
+        with st.container(border=True, key=f"resume_library_{version_id}"):
+            identity, metadata = st.columns((2.1, 1.4), gap="small")
+            identity.markdown(f"**{row['company_name']} · {row['title']}**")
+            identity.caption(
+                f"v{int(row.get('version_number') or 0)} · "
+                f"{row.get('created_at') or 'Date unavailable'} · "
+                f"{'Current' if row.get('is_current') else 'Superseded'}"
+            )
+            coverage = row.get("coverage")
+            metadata.caption(
+                f"JD coverage: {float(coverage):.0f}%" if coverage is not None else "JD coverage: —"
+            )
+            metadata.caption(
+                f"Truth: {row['truth_status']} · Engine: {row['engine']} · "
+                f"Application: {row['application_status']}"
+            )
+            actions = st.columns(4, gap="small")
+            if actions[0].button("Open", key=f"resume_library_open_{version_id}", use_container_width=True):
+                st.session_state["native_resume_job_id"] = job_id
+                st.session_state["native_resume_selected_version"] = version_id
+                st.rerun()
+            actions[1].button(
+                "Open application",
+                key=f"resume_library_application_{version_id}",
+                disabled=not bool(row.get("application_id")),
+                use_container_width=True,
+                on_click=_open_job_view,
+                args=(job_id,),
+                kwargs={"application": True},
+            )
+            actions[2].button(
+                "View job",
+                key=f"resume_library_job_{version_id}",
+                use_container_width=True,
+                on_click=_open_job_view,
+                args=(job_id,),
+            )
+            if actions[3].button(
+                "Regenerate",
+                key=f"resume_library_regenerate_{version_id}",
+                use_container_width=True,
+            ):
+                st.session_state["native_resume_job_id"] = job_id
+                st.session_state["native_resume_selected_version"] = version_id
+                st.session_state[f"resume_regenerate_requested_{job_id}"] = True
+                st.rerun()
+    if len(filtered) > 12:
+        st.caption("Refine the search or filters to view more saved resumes.")
 
 
 def _version_label(row: dict[str, Any]) -> str:
@@ -884,6 +1151,9 @@ def render() -> None:
         expanded=bool(st.session_state.get("native_resume_advanced_open")),
     ):
         advanced_writer_ui._writer_settings_panel()
+
+    st.divider()
+    _resume_library()
 
     st.divider()
     job_id, context = _job_workspace()

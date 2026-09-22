@@ -182,24 +182,16 @@ def _reusable_generated_resume(
     operation: Mapping[str, Any],
     task: Mapping[str, Any],
 ) -> dict[str, Any] | None:
-    """Reuse a validated post-generation resume after a retryable artifact failure.
+    """Reuse the newest validated version bound to these exact durable inputs.
 
-    The first attempt may already have paid for and persisted a fully validated,
-    truth/job/Stage-B-bound resume before local PDF/DOCX materialization fails.
-    A retry must not spend another model call for identical durable inputs.
+    This lookup runs before every model call, including a new operation or a
+    worker restart. Materialization below revalidates the immutable artifacts.
     """
-    if int(task.get("attempts") or 0) < 2:
-        return None
-    if str(task.get("error_code") or "") != "NATIVE_RESUME_PREPARE_FAILED":
-        return None
-
-    operation_created = str(operation.get("created_at") or "")
+    del task
     for summary in native_resume_service_v5.list_versions(
         job_id=int(operation["job_id"]),
         limit=12,
     ):
-        if operation_created and str(summary.get("created_at") or "") < operation_created:
-            continue
         try:
             record = native_resume_service_v5.get_version(str(summary["version_id"]))
         except (LookupError, RuntimeError, ValueError):

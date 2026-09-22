@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -113,6 +115,46 @@ def test_start_builds_bound_durable_graph_and_replays_exactly(prepare_db):
     replay = _start()
     assert replay["operation_id"] == first["operation_id"]
     assert replay["replayed"] is True
+
+
+def test_start_retries_short_writer_collision_and_creates_exactly_once(prepare_db):
+    locked = threading.Event()
+
+    def brief_writer() -> None:
+        connection = database.get_connection()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "UPDATE jobs SET status=status WHERE id=91"
+            )
+            locked.set()
+            time.sleep(0.34)
+            connection.commit()
+        finally:
+            connection.close()
+
+    thread = threading.Thread(target=brief_writer)
+    thread.start()
+    assert locked.wait(timeout=2)
+    try:
+        first = _start(key="prepare-brief-writer")
+    finally:
+        thread.join(timeout=2)
+
+    replay = _start(key="prepare-brief-writer")
+    assert replay["operation_id"] == first["operation_id"]
+    assert replay["application_id"] == "application-91"
+    assert replay["replayed"] is True
+
+    connection = database.get_connection()
+    try:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM prepare_operations_v1 WHERE idempotency_key=?",
+            ("prepare-brief-writer",),
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    assert count == 1
 
 
 def test_same_idempotency_key_with_other_engine_fails_closed(prepare_db):

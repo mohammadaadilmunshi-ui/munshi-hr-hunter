@@ -28,7 +28,7 @@ def test_native_v5_is_available_by_default_but_can_be_explicitly_disabled(
     assert native_resume_v5_enabled() is True
 
 
-def test_product_shell_preserves_n8n_and_installs_selector() -> None:
+def test_product_shell_preserves_selector_without_intercepting_prepare() -> None:
     root = Path(__file__).resolve().parents[1]
     shell = (root / "app" / "product_shell.py").read_text(encoding="utf-8")
     selector = (root / "app" / "resume_engine_selector.py").read_text(
@@ -42,8 +42,8 @@ def test_product_shell_preserves_n8n_and_installs_selector() -> None:
     )
     assert "render_resume_engine_selector()" in shell
 
-    assert "_resume_engine_original_n8n_prepare = pages_module._prepare_job" in selector
-    assert "pages_module._prepare_job = _request_engine_choice" in selector
+    assert "_resume_engine_original_n8n_prepare = pages_module._prepare_job" not in selector
+    assert "pages_module._prepare_job = _request_engine_choice" not in selector
     assert "_run_n8n(job_id)" in selector
 
     assert "from app.native_resume_service_v5 import writer_status" in selector

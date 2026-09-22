@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -20,6 +21,9 @@ from app.database import get_connection
 from app.phase67_common import safe_owned_job_snapshot
 from app.phase8_application_truth import current_application_truth_projection
 from app.tenant_foundation import current_owner, current_owner_readonly
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 PREPARE_ACTIVE = frozenset(
@@ -641,8 +645,39 @@ def start_prepare_for_job(
 
     existing = _latest_prepare(int(job_id))
     if existing and str(existing.get('status') or '') in PREPARE_ACTIVE:
-        result = flow_for_job(int(job_id))
+        try:
+            result = flow_for_job(int(job_id), summary=True)
+        except Exception as projection_error:  # noqa: BLE001 - durable replay wins
+            _LOGGER.warning(
+                'PREPARE_ROUTE_PROJECTION_DEFERRED job_id=%s operation_id=%s application_id=%s error_type=%s',
+                int(job_id),
+                existing.get('operation_id'),
+                existing.get('application_id'),
+                type(projection_error).__name__,
+            )
+            result = {
+                'job_id': int(job_id),
+                'application_id': existing.get('application_id'),
+                'operation_id': existing.get('operation_id'),
+                'state': existing.get('status') or 'RUNNING',
+                'display_status': 'Preparing',
+                'cta': 'open_application',
+                'cta_label': 'Open application',
+                'submission_authority': False,
+            }
+        result['application_id'] = (
+            result.get('application_id') or existing.get('application_id')
+        )
+        result['operation_id'] = (
+            result.get('operation_id') or existing.get('operation_id')
+        )
         result['replayed'] = True
+        _LOGGER.info(
+            'PREPARE_OPERATION_REPLAYED job_id=%s operation_id=%s application_id=%s',
+            int(job_id),
+            existing.get('operation_id'),
+            existing.get('application_id'),
+        )
         return result
 
     snapshot = safe_owned_job_snapshot(int(job_id))
@@ -688,14 +723,41 @@ def start_prepare_for_job(
         + hashlib.sha256(raw_key.encode('utf-8')).hexdigest()[:40]
     )
 
-    prepare.start_prepare(
+    operation = prepare.start_prepare(
         application_id=application_id,
         job_id=int(job_id),
         engine=resolved_engine,
         idempotency_key=idempotency_key,
     )
-    result = flow_for_job(int(job_id))
-    result['replayed'] = False
+    # The durable operation is the success boundary. A secondary UI projection
+    # must never turn a committed Prepare click into an apparent failure.
+    try:
+        result = flow_for_job(int(job_id), summary=True)
+    except Exception as projection_error:  # noqa: BLE001 - committed identity wins
+        _LOGGER.warning(
+            'PREPARE_ROUTE_PROJECTION_DEFERRED job_id=%s operation_id=%s application_id=%s error_type=%s',
+            int(job_id),
+            operation.get('operation_id'),
+            application_id,
+            type(projection_error).__name__,
+        )
+        result = {
+            'job_id': int(job_id),
+            'application_id': application_id,
+            'operation_id': operation.get('operation_id'),
+            'state': operation.get('status') or 'QUEUED',
+            'display_status': 'Preparing',
+            'cta': 'open_application',
+            'cta_label': 'Open application',
+            'submission_authority': False,
+        }
+    result['application_id'] = (
+        result.get('application_id') or operation.get('application_id') or application_id
+    )
+    result['operation_id'] = (
+        result.get('operation_id') or operation.get('operation_id')
+    )
+    result['replayed'] = bool(operation.get('replayed'))
     return result
 
 

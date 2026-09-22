@@ -19,6 +19,7 @@ from app import autonomous_prepare_v1 as runtime
 from app import prepare_orchestrator_v1 as orchestrator
 from app import product_application_flow_v2 as product_flow
 from app.database import get_connection
+from app.database import get_setting
 from app.n8n_dispatch import (
     enabled_lanes,
     ensure_schema as ensure_n8n_schema,
@@ -30,6 +31,17 @@ from app.n8n_dispatch import (
 )
 
 SUBMISSION_AUTHORITY = False
+
+
+def eligible_unprepared_count() -> int:
+    """Read the canonical eligible pool without schema work or admission writes."""
+    scoring = dict(get_setting("scoring", {}) or {})
+    threshold = float(scoring["auto_n8n_threshold"])
+    connection = get_connection()
+    try:
+        return len(_eligible_unprepared_pool(connection, threshold=threshold))
+    finally:
+        connection.close()
 
 
 def _eligible_unprepared_pool(

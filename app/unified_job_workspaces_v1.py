@@ -461,11 +461,13 @@ def _requested_job_id() -> int | None:
 
 
 _APPLICATION_FILTERS = {
+    "Current": "current",
     "Needs you": "needs_you",
     "Preparing": "preparing",
     "Applying": "applying",
     "Needs attention": "needs_attention",
     "Submitted": "submitted",
+    "Historical": "historical",
     "All": "all",
 }
 
@@ -493,7 +495,7 @@ def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
     choice = st.selectbox(
         "Filter applications",
         list(_APPLICATION_FILTERS),
-        index=len(_APPLICATION_FILTERS) - 1,
+        index=0,
         key="application_center_filter",
     )
     query = st.text_input(
@@ -506,10 +508,16 @@ def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
     visible = [
         item
         for item in views
-        if (group == "all" or item.state_group == group)
+        if (
+            group == "all"
+            or (group == "current" and not (item.state_group == "needs_attention" and item.stale))
+            or (group == "historical" and item.state_group == "needs_attention" and item.stale)
+            or item.state_group == group
+        )
         and (
             not needle
-            or needle in f"{item.company} {item.title}".casefold()
+            or needle
+            in f"{item.company} {item.title} {item.human_state} {item.next_action}".casefold()
         )
     ]
     st.caption(f"{len(visible)} application{'s' if len(visible) != 1 else ''}")
@@ -535,6 +543,7 @@ def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
             )
             score = "—" if item.match is None else f"{item.match:.0f}% match"
             st.caption(f"{score} · {item.human_state}")
+            st.caption(f"Updated {_updated_label(item.last_update)}")
             st.caption(f"Next: {item.next_action}")
             st.button(
                 "Selected" if selected_id == item.job_id else "Open application",
