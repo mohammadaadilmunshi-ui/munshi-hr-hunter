@@ -124,3 +124,46 @@ def test_application_center_projection_uses_readonly_owner_resolution():
     assert "owner = current_owner(connection)" in inspect.getsource(
         flow.start_prepare_for_job
     )
+
+
+def test_summary_projection_skips_full_review_reconstruction(monkeypatch):
+    monkeypatch.setattr(
+        flow,
+        "_latest_prepare",
+        lambda _job_id: {
+            "status": "READY_FOR_REVIEW",
+            "application_id": "application-1",
+            "tasks": [
+                {
+                    "task_kind": "APPLICATION_PREFLIGHT",
+                    "status": "SUCCEEDED",
+                    "required": True,
+                    "output": {
+                        "preflight_package_id": "preflight-1",
+                        "single_approval_package_ready": True,
+                    },
+                },
+                {
+                    "task_kind": "ATS_FORM_PREPARATION",
+                    "status": "PENDING",
+                    "required": True,
+                    "output": {},
+                },
+            ],
+        },
+    )
+    monkeypatch.setattr(flow, "_latest_lifecycle", lambda _job_id: None)
+    monkeypatch.setattr(
+        flow,
+        "_package_review",
+        lambda _preflight: (_ for _ in ()).throw(
+            AssertionError("summary projection must not rebuild the review")
+        ),
+    )
+    monkeypatch.setattr(flow, "_execution_mandate", lambda _preflight: None)
+    monkeypatch.setattr(flow, "_production_receipt", lambda _application_id: None)
+
+    result = flow.flow_for_job(1, summary=True)
+
+    assert result["state"] == "READY_FOR_APPROVAL"
+    assert result["package_review"] == {"summary_projection": True}

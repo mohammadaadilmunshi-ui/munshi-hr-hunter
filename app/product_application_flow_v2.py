@@ -476,18 +476,27 @@ def _effective_state(
     return '', 'none'
 
 
-def flow_for_job(job_id: int) -> dict[str, Any]:
+def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
     prepare = _latest_prepare(int(job_id))
     lifecycle = _latest_lifecycle(int(job_id))
     state, authority = _effective_state(prepare, lifecycle)
     tasks = list((prepare or {}).get('tasks') or [])
     runtime_questions = _runtime_questions(tasks)
     artifacts = _artifact_summary(tasks)
-    package_review = _package_review(artifacts.get('preflight'))
+    preflight = artifacts.get('preflight') or {}
+    if summary:
+        package_review = (
+            {'summary_projection': True}
+            if str(preflight.get('preflight_package_id') or '')
+            and preflight.get('single_approval_package_ready') is True
+            else None
+        )
+    else:
+        package_review = _package_review(preflight)
     execution_mandate = _execution_mandate(artifacts.get('preflight'))
     # The post-browser review is an INTERNAL integrity snapshot. It is never
     # projected as a second customer-facing review after the execution mandate.
-    internal_review = _customer_review(artifacts.get('plan'))
+    internal_review = None if summary else _customer_review(artifacts.get('plan'))
     application_id = (
         str((lifecycle or {}).get('application_id') or '')
         or str((prepare or {}).get('application_id') or '')
@@ -805,7 +814,7 @@ def pipeline_rows(limit: int | None = 250) -> list[dict[str, Any]]:
     for job in _pipeline_candidate_jobs(None if limit is None else int(limit)):
         job_id = int(job['id'])
         try:
-            state = flow_for_job(job_id)
+            state = flow_for_job(job_id, summary=True)
         except Exception as error:  # noqa: BLE001 - isolate one malformed application
             # One corrupt or partially migrated application must not make the
             # remaining Application Center disappear. Keep the projection
@@ -853,6 +862,7 @@ def pipeline_rows(limit: int | None = 250) -> list[dict[str, Any]]:
                 ),
                 'runtime_question_count': len(state['runtime_questions']),
                 'verified_receipt_id': lifecycle.get('verified_receipt_id'),
+                '_flow_projection': state,
                 'submission_authority': False,
             }
         )

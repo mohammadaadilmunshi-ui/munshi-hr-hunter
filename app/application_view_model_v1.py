@@ -317,13 +317,18 @@ def view_for_job(
     job_id: int,
     *,
     seed: Mapping[str, Any] | None = None,
+    flow_seed: Mapping[str, Any] | None = None,
     heartbeat: Mapping[str, Any] | None = None,
 ) -> ApplicationViewModel:
     job = dict(seed or {}) or _job_row(int(job_id))
     if job.get("projection_error"):
         return degraded_view(job, str(job.get("projection_error")), heartbeat=heartbeat)
 
-    flow = application_flow.flow_for_job(int(job_id))
+    flow = (
+        dict(flow_seed)
+        if flow_seed is not None
+        else application_flow.flow_for_job(int(job_id))
+    )
     state = str(flow.get("state") or "")
     authority = str(flow.get("authority") or "")
     protected = authority == "protected_human_checkpoint"
@@ -427,6 +432,7 @@ def application_views(*, limit: int | None = 250) -> list[ApplicationViewModel]:
                 view_for_job(
                     int(row["job_id"]),
                     seed=row,
+                    flow_seed=row.get("_flow_projection"),
                     heartbeat=heartbeat,
                 )
             )

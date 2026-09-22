@@ -136,3 +136,29 @@ def test_one_malformed_application_does_not_hide_other_views(monkeypatch):
     assert malformed.state_group == "needs_attention"
     assert "Other applications are still available" in malformed.issue_summary
 
+
+def test_application_views_reuses_pipeline_flow_projection(monkeypatch):
+    row = _seed(11, _flow_projection=_flow("RUNNING"))
+    monkeypatch.setattr(
+        view_model.application_flow,
+        "pipeline_rows",
+        lambda limit: [row],
+    )
+    monkeypatch.setattr(
+        view_model.application_flow,
+        "flow_for_job",
+        lambda _job_id: (_ for _ in ()).throw(
+            AssertionError("pipeline flow must not be projected twice")
+        ),
+    )
+    monkeypatch.setattr(
+        view_model,
+        "worker_health_snapshot",
+        lambda **_kwargs: {"state": "healthy", "label": "Worker healthy"},
+    )
+
+    views = view_model.application_views(limit=250)
+
+    assert len(views) == 1
+    assert views[0].job_id == 11
+    assert views[0].state_group == "preparing"
