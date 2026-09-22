@@ -19,7 +19,7 @@ from typing import Any
 from app.database import get_connection
 from app.phase67_common import safe_owned_job_snapshot
 from app.phase8_application_truth import current_application_truth_projection
-from app.tenant_foundation import current_owner
+from app.tenant_foundation import current_owner, current_owner_readonly
 
 
 PREPARE_ACTIVE = frozenset(
@@ -135,7 +135,7 @@ def _latest_prepare(job_id: int) -> dict[str, Any] | None:
     try:
         if not _table_exists(connection, 'prepare_operations_v1'):
             return None
-        owner = current_owner(connection)
+        owner = current_owner_readonly(connection)
         row = connection.execute(
             '''SELECT *
                  FROM prepare_operations_v1
@@ -180,7 +180,7 @@ def _latest_lifecycle(job_id: int) -> dict[str, Any] | None:
     try:
         if not _table_exists(connection, 'application_lifecycle_records'):
             return None
-        owner = current_owner(connection)
+        owner = current_owner_readonly(connection)
         row = connection.execute(
             '''SELECT a.*, j.company_name, j.title AS job_title,
                       j.location_raw, j.apply_url
@@ -446,7 +446,7 @@ def _production_receipt(application_id: str | None) -> dict[str, Any] | None:
     try:
         if not _table_exists(connection, 'production_submission_receipts_v1'):
             return None
-        owner = current_owner(connection)
+        owner = current_owner_readonly(connection)
         row = connection.execute(
             """SELECT receipt_id,provider,provider_application_id,target_url,
                       verification_method,verified_at,receipt_digest
@@ -742,7 +742,7 @@ def _pipeline_candidate_jobs(limit: int | None) -> list[dict[str, Any]]:
     """Fetch the durable application index in one short read connection."""
     connection = get_connection()
     try:
-        owner = current_owner(connection)
+        owner = current_owner_readonly(connection)
         candidate_ids: list[int] = []
 
         limit_clause = ' LIMIT ?' if limit is not None else ''

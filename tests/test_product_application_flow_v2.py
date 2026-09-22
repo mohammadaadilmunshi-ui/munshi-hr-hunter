@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 from app import product_application_flow_v2 as flow
 
 
@@ -105,3 +107,20 @@ def test_artifact_summary_reads_bound_outputs_without_submit_authority():
     assert result["cover_letter"]["cover_letter_id"] == "cover-1"
     assert result["plan"]["browser_preparation_completed"] is True
     assert "submission_authority" not in result["plan"]
+
+
+def test_application_center_projection_uses_readonly_owner_resolution():
+    for projection in (
+        flow._latest_prepare,
+        flow._latest_lifecycle,
+        flow._production_receipt,
+        flow._pipeline_candidate_jobs,
+    ):
+        source = inspect.getsource(projection)
+        assert "current_owner_readonly(connection)" in source
+        assert "owner = current_owner(connection)" not in source
+
+    # Starting a durable operation remains an intentional mutation boundary.
+    assert "owner = current_owner(connection)" in inspect.getsource(
+        flow.start_prepare_for_job
+    )
