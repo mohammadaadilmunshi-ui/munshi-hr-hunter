@@ -616,7 +616,28 @@ def generate(
         config=config,
     )
     model_calls = 1
-    draft, audit = _validate_draft(candidate, context)
+    try:
+        draft, audit = _validate_draft(candidate, context)
+    except ValueError as validation_error:
+        if model_calls >= int(config["max_calls_per_generation"]):
+            raise
+        repair_prompt = _writer_payload(
+            context,
+            repair=(
+                "The previous draft failed the authoritative truth check. "
+                "Remove or rewrite only the unsupported wording using supplied "
+                "Candidate Truth evidence and supported requirements. If a claim "
+                "cannot be supported, remove it. Add no facts. Validation detail: "
+                + str(validation_error)[:500]
+            ),
+        )
+        repair_prompt["previous_draft"] = candidate
+        candidate, response_id, model = _call_writer(
+            prompt_payload=repair_prompt,
+            config=config,
+        )
+        model_calls += 1
+        draft, audit = _validate_draft(candidate, context)
     content = _content_text(draft)
 
     _assert_context_still_current(context)
@@ -629,7 +650,7 @@ def generate(
     except ValueError as error:
         if (
             "exactly one page" not in str(error).casefold()
-            or int(config["max_calls_per_generation"]) < 2
+            or model_calls >= int(config["max_calls_per_generation"])
         ):
             raise
 

@@ -243,6 +243,40 @@ def test_preflight_persistence_is_content_addressed_idempotent_and_non_submittin
         connection.close()
 
 
+def test_preflight_retry_reuses_fresh_committed_package_before_new_evaluation(
+    hunter_db, monkeypatch
+) -> None:
+    capture = _capture()
+    calls = {"count": 0}
+
+    def captured(**_kwargs):
+        calls["count"] += 1
+        return copy.deepcopy(capture)
+
+    monkeypatch.setattr(phase9, "_capture", captured)
+    first = phase9.prepare_preflight_package(
+        job_id=42,
+        application_id="application-1",
+        idempotency_key="package-retry-key",
+        resume_version_id="resume-1",
+        opportunity_evaluation_id="opportunity-1",
+    )
+    assert calls["count"] == 2
+
+    replay = phase9.prepare_preflight_package(
+        job_id=42,
+        application_id="application-1",
+        idempotency_key="package-retry-key",
+        resume_version_id="resume-1",
+        opportunity_evaluation_id="opportunity-new-equivalent",
+    )
+
+    assert replay["package_id"] == first["package_id"]
+    # One freshness capture using the package's original immutable bindings;
+    # no new package candidate is captured.
+    assert calls["count"] == 3
+
+
 def test_observational_truth_timestamp_does_not_trigger_false_drift(hunter_db, monkeypatch) -> None:
     first = _capture()
     second = copy.deepcopy(first)

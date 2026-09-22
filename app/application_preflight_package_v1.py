@@ -329,6 +329,47 @@ def prepare_preflight_package(
             relationship_strategy_id, "Relationship strategy id", 160
         )
 
+    # A worker retry must resume the immutable package it already committed.
+    # Re-evaluating opportunity intelligence first can mint a new evaluation id
+    # for equivalent evidence and then make the stable operation key appear to
+    # conflict with itself.  Reuse only when the stored authority is still fresh
+    # and its durable job/application/resume bindings are exact.
+    replay_connection = get_connection()
+    try:
+        owner = current_owner_readonly(replay_connection)
+        table_ready = replay_connection.execute(
+            """SELECT 1 FROM sqlite_master
+                WHERE type='table' AND name='application_preflight_packages'"""
+        ).fetchone()
+        prior_row = (
+            replay_connection.execute(
+                """SELECT package_id,job_id,application_id,resume_version_id
+                     FROM application_preflight_packages
+                    WHERE tenant_id=? AND user_id=? AND idempotency_key=?""",
+                (owner.tenant_id, owner.user_id, idempotency_key),
+            ).fetchone()
+            if table_ready is not None
+            else None
+        )
+    finally:
+        replay_connection.close()
+    if prior_row is not None:
+        if (
+            int(prior_row["job_id"]) != resolved_job_id
+            or str(prior_row["application_id"]) != application_id
+            or str(prior_row["resume_version_id"]) != resume_version_id
+        ):
+            raise ValueError(
+                "Idempotency key belongs to a different preflight package."
+            )
+        prior_id = str(prior_row["package_id"])
+        freshness = preflight_package_freshness(prior_id)
+        if freshness.get("fresh") is not True:
+            raise RuntimeError(
+                "Existing application preflight package became stale."
+            )
+        return get_preflight_package(prior_id)
+
     first = _capture(
         job_id=resolved_job_id,
         application_id=application_id,

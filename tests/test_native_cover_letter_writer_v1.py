@@ -229,6 +229,50 @@ def test_unsupported_numeric_candidate_claim_fails_closed():
         writer._validate_draft(value, context())
 
 
+def test_generation_repairs_forbidden_jd_language_once(wired, monkeypatch):
+    unsafe = draft(
+        "I have managed recruiting operations and have Five years of compensation experience."
+    )
+    calls = []
+
+    def model(**kwargs):
+        calls.append(kwargs["prompt_payload"])
+        return (unsafe if len(calls) == 1 else draft()), f"response-{len(calls)}", "gpt-test"
+
+    monkeypatch.setattr(writer, "_call_writer", model)
+    result = writer.generate(preflight_package_id="preflight-cl-1")
+
+    assert result["cover_letter_id"] == "cover-letter-cl-1"
+    assert result["model_calls"] == 2
+    assert len(calls) == 2
+    assert "failed the authoritative truth check" in calls[1]["repair_instruction"]
+
+
+def test_generation_persists_nothing_when_truth_repair_still_fails(
+    wired, monkeypatch
+):
+    unsafe = draft(
+        "I have managed recruiting operations and have Five years of compensation experience."
+    )
+    calls = {"model": 0, "artifact": 0}
+
+    def model(**_kwargs):
+        calls["model"] += 1
+        return unsafe, f"response-{calls['model']}", "gpt-test"
+
+    def artifact(**_kwargs):
+        calls["artifact"] += 1
+        raise AssertionError("unsafe cover letter must not be persisted")
+
+    monkeypatch.setattr(writer, "_call_writer", model)
+    monkeypatch.setattr(writer.cover_letter_artifact_v1, "create", artifact)
+
+    with pytest.raises(ValueError, match="forbidden unsupported requirement"):
+        writer.generate(preflight_package_id="preflight-cl-1")
+
+    assert calls == {"model": 2, "artifact": 0}
+
+
 def test_context_drift_after_model_fails_before_artifact(wired, monkeypatch):
     monkeypatch.setattr(
         writer,
