@@ -415,6 +415,8 @@ def _package_review(
 
 def _execution_mandate(
     preflight: Mapping[str, Any] | None,
+    *,
+    summary: bool = False,
 ) -> dict[str, Any] | None:
     package_id = str((preflight or {}).get('preflight_package_id') or '')
     if not package_id:
@@ -422,6 +424,8 @@ def _execution_mandate(
     try:
         from app import application_execution_mandate_v1 as mandate_v1
 
+        if summary:
+            return mandate_v1.current_summary_for_preflight(package_id)
         return mandate_v1.current_for_preflight(package_id)
     except (LookupError, PermissionError, RuntimeError, ValueError):
         return None
@@ -493,7 +497,10 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
         )
     else:
         package_review = _package_review(preflight)
-    execution_mandate = _execution_mandate(artifacts.get('preflight'))
+    execution_mandate = _execution_mandate(
+        artifacts.get('preflight'),
+        summary=summary,
+    )
     # The post-browser review is an INTERNAL integrity snapshot. It is never
     # projected as a second customer-facing review after the execution mandate.
     internal_review = None if summary else _customer_review(artifacts.get('plan'))

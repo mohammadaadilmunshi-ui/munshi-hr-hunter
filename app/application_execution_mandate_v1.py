@@ -322,6 +322,39 @@ def current_for_preflight(preflight_package_id: str) -> dict[str, Any] | None:
         connection.close()
 
 
+def current_summary_for_preflight(
+    preflight_package_id: str,
+) -> dict[str, Any] | None:
+    """Project mandate presence without rebuilding review artifacts.
+
+    This is for read-only list/status surfaces only. Authority-consuming paths
+    must continue to call ``current_for_preflight`` and perform full freshness
+    validation before use.
+    """
+    connection = get_connection()
+    try:
+        owner = current_owner_readonly(connection)
+        row = connection.execute(
+            """SELECT mandate_id,application_id,job_id,preflight_package_id,
+                      resume_version_id,approved_at
+                 FROM application_execution_mandates_v1
+                WHERE tenant_id=? AND user_id=? AND preflight_package_id=?
+                  AND revoked_at IS NULL
+                ORDER BY datetime(approved_at) DESC,rowid DESC LIMIT 1""",
+            (owner.tenant_id, owner.user_id, str(preflight_package_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            **dict(row),
+            "approved": True,
+            "summary_projection": True,
+            "submission_authority": False,
+        }
+    finally:
+        connection.close()
+
+
 def mandate_authorizes_internal_review(
     *,
     mandate_id: str,

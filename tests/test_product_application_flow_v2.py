@@ -160,7 +160,11 @@ def test_summary_projection_skips_full_review_reconstruction(monkeypatch):
             AssertionError("summary projection must not rebuild the review")
         ),
     )
-    monkeypatch.setattr(flow, "_execution_mandate", lambda _preflight: None)
+    monkeypatch.setattr(
+        flow,
+        "_execution_mandate",
+        lambda _preflight, **_kwargs: None,
+    )
     monkeypatch.setattr(flow, "_production_receipt", lambda _application_id: None)
 
     result = flow.flow_for_job(1, summary=True)

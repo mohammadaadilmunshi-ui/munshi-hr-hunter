@@ -141,6 +141,11 @@ def test_approve_package_is_one_idempotent_customer_mandate(
     current = mandate.current_for_preflight("preflight-1")
     assert current is not None
     assert current["mandate_id"] == first["mandate_id"]
+    summary = mandate.current_summary_for_preflight("preflight-1")
+    assert summary is not None
+    assert summary["mandate_id"] == first["mandate_id"]
+    assert summary["summary_projection"] is True
+    assert summary["submission_authority"] is False
 
 
 def test_approval_refuses_changed_displayed_package(
