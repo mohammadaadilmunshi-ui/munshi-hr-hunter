@@ -51,6 +51,7 @@ from app import native_cover_letter_writer_v1
 from app import phase67_common
 from app import universal_open_ended_generator_v1 as universal_open_ended
 from app import prepare_orchestrator_v1 as orchestrator
+from app.database import get_connection
 
 
 WORKERS_ENV = "MUNSHI_PREPARE_WORKER_ADAPTERS_V1C_ENABLED"
@@ -272,6 +273,96 @@ def _preflight_unresolved(package: Mapping[str, Any]) -> list[str]:
     return sorted(result)
 
 
+def _reusable_preflight_output(
+    *,
+    operation: Mapping[str, Any],
+    resume: Mapping[str, Any],
+    cover: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Reuse an exact fresh preflight package across technical retries.
+
+    The customer mandate is bound to the immutable preflight package. Creating
+    a new package for an otherwise identical retry would discard that binding
+    and can needlessly regenerate a cover letter. Only exact application, job,
+    truth, snapshot, resume, and cover-policy matches are eligible for reuse.
+    """
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            """SELECT t.output_json
+                 FROM prepare_tasks_v1 AS t
+                 JOIN prepare_operations_v1 AS o
+                   ON o.operation_id=t.operation_id
+                WHERE o.tenant_id=? AND o.user_id=?
+                  AND o.application_id=? AND o.job_id=?
+                  AND o.job_snapshot_sha256=?
+                  AND o.application_truth_projection_digest=?
+                  AND o.candidate_profile_digest=?
+                  AND o.operation_id<>?
+                  AND t.task_kind='APPLICATION_PREFLIGHT'
+                  AND t.status='SUCCEEDED'
+                ORDER BY datetime(t.updated_at) DESC,t.rowid DESC
+                LIMIT 12""",
+            (
+                str(operation["tenant_id"]),
+                str(operation["user_id"]),
+                str(operation["application_id"]),
+                int(operation["job_id"]),
+                str(operation["job_snapshot_sha256"]),
+                str(operation["application_truth_projection_digest"]),
+                str(operation["candidate_profile_digest"]),
+                str(operation["operation_id"]),
+            ),
+        ).fetchall()
+    finally:
+        connection.close()
+
+    resume_pdf = dict(resume.get("pdf") or {})
+    for row in rows:
+        try:
+            output = json.loads(str(row["output_json"] or ""))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(output, dict):
+            continue
+        package_id = str(output.get("preflight_package_id") or "").strip()
+        if (
+            not package_id
+            or output.get("submission_authority") is not False
+            or str(output.get("preflight_status") or "") != "READY_TO_APPLY"
+            or str(output.get("resume_version_id") or "")
+            != str(resume.get("resume_version_id") or "")
+            or str(output.get("resume_pdf_sha256") or "")
+            != str(resume_pdf.get("artifact_sha256") or "")
+            or str(output.get("cover_letter_decision") or "")
+            != str(cover.get("decision") or "")
+        ):
+            continue
+        try:
+            package = preflight_v1.get_preflight_package(package_id)
+            freshness = preflight_v1.preflight_package_freshness(package_id)
+        except (LookupError, RuntimeError, ValueError):
+            continue
+        if (
+            freshness.get("fresh") is not True
+            or str(package.get("application_id") or "")
+            != str(operation["application_id"])
+            or int(package.get("job_id") or 0) != int(operation["job_id"])
+            or str(package.get("job_snapshot_sha256") or "")
+            != str(operation["job_snapshot_sha256"])
+            or str(package.get("candidate_profile_digest") or "")
+            != str(operation["candidate_profile_digest"])
+            or str(package.get("resume_version_id") or "")
+            != str(resume.get("resume_version_id") or "")
+            or str(package.get("package_digest") or "")
+            != str(output.get("preflight_package_digest") or "")
+            or str(package.get("status") or "") != "READY_TO_APPLY"
+        ):
+            continue
+        return output
+    return None
+
+
 def run_application_preflight_once(
     *,
     operation_id: str,
@@ -311,6 +402,25 @@ def run_application_preflight_once(
 
     try:
         resume, answers = _validate_resume_and_answers(operation)
+        cover = _cover_decision(operation)
+        reused_output = _reusable_preflight_output(
+            operation=operation,
+            resume=resume,
+            cover=cover,
+        )
+        if reused_output is not None:
+            result = orchestrator.complete_task(
+                task_id=str(task["task_id"]),
+                worker_id=str(worker_id),
+                output=reused_output,
+            )
+            return {
+                **result,
+                "claimed": True,
+                "output": reused_output,
+                "reused_preflight_package": True,
+                "submission_authority": False,
+            }
         opportunity = opportunity_intelligence_v3.evaluate_job(
             int(operation["job_id"]),
             persist=True,
@@ -367,7 +477,6 @@ def run_application_preflight_once(
                 "submission_authority": False,
             }
 
-        cover = _cover_decision(operation)
         reviewed_cover_letter: dict[str, Any] | None = None
         if str(cover.get("decision") or "") != "NOT_REQUIRED":
             reviewed_cover_letter = native_cover_letter_writer_v1.generate(
