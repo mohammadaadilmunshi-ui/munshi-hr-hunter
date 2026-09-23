@@ -20,7 +20,7 @@ from app.tenant_foundation import (
 ANSWER_VERSION = "application-answer-v1"
 ENCRYPTION_VERSION = "aes-gcm-v1"
 KEY_VERSION = "env-v1"
-QUESTION_FAMILIES = frozenset({"candidate_fact", "career_preference", "work_authorization", "salary", "location", "availability", "experience_skill", "voluntary_self_identification", "open_ended_job_specific", "credential_requirement", "unknown", "post_offer_sensitive"})
+QUESTION_FAMILIES = frozenset({"candidate_fact", "career_preference", "work_authorization", "salary", "location", "availability", "experience_skill", "referral_source", "voluntary_self_identification", "open_ended_job_specific", "credential_requirement", "unknown", "post_offer_sensitive"})
 SENSITIVE_FAMILIES = frozenset({"voluntary_self_identification", "post_offer_sensitive"})
 NON_PLAINTEXT_FAMILIES = SENSITIVE_FAMILIES | frozenset({"credential_requirement"})
 NORMAL_QUESTION_FAMILIES = QUESTION_FAMILIES - NON_PLAINTEXT_FAMILIES
@@ -166,6 +166,11 @@ def classify_question(question: str) -> str:
         return "experience_skill"
     if any(term in text for term in ("career goal", "work preference", "preferred role", "job preference")):
         return "career_preference"
+    if any(term in text for term in (
+        "how did you hear about", "how did you find", "where did you hear about",
+        "referral source", "application source",
+    )):
+        return "referral_source"
     if any(term in text for term in ("why are you", "cover letter", "describe a time", "why do you")):
         return "open_ended_job_specific"
     if any(term in text for term in ("full name", "phone number", "email address")):

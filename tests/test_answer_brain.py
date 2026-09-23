@@ -67,6 +67,7 @@ def test_answer_brain_is_disabled_by_default(hunter_db) -> None:
     ("State / Province", "location"),
     ("When can you start?", "availability"),
     ("How many years of experience with SQL do you have?", "experience_skill"),
+    ("How did you hear about us?", "referral_source"),
     ("Why are you interested in this company?", "open_ended_job_specific"),
     ("What is your favorite color?", "unknown"),
 ])
