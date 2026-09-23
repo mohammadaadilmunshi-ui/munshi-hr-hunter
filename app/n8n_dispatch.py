@@ -13,7 +13,7 @@ from typing import Any
 import requests
 
 from app.job_detail import build_manual_job_text as build_structured_manual_job_text
-from app.database import DB_PATH, get_connection, get_setting as get_canonical_setting
+from app.database import get_connection, get_setting as get_canonical_setting
 from app.application_runs_v1 import enhance_dispatch_payload, hard_work_authorization_block
 from app.product_state import enabled_lanes, lane_matches_job
 from app.targeting import evaluate_job, load_rules
@@ -540,7 +540,13 @@ def has_completed_result(
 def plan_candidates(
     connection: sqlite3.Connection,
 ) -> dict[str, Any]:
+    caller_owned_transaction = connection.in_transaction
     ensure_schema(connection)
+    if not caller_owned_transaction and connection.in_transaction:
+        # CREATE IF NOT EXISTS can still open a SQLite writer transaction.
+        # Candidate planning performs large read scans, so release only the
+        # schema transaction we opened before those reads begin.
+        connection.commit()
     scoring = load_setting(
         connection,
         "scoring",
@@ -608,6 +614,8 @@ def plan_candidates(
     ] = []
 
     active_lanes = enabled_lanes(connection)
+    if not caller_owned_transaction and connection.in_transaction:
+        connection.commit()
 
     if auto_limit is None or auto_used < auto_limit:
         targeting_rules = load_rules()

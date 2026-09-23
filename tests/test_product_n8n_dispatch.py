@@ -39,6 +39,17 @@ def _plan_ids(hunter_db) -> tuple[dict, set[int]]:
     return plan, {int(job["id"]) for job in plan["auto_candidates"]}
 
 
+def test_candidate_planning_releases_its_schema_writer_before_long_reads(hunter_db):
+    _settings()
+    connection = database.get_connection()
+    try:
+        assert connection.in_transaction is False
+        n8n_dispatch.plan_candidates(connection)
+        assert connection.in_transaction is False
+    finally:
+        connection.close()
+
+
 def test_absent_product_policy_preserves_legacy_auto_limit(hunter_db) -> None:
     _settings()
     connection = database.get_connection()
