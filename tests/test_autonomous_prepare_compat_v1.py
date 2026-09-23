@@ -5,7 +5,11 @@ from app import autonomous_prepare_compat_v1 as compat
 
 
 class FakeConnection:
+    def __init__(self):
+        self.commit_count = 0
+
     def commit(self):
+        self.commit_count += 1
         return None
 
     def rollback(self):
@@ -165,4 +169,5 @@ def test_n8n_compat_filters_durable_jobs_before_manual_and_auto_quota(monkeypatc
         "auto_top_match",
         "auto_top_match",
     ]
+    assert connection.commit_count == 1
     assert result["submission_authority"] is False

@@ -123,6 +123,11 @@ def queue_legacy_n8n_candidates(
     connection = get_connection()
     try:
         ensure_n8n_schema(connection)
+        # Schema guards can open a SQLite writer transaction even when every
+        # table/index already exists. Release it before the large eligibility
+        # reads so preparation, receipts, and recovery events are not blocked
+        # for the duration of a coordinator scan.
+        connection.commit()
         plan = plan_candidates(connection)
         existing_prepare = runtime._existing_prepare_job_ids(connection)
         durable_used = runtime._admissions_today(connection)
