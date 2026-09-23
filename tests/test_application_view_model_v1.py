@@ -86,6 +86,37 @@ def test_submission_unverified_never_exposes_mutating_recovery(monkeypatch):
     assert model.allowed_recovery_actions == ("refresh_state", "clear_local_selection")
 
 
+def test_customer_mandate_preserves_safe_prepare_retry(monkeypatch):
+    monkeypatch.setattr(
+        view_model.application_flow,
+        "flow_for_job",
+        lambda _job_id: _flow(
+            "FAILED_SAFELY",
+            execution_mandate={"mandate_id": "mandate-1"},
+        ),
+    )
+
+    model = view_model.view_for_job(13, seed=_seed(13), heartbeat={"state": "healthy"})
+
+    assert "retry_preparation" in model.allowed_recovery_actions
+
+
+def test_consumed_submit_approval_hides_mutating_recovery(monkeypatch):
+    monkeypatch.setattr(
+        view_model.application_flow,
+        "flow_for_job",
+        lambda _job_id: _flow(
+            "FAILED_SAFELY",
+            execution_mandate={"mandate_id": "mandate-1"},
+            internal_integrity_review={"approval_consumed": True},
+        ),
+    )
+
+    model = view_model.view_for_job(14, seed=_seed(14), heartbeat={"state": "healthy"})
+
+    assert model.allowed_recovery_actions == ("refresh_state", "clear_local_selection")
+
+
 def test_expired_pre_submit_lease_is_recoverable(monkeypatch):
     expired = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
     monkeypatch.setattr(

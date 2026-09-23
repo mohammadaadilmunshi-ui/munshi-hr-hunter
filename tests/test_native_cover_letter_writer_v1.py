@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
-
 import pytest
 
 from app import native_cover_letter_writer_v1 as writer
@@ -355,3 +353,61 @@ def test_migration_051_is_additive():
     assert "native_cover_letter_writer_v1.ensure_schema" in migration.read_text(
         encoding="utf-8"
     )
+
+
+def test_role_title_context_may_be_mentioned_without_claiming_forbidden_requirement():
+    value = context()
+    value["requirement_map"]["req-title-context"] = {
+        "requirement_id": "req-title-context",
+        "source_field": "title",
+        "exact_text": "People Analyst",
+        "match_status": "NO_EVIDENCE",
+    }
+    value["forbidden_requirement_ids"].add("req-title-context")
+    value["jd_plan"]["requirement_refs"].append(
+        {
+            "requirement_id": "req-title-context",
+            "priority": "CONTEXT",
+            "type": "OTHER",
+            "source_field": "title",
+            "exact_text": "People Analyst",
+            "match_status": "NO_EVIDENCE",
+            "evidence_ids": [],
+        }
+    )
+    value["jd_plan"]["do_not_claim_requirement_ids"].append("req-title-context")
+
+    candidate = draft()
+    candidate["paragraphs"][1]["text"] = (
+        "I would bring that recruiting operations experience to the "
+        "People Analyst role while continuing to learn from the team."
+    )
+
+    validated, audit = writer._validate_draft(candidate, value)
+
+    assert len(validated.paragraphs) == 2
+    assert "req-title-context" not in audit["requirement_ids"]
+
+
+def test_role_title_requirement_id_still_cannot_be_cited_as_supported():
+    value = context()
+    value["requirement_map"]["req-title-context"] = {
+        "requirement_id": "req-title-context",
+        "source_field": "title",
+        "exact_text": "People Analyst",
+        "match_status": "NO_EVIDENCE",
+    }
+    value["forbidden_requirement_ids"].add("req-title-context")
+    candidate = draft()
+    candidate["paragraphs"][0]["requirement_ids"] = ["req-title-context"]
+
+    with pytest.raises(ValueError, match="unsupported JD requirements"):
+        writer._validate_draft(candidate, value)
+
+
+def test_non_title_forbidden_phrase_guard_remains_fail_closed():
+    candidate = draft(
+        "I have managed recruiting operations and have Five years of compensation experience."
+    )
+    with pytest.raises(ValueError, match="forbidden unsupported requirement"):
+        writer._validate_draft(candidate, context())

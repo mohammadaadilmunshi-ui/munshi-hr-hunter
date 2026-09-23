@@ -415,6 +415,23 @@ def _call_writer(
     )
 
 
+def _forbidden_phrase_refs(context: Mapping[str, Any]) -> list[tuple[str, str]]:
+    # A role title is context, not a candidate qualification. Mentioning the
+    # target role must not be interpreted as claiming an unsupported skill.
+    requirement_map = context["requirement_map"]
+    result: list[tuple[str, str]] = []
+    for requirement_id in context["forbidden_requirement_ids"]:
+        ref = requirement_map.get(requirement_id)
+        if not isinstance(ref, Mapping):
+            continue
+        if str(ref.get("source_field") or "").strip().casefold() == "title":
+            continue
+        exact = _normalized(ref.get("exact_text"))
+        if exact:
+            result.append((str(requirement_id), exact))
+    return result
+
+
 def _validate_draft(
     draft_payload: Mapping[str, Any],
     context: Mapping[str, Any],
@@ -480,11 +497,7 @@ def _validate_draft(
             )
 
         normalized_paragraph = _normalized(paragraph.text)
-        for requirement_id in forbidden:
-            ref = requirement_map.get(requirement_id)
-            exact = _normalized(
-                ref.get("exact_text") if isinstance(ref, Mapping) else ""
-            )
+        for requirement_id, exact in _forbidden_phrase_refs(context):
             if len(exact) >= 12 and exact in normalized_paragraph:
                 raise ValueError(
                     "Cover letter contains a forbidden unsupported requirement "
@@ -525,11 +538,8 @@ def _remove_forbidden_wording(
     draft = CoverLetterDraft.model_validate(draft_payload)
     forbidden = set(context["forbidden_requirement_ids"])
     supported = set(context["supported_requirement_ids"])
-    requirement_map = context["requirement_map"]
     forbidden_text = tuple(
-        _normalized((requirement_map.get(requirement_id) or {}).get("exact_text"))
-        for requirement_id in forbidden
-        if _normalized((requirement_map.get(requirement_id) or {}).get("exact_text"))
+        exact for _requirement_id, exact in _forbidden_phrase_refs(context)
     )
     repaired: list[dict[str, Any]] = []
     for paragraph in draft.paragraphs:

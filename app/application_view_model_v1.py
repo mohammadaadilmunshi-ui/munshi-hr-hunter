@@ -314,7 +314,12 @@ def _recovery_actions(
     expired_lease: bool,
 ) -> tuple[str, ...]:
     actions = ["refresh_state", "clear_local_selection"]
-    if state in IMMUTABLE_SUBMISSION_STATES or flow.get("execution_mandate"):
+    review = dict(flow.get("internal_integrity_review") or {})
+    if (
+        state in IMMUTABLE_SUBMISSION_STATES
+        or flow.get("production_receipt")
+        or review.get("approval_consumed")
+    ):
         return tuple(actions)
     if expired_lease:
         actions.append("recover_expired_lease")

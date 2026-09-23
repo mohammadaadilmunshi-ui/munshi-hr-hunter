@@ -50,7 +50,6 @@ def _pre_submit(job_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
     if (
         state in IMMUTABLE_SUBMISSION_STATES
         or flow.get("production_receipt")
-        or flow.get("execution_mandate")
         or review.get("approval_consumed")
     ):
         raise ValueError(

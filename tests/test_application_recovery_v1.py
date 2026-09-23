@@ -42,6 +42,25 @@ def test_consumed_approval_blocks_recovery_even_before_receipt(monkeypatch):
         recovery._pre_submit(1)
 
 
+def test_customer_execution_mandate_does_not_block_safe_prepare_retry(monkeypatch):
+    monkeypatch.setattr(
+        recovery.application_flow,
+        "flow_for_job",
+        lambda _job_id: {
+            "state": "FAILED_SAFELY",
+            "prepare": {"operation_id": "prepare-1", "engine": "NATIVE"},
+            "production_receipt": None,
+            "execution_mandate": {"mandate_id": "mandate-1"},
+            "internal_integrity_review": None,
+        },
+    )
+
+    flow, prepare = recovery._pre_submit(1)
+
+    assert flow["execution_mandate"]["mandate_id"] == "mandate-1"
+    assert prepare["operation_id"] == "prepare-1"
+
+
 def test_every_durable_recovery_request_can_leave_an_audit_event(hunter_db):
     connection = database.get_connection()
     try:
