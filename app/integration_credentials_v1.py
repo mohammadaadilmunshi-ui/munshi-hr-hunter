@@ -18,7 +18,7 @@ TELEGRAM_CHAT_ID_TYPE = "telegram_chat_id"
 SMTP2GO_API_KEY_TYPE = "smtp2go_api_key"
 SMTP2GO_SENDER_TYPE = "smtp2go_sender"
 
-_EMAIL = re.compile(r"^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
+_EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 def _vault_value(credential_type: str) -> str:

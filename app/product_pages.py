@@ -21,11 +21,7 @@ from app.product_state import (
     update_lane, volume_policy,
 )
 from app.product_ui import esc, page_intro, pastel_for, safe_link, score_ring
-from app.linkedin_url_contract import (
-    canonical_linkedin_job_url,
-    direct_application_url,
-    is_linkedin_source,
-)
+from app.job_destination_v1 import describe_job_destination
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,8 +84,26 @@ def _toggle_job_skipped(job_id: int, currently_skipped: bool) -> None:
 def _application_flow(job_id: int) -> dict[str, Any]:
     try:
         from app import product_application_flow_v2 as complete_loop
+        from app import application_archive_v1
 
-        return complete_loop.flow_for_job(int(job_id))
+        result = complete_loop.flow_for_job(int(job_id))
+        prepare = dict(result.get("prepare") or {})
+        lifecycle = dict(result.get("lifecycle") or {})
+        application_id = str(
+            lifecycle.get("application_id") or prepare.get("application_id") or ""
+        ).strip()
+        try:
+            visibility = application_archive.visibility_for((application_id,)).get(
+                application_id, {}
+            ) if application_id else {}
+        except Exception:  # noqa: BLE001 - visibility cannot erase lifecycle truth
+            visibility = {}
+        result["application_id"] = application_id or None
+        result["archived"] = bool(int(visibility.get("archived") or 0))
+        if result["archived"]:
+            result["cta"] = "workspace"
+            result["cta_label"] = "Archived application"
+        return result
     except Exception:
         return {
             "job_id": int(job_id),
@@ -167,6 +181,7 @@ def _prepare_job(job_id: int) -> dict[str, Any] | None:
     try:
         st.query_params["view"] = "prepare-application"
         st.query_params["job"] = str(resolved_job_id)
+        st.query_params["application"] = str(application_id)
     except Exception:
         pass
     _LOGGER.info(
@@ -216,6 +231,7 @@ def _open_job_detail(job_id: int) -> None:
 def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
     job_id = int(row["id"])
     flow = _application_flow(job_id)
+    destination = describe_job_destination(row)
     tone = pastel_for(job_id)
     tags = [row.get("remote_type"), row.get("employment_type"), row.get("salary_raw")]
     if flow.get("state"):
@@ -230,7 +246,7 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
                 <div class="job-top"><span>{esc(row.get("location_raw"), "Location unknown")}<br><span class="quiet">{esc(_relative_time(row.get("first_seen_at")))}</span></span>{score_ring(row.get("hunter_score"), tone)}</div>
                 <div class="job-title">{esc(row.get("title"), "Untitled role")}</div>
                 <div>{tags_html}</div><div class="job-company">{esc(row.get("company_name"), "Company not recorded")}</div>
-                <div class="job-meta">{esc(row.get("source"), "Source unknown")}</div></div></div></div>""",
+                <div class="job-destination"><span><b>Apply via:</b> {esc(destination.apply_via)}</span><span><b>Source:</b> {esc(destination.source)}</span></div></div></div></div>""",
             unsafe_allow_html=True,
         )
         st.button(
@@ -241,31 +257,14 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
             on_click=_open_job_detail,
             args=(job_id,),
         )
-        if is_linkedin_source(row.get("source")):
-            linkedin_url = canonical_linkedin_job_url(
-                row.get("job_url"),
-                job_id=row.get("ats_job_id"),
+        if destination.original_url:
+            st.link_button(
+                "Open original job",
+                destination.original_url,
+                use_container_width=True,
             )
-            direct_url = direct_application_url(
-                row.get("apply_url"),
-                linkedin_url=linkedin_url,
-            )
-            external_actions = st.columns(2 if direct_url else 1, gap="small")
-            with external_actions[0]:
-                st.link_button(
-                    "Open LinkedIn job",
-                    linkedin_url,
-                    use_container_width=True,
-                )
-            if direct_url:
-                with external_actions[1]:
-                    st.link_button(
-                        "Apply",
-                        direct_url,
-                        type="primary",
-                        use_container_width=True,
-                    )
-        actions = st.columns(3, gap="small")
+        with st.container(key=f"product_actions_{key_prefix}_{job_id}"):
+            actions = st.columns((0.8, 0.8, 1.6), gap="small")
         saved = bool(row.get("saved"))
         skipped = bool(row.get("skipped"))
         with actions[0]:
@@ -285,7 +284,12 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
             else:
                 st.link_button(
                     str(flow.get("cta_label") or "Application"),
-                    f"?view=prepare-application&job={job_id}",
+                    f"?view=prepare-application&job={job_id}"
+                    + (
+                        f"&application={flow.get('application_id')}"
+                        if flow.get("application_id")
+                        else ""
+                    ),
                     type=(
                         "primary"
                         if flow.get("state") in {
@@ -306,6 +310,20 @@ def _clear_job_query() -> None:
         pass
 
 
+def _open_manual_add_from_query() -> None:
+    try:
+        requested = str(st.query_params.get("add") or "").strip().casefold()
+    except Exception:
+        requested = ""
+    if requested not in {"1", "true", "yes"}:
+        return
+    st.session_state["show_manual_job"] = True
+    try:
+        del st.query_params["add"]
+    except (KeyError, TypeError):
+        pass
+
+
 @st.dialog("Job details", width="large")
 def _job_detail_dialog(job_id: int) -> None:
     from app.database import get_connection
@@ -322,8 +340,10 @@ def _job_detail_dialog(job_id: int) -> None:
     row = dict(record)
     row["saved"] = int(state_record["saved"]) if state_record else 0
     row["skipped"] = int(state_record["skipped"]) if state_record else 0
+    destination = describe_job_destination(row)
     st.markdown(f"## {esc(row.get('title'), 'Untitled role')}", unsafe_allow_html=True)
-    st.caption(f"{row.get('company_name') or 'Company not recorded'} · {row.get('location_raw') or 'Location unknown'} · {row.get('source') or 'Source unknown'}")
+    st.caption(f"{row.get('company_name') or 'Company not recorded'} · {row.get('location_raw') or 'Location unknown'}")
+    st.caption(f"Apply via: {destination.apply_via} · Source: {destination.source}")
     flow = _application_flow(job_id)
     st.markdown(
         f"""<div class="product-callout"><div>
@@ -376,8 +396,8 @@ def _job_detail_dialog(job_id: int) -> None:
                 use_container_width=True,
             )
     with action_columns[3]:
-        if safe_link(row.get("apply_url")):
-            st.link_button("Open application", safe_link(row["apply_url"]), use_container_width=True)
+        if destination.original_url:
+            st.link_button("Open original job", destination.original_url, use_container_width=True)
         else:
             st.button("No application URL", disabled=True, use_container_width=True)
     _render_prepare_error(job_id, key_prefix="dialog")
@@ -541,6 +561,7 @@ def dashboard() -> None:
 
 def browse_jobs() -> None:
     _show_action_feedback()
+    _open_manual_add_from_query()
     page_intro("DISCOVER", "Browse jobs", "Search every stored opportunity without losing the targeting, authorization, source, or score evidence behind the match.")
     filters = _search_filters("jobs")
     page = int(st.session_state.get("product_jobs_page", 1))
@@ -623,16 +644,20 @@ def _manual_add() -> None:
         result = st.session_state.get("manual_analysis")
         if isinstance(result, dict) and isinstance(result.get("job"), dict):
             job = dict(result["job"])
+            destination = describe_job_destination(job)
             missing = list(result.get("missing") or [])
             st.markdown("### Review job")
             identity = st.columns(3, gap="small")
             identity[0].metric("Company", str(job.get("company_name") or "Not available"))
             identity[1].metric("Job title", str(job.get("title") or "Not available"))
             identity[2].metric("Location", str(job.get("location_raw") or "Not available"))
-            details = st.columns(3, gap="small")
+            details = st.columns(4, gap="small")
             details[0].metric("Work arrangement", str(job.get("remote_type") or "Not specified"))
             details[1].metric("Employment", str(job.get("employment_type") or "Not specified"))
-            details[2].metric("ATS / source", str(job.get("source") or result.get("source") or "Manual"))
+            details[2].metric("Apply via", destination.apply_via)
+            details[3].metric("Source", destination.source)
+            if destination.original_url:
+                st.caption(f"Application URL: {destination.original_url}")
             st.markdown("**Job description**")
             st.write(job.get("description_raw") or "Description not available.")
             blocker = str(job.get("hard_rejection_reason") or "").strip()
@@ -664,17 +689,31 @@ def _manual_add() -> None:
                     st.success("Job added")
                 else:
                     st.info("Already in MUNSHI")
+                flow = _application_flow(int(job_id))
                 next_actions = st.columns(2, gap="small")
-                next_actions[0].button(
-                    "Prepare application",
-                    key="product_manual_prepare",
-                    type="primary",
-                    use_container_width=True,
-                    on_click=_prepare_job,
-                    args=(int(job_id),),
-                )
+                if flow.get("cta") == "prepare":
+                    next_actions[0].button(
+                        "Prepare application",
+                        key="product_manual_prepare",
+                        type="primary",
+                        use_container_width=True,
+                        on_click=_prepare_job,
+                        args=(int(job_id),),
+                    )
+                else:
+                    next_actions[0].link_button(
+                        str(flow.get("cta_label") or "Open application"),
+                        f"?view=prepare-application&job={int(job_id)}"
+                        + (
+                            f"&application={flow.get('application_id')}"
+                            if flow.get("application_id")
+                            else ""
+                        ),
+                        type="primary",
+                        use_container_width=True,
+                    )
                 next_actions[1].link_button(
-                    "View in Browse Jobs",
+                    "Open job",
                     f"?view=jobs&job={int(job_id)}",
                     use_container_width=True,
                 )

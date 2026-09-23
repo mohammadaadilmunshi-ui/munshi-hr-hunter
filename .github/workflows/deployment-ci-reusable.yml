@@ -72,7 +72,7 @@ jobs:
           assert importlib.metadata.version("python-jobspy") == "1.1.82"
           assert runner.is_file()
           digest = hashlib.sha256(runner.read_bytes()).hexdigest()
-          assert digest == "722878a265ebdabb525044e7fe208d03397b35287256f9c073b3779283b120ce", digest
+          assert digest == "0c2fcdc66ef405407f0b76451f2ac4c8c09c43b011db18bba68aecb2926c7794", digest
           print("JOBSPY_IMAGE_CONTRACT=PASS")
           print("JOBSPY_RUNNER_SHA256=", digest)
           PY

@@ -290,12 +290,12 @@ def test_linkedin_rotation_records_query_request_provenance(monkeypatch) -> None
         jobspy_board_common,
         "_scrape_jobs",
         lambda **_kwargs: [{
-            "id": "fixture-linkedin-1",
+            "id": "1234567890",
             "site": "linkedin",
             "company": "Fixture Employer",
             "title": "HR Operations Coordinator",
             "location": "Austin, TX",
-            "job_url": "https://example.test/linkedin/1",
+            "job_url": "https://www.linkedin.com/jobs/view/1234567890",
         }],
     )
     monkeypatch.setattr(

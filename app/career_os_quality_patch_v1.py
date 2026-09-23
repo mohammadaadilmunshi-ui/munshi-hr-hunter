@@ -173,6 +173,7 @@ def _install_infinite_jobs(pages_module: Any) -> None:
 
     def browse_jobs_infinite() -> None:
         pages_module._show_action_feedback()
+        pages_module._open_manual_add_from_query()
         pages_module.page_intro(
             "DISCOVER",
             "Browse jobs",

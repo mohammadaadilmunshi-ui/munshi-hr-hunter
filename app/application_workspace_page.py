@@ -493,7 +493,7 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
         review_record = review
         st.markdown('### Review tailored resume')
         st.caption(
-            'This is the one customer review. Check the truthful, job-specific resume; '
+            'This is the only customer review. Check the truthful, job-specific resume; '
             'Approve & Submit then starts unattended application execution.'
         )
 

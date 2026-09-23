@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from app import product_application_flow_v2 as application_flow
+from app import application_archive_v1 as application_archive
 from app.database import get_connection
+from app.job_destination_v1 import describe_job_destination
 
 HEARTBEAT_PATH = Path(
     os.getenv("MUNSHI_PREPARE_RUNTIME_HEARTBEAT_PATH")
@@ -42,6 +44,14 @@ ATTENTION_STATES = frozenset(
 IMMUTABLE_SUBMISSION_STATES = frozenset(
     {"SUBMITTED", "VERIFIED", "AWAITING_RESPONSE", "SUBMISSION_UNVERIFIED"}
 )
+
+
+def _visibility_for(application_ids: tuple[str, ...]) -> dict[str, dict[str, Any]]:
+    """Keep lifecycle reads available if the optional archive projection degrades."""
+    try:
+        return application_archive.visibility_for(application_ids)
+    except Exception:  # noqa: BLE001 - archive visibility must not hide applications
+        return {}
 
 _STAGE_LABELS = {
     "RESUME_PREPARE": "Resume tailoring",
@@ -82,7 +92,8 @@ def _job_row(job_id: int) -> dict[str, Any]:
     try:
         row = connection.execute(
             """SELECT id,company_name,title,location_raw,remote_type,
-                      hunter_score,apply_url
+                      hunter_score,apply_url,job_url,source,
+                      source_provenance_json,detail_extraction_json
                  FROM jobs WHERE id=?""",
             (int(job_id),),
         ).fetchone()
@@ -160,6 +171,11 @@ class ApplicationViewModel:
     allowed_recovery_actions: tuple[str, ...] = field(default_factory=tuple)
     degraded: bool = False
     projection_error: str | None = None
+    provider: str | None = None
+    apply_via: str | None = None
+    source_platform: str | None = None
+    archived: bool = False
+    archived_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -319,6 +335,7 @@ def view_for_job(
     seed: Mapping[str, Any] | None = None,
     flow_seed: Mapping[str, Any] | None = None,
     heartbeat: Mapping[str, Any] | None = None,
+    visibility_seed: Mapping[str, Any] | None = None,
 ) -> ApplicationViewModel:
     job = dict(seed or {}) or _job_row(int(job_id))
     if job.get("projection_error"):
@@ -351,6 +368,10 @@ def view_for_job(
     application_id = str(
         lifecycle.get("application_id") or prepare.get("application_id") or ""
     ) or None
+    destination = describe_job_destination(job)
+    visibility = dict(visibility_seed or {})
+    if visibility_seed is None and application_id:
+        visibility = _visibility_for((application_id,)).get(application_id, {})
     return ApplicationViewModel(
         job_id=int(job_id),
         application_id=application_id,
@@ -381,6 +402,11 @@ def view_for_job(
             stale=stale,
             expired_lease=expired_lease,
         ),
+        provider=destination.provider,
+        apply_via=destination.apply_via,
+        source_platform=destination.source,
+        archived=bool(int(visibility.get("archived") or 0)),
+        archived_at=str(visibility.get("archived_at") or "") or None,
     )
 
 
@@ -426,28 +452,37 @@ def application_views(*, limit: int | None = 250) -> list[ApplicationViewModel]:
         limit=None if limit is None else int(limit)
     )
     views: list[ApplicationViewModel] = []
+    application_ids = tuple(
+        str(row.get("application_id") or "").strip()
+        for row in rows
+        if str(row.get("application_id") or "").strip()
+    )
+    visibility = _visibility_for(application_ids)
     for row in rows:
         try:
-            views.append(
-                view_for_job(
-                    int(row["job_id"]),
-                    seed=row,
-                    flow_seed=row.get("_flow_projection"),
-                    heartbeat=heartbeat,
-                )
+            item = view_for_job(
+                int(row["job_id"]),
+                seed=row,
+                flow_seed=row.get("_flow_projection"),
+                heartbeat=heartbeat,
+                visibility_seed=visibility.get(
+                    str(row.get("application_id") or ""), {}
+                ),
             )
+            views.append(item)
         except Exception as error:  # noqa: BLE001 - isolate one malformed application
             views.append(degraded_view(row, type(error).__name__, heartbeat=heartbeat))
     priority = {
         "needs_you": 0,
-        "needs_attention": 1,
-        "applying": 2,
-        "preparing": 3,
+        "applying": 1,
+        "preparing": 2,
+        "needs_attention": 3,
         "submitted": 4,
         "all": 5,
     }
     views.sort(
         key=lambda item: (
+            1 if item.archived else 0,
             priority.get(item.state_group, 9),
             -(int(_timestamp(item.last_update).timestamp()) if _timestamp(item.last_update) else 0),
             item.company.casefold(),
@@ -458,7 +493,7 @@ def application_views(*, limit: int | None = 250) -> list[ApplicationViewModel]:
 
 
 def control_center_snapshot(*, limit: int = 250) -> dict[str, Any]:
-    views = application_views(limit=limit)
+    views = [item for item in application_views(limit=limit) if not item.archived]
     counts = {
         "preparing": sum(item.state_group == "preparing" for item in views),
         "needs_review": sum(

@@ -596,6 +596,8 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
 
     return {
         'job_id': int(job_id),
+        'application_id': application_id or None,
+        'operation_id': (prepare or {}).get('operation_id'),
         'state': state,
         'authority': authority,
         'display_status': STATE_LABELS.get(
@@ -867,7 +869,8 @@ def _pipeline_candidate_jobs(limit: int | None) -> list[dict[str, Any]]:
         placeholders = ','.join('?' for _ in unique_ids)
         jobs = connection.execute(
             f'''SELECT id, company_name, title, location_raw, remote_type,
-                       hunter_score, apply_url
+                       hunter_score, apply_url, job_url, source,
+                       source_provenance_json, detail_extraction_json
                   FROM jobs WHERE id IN ({placeholders})''',
             tuple(unique_ids),
         ).fetchall()

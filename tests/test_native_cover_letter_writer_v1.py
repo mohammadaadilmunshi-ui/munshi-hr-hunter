@@ -248,6 +248,40 @@ def test_generation_repairs_forbidden_jd_language_once(wired, monkeypatch):
     assert "failed the authoritative truth check" in calls[1]["repair_instruction"]
 
 
+def test_generation_removes_persistently_forbidden_sentence_without_third_model_call(
+    wired, monkeypatch
+):
+    unsafe = draft()
+    unsafe["paragraphs"][0]["text"] += (
+        " I also have Five years of compensation experience."
+    )
+    calls = {"model": 0}
+
+    def model(**_kwargs):
+        calls["model"] += 1
+        return unsafe, f"response-{calls['model']}", "gpt-test"
+
+    monkeypatch.setattr(writer, "_call_writer", model)
+
+    result = writer.generate(preflight_package_id="preflight-cl-1")
+
+    assert result["cover_letter_id"] == "cover-letter-cl-1"
+    assert result["model_calls"] == 2
+    assert calls["model"] == 2
+
+
+def test_deterministic_forbidden_repair_still_fails_if_no_valid_letter_remains():
+    unsafe = draft("Five years of compensation experience is my core qualification.")
+    unsafe["paragraphs"][1]["text"] = (
+        "Five years of compensation experience would support this team."
+    )
+
+    repaired = writer._remove_forbidden_wording(unsafe, context())
+
+    with pytest.raises(ValueError):
+        writer._validate_draft(repaired, context())
+
+
 def test_generation_persists_nothing_when_truth_repair_still_fails(
     wired, monkeypatch
 ):

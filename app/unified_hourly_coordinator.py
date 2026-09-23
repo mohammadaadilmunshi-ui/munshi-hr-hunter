@@ -266,7 +266,7 @@ def run_coordinator(
         "skip_workers": (
             skip_workers
         ),
-        "queue_only_invariant": False,
+        "queue_only_invariant": True,
         "auto_prepare_routing": auto_prepare_routing,
         "durable_prepare_is_auto_owner": bool(
             auto_prepare_routing.get("durable_prepare_is_auto_owner")

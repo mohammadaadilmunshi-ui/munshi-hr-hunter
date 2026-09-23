@@ -97,7 +97,7 @@ The proven cloud repair expects:
 
 - `python-jobspy==1.1.82`
 - runner path `/app/hunter/tools/runners/jobspy_runner.py`
-- runner SHA-256 `722878a265ebdabb525044e7fe208d03397b35287256f9c073b3779283b120ce`
+- runner SHA-256 `0c2fcdc66ef405407f0b76451f2ac4c8c09c43b011db18bba68aecb2926c7794`
 - Linux/container interpreter resolution that can use the proven container Python runtime
 
 Do not copy a Mac virtual environment into the container.

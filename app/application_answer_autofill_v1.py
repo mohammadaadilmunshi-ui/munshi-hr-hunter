@@ -10,6 +10,7 @@ post-offer domains remain outside the normal answer vault.
 """
 from __future__ import annotations
 
+import sqlite3
 from typing import Any, Mapping
 
 from app import answer_brain_v2
@@ -68,7 +69,7 @@ def enrich_requirement(requirement: Mapping[str, Any]) -> dict[str, Any]:
         return result
     try:
         snapshot = truth_binding.current_candidate_profile_snapshot()
-    except (LookupError, RuntimeError, ValueError):
+    except (LookupError, RuntimeError, ValueError, sqlite3.Error):
         return result
     conditions.update(_binding_conditions(snapshot, projection))
     result["conditions"] = conditions

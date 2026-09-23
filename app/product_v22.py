@@ -790,6 +790,9 @@ def _opportunity_dialog(job_id: int) -> None:
     artifact = row["artifact_result"]
     queue = row["queue"]
     application_flow = _PAGES._application_flow(int(job_id))
+    from app.job_destination_v1 import describe_job_destination
+
+    destination = describe_job_destination(row)
 
     resume_url = (
         _PAGES.safe_link(artifact.get("resume_pdf_url"))
@@ -833,9 +836,9 @@ def _opportunity_dialog(job_id: int) -> None:
     )
     st.caption(
         f"{row.get('company_name') or 'Company not recorded'} · "
-        f"{row.get('location_raw') or 'Location unknown'} · "
-        f"{row.get('source') or 'Source unknown'}"
+        f"{row.get('location_raw') or 'Location unknown'}"
     )
+    st.caption(f"Apply via: {destination.apply_via} · Source: {destination.source}")
 
     status_html = (
         f'<div class="product-dialog-card">'
@@ -996,23 +999,10 @@ def _opportunity_dialog(job_id: int) -> None:
                     use_container_width=True,
                 )
         with action_columns[3]:
-            if linked_source:
-                st.link_button(
-                    "Open LinkedIn job",
-                    linkedin_url,
-                    use_container_width=True,
-                )
-                if apply_url:
-                    st.link_button(
-                        "Apply",
-                        apply_url,
-                        type="primary",
-                        use_container_width=True,
-                    )
-            elif apply_url:
+            if destination.original_url:
                 st.link_button(
                     "Open original job",
-                    apply_url,
+                    destination.original_url,
                     use_container_width=True,
                 )
             else:

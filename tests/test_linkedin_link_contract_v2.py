@@ -296,8 +296,4 @@ def test_jobspy_linkedin_result_reaches_clickable_card_with_separate_apply(
 
     product_pages._job_card(row, key_prefix="acceptance")
 
-    assert (
-        "Open LinkedIn job",
-        "https://www.linkedin.com/jobs/view/4466640197",
-    ) in fake_ui.links
-    assert ("Apply", direct) in fake_ui.links
+    assert ("Open original job", direct) in fake_ui.links

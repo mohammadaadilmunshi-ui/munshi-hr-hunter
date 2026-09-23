@@ -156,9 +156,63 @@ def test_application_views_reuses_pipeline_flow_projection(monkeypatch):
         "worker_health_snapshot",
         lambda **_kwargs: {"state": "healthy", "label": "Worker healthy"},
     )
+    monkeypatch.setattr(
+        view_model.application_archive,
+        "visibility_for",
+        lambda _application_ids: {},
+    )
 
     views = view_model.application_views(limit=250)
 
     assert len(views) == 1
     assert views[0].job_id == 11
     assert views[0].state_group == "preparing"
+
+
+def test_archive_projection_failure_does_not_hide_application_views(monkeypatch):
+    row = _seed(12, _flow_projection=_flow("RUNNING"))
+    monkeypatch.setattr(view_model.application_flow, "pipeline_rows", lambda limit: [row])
+    monkeypatch.setattr(
+        view_model,
+        "worker_health_snapshot",
+        lambda **_kwargs: {"state": "healthy", "label": "Worker healthy"},
+    )
+    monkeypatch.setattr(
+        view_model.application_archive,
+        "visibility_for",
+        lambda _ids: (_ for _ in ()).throw(RuntimeError("archive read unavailable")),
+    )
+
+    views = view_model.application_views(limit=250)
+
+    assert len(views) == 1
+    assert views[0].job_id == 12
+    assert views[0].archived is False
+    assert views[0].degraded is False
+
+
+def test_archived_application_is_removed_from_auto_prepare_counts(monkeypatch):
+    active = view_model.ApplicationViewModel(
+        job_id=1, application_id="application-1", company="Alpha", title="Analyst",
+        location="Remote", work_arrangement="Remote", match=90,
+        canonical_state="RUNNING", human_state="Preparing", state_group="preparing",
+        last_update=datetime.now(timezone.utc).isoformat(), next_action="No action needed",
+        safe_progress_stage="Resume tailoring", stage_index=2, stage_count=6,
+        resume_review_available=False, protected_checkpoint=False, issue_summary=None,
+        stopped_at=None, submission_attempted=False, receipt_summary=None,
+        worker_heartbeat={"state": "healthy"}, stale=False,
+    )
+    archived = view_model.ApplicationViewModel(
+        **{**active.to_dict(), "job_id": 2, "application_id": "application-2", "archived": True}
+    )
+    monkeypatch.setattr(view_model, "application_views", lambda limit=250: [active, archived])
+    monkeypatch.setattr(
+        view_model,
+        "worker_health_snapshot",
+        lambda **_kwargs: {"state": "healthy", "label": "Worker healthy"},
+    )
+
+    snapshot = view_model.control_center_snapshot(limit=250)
+
+    assert [item.application_id for item in snapshot["applications"]] == ["application-1"]
+    assert snapshot["counts"]["preparing"] == 1

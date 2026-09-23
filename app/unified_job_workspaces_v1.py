@@ -461,27 +461,60 @@ def _requested_job_id() -> int | None:
 
 
 _APPLICATION_FILTERS = {
-    "Current": "current",
     "Needs you": "needs_you",
     "Preparing": "preparing",
     "Applying": "applying",
     "Needs attention": "needs_attention",
     "Submitted": "submitted",
-    "Historical": "historical",
+    "Archived": "archived",
     "All": "all",
 }
 
 
-def _select_application(job_id: int) -> None:
+def _requested_application_id() -> str | None:
+    try:
+        value = str(st.query_params.get("application") or "").strip()
+    except Exception:
+        return None
+    return value or None
+
+
+def _select_application(job_id: int, application_id: str | None = None) -> None:
     st.query_params["view"] = "prepare-application"
     st.query_params["job"] = str(int(job_id))
+    if application_id:
+        st.query_params["application"] = str(application_id)
 
 
 def _clear_application_selection() -> None:
+    for key in ("job", "application"):
+        try:
+            del st.query_params[key]
+        except (KeyError, TypeError):
+            pass
+
+
+def _archive_application(application_id: str, job_id: int) -> None:
+    from app.application_archive_v1 import archive_application
+
     try:
-        del st.query_params["job"]
-    except (KeyError, TypeError):
-        pass
+        archive_application(application_id=application_id, job_id=int(job_id))
+    except Exception as error:  # noqa: BLE001 - report durable-action failure in place
+        st.session_state["application_visibility_error"] = str(error)
+        return
+    st.session_state["application_visibility_success"] = "Application archived. Its lifecycle, resume, history, and receipts were preserved."
+    _clear_application_selection()
+
+
+def _restore_application(application_id: str, job_id: int) -> None:
+    from app.application_archive_v1 import restore_application
+
+    try:
+        restore_application(application_id=application_id, job_id=int(job_id))
+    except Exception as error:  # noqa: BLE001
+        st.session_state["application_visibility_error"] = str(error)
+        return
+    st.session_state["application_visibility_success"] = "Application restored to active views."
 
 
 def _updated_label(value: str | None) -> str:
@@ -490,12 +523,37 @@ def _updated_label(value: str | None) -> str:
     return str(value).replace("T", " ").replace("+00:00", " UTC")
 
 
+def _filter_application_views(
+    views: list[Any], *, group: str, query: str = ""
+) -> list[Any]:
+    needle = str(query or "").strip().casefold()
+    return [
+        item
+        for item in views
+        if (
+            (group == "all" and not item.archived)
+            or (group == "archived" and item.archived)
+            or (not item.archived and item.state_group == group)
+        )
+        and (group == "all" or item.archived == (group == "archived"))
+        and (
+            not needle
+            or needle
+            in f"{item.company} {item.title} {item.human_state} {item.next_action}".casefold()
+        )
+    ]
+
+
 def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
     st.markdown("### Application Center")
+    # The default shows every durable application, already priority-sorted by
+    # the shared read model. Filters narrow the same identities; they never hide
+    # the existence of other current work on first open.
+    default_choice = "All"
     choice = st.selectbox(
         "Filter applications",
         list(_APPLICATION_FILTERS),
-        index=0,
+        index=list(_APPLICATION_FILTERS).index(default_choice),
         key="application_center_filter",
     )
     query = st.text_input(
@@ -504,22 +562,7 @@ def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
         key="application_center_search",
     )
     group = _APPLICATION_FILTERS[choice]
-    needle = query.strip().casefold()
-    visible = [
-        item
-        for item in views
-        if (
-            group == "all"
-            or (group == "current" and not (item.state_group == "needs_attention" and item.stale))
-            or (group == "historical" and item.state_group == "needs_attention" and item.stale)
-            or item.state_group == group
-        )
-        and (
-            not needle
-            or needle
-            in f"{item.company} {item.title} {item.human_state} {item.next_action}".casefold()
-        )
-    ]
+    visible = _filter_application_views(views, group=group, query=query)
     st.caption(f"{len(visible)} application{'s' if len(visible) != 1 else ''}")
     if not visible:
         st.info("No applications match this view.")
@@ -542,7 +585,13 @@ def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
                 unsafe_allow_html=True,
             )
             score = "—" if item.match is None else f"{item.match:.0f}% match"
-            st.caption(f"{score} · {item.human_state}")
+            archived = " · Archived" if item.archived else ""
+            st.caption(f"{score} · {item.human_state}{archived}")
+            destination = " · ".join(
+                value for value in (item.apply_via, item.source_platform) if value
+            )
+            if destination:
+                st.caption(destination)
             st.caption(f"Updated {_updated_label(item.last_update)}")
             st.caption(f"Next: {item.next_action}")
             st.button(
@@ -552,7 +601,7 @@ def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
                 disabled=selected_id == item.job_id,
                 use_container_width=True,
                 on_click=_select_application,
-                args=(item.job_id,),
+                args=(item.job_id, item.application_id),
             )
 
 
@@ -577,11 +626,54 @@ def _render_application_header(model: Any) -> None:
         f"""<div class="product-callout"><div>
         <strong>{esc(model.company, 'Company')} · {esc(model.title, 'Untitled role')}</strong>
         <span>{esc(model.location, 'Location not recorded')} · {esc(model.work_arrangement)} · {match}</span>
+        <span>Apply via: {esc(model.apply_via, 'Destination not recorded')} · Source: {esc(model.source_platform, 'Not recorded')}</span>
         <span>Updated {_updated_label(model.last_update)} · Next: {esc(model.next_action)}</span>
         </div><span class="status-chip">{esc(model.human_state)}</span></div>""",
         unsafe_allow_html=True,
     )
     _render_lifecycle(model)
+
+
+def _render_application_visibility_feedback() -> None:
+    feedback_error = st.session_state.pop("application_visibility_error", None)
+    feedback_success = st.session_state.pop("application_visibility_success", None)
+    if feedback_error:
+        st.error(str(feedback_error))
+    if feedback_success:
+        st.success(str(feedback_success))
+
+
+def _render_application_visibility_actions(model: Any) -> None:
+    actions = st.columns((1, 1, 2.4), gap="small")
+    actions[0].button(
+        "Close",
+        key=f"application_close_{model.job_id}",
+        use_container_width=True,
+        on_click=_clear_application_selection,
+        help="Close this workspace selection. The application stays in your list.",
+    )
+    if model.application_id:
+        if model.archived:
+            actions[1].button(
+                "Restore",
+                key=f"application_restore_{model.job_id}",
+                type="primary",
+                use_container_width=True,
+                on_click=_restore_application,
+                args=(model.application_id, model.job_id),
+            )
+        else:
+            actions[1].button(
+                "Archive",
+                key=f"application_archive_{model.job_id}",
+                use_container_width=True,
+                on_click=_archive_application,
+                args=(model.application_id, model.job_id),
+                help="Remove from active views without deleting any application evidence.",
+            )
+    actions[2].caption(
+        "Archive changes visibility only. Job, resume, review, submission, and receipt history remain intact."
+    )
 
 
 def _run_recovery(action: str, job_id: int) -> None:
@@ -613,17 +705,10 @@ def _render_recovery_center(model: Any) -> None:
             st.error(str(feedback_error))
         if feedback_success:
             st.success("Recovery action completed. Refreshing durable state.")
-        read_actions = st.columns(2, gap="small")
-        read_actions[0].button(
+        st.button(
             "Refresh state",
             key=f"application_refresh_{model.job_id}",
             use_container_width=True,
-        )
-        read_actions[1].button(
-            "Clear local selection",
-            key=f"application_clear_{model.job_id}",
-            use_container_width=True,
-            on_click=_clear_application_selection,
         )
         durable = [
             action
@@ -733,6 +818,7 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
     )
     if hasattr(product_pages, "_show_action_feedback"):
         product_pages._show_action_feedback()
+    _render_application_visibility_feedback()
 
     try:
         # Pagination bounds the rendered rail; the read projection includes every
@@ -746,7 +832,17 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
     else:
         st.session_state["_application_center_last_good"] = views
     requested = _requested_job_id()
-    selected = next((item for item in views if item.job_id == requested), None)
+    requested_application = _requested_application_id()
+    selected = next(
+        (
+            item
+            for item in views
+            if requested_application and item.application_id == requested_application
+        ),
+        None,
+    )
+    if selected is None:
+        selected = next((item for item in views if item.job_id == requested), None)
     if requested is not None and selected is None:
         try:
             selected = view_for_job(requested)
@@ -760,6 +856,7 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
             unsafe_allow_html=True,
         )
         st.link_button("Browse jobs", "?view=jobs", type="primary")
+        st.link_button("Add job", "?view=jobs&add=1")
         return
 
     rail, workspace = st.columns((0.9, 2.1), gap="large")
@@ -769,7 +866,7 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
         if selected is None:
             st.markdown("### Select an application")
             st.info("Action-required applications are listed first. Select one to open its exact durable context; search is optional.")
-            counts = Counter(item.state_group for item in views)
+            counts = Counter(item.state_group for item in views if not item.archived)
             metrics = st.columns(4, gap="small")
             metrics[0].metric("Needs you", counts.get("needs_you", 0))
             metrics[1].metric("Preparing", counts.get("preparing", 0))
@@ -777,6 +874,7 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
             metrics[3].metric("Needs attention", counts.get("needs_attention", 0))
         else:
             _render_application_header(selected)
+            _render_application_visibility_actions(selected)
             _render_application_state(app_workspace, selected)
 
 

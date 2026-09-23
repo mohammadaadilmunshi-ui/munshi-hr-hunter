@@ -50,6 +50,7 @@ _MAX_PARAGRAPH_CHARS = 1300
 _MAX_CONTENT_CHARS = 4300
 _NUMBER_RE = re.compile(r"(?<![A-Za-z])\$?\d[\d,]*(?:\.\d+)?%?\+?")
 _SPACE_RE = re.compile(r"\s+")
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
 
 SCHEMA_STATEMENTS = (
     """CREATE TABLE IF NOT EXISTS native_cover_letter_generations_v1(
@@ -510,6 +511,57 @@ def _validate_draft(
     return draft, audit
 
 
+def _remove_forbidden_wording(
+    draft_payload: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Remove only explicitly forbidden JD language; never add candidate facts.
+
+    This is the bounded final repair after the model's single truth-repair
+    attempt.  A paragraph that cannot retain both valid evidence and a supported
+    requirement is removed.  The ordinary schema/truth validator then decides
+    whether the reduced draft is still a usable cover letter.
+    """
+    draft = CoverLetterDraft.model_validate(draft_payload)
+    forbidden = set(context["forbidden_requirement_ids"])
+    supported = set(context["supported_requirement_ids"])
+    requirement_map = context["requirement_map"]
+    forbidden_text = tuple(
+        _normalized((requirement_map.get(requirement_id) or {}).get("exact_text"))
+        for requirement_id in forbidden
+        if _normalized((requirement_map.get(requirement_id) or {}).get("exact_text"))
+    )
+    repaired: list[dict[str, Any]] = []
+    for paragraph in draft.paragraphs:
+        requirement_ids = [
+            value
+            for value in dict.fromkeys(paragraph.requirement_ids)
+            if value in supported and value not in forbidden
+        ]
+        if not requirement_ids:
+            continue
+        sentences = _SENTENCE_BOUNDARY_RE.split(" ".join(paragraph.text.split()))
+        kept = [
+            sentence
+            for sentence in sentences
+            if not any(
+                exact and exact in _normalized(sentence)
+                for exact in forbidden_text
+            )
+        ]
+        text = " ".join(value.strip() for value in kept if value.strip()).strip()
+        if len(text) < 30:
+            continue
+        repaired.append(
+            {
+                "text": text,
+                "evidence_ids": list(dict.fromkeys(paragraph.evidence_ids)),
+                "requirement_ids": requirement_ids,
+            }
+        )
+    return {"paragraphs": repaired}
+
+
 def _content_text(draft: CoverLetterDraft) -> str:
     paragraphs = [
         " ".join(paragraph.text.split())
@@ -637,7 +689,25 @@ def generate(
             config=config,
         )
         model_calls += 1
-        draft, audit = _validate_draft(candidate, context)
+        try:
+            draft, audit = _validate_draft(candidate, context)
+        except ValueError as final_validation_error:
+            if not any(
+                marker in str(final_validation_error).casefold()
+                for marker in (
+                    "forbidden unsupported requirement",
+                    "unsupported jd requirements",
+                )
+            ):
+                raise
+            candidate = _remove_forbidden_wording(candidate, context)
+            try:
+                draft, audit = _validate_draft(candidate, context)
+            except ValueError as deterministic_repair_error:
+                raise final_validation_error from deterministic_repair_error
+            audit["deterministic_truth_repair"] = (
+                "unsupported_requirement_wording_removed"
+            )
     content = _content_text(draft)
 
     _assert_context_still_current(context)

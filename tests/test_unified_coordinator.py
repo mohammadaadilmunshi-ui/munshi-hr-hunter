@@ -6,8 +6,8 @@ from app import unified_hourly_coordinator as coordinator
 def test_unified_coordinator_cannot_launch_source_workers(monkeypatch, hunter_db) -> None:
     monkeypatch.setattr(coordinator, "load_enabled_sources", lambda: ["Ashby"])
     monkeypatch.setattr(
-        coordinator,
-        "queue_candidates",
+        coordinator.autonomous_prepare_compat_v1,
+        "queue_legacy_n8n_candidates",
         lambda **_kwargs: {"success": True, "queued": 0},
     )
     monkeypatch.setattr(

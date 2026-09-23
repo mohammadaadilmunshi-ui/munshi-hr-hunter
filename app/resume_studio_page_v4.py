@@ -43,13 +43,20 @@ def _set_view(view: str) -> None:
         return
 
 
-def _open_job_view(job_id: int, *, application: bool = False) -> None:
+def _open_job_view(
+    job_id: int,
+    *,
+    application: bool = False,
+    application_id: str | None = None,
+) -> None:
     view = "prepare-application" if application else "jobs"
     st.session_state["product_view"] = view
     st.session_state["last_viewed_job_id"] = int(job_id)
     try:
         st.query_params["view"] = view
         st.query_params["job"] = str(int(job_id))
+        if application and application_id:
+            st.query_params["application"] = str(application_id)
     except Exception:  # noqa: BLE001
         return
 
@@ -795,9 +802,15 @@ def _resume_library_rows(limit: int = 200) -> list[dict[str, Any]]:
         if job_id not in application_state:
             try:
                 flow = application_flow.flow_for_job(job_id, summary=True)
+                prepare = dict(flow.get("prepare") or {})
+                lifecycle = dict(flow.get("lifecycle") or {})
                 application_state[job_id] = (
                     str(flow.get("display_status") or "No application"),
-                    str(flow.get("application_id") or ""),
+                    str(
+                        lifecycle.get("application_id")
+                        or prepare.get("application_id")
+                        or ""
+                    ),
                 )
             except Exception:  # noqa: BLE001 - preserve access to healthy resumes
                 application_state[job_id] = ("Application status unavailable", "")
@@ -929,7 +942,10 @@ def _resume_library() -> None:
                 use_container_width=True,
                 on_click=_open_job_view,
                 args=(job_id,),
-                kwargs={"application": True},
+                kwargs={
+                    "application": True,
+                    "application_id": str(row.get("application_id") or "") or None,
+                },
             )
             actions[2].button(
                 "View job",
