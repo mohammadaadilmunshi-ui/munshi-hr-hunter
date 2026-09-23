@@ -347,6 +347,15 @@ def test_provider_requires_a_real_supported_ats_host_and_policy_is_closed(
         plans._normalize_provider_policy({"permitted": True, "host": "evil.test"}, provider="GREENHOUSE")
 
 
+def test_workday_provider_policy_has_narrow_mailbox_verification_allowlist():
+    policy = plans._normalize_provider_policy(None, provider="WORKDAY")
+
+    assert policy["mailbox_verification"] == {
+        "sender_domains": ["myworkday.com"],
+        "link_hosts": ["myworkdayjobs.com", "workdayjobs.com"],
+    }
+
+
 def test_secure_resolver_is_exactly_scoped_to_its_protected_question() -> None:
     with pytest.raises(ValueError, match="outside its Candidate Truth scope"):
         plans._normalize_secure_refs(

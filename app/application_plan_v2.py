@@ -67,6 +67,14 @@ _PROVIDER_HOSTS = {
     "WORKDAY": ("myworkdayjobs.com", "workdayjobs.com"),
     "AGILE_ATS": ("agile-ats.com",),
 }
+_PROVIDER_MAILBOX_POLICIES = {
+    # Workday SMTP delivery uses the myworkday.com sending domain. Candidate
+    # verification links remain on the provider's external career-site hosts.
+    "WORKDAY": {
+        "sender_domains": ["myworkday.com"],
+        "link_hosts": ["myworkdayjobs.com", "workdayjobs.com"],
+    },
+}
 
 SCHEMA_STATEMENTS = (
     """CREATE TABLE IF NOT EXISTS application_plans_v2 (
@@ -461,7 +469,7 @@ def _normalize_provider_policy(
         raise ValueError(
             "Application Plan V2 never permits automatic CAPTCHA handling."
         )
-    return {
+    normalized = {
         "provider": provider,
         "provider_recipe": provider if provider in KNOWN_PROVIDER_RECIPES else None,
         "permitted": permitted,
@@ -471,6 +479,10 @@ def _normalize_provider_policy(
         "credentials_authority": False,
         "allowed_hosts": list(effective_hosts),
     }
+    mailbox_policy = _PROVIDER_MAILBOX_POLICIES.get(provider)
+    if mailbox_policy is not None:
+        normalized["mailbox_verification"] = copy.deepcopy(mailbox_policy)
+    return normalized
 
 
 def _owner_binding(package_snapshot: Mapping[str, Any]) -> dict[str, str]:
