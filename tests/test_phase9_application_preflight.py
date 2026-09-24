@@ -337,6 +337,40 @@ def test_freshness_allows_strict_immutable_inflight_continuation(
     assert freshness["current_package_digest"] == package["package_digest"]
 
 
+def test_semantic_truth_extension_allows_only_resourced_or_added_facts() -> None:
+    stored = {
+        "tenant_id": "tenant-1",
+        "user_id": "user-1",
+        "candidate_profile_binding": {"profile_revision": 6},
+        "protected_fact_keys": ["work_authorization"],
+        "unresolved_fact_keys": ["salary"],
+        "facts": [
+            {
+                "key": "contact.email",
+                "value_reference": "vault://email",
+                "protected": True,
+                "source": {"extraction_id": "old"},
+            }
+        ],
+    }
+    current = copy.deepcopy(stored)
+    current["candidate_profile_binding"] = {"profile_revision": 6}
+    current["facts"][0]["source"] = {"extraction_id": "new"}
+    current["facts"].append(
+        {
+            "key": "contact.portfolio",
+            "value_reference": "vault://portfolio",
+            "protected": False,
+            "source": {"extraction_id": "new"},
+        }
+    )
+
+    assert phase9._semantic_truth_extension(stored, current) is True
+
+    current["facts"][0]["value_reference"] = "vault://different-email"
+    assert phase9._semantic_truth_extension(stored, current) is False
+
+
 def test_mid_capture_change_fails_closed_before_any_package_write(hunter_db, monkeypatch) -> None:
     first = _capture()
     second = copy.deepcopy(first)
