@@ -472,29 +472,148 @@ def get_preflight_package(
             connection.close()
 
 
+_CONTINUATION_JOB_IDENTITY_FIELDS = (
+    "id",
+    "company_name",
+    "title",
+    "job_url",
+    "apply_url",
+)
+_CANDIDATE_BINDING_FIELDS = (
+    "source_extraction_id",
+    "profile_revision",
+    "profile_digest",
+)
+
+
+def _immutable_inflight_continuation(package: Mapping[str, Any]) -> dict[str, Any]:
+    """Allow a prepared package to survive additive source enrichment safely.
+
+    Discovery may enrich a live job after preparation (description, parsed
+    location, score, timestamps).  Requiring the resume to be regenerated for
+    those additions defeats immutable in-flight execution.  Continuation is
+    allowed only while the exact employer/job/destination, current eligibility,
+    Candidate Truth, validated resume version, and rendered resume digest remain
+    unchanged.  A changed target or candidate fact still fails closed.
+    """
+    snapshot = dict(package.get("snapshot") or {})
+    stored_job = dict(snapshot.get("job") or {})
+    current_job_snapshot = safe_owned_job_snapshot(int(package["job_id"]))
+    current_job = dict(current_job_snapshot.get("job") or {})
+    changed_identity = [
+        field
+        for field in _CONTINUATION_JOB_IDENTITY_FIELDS
+        if str(stored_job.get(field) or "") != str(current_job.get(field) or "")
+    ]
+    if changed_identity:
+        return {"allowed": False, "reason": "job_identity_changed"}
+
+    connection = get_connection()
+    try:
+        owner = current_owner_readonly(connection)
+        row = connection.execute(
+            """SELECT primary_decision,status,hard_rejection_reason,
+                      cpt_trapdoor,already_applied
+                 FROM jobs
+                WHERE id=?""",
+            (int(package["job_id"]),),
+        ).fetchone()
+        if row is None:
+            return {"allowed": False, "reason": "job_missing"}
+        if (
+            str(row["primary_decision"] or "") != "ELIGIBLE"
+            or str(row["status"] or "") != "found"
+            or row["hard_rejection_reason"] is not None
+            or bool(int(row["cpt_trapdoor"] or 0))
+            or bool(int(row["already_applied"] or 0))
+        ):
+            return {"allowed": False, "reason": "job_no_longer_eligible"}
+        if (
+            str(snapshot.get("tenant_id") or snapshot.get("application_truth", {}).get("tenant_id") or "")
+            != owner.tenant_id
+            or str(snapshot.get("user_id") or snapshot.get("application_truth", {}).get("user_id") or "")
+            != owner.user_id
+        ):
+            return {"allowed": False, "reason": "owner_changed"}
+    finally:
+        connection.close()
+
+    current_truth = current_application_truth_projection(job_id=int(package["job_id"]))
+    stored_truth = dict(snapshot.get("application_truth") or {})
+    current_binding = dict(current_truth.get("candidate_profile_binding") or {})
+    stored_binding = dict(stored_truth.get("candidate_profile_binding") or {})
+    if any(
+        str(current_binding.get(field) or "") != str(stored_binding.get(field) or "")
+        for field in _CANDIDATE_BINDING_FIELDS
+    ):
+        return {"allowed": False, "reason": "candidate_truth_changed"}
+
+    resume = _resume_reference(str(package["resume_version_id"]))
+    resume_binding = dict(resume.get("candidate_truth_binding") or {})
+    if (
+        str(resume.get("status") or "") != "VALIDATED"
+        or str(resume.get("version_id") or "") != str(package["resume_version_id"])
+        or str(resume.get("rendered_resume_sha256") or "")
+        != str(package["resume_sha256"])
+        or any(
+            str(resume_binding.get(field) or "")
+            != str(current_binding.get(field) or "")
+            for field in _CANDIDATE_BINDING_FIELDS
+        )
+    ):
+        return {"allowed": False, "reason": "resume_changed"}
+
+    return {
+        "allowed": True,
+        "reason": "additive_job_enrichment",
+        "current_job_snapshot_sha256": str(
+            current_job_snapshot["job_snapshot_sha256"]
+        ),
+    }
+
+
 def preflight_package_freshness(package_id: str) -> dict[str, Any]:
     package = get_preflight_package(package_id)
     snapshot = package["snapshot"]
-    current = _capture(
-        job_id=int(package["job_id"]),
-        application_id=str(package["application_id"]),
-        resume_version_id=str(package["resume_version_id"]),
-        opportunity_evaluation_id=str(package["opportunity_evaluation_id"]),
-        relationship_strategy_id=(
-            str(package["relationship_strategy_id"])
-            if package.get("relationship_strategy_id")
-            else None
-        ),
-        application_questions_complete=bool(
-            (snapshot.get("application_question_state") or {}).get("complete")
-        ),
-        unresolved_question_keys=list(
-            (snapshot.get("application_question_state") or {}).get(
-                "unresolved_question_keys"
-            )
-            or []
-        ),
-    )
+    try:
+        current = _capture(
+            job_id=int(package["job_id"]),
+            application_id=str(package["application_id"]),
+            resume_version_id=str(package["resume_version_id"]),
+            opportunity_evaluation_id=str(package["opportunity_evaluation_id"]),
+            relationship_strategy_id=(
+                str(package["relationship_strategy_id"])
+                if package.get("relationship_strategy_id")
+                else None
+            ),
+            application_questions_complete=bool(
+                (snapshot.get("application_question_state") or {}).get("complete")
+            ),
+            unresolved_question_keys=list(
+                (snapshot.get("application_question_state") or {}).get(
+                    "unresolved_question_keys"
+                )
+                or []
+            ),
+        )
+    except (LookupError, RuntimeError, ValueError):
+        continuation = _immutable_inflight_continuation(package)
+        if continuation.get("allowed") is True:
+            return {
+                "package_id": str(package_id),
+                "fresh": True,
+                "reasons": [],
+                "stored_package_digest": str(package["package_digest"]),
+                "current_package_digest": str(package["package_digest"]),
+                "immutable_inflight_continuation": True,
+                "continuation_reason": str(continuation["reason"]),
+                "current_job_snapshot_sha256": str(
+                    continuation["current_job_snapshot_sha256"]
+                ),
+                "checked_at": _now(),
+                "submission_authority": False,
+            }
+        raise
     current_digest = sha256_json(package_digest_payload(current))
     reasons: list[str] = []
     if current_digest != str(package["package_digest"]):

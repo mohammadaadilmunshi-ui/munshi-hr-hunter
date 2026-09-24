@@ -170,8 +170,14 @@ def _current_bindings(preflight_package_id: str) -> dict[str, Any]:
         )
     job_id = int(package["job_id"])
     current = safe_owned_job_snapshot(job_id)
-    jd = str(current["job_snapshot_sha256"])
-    if jd != str(package["job_snapshot_sha256"]):
+    current_jd = str(current["job_snapshot_sha256"])
+    immutable_continuation = fresh.get("immutable_inflight_continuation") is True
+    jd = (
+        str(package["job_snapshot_sha256"])
+        if immutable_continuation
+        else current_jd
+    )
+    if current_jd != str(package["job_snapshot_sha256"]) and not immutable_continuation:
         raise RuntimeError("Cover letter job snapshot is stale.")
     rv = str(package["resume_version_id"])
     resume = application_execution_artifact.native(

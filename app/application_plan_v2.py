@@ -814,8 +814,16 @@ def _capture(
     job = dict(package_snapshot.get("job") or {})
     job_id = int(package["job_id"])
     owned_job = safe_owned_job_snapshot(job_id)
-    job_digest = str(owned_job["job_snapshot_sha256"])
-    if job_digest != str(package["job_snapshot_sha256"]):
+    current_job_digest = str(owned_job["job_snapshot_sha256"])
+    immutable_continuation = (
+        freshness.get("immutable_inflight_continuation") is True
+    )
+    job_digest = (
+        str(package["job_snapshot_sha256"])
+        if immutable_continuation
+        else current_job_digest
+    )
+    if current_job_digest != str(package["job_snapshot_sha256"]) and not immutable_continuation:
         raise RuntimeError("Application Plan job snapshot is stale.")
 
     resume_version_id = str(package["resume_version_id"])

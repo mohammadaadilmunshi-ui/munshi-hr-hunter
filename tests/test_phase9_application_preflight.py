@@ -299,6 +299,44 @@ def test_observational_truth_timestamp_does_not_trigger_false_drift(hunter_db, m
     )
 
 
+def test_freshness_allows_strict_immutable_inflight_continuation(
+    hunter_db, monkeypatch
+) -> None:
+    capture = _capture(complete=True)
+    monkeypatch.setattr(phase9, "_capture", lambda **_kwargs: copy.deepcopy(capture))
+    package = phase9.prepare_preflight_package(
+        job_id=42,
+        application_id="application-1",
+        idempotency_key="package-continuation-key",
+        resume_version_id="resume-1",
+        opportunity_evaluation_id="opportunity-1",
+        application_questions_complete=True,
+    )
+    monkeypatch.setattr(
+        phase9,
+        "_capture",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("Selected resume is not bound to the current job snapshot.")
+        ),
+    )
+    monkeypatch.setattr(
+        phase9,
+        "_immutable_inflight_continuation",
+        lambda _package: {
+            "allowed": True,
+            "reason": "additive_job_enrichment",
+            "current_job_snapshot_sha256": "9" * 64,
+        },
+    )
+
+    freshness = phase9.preflight_package_freshness(package["package_id"])
+
+    assert freshness["fresh"] is True
+    assert freshness["immutable_inflight_continuation"] is True
+    assert freshness["stored_package_digest"] == package["package_digest"]
+    assert freshness["current_package_digest"] == package["package_digest"]
+
+
 def test_mid_capture_change_fails_closed_before_any_package_write(hunter_db, monkeypatch) -> None:
     first = _capture()
     second = copy.deepcopy(first)
