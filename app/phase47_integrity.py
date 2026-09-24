@@ -28,6 +28,21 @@ def _same_truth(left: dict[str, Any] | None, right: dict[str, Any] | None) -> bo
     )
 
 
+def _unsuperseded_stale_profile_answers(planning: dict[str, Any]) -> list[dict[str, Any]]:
+    """Keep stale profile memory excluded, but do not block its current replacement."""
+    current_keys = {
+        str(item.get("question_key") or "")
+        for item in planning.get("answers") or []
+        if str(item.get("question_key") or "")
+    }
+    return [
+        dict(item)
+        for item in planning.get("excluded_answers") or []
+        if item.get("reason") == "stale_or_unbound_profile_answer"
+        and str(item.get("question_key") or "") not in current_keys
+    ]
+
+
 def application_preparation_readiness(
     *,
     job_id: int,
@@ -74,10 +89,7 @@ def application_preparation_readiness(
         answer_truth = planning.get("candidate_truth_binding")
         if current_truth_public and not _same_truth(answer_truth, current_truth_public):
             blockers.append("answer_brain_candidate_truth_mismatch")
-        stale_exclusions = [
-            item for item in planning.get("excluded_answers") or []
-            if item.get("reason") == "stale_or_unbound_profile_answer"
-        ]
+        stale_exclusions = _unsuperseded_stale_profile_answers(planning)
         if stale_exclusions:
             blockers.append("answer_brain_contains_stale_profile_memory")
         checks["phase5_answers"] = {

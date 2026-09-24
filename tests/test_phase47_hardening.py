@@ -408,6 +408,32 @@ def test_phase47_integrity_requires_one_current_truth_and_job_snapshot(
     assert "opportunity_evaluation_stale" in stale["blockers"]
 
 
+def test_phase47_stale_profile_memory_is_nonblocking_when_current_answer_supersedes_it() -> None:
+    planning = {
+        "answers": [{"question_key": "contact.first_name"}],
+        "excluded_answers": [
+            {
+                "answer_id": "old-first-name",
+                "question_key": "contact.first_name",
+                "reason": "stale_or_unbound_profile_answer",
+            },
+            {
+                "answer_id": "old-city",
+                "question_key": "contact.city",
+                "reason": "stale_or_unbound_profile_answer",
+            },
+        ],
+    }
+
+    assert phase47_integrity._unsuperseded_stale_profile_answers(planning) == [
+        {
+            "answer_id": "old-city",
+            "question_key": "contact.city",
+            "reason": "stale_or_unbound_profile_answer",
+        }
+    ]
+
+
 
 def test_phase47_advisory_opportunity_unknowns_do_not_block_preflight(
     hunter_db, monkeypatch: pytest.MonkeyPatch
