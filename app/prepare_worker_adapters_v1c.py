@@ -1249,7 +1249,7 @@ def _runtime_replacement_plan(
     if not prior_plan_id:
         return None, None
 
-    supersession = application_plan_v2.runtime_plan_supersession(prior_plan_id)
+    supersession = application_plan_v2.runtime_plan_replacement(prior_plan_id)
     if not supersession:
         return None, None
     replacement_id = str(supersession.get("replacement_plan_id") or "").strip()

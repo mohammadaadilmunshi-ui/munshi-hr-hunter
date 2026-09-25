@@ -164,6 +164,7 @@ def test_runtime_browser_resolution_creates_exact_replay_safe_supersession(
     assert lineage["session_id"] == "apply-session-1"
     assert lineage["checkpoint_id"] == "checkpoint-1"
     assert lineage["browser_form_digest"] == "f" * 64
+    assert plans.runtime_plan_replacement(prior["plan_id"]) == lineage
     assert replacement["snapshot"]["answers"][0]["execution_value"] == "Aadil"
     assert plans.runtime_plan_is_superseded(prior["plan_id"]) is True
     with pytest.raises(RuntimeError, match="superseded"):

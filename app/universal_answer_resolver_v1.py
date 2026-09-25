@@ -207,6 +207,36 @@ def resolve_concept(
             extra={"answer_source": str(row.get("source_type") or ""), "source_ref": str(row.get("source_ref") or "")},
         )
 
+    if concept.answer_mode == "JOB_CONTEXT_DERIVED":
+        source = " ".join(str((job_context or {}).get("source") or "").split())
+        job_id = str((job_context or {}).get("id") or "").strip()
+        if graph.universal_derivation_enabled() and source and job_id and len(source) <= 200:
+            row = {
+                "source_type": "DERIVED",
+                "source_ref": f"hunter-job:{job_id}:source",
+                "trust_level": "DERIVED",
+                "confidence": 1.0,
+            }
+            return _base_result(
+                status="DERIVED", concept_id=concept_id,
+                answer_mode=concept.answer_mode,
+                confidence=min(float(question.get("confidence") or 0.0), 1.0),
+                sensitivity="NORMAL", autofill_allowed=True,
+                reason="current_hunter_job_source_derivation",
+                knowledge_revision=revision, question=question,
+                evidence_ids=[f"hunter-job:{job_id}:source"],
+                value_ref=_opaque_value_ref(concept_id, row, revision), value=source,
+                extra={"derivation": {"source_ref": row["source_ref"]}},
+            )
+        return _base_result(
+            status="MISSING_FACT", concept_id=concept_id,
+            answer_mode=concept.answer_mode,
+            confidence=float(question.get("confidence") or 0.0),
+            sensitivity="NORMAL", autofill_allowed=False,
+            reason="current_hunter_job_source_missing",
+            knowledge_revision=revision, question=question,
+        )
+
     # Evidence-backed derivations run only after direct facts and reusable memory,
     # and remain independently rollout-gated from direct NORMAL fact autofill.
     conditions = dict(question.get("conditions") or {})

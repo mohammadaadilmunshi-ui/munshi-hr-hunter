@@ -1995,6 +1995,14 @@ def _runtime_replacement_plan_id(prior_plan_id: str) -> str | None:
         connection.close()
 
 
+def runtime_plan_replacement(prior_plan_id: str) -> dict[str, Any] | None:
+    """Return finalized runtime lineage when given its superseded prior plan."""
+    replacement_id = _runtime_replacement_plan_id(prior_plan_id)
+    if replacement_id is None:
+        return None
+    return runtime_plan_supersession(replacement_id)
+
+
 def runtime_plan_is_superseded(plan_id: str) -> bool:
     return _runtime_replacement_plan_id(plan_id) is not None
 

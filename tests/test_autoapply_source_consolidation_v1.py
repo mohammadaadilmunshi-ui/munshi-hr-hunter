@@ -120,7 +120,7 @@ def test_runtime_supersession_uses_exact_fresh_replacement(monkeypatch) -> None:
 
     monkeypatch.setattr(
         prepare_v1c.application_plan_v2,
-        "runtime_plan_supersession",
+        "runtime_plan_replacement",
         lambda plan_id: {
             "prior_plan_id": plan_id,
             "replacement_plan_id": "plan-replacement",

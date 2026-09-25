@@ -259,6 +259,17 @@ def _build_registry() -> dict[str, CandidateConcept]:
             "Explicit candidate preference for remote, hybrid, or onsite work.",
         ),
         CandidateConcept(
+            "application.referral_source", "APPLICATION", "choice", "NORMAL",
+            "JOB_CONTEXT_DERIVED", False,
+            (
+                "how did you hear about us", "how did you hear about this job",
+                "where did you hear about this opportunity", "application source",
+                "referral source",
+            ),
+            ("REFERRAL",), (), (), False,
+            "Source through which the current Hunter job was discovered.",
+        ),
+        CandidateConcept(
             "work.authorization.us", "WORK_AUTHORIZATION", "boolean", "PROTECTED", "WORK_AUTHORIZATION_POLICY", False,
             ("authorized to work in the us", "us work authorization"),
             ("WORK_AUTHORIZATION_CURRENT",), ("application_defaults.authorized_to_work",),
