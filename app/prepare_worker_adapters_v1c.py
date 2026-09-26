@@ -367,6 +367,11 @@ def _reusable_preflight_output(
             freshness = preflight_v1.preflight_package_freshness(package_id)
         except (LookupError, RuntimeError, ValueError):
             continue
+        package_snapshot = dict(package.get("snapshot") or {})
+        package_truth = dict(package_snapshot.get("application_truth") or {})
+        package_candidate_binding = dict(
+            package_truth.get("candidate_profile_binding") or {}
+        )
         if (
             freshness.get("fresh") is not True
             or str(package.get("application_id") or "")
@@ -374,7 +379,7 @@ def _reusable_preflight_output(
             or int(package.get("job_id") or 0) != int(operation["job_id"])
             or str(package.get("job_snapshot_sha256") or "")
             != str(operation["job_snapshot_sha256"])
-            or str(package.get("candidate_profile_digest") or "")
+            or str(package_candidate_binding.get("profile_digest") or "")
             != str(operation["candidate_profile_digest"])
             or str(package.get("resume_version_id") or "")
             != str(resume.get("resume_version_id") or "")

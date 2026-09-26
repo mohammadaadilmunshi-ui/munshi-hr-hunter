@@ -284,9 +284,15 @@ def test_preflight_retry_reuses_exact_fresh_package_without_writer_call(
             "application_id": "application-94",
             "job_id": 94,
             "job_snapshot_sha256": JOB_DIGEST,
-            "candidate_profile_digest": PROFILE_DIGEST,
             "resume_version_id": "resume-v5-94",
             "status": "READY_TO_APPLY",
+            "snapshot": {
+                "application_truth": {
+                    "candidate_profile_binding": {
+                        "profile_digest": PROFILE_DIGEST,
+                    },
+                },
+            },
         },
     )
     monkeypatch.setattr(
