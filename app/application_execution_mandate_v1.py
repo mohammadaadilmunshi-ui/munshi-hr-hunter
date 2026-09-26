@@ -386,6 +386,7 @@ def mandate_authorizes_internal_review(
     plan = application_plan_v2.get_application_plan(plan_id)
     plan_snapshot = dict(plan.get("snapshot") or {})
     plan_job = dict(plan_snapshot.get("job") or {})
+    plan_resume = dict(plan_snapshot.get("resume") or {})
     provider_policy = dict(plan_snapshot.get("provider_policy") or {})
     allowed_hosts = {
         str(value).strip().casefold()
@@ -406,8 +407,12 @@ def mandate_authorizes_internal_review(
         != str(mandate["application_id"])
         or int(plan.get("job_id") or 0) != int(mandate["job_id"])
         or str(plan_job.get("id") or "") != str(package_job.get("id") or "")
+        or str(mandate.get("resume_version_id") or "")
+        != str(plan_resume.get("version_id") or "")
+        or str(mandate.get("resume_sha256") or "")
+        != str(plan_resume.get("rendered_output_sha256") or "")
         or str(review_record.get("resume_artifact_sha256") or "")
-        != str(mandate["resume_sha256"])
+        != str(plan_resume.get("artifact_sha256") or "")
         or not destination_allowed
     ):
         raise PermissionError(

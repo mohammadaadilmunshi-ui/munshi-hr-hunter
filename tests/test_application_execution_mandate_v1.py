@@ -11,6 +11,7 @@ from app import database
 PACKAGE_DIGEST = "a" * 64
 RESUME_DIGEST = "b" * 64
 PROFILE_DIGEST = "c" * 64
+ARTIFACT_DIGEST = "e" * 64
 
 
 @pytest.fixture
@@ -158,3 +159,52 @@ def test_approval_refuses_changed_displayed_package(
             expected_review_digest="f" * 64,
             idempotency_key="customer-package-approval-wrong",
         )
+
+
+def test_mandate_binds_rendered_resume_and_browser_review_binds_pdf_artifact(
+    mandate_authority,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_review = mandate.package_review(
+        preflight_package_id="preflight-1",
+        cover_letter_decision="NOT_REQUIRED",
+    )
+    approved = mandate.approve_package(
+        preflight_package_id="preflight-1",
+        cover_letter_decision="NOT_REQUIRED",
+        expected_review_digest=package_review["review_digest"],
+        idempotency_key="customer-package-approval-digest-domains",
+    )
+    monkeypatch.setattr(
+        mandate.application_plan_v2,
+        "get_application_plan",
+        lambda plan_id: {
+            "plan_id": plan_id,
+            "job_id": 42,
+            "snapshot": {
+                "job": {"id": 42},
+                "resume": {
+                    "version_id": "resume-1",
+                    "rendered_output_sha256": RESUME_DIGEST,
+                    "artifact_sha256": ARTIFACT_DIGEST,
+                },
+                "provider_policy": {"allowed_hosts": ["jobs.example.test"]},
+            },
+        },
+    )
+
+    authorized = mandate.mandate_authorizes_internal_review(
+        mandate_id=approved["mandate_id"],
+        review_record={
+            "application_id": "application-1",
+            "plan_id": "application-plan-1",
+            "resume_artifact_sha256": ARTIFACT_DIGEST,
+            "review": {
+                "destination_url": "https://jobs.example.test/42/apply",
+                "cover_letter": None,
+            },
+        },
+    )
+
+    assert authorized["resume_version_id"] == "resume-1"
+    assert authorized["resume_sha256"] == RESUME_DIGEST
