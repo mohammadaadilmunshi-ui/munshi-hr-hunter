@@ -1315,6 +1315,37 @@ def test_provider_capability_retry_fails_closed_on_non_provider_semantic_drift(
         )
 
 
+def test_content_addressed_plan_follows_existing_runtime_replacement(
+    monkeypatch,
+) -> None:
+    prior = {"plan_id": "plan-prior"}
+    replacement = {
+        "plan_id": "plan-replacement",
+        "idempotency_key": "runtime-replacement-key",
+    }
+    seen = {}
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "runtime_plan_is_superseded",
+        lambda plan_id: plan_id == "plan-prior",
+    )
+
+    def runtime_replacement(**kwargs):
+        seen.update(kwargs)
+        return replacement, "plan-prior"
+
+    monkeypatch.setattr(workers, "_runtime_replacement_plan", runtime_replacement)
+    resolved, prior_id = workers._follow_content_addressed_runtime_replacement(
+        plan=prior,
+        operation={"operation_id": "operation-94"},
+        preflight={"preflight_package_id": "preflight-94"},
+    )
+
+    assert resolved == replacement
+    assert prior_id == "plan-prior"
+    assert seen["pending_task"] == {"output": {"plan_id": "plan-prior"}}
+
+
 def test_ats_browser_waits_for_single_prebrowser_mandate(
     worker_db, monkeypatch
 ):

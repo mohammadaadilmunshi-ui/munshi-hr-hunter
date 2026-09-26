@@ -1314,6 +1314,26 @@ def _runtime_replacement_plan(
     return replacement, prior_plan_id
 
 
+def _follow_content_addressed_runtime_replacement(
+    *,
+    plan: Mapping[str, Any],
+    operation: Mapping[str, Any],
+    preflight: Mapping[str, Any],
+) -> tuple[dict[str, Any], str | None]:
+    """Follow saved runtime lineage when plan de-duplication returns its prior."""
+    plan_id = str(plan.get("plan_id") or "")
+    if not application_plan_v2.runtime_plan_is_superseded(plan_id):
+        return dict(plan), None
+    replacement, prior_plan_id = _runtime_replacement_plan(
+        operation=operation,
+        pending_task={"output": {"plan_id": plan_id}},
+        preflight=preflight,
+    )
+    if replacement is None or not prior_plan_id:
+        raise RuntimeError("Superseded Application Plan has no valid replacement.")
+    return replacement, prior_plan_id
+
+
 def run_ats_form_preparation_once(
     *,
     operation_id: str,
@@ -1468,6 +1488,16 @@ def run_ats_form_preparation_once(
                 resume_format="PDF",
                 cover_letter_id=cover_letter_id,
             )
+            plan, followed_prior_plan_id = (
+                _follow_content_addressed_runtime_replacement(
+                    plan=plan,
+                    operation=operation,
+                    preflight=preflight,
+                )
+            )
+            if followed_prior_plan_id:
+                runtime_supersession_from_plan_id = followed_prior_plan_id
+                plan_key = str(plan["idempotency_key"])
         if (
             str(plan.get("status") or "") != "READY_TO_APPLY"
             or plan.get("executable") is not True
