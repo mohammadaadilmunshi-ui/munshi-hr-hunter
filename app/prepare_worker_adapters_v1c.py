@@ -342,6 +342,7 @@ def _reusable_preflight_output(
         connection.close()
 
     resume_pdf = dict(resume.get("pdf") or {})
+    unapproved_fallback: dict[str, Any] | None = None
     for row in rows:
         try:
             output = json.loads(str(row["output_json"] or ""))
@@ -388,8 +389,12 @@ def _reusable_preflight_output(
             or str(package.get("status") or "") != "READY_TO_APPLY"
         ):
             continue
-        return output
-    return None
+        mandate = application_execution_mandate_v1.current_for_preflight(package_id)
+        if mandate is not None:
+            return output
+        if unapproved_fallback is None:
+            unapproved_fallback = output
+    return unapproved_fallback
 
 
 def run_application_preflight_once(

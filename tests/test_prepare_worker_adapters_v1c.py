@@ -325,6 +325,111 @@ def test_preflight_retry_reuses_exact_fresh_package_without_writer_call(
     assert result["output"] == prior_output
 
 
+def test_preflight_retry_prefers_equally_fresh_package_with_existing_mandate(
+    worker_db, monkeypatch
+):
+    def complete_prior(key: str, package_id: str, package_digest: str) -> dict:
+        operation = _start(key)
+        _ready_dependencies(operation["operation_id"], cover="OPTIONAL")
+        output = {
+            "version": workers.WORKER_VERSION,
+            "preflight_package_id": package_id,
+            "preflight_package_digest": package_digest,
+            "preflight_status": "READY_TO_APPLY",
+            "opportunity_evaluation_id": "opportunity-94",
+            "opportunity_result_sha256": "f" * 64,
+            "relationship_strategy_id": None,
+            "resume_version_id": "resume-v5-94",
+            "resume_pdf_sha256": "d" * 64,
+            "cover_letter_decision": "OPTIONAL",
+            "cover_letter_id": "cover-letter-94",
+            "cover_letter_artifact_sha256": "c" * 64,
+            "cover_letter_page_count": 1,
+            "single_approval_package_ready": True,
+            "answer_inventory_snapshot_complete": True,
+            "known_requirement_set_complete": True,
+            "live_form_discovery_pending": True,
+            "employer_form_claimed_complete": False,
+            "submission_authority": False,
+            "automatic_submission_executed": False,
+        }
+        _complete_root(
+            operation["operation_id"],
+            orchestrator.TASK_APPLICATION_PREFLIGHT,
+            "prior-preflight-worker",
+            output,
+        )
+        return output
+
+    approved_output = complete_prior(
+        "v1c-preflight-approved-prior", "preflight-approved-94", "e" * 64
+    )
+    complete_prior(
+        "v1c-preflight-unapproved-newer", "preflight-unapproved-94", "a" * 64
+    )
+    retry = _start("v1c-preflight-prefer-approved-retry")
+    _ready_dependencies(retry["operation_id"], cover="OPTIONAL")
+
+    monkeypatch.setattr(
+        workers.preflight_v1,
+        "get_preflight_package",
+        lambda package_id: {
+            "package_id": package_id,
+            "package_digest": (
+                "e" * 64 if package_id == "preflight-approved-94" else "a" * 64
+            ),
+            "application_id": "application-94",
+            "job_id": 94,
+            "job_snapshot_sha256": JOB_DIGEST,
+            "resume_version_id": "resume-v5-94",
+            "status": "READY_TO_APPLY",
+            "snapshot": {
+                "application_truth": {
+                    "candidate_profile_binding": {
+                        "profile_digest": PROFILE_DIGEST,
+                    },
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        workers.preflight_v1,
+        "preflight_package_freshness",
+        lambda package_id: {"fresh": True},
+    )
+    monkeypatch.setattr(
+        workers.application_execution_mandate_v1,
+        "current_for_preflight",
+        lambda package_id: (
+            {"mandate_id": "execution-mandate-94"}
+            if package_id == "preflight-approved-94"
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        workers.preflight_v1,
+        "prepare_preflight_package",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("retry must reuse the approved preflight package")
+        ),
+    )
+    monkeypatch.setattr(
+        workers.native_cover_letter_writer_v1,
+        "generate",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("retry must not regenerate a cover letter")
+        ),
+    )
+
+    result = workers.run_application_preflight_once(
+        operation_id=retry["operation_id"],
+        worker_id="retry-preflight-worker",
+    )
+
+    assert result["reused_preflight_package"] is True
+    assert result["output"] == approved_output
+
+
 def test_preflight_worker_passes_v5_resume_and_known_scope(worker_db, monkeypatch):
     operation = _start("v1c-preflight-args")
     _ready_dependencies(operation["operation_id"])
