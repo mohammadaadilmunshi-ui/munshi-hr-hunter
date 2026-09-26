@@ -61,6 +61,8 @@ APPLY_BASE_URL_ENV = "MUNSHI_APPLY_BASE_URL"
 APPLY_COMMAND_SECRET_ENV = "MUNSHI_APPLY_COMMAND_SECRET"
 APPLY_INTERNAL_HTTP_ENABLED_ENV = "MUNSHI_APPLY_INTERNAL_HTTP_ENABLED"
 APPLY_INTERNAL_HTTP_BASE_URL_ENV = "MUNSHI_APPLY_INTERNAL_HTTP_BASE_URL"
+ATS_PREPARE_POLL_TIMEOUT_ENV = "MUNSHI_ATS_PREPARE_POLL_TIMEOUT_SECONDS"
+ATS_PREPARE_POLL_TIMEOUT_DEFAULT_SECONDS = 300.0
 
 WORKER_VERSION = "munshi-prepare-worker-adapters-v1c"
 SUBMISSION_AUTHORITY = False
@@ -87,6 +89,28 @@ def _truthy(name: str) -> bool:
         "on",
         "enabled",
     }
+
+
+def _ats_prepare_poll_timeout_seconds(value: float | None = None) -> float:
+    raw: Any
+    if value is None:
+        raw = os.getenv(
+            ATS_PREPARE_POLL_TIMEOUT_ENV,
+            str(ATS_PREPARE_POLL_TIMEOUT_DEFAULT_SECONDS),
+        )
+    else:
+        raw = value
+    try:
+        resolved = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "ATS preparation poll timeout must be a numeric value."
+        ) from exc
+    if resolved <= 0 or resolved > 3600:
+        raise ValueError(
+            "ATS preparation poll timeout must be between 0 and 3600 seconds."
+        )
+    return resolved
 
 
 def workers_enabled() -> bool:
@@ -1284,7 +1308,7 @@ def run_ats_form_preparation_once(
     *,
     operation_id: str,
     worker_id: str,
-    poll_timeout_seconds: float = 30.0,
+    poll_timeout_seconds: float | None = None,
     poll_interval_seconds: float = 1.0,
     lease_seconds: int = 300,
     plan_delivery: Callable[..., Any] | None = None,
@@ -1321,8 +1345,9 @@ def run_ats_form_preparation_once(
             "submission_authority": False,
         }
 
-    if float(poll_timeout_seconds) <= 0 or float(poll_timeout_seconds) > 3600:
-        raise ValueError("ATS preparation poll timeout must be between 0 and 3600 seconds.")
+    poll_timeout_seconds = _ats_prepare_poll_timeout_seconds(
+        poll_timeout_seconds
+    )
     if float(poll_interval_seconds) < 0 or float(poll_interval_seconds) > 30:
         raise ValueError("ATS preparation poll interval must be between 0 and 30 seconds.")
 

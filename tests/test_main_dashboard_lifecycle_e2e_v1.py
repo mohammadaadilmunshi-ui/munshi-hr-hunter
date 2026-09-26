@@ -141,3 +141,22 @@ def test_generic_two_job_browse_prepare_application_center_chain(monkeypatch) ->
         }
     )
     assert other_destination.apply_via == "Lever"
+
+def test_initial_main_dashboard_uses_canonical_complete_application_loop():
+    import inspect
+
+    from app import application_workspace_page
+    from app import product_shell
+
+    workspace_source = inspect.getsource(
+        application_workspace_page._render_complete_loop
+    )
+    shell_source = inspect.getsource(product_shell.render)
+
+    assert (
+        "from app import product_application_flow_v2 as complete_loop"
+        in inspect.getsource(application_workspace_page)
+    )
+    assert "complete_loop.start_prepare_for_job(" in workspace_source
+    assert "complete_loop.approve_and_submit_for_job(" in workspace_source
+    assert "PREPARE_APPLICATION_VIEW: application_workspace_page.render" in shell_source

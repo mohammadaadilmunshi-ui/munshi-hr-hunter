@@ -1513,3 +1513,22 @@ def test_apply_semantic_bridge_rejects_provider_contract_leak(monkeypatch):
             tenant_id="tenant-a",
             user_id="user-a",
         )
+
+def test_ats_prepare_poll_timeout_policy_is_generic_and_runtime_configurable(
+    monkeypatch,
+):
+    monkeypatch.delenv(workers.ATS_PREPARE_POLL_TIMEOUT_ENV, raising=False)
+    assert workers._ats_prepare_poll_timeout_seconds() == 300.0
+
+    monkeypatch.setenv(workers.ATS_PREPARE_POLL_TIMEOUT_ENV, "420")
+    assert workers._ats_prepare_poll_timeout_seconds() == 420.0
+
+    assert workers._ats_prepare_poll_timeout_seconds(0.25) == 0.25
+
+    monkeypatch.setenv(workers.ATS_PREPARE_POLL_TIMEOUT_ENV, "0")
+    with pytest.raises(ValueError, match="between 0 and 3600"):
+        workers._ats_prepare_poll_timeout_seconds()
+
+    monkeypatch.setenv(workers.ATS_PREPARE_POLL_TIMEOUT_ENV, "not-a-number")
+    with pytest.raises(ValueError, match="numeric value"):
+        workers._ats_prepare_poll_timeout_seconds()
