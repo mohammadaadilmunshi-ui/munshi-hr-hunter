@@ -306,12 +306,18 @@ def _preclassification(obs: QuestionObservation) -> dict[str, Any]:
         sensitivity = ontology.sensitivity_at_least(sensitivity, "POST_OFFER")
     semantic = str(obs.apply_semantic_type or "").upper()
     if semantic in {
-        "WORK_AUTHORIZATION_CURRENT", "SPONSORSHIP_CURRENT", "SPONSORSHIP_FUTURE",
+        "WORK_AUTHORIZATION_CURRENT", "WORK_LOCATION_ELIGIBILITY", "AGE_18_PLUS",
+        "SPONSORSHIP_CURRENT", "SPONSORSHIP_FUTURE",
         "IMMIGRATION_ASSISTANCE", "SECURITY_CLEARANCE",
     }:
         sensitivity = ontology.sensitivity_at_least(sensitivity, "PROTECTED")
-    if semantic in {"VETERAN_STATUS", "PROTECTED_VETERAN_STATUS", "DISABILITY_STATUS", "GENDER", "RACE_ETHNICITY", "EEO_SELF_ID"}:
+    if semantic in {
+        "VETERAN_STATUS", "PROTECTED_VETERAN_STATUS", "DISABILITY_STATUS",
+        "GENDER", "RACE_ETHNICITY", "HISPANIC_LATINO", "EEO_SELF_ID",
+    }:
         sensitivity = ontology.sensitivity_at_least(sensitivity, "SELF_ID")
+    if semantic == "EMPLOYEE_ID":
+        sensitivity = ontology.sensitivity_at_least(sensitivity, "POST_OFFER")
     if semantic in {"PASSWORD", "OTP", "MFA", "CAPTCHA", "PASSKEY", "BIOMETRIC", "IDENTITY_VERIFICATION"}:
         sensitivity = ontology.sensitivity_at_least(sensitivity, "CREDENTIAL")
     return {"family": family, "sensitivity": sensitivity, "catalog_match": catalog_match, "catalog_concept_id": concept_id}
