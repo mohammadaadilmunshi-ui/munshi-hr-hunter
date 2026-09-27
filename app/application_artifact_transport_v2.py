@@ -17,6 +17,7 @@ from app import (
     application_submit_authorization_v1,
     application_production_submission_receipt_v1,
     application_secure_answer_resolver_v1,
+    application_execution_mandate_v1,
 )
 from app.database import get_setting
 from app.secure_vault import read_secret
@@ -29,11 +30,18 @@ PURPOSE_COVER_LETTER_BYTES = "COVER_LETTER_BYTES"
 PURPOSE_AUTOAPPLY_CONFIG = "AUTOAPPLY_CONFIG"
 PURPOSE_AUTOAPPLY_CREDENTIAL = "AUTOAPPLY_CREDENTIAL"
 PURPOSE_PROTECTED_ANSWER = "PROTECTED_APPLICATION_VALUE"
+PURPOSE_LEGAL_ATTESTATION = "LEGAL_ATTESTATION_AUTHORIZATION"
 PURPOSE_SUBMIT_AUTH_ISSUE = "SUBMIT_AUTHORIZATION_ISSUE"
 PURPOSE_SUBMIT_AUTH_CLAIM = "SUBMIT_AUTHORIZATION_CLAIM"
 PURPOSE_SUBMIT_AUTH_READ = "SUBMIT_AUTHORIZATION_READ"
 PURPOSE_PRODUCTION_RECEIPT_INGEST = "PRODUCTION_RECEIPT_INGEST"
-CONTROL_PURPOSES = frozenset({PURPOSE_SUBMIT_AUTH_ISSUE,PURPOSE_SUBMIT_AUTH_CLAIM,PURPOSE_SUBMIT_AUTH_READ,PURPOSE_PRODUCTION_RECEIPT_INGEST})
+CONTROL_PURPOSES = frozenset({
+    PURPOSE_LEGAL_ATTESTATION,
+    PURPOSE_SUBMIT_AUTH_ISSUE,
+    PURPOSE_SUBMIT_AUTH_CLAIM,
+    PURPOSE_SUBMIT_AUTH_READ,
+    PURPOSE_PRODUCTION_RECEIPT_INGEST,
+})
 SECRET_CONTROL_PURPOSES = frozenset({PURPOSE_PROTECTED_ANSWER})
 MAX_SKEW_SECONDS = 120
 REQUIRED = {"version","request_id","purpose","tenant_id","user_id","application_id","plan_id","plan_digest","artifact_id","artifact_reference","artifact_sha256"}
@@ -114,7 +122,13 @@ def _control_response(body:bytes,headers:Mapping[str,str],*,now:int|None=None):
         if purpose==PURPOSE_SUBMIT_AUTH_CLAIM: source=dict(payload.get("authorization") or {})
         elif purpose==PURPOSE_PRODUCTION_RECEIPT_INGEST: source=dict(payload.get("receipt") or {})
         if str(source.get(key) or "")!=str(p[key]): raise PermissionError(f"Execution bridge control binding mismatch: {key}.")
-    if purpose==PURPOSE_SUBMIT_AUTH_ISSUE:
+    if purpose==PURPOSE_LEGAL_ATTESTATION:
+        result=application_execution_mandate_v1.authorize_legal_attestation(
+            plan_id=str(p["plan_id"]),
+            plan_digest=str(p["plan_digest"]),
+            attestation_identity=dict(payload.get("attestation_identity") or {}),
+        )
+    elif purpose==PURPOSE_SUBMIT_AUTH_ISSUE:
         result=application_submit_authorization_v1.issue_authorization(payload)
     elif purpose==PURPOSE_SUBMIT_AUTH_READ:
         result=application_submit_authorization_v1.current_authorization(payload)
@@ -306,6 +320,19 @@ def protected_answer_response(body:bytes,headers:Mapping[str,str],*,now:int|None
         "X-Munshi-Submission-Authority":"false",
     })
     return data,response_headers
+
+
+def legal_attestation_response(
+    body: bytes,
+    headers: Mapping[str, str],
+    *,
+    now: int | None = None,
+):
+    """Return one signed, value-free legal-attestation authorization proof."""
+    peek = _decode(body)
+    if peek.get("purpose") != PURPOSE_LEGAL_ATTESTATION:
+        raise ValueError("Legal attestation execution purpose is invalid.")
+    return _control_response(body, headers, now=now)
 
 
 def current_plan_response(body:bytes,headers:Mapping[str,str],*,now:int|None=None):
