@@ -16,6 +16,7 @@ from app import (
     native_resume_artifact_v5,
     application_submit_authorization_v1,
     application_production_submission_receipt_v1,
+    application_secure_answer_resolver_v1,
 )
 from app.database import get_setting
 from app.secure_vault import read_secret
@@ -27,11 +28,13 @@ PURPOSE_ARTIFACT_BYTES = "ARTIFACT_BYTES"
 PURPOSE_COVER_LETTER_BYTES = "COVER_LETTER_BYTES"
 PURPOSE_AUTOAPPLY_CONFIG = "AUTOAPPLY_CONFIG"
 PURPOSE_AUTOAPPLY_CREDENTIAL = "AUTOAPPLY_CREDENTIAL"
+PURPOSE_PROTECTED_ANSWER = "PROTECTED_APPLICATION_VALUE"
 PURPOSE_SUBMIT_AUTH_ISSUE = "SUBMIT_AUTHORIZATION_ISSUE"
 PURPOSE_SUBMIT_AUTH_CLAIM = "SUBMIT_AUTHORIZATION_CLAIM"
 PURPOSE_SUBMIT_AUTH_READ = "SUBMIT_AUTHORIZATION_READ"
 PURPOSE_PRODUCTION_RECEIPT_INGEST = "PRODUCTION_RECEIPT_INGEST"
 CONTROL_PURPOSES = frozenset({PURPOSE_SUBMIT_AUTH_ISSUE,PURPOSE_SUBMIT_AUTH_CLAIM,PURPOSE_SUBMIT_AUTH_READ,PURPOSE_PRODUCTION_RECEIPT_INGEST})
+SECRET_CONTROL_PURPOSES = frozenset({PURPOSE_PROTECTED_ANSWER})
 MAX_SKEW_SECONDS = 120
 REQUIRED = {"version","request_id","purpose","tenant_id","user_id","application_id","plan_id","plan_digest","artifact_id","artifact_reference","artifact_sha256"}
 CONTROL_REQUIRED = {"version","request_id","purpose","tenant_id","user_id","application_id","plan_id","plan_digest","payload"}
@@ -82,7 +85,7 @@ def _verify(body:bytes,headers:Mapping[str,str],*,purpose:str,now:int|None=None)
 def _verify_control(body:bytes,headers:Mapping[str,str],*,now:int|None=None)->dict[str,Any]:
     eid=_verify_signature(body,headers,now=now); p=_decode(body)
     if set(p)!=CONTROL_REQUIRED: raise ValueError("Execution bridge control request shape is invalid.")
-    if p.get("version")!=REQUEST_VERSION or p.get("purpose") not in CONTROL_PURPOSES: raise ValueError("Execution bridge control version/purpose is invalid.")
+    if p.get("version")!=REQUEST_VERSION or p.get("purpose") not in (CONTROL_PURPOSES | SECRET_CONTROL_PURPOSES): raise ValueError("Execution bridge control version/purpose is invalid.")
     if p.get("request_id")!=eid or not eid: raise PermissionError("Execution bridge event identity mismatch.")
     if not isinstance(p.get("payload"),dict): raise ValueError("Execution bridge control payload must be an object.")
     return p
@@ -206,6 +209,104 @@ def autoapply_credential_response(body:bytes,headers:Mapping[str,str],*,now:int|
         "X-Munshi-Submission-Authority":"false",
     })
     return data,response_headers
+
+def protected_answer_response(body:bytes,headers:Mapping[str,str],*,now:int|None=None):
+    """Resolve one plan-authorized protected/self-ID answer as sealed bytes."""
+    p=_verify_control(body,headers,now=now)
+    if str(p.get("purpose") or "")!=PURPOSE_PROTECTED_ANSWER:
+        raise ValueError("Protected answer execution purpose is invalid.")
+    payload=dict(p["payload"])
+    for key in ("tenant_id","user_id","application_id","plan_id","plan_digest"):
+        if str(payload.get(key) or "")!=str(p[key]):
+            raise PermissionError(f"Protected answer execution binding mismatch: {key}.")
+
+    plan=application_plan_v2.executable_plan(str(p["plan_id"]))
+    snapshot=dict(plan["snapshot"])
+    owner=dict(snapshot.get("owner_binding") or {})
+    checks=(
+        str(plan["tenant_id"])==str(p["tenant_id"]),
+        str(plan["user_id"])==str(p["user_id"]),
+        str(owner.get("tenant_id") or plan["tenant_id"])==str(p["tenant_id"]),
+        str(owner.get("user_id") or plan["user_id"])==str(p["user_id"]),
+        str(plan["application_id"])==str(p["application_id"]),
+        str(plan["plan_digest"])==str(p["plan_digest"]),
+        snapshot.get("submission_authority") is False,
+    )
+    if not all(checks):
+        raise PermissionError("Protected answer request conflicts with immutable plan binding.")
+
+    question_key=str(payload.get("question_key") or "").strip()
+    reference=str(payload.get("secure_resolver_ref") or "").strip()
+    if not question_key or not reference:
+        raise ValueError("Protected answer request is incomplete.")
+
+    answers=[
+        dict(item) for item in list(snapshot.get("answers") or [])
+        if isinstance(item,Mapping) and str(item.get("question_key") or "")==question_key
+    ]
+    requirements=[
+        dict(item) for item in list(plan["inputs"].get("answer_requirements") or [])
+        if isinstance(item,Mapping) and str(item.get("question_key") or "")==question_key
+    ]
+    if len(answers)!=1 or len(requirements)!=1:
+        raise PermissionError("Protected answer is not uniquely bound to the Application Plan.")
+    answer=answers[0]
+    requirement=requirements[0]
+    sensitivity=str(answer.get("sensitivity_class") or "").upper()
+    if sensitivity not in {"PROTECTED","SELF_ID"}:
+        raise PermissionError("Protected answer endpoint cannot serve this sensitivity class.")
+    if str(answer.get("secure_resolver_ref") or "")!=reference:
+        raise PermissionError("Protected answer secure reference differs from the Application Plan.")
+    if answer.get("autofill_allowed") is not True or answer.get("execution_value") is not None:
+        raise PermissionError("Protected answer is not authorized for execution.")
+    permissions=dict(snapshot.get("permissions") or {})
+    if sensitivity=="PROTECTED" and permissions.get("protected_fact_execution") is not True:
+        raise PermissionError("Protected fact execution permission is absent.")
+    if sensitivity=="SELF_ID" and permissions.get("self_id_execution") is not True:
+        raise PermissionError("Self-identification execution permission is absent.")
+
+    resolved=application_secure_answer_resolver_v1.resolve_value(
+        requirement,
+        reference,
+        expected_candidate_truth_binding=dict(snapshot.get("candidate_truth_binding") or {}),
+    )
+    safe={
+        "resolver_version":str(resolved["resolver_version"]),
+        "question_key":question_key,
+        "sensitivity":sensitivity,
+        "fact_key":str(resolved["fact_key"]),
+        "value_type":str(resolved["value_type"]),
+        "value":resolved["value"],
+        "provenance":str(resolved["provenance"]),
+    }
+    plaintext=_canonical(safe)
+    if len(plaintext)>16384:
+        raise RuntimeError("Protected application answer is too large for execution bridge.")
+
+    request_id=str(p["request_id"])
+    plan_digest=str(plan["plan_digest"])
+    key=hmac.new(
+        _secret(),
+        f"protected-answer:{request_id}:{plan_digest}:{question_key}".encode(),
+        hashlib.sha256,
+    ).digest()
+    nonce=os.urandom(12)
+    aad=f"{request_id}.{plan_digest}.{question_key}.protected_application_value".encode()
+    data=nonce+AESGCM(key).encrypt(nonce,plaintext,aad)
+    response_headers=_headers(
+        request_id=request_id,
+        purpose=PURPOSE_PROTECTED_ANSWER,
+        body=data,
+        plan_digest=plan_digest,
+    )
+    response_headers.update({
+        "X-Munshi-Protected-Answer-Encryption":"aes-gcm-v1",
+        "X-Munshi-Question-Key":question_key,
+        "X-Munshi-Sensitivity-Class":sensitivity,
+        "X-Munshi-Submission-Authority":"false",
+    })
+    return data,response_headers
+
 
 def current_plan_response(body:bytes,headers:Mapping[str,str],*,now:int|None=None):
     peek=_decode(body)
