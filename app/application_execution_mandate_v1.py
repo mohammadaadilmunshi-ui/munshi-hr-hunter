@@ -435,3 +435,103 @@ def mandate_authorizes_internal_review(
                 "Browser preparation introduced an unapproved cover-letter artifact."
             )
     return mandate
+
+
+def authorize_legal_attestation(
+    *,
+    plan_id: str,
+    plan_digest: str,
+    attestation_identity: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Authorize one exact browser-observed legal attestation from the user mandate.
+
+    The proof is value-free and grants no final-submit authority. Existing
+    mandates whose preflight packages did not opt into legal-attestation
+    execution fail closed.
+    """
+    plan = application_plan_v2.executable_plan(str(plan_id))
+    if str(plan.get("plan_digest") or "") != str(plan_digest or ""):
+        raise PermissionError("Legal attestation request does not match the immutable plan.")
+
+    snapshot = dict(plan.get("snapshot") or {})
+    inputs = dict(plan.get("inputs") or {})
+    preflight_package_id = str(inputs.get("preflight_package_id") or "")
+    if not preflight_package_id:
+        raise PermissionError("Application Plan has no preflight-package binding.")
+
+    mandate = current_for_preflight(preflight_package_id)
+    if mandate is None:
+        raise PermissionError("No current execution mandate covers this Application Plan.")
+
+    policy = dict((mandate.get("review") or {}).get("execution_policy") or {})
+    if policy.get("legal_attestation") != (
+        "AUTONOMOUS_ONLY_WHEN_EXACT_PROVIDER_TERMS_IDENTITY_IS_BOUND"
+    ):
+        raise PermissionError(
+            "Execution mandate does not authorize autonomous legal attestations."
+        )
+
+    if (
+        str(mandate.get("application_id") or "")
+        != str(plan.get("application_id") or "")
+        or int(mandate.get("job_id") or 0) != int(plan.get("job_id") or 0)
+    ):
+        raise PermissionError("Legal attestation exceeds the approved application mandate.")
+
+    identity = dict(attestation_identity or {})
+    required = {
+        "semantic_type",
+        "logical_field_fingerprint",
+        "label_digest",
+        "terms_identity_digest",
+        "provider_host",
+    }
+    if set(identity) != required or identity.get("semantic_type") != "LEGAL_ATTESTATION":
+        raise ValueError("Legal attestation identity shape is invalid.")
+
+    for key in (
+        "logical_field_fingerprint",
+        "label_digest",
+        "terms_identity_digest",
+    ):
+        value = str(identity.get(key) or "").strip().lower()
+        if len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value):
+            raise ValueError(f"Legal attestation {key} is invalid.")
+        identity[key] = value
+
+    provider_host = str(identity.get("provider_host") or "").strip().casefold().rstrip(".")
+    if not provider_host or "/" in provider_host or ":" in provider_host:
+        raise ValueError("Legal attestation provider host is invalid.")
+
+    provider_policy = dict(snapshot.get("provider_policy") or {})
+    job = dict(snapshot.get("job") or {})
+    allowed_hosts = {
+        str(value).strip().casefold().rstrip(".")
+        for value in provider_policy.get("allowed_hosts") or []
+        if str(value).strip()
+    }
+    for field in ("apply_url", "job_url"):
+        host = str(urlsplit(str(job.get(field) or "")).hostname or "").casefold().rstrip(".")
+        if host:
+            allowed_hosts.add(host)
+    if allowed_hosts and not any(
+        provider_host == host or provider_host.endswith("." + host)
+        for host in allowed_hosts
+    ):
+        raise PermissionError("Legal attestation provider is outside the approved plan.")
+
+    material = {
+        "version": "legal-attestation-authorization-v1",
+        "mandate_id": str(mandate["mandate_id"]),
+        "mandate_review_digest": str(mandate["review_digest"]),
+        "application_id": str(plan["application_id"]),
+        "plan_id": str(plan["plan_id"]),
+        "plan_digest": str(plan["plan_digest"]),
+        "attestation_identity": identity,
+        "submission_authority": False,
+    }
+    return {
+        **material,
+        "authorized": True,
+        "authorization_digest": sha256_json(material),
+    }
