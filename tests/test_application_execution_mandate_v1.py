@@ -208,3 +208,135 @@ def test_mandate_binds_rendered_resume_and_browser_review_binds_pdf_artifact(
 
     assert authorized["resume_version_id"] == "resume-1"
     assert authorized["resume_sha256"] == RESUME_DIGEST
+
+
+def test_legacy_package_review_does_not_gain_legal_attestation_scope(
+    mandate_authority,
+) -> None:
+    review = mandate.package_review(
+        preflight_package_id="preflight-1",
+        cover_letter_decision="NOT_REQUIRED",
+    )
+    assert "legal_attestation" not in review["execution_policy"]
+
+
+def test_new_preflight_capability_is_visible_in_single_approval_scope(
+    mandate_authority,
+) -> None:
+    mandate_authority["snapshot"]["execution_capabilities"] = {
+        "legal_attestation_execution": True,
+    }
+    review = mandate.package_review(
+        preflight_package_id="preflight-1",
+        cover_letter_decision="NOT_REQUIRED",
+    )
+    assert review["execution_policy"]["legal_attestation"] == (
+        "AUTONOMOUS_ONLY_WHEN_EXACT_PROVIDER_TERMS_IDENTITY_IS_BOUND"
+    )
+
+
+def _attestation_identity() -> dict[str, str]:
+    return {
+        "semantic_type": "LEGAL_ATTESTATION",
+        "logical_field_fingerprint": "1" * 64,
+        "label_digest": "2" * 64,
+        "terms_identity_digest": "3" * 64,
+        "provider_host": "jobs.example.test",
+    }
+
+
+def test_legal_attestation_fails_closed_without_explicit_mandate_scope(
+    mandate_authority,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        mandate.application_plan_v2,
+        "executable_plan",
+        lambda plan_id: {
+            "plan_id": plan_id,
+            "plan_digest": "9" * 64,
+            "application_id": "application-1",
+            "job_id": 42,
+            "inputs": {"preflight_package_id": "preflight-1"},
+            "snapshot": {
+                "job": {
+                    "id": 42,
+                    "apply_url": "https://jobs.example.test/42",
+                },
+                "provider_policy": {
+                    "allowed_hosts": ["jobs.example.test"],
+                },
+            },
+        },
+    )
+    monkeypatch.setattr(
+        mandate,
+        "current_for_preflight",
+        lambda _package_id: {
+            "mandate_id": "mandate-1",
+            "review_digest": "8" * 64,
+            "application_id": "application-1",
+            "job_id": 42,
+            "review": {"execution_policy": {}},
+        },
+    )
+    with pytest.raises(PermissionError, match="does not authorize"):
+        mandate.authorize_legal_attestation(
+            plan_id="application-plan-1",
+            plan_digest="9" * 64,
+            attestation_identity=_attestation_identity(),
+        )
+
+
+def test_legal_attestation_proof_binds_exact_identity_without_submit_authority(
+    mandate_authority,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = {
+        "plan_id": "application-plan-1",
+        "plan_digest": "9" * 64,
+        "application_id": "application-1",
+        "job_id": 42,
+        "inputs": {"preflight_package_id": "preflight-1"},
+        "snapshot": {
+            "job": {
+                "id": 42,
+                "apply_url": "https://jobs.example.test/42",
+            },
+            "provider_policy": {
+                "allowed_hosts": ["jobs.example.test"],
+            },
+        },
+    }
+    monkeypatch.setattr(
+        mandate.application_plan_v2,
+        "executable_plan",
+        lambda _plan_id: plan,
+    )
+    monkeypatch.setattr(
+        mandate,
+        "current_for_preflight",
+        lambda _package_id: {
+            "mandate_id": "mandate-1",
+            "review_digest": "8" * 64,
+            "application_id": "application-1",
+            "job_id": 42,
+            "review": {
+                "execution_policy": {
+                    "legal_attestation": (
+                        "AUTONOMOUS_ONLY_WHEN_EXACT_PROVIDER_TERMS_IDENTITY_IS_BOUND"
+                    )
+                }
+            },
+        },
+    )
+    identity = _attestation_identity()
+    proof = mandate.authorize_legal_attestation(
+        plan_id="application-plan-1",
+        plan_digest="9" * 64,
+        attestation_identity=identity,
+    )
+    assert proof["authorized"] is True
+    assert proof["submission_authority"] is False
+    assert proof["attestation_identity"] == identity
+    assert len(proof["authorization_digest"]) == 64
