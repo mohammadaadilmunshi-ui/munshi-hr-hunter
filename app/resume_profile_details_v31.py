@@ -62,6 +62,15 @@ class CandidateProvidedProfileDetails(BaseModel):
     authorization_status: str = ""
     authorized_to_work: bool | None = None
     sponsorship_required: bool | None = None
+    # Protected application-policy facts. These are candidate-entered only and
+    # are never derived from DOB, address, nationality, resume, or job location.
+    age_18_plus: bool | None = None
+    location_work_eligible: bool | None = None
+
+    # Reusable segmented-phone metadata is distinct from the primary number.
+    phone_device_type: str = ""
+    phone_country_code: str = ""
+    phone_extension: str = ""
 
     in_person_ok: bool | None = None
     willing_to_relocate: bool | None = None
@@ -75,9 +84,16 @@ class CandidateProvidedProfileDetails(BaseModel):
     government_ties: bool | None = None
 
     gender: str = ""
+    # race_ethnicity is the canonical combined provider-facing choice. Keep the
+    # older ethnicity field for backward-compatible encrypted records.
+    race_ethnicity: str = ""
     ethnicity: str = ""
+    hispanic_latino: bool | None = None
     veteran: bool | None = None
     disability: bool | None = None
+
+    # Explicit post-offer identity only. Ordinary applicants leave this blank.
+    employee_id: str = ""
 
 
 class CandidateProfileDetailsEnvelope(BaseModel):
