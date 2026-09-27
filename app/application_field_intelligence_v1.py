@@ -100,12 +100,6 @@ _APPLY_SAFE_SEMANTIC_MAP: dict[str, FieldIntent] = {
         "identity",
         "text",
     ),
-    "AGE_18_PLUS": FieldIntent(
-        "eligibility.age_18_plus",
-        "application_defaults.age_18_plus",
-        "identity",
-        "boolean",
-    ),
     "SELF_ID_NAME": _AUTOCOMPLETE_MAP["name"],
     "LINKEDIN": FieldIntent("contact.linkedin", "contact.linkedin", "identity", "url"),
     "PORTFOLIO": FieldIntent("contact.portfolio", "contact.portfolio", "identity", "url"),
