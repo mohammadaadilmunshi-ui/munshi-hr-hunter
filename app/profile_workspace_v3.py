@@ -119,7 +119,20 @@ def _edit_profile_section(extracted: dict[str, Any], profile: dict[str, Any], se
             contact = dict(profile.get("contact") or {})
             left, right = st.columns(2)
             with left:
-                full_name = st.text_input("Full name", value=str(contact.get("full_name") or ""))
+                full_name = st.text_input("Full legal name", value=str(contact.get("full_name") or ""))
+                first_name = st.text_input(
+                    "Legal first / given name",
+                    value=str(contact.get("first_name") or ""),
+                    help="Use the exact structured legal-name part when known. Leave blank rather than guessing from the full name.",
+                )
+                middle_name = st.text_input(
+                    "Legal middle name",
+                    value=str(contact.get("middle_name") or ""),
+                )
+                last_name = st.text_input(
+                    "Legal last / family name",
+                    value=str(contact.get("last_name") or ""),
+                )
                 location = st.text_input(
                     "Display location",
                     value=str(contact.get("location") or ""),
@@ -150,6 +163,9 @@ def _edit_profile_section(extracted: dict[str, Any], profile: dict[str, Any], se
                 country = st.text_input("Country", value=str(contact.get("country") or ""))
             value = {
                 "full_name": full_name,
+                "first_name": first_name,
+                "middle_name": middle_name,
+                "last_name": last_name,
                 "location": location,
                 "address_line1": address_line1,
                 "address_line2": address_line2,
@@ -231,6 +247,16 @@ def _edit_application_defaults() -> None:
             status = st.text_input("Authorization status", value=str(current.get("authorization_status") or ""))
             authorized = _bool_select("Authorized to work", current.get("authorized_to_work"), key="profile_v3_authorized")
             sponsorship = _bool_select("Needs sponsorship", current.get("sponsorship_required"), key="profile_v3_sponsorship")
+            location_eligible = _bool_select(
+                "Eligible to work in target job location",
+                current.get("location_work_eligible"),
+                key="profile_v3_location_work_eligible",
+            )
+            age_18_plus = _bool_select(
+                "At least 18 years old",
+                current.get("age_18_plus"),
+                key="profile_v3_age_18_plus",
+            )
         with right:
             in_person = _bool_select("In-person OK", current.get("in_person_ok"), key="profile_v3_in_person")
             relocate = _bool_select("Can relocate", current.get("willing_to_relocate"), key="profile_v3_relocate")
@@ -241,6 +267,27 @@ def _edit_application_defaults() -> None:
                 "Work modes",
                 ["Remote", "Hybrid", "On-site"],
                 default=[mode for mode in current.get("work_modes") or [] if mode in {"Remote", "Hybrid", "On-site"}],
+            )
+
+        st.markdown("#### Segmented phone metadata")
+        p1, p2, p3 = st.columns(3)
+        with p1:
+            phone_device_type = st.text_input(
+                "Phone device type",
+                value=str(current.get("phone_device_type") or ""),
+                help="Examples are provider labels such as Mobile or Home. This never substitutes for the phone number.",
+            )
+        with p2:
+            phone_country_code = st.text_input(
+                "Phone country code",
+                value=str(current.get("phone_country_code") or ""),
+                help="Store the canonical calling-code choice separately from the main phone number.",
+            )
+        with p3:
+            phone_extension = st.text_input(
+                "Phone extension",
+                value=str(current.get("phone_extension") or ""),
+                help="Leave blank unless there is a real extension. MUNSHI never derives this from the phone number.",
             )
 
         st.markdown("#### Background")
@@ -257,10 +304,23 @@ def _edit_application_defaults() -> None:
         s1, s2 = st.columns(2)
         with s1:
             gender = st.text_input("Gender (optional)", value=str(current.get("gender") or ""))
+            race_ethnicity = st.text_input(
+                "Race / ethnicity (optional)",
+                value=str(current.get("race_ethnicity") or current.get("ethnicity") or ""),
+            )
             veteran = _bool_select("Veteran", current.get("veteran"), key="profile_v3_veteran")
         with s2:
-            ethnicity = st.text_input("Ethnicity (optional)", value=str(current.get("ethnicity") or ""))
+            hispanic_latino = _bool_select(
+                "Hispanic or Latino",
+                current.get("hispanic_latino"),
+                key="profile_v3_hispanic_latino",
+            )
             disability = _bool_select("Disability", current.get("disability"), key="profile_v3_disability")
+            employee_id = st.text_input(
+                "Employee ID (post-offer only, if applicable)",
+                value=str(current.get("employee_id") or ""),
+                help="Ordinary applicants should leave this blank. It is never derived from any application or account identifier.",
+            )
 
         open_to_work = _bool_select("Open to work", current.get("open_to_work"), key="profile_v3_open_to_work")
         save = st.form_submit_button("Save encrypted application defaults", type="primary", use_container_width=True)
@@ -275,6 +335,11 @@ def _edit_application_defaults() -> None:
             "authorization_status": status,
             "authorized_to_work": authorized,
             "sponsorship_required": sponsorship,
+            "location_work_eligible": location_eligible,
+            "age_18_plus": age_18_plus,
+            "phone_device_type": phone_device_type,
+            "phone_country_code": phone_country_code,
+            "phone_extension": phone_extension,
             "in_person_ok": in_person,
             "willing_to_relocate": relocate,
             "start_immediately": immediate,
@@ -285,9 +350,12 @@ def _edit_application_defaults() -> None:
             "government_clearance": clearance,
             "government_ties": ties,
             "gender": gender,
-            "ethnicity": ethnicity,
+            "race_ethnicity": race_ethnicity,
+            "ethnicity": str(current.get("ethnicity") or ""),
+            "hispanic_latino": hispanic_latino,
             "veteran": veteran,
             "disability": disability,
+            "employee_id": employee_id,
         })
         try:
             save_candidate_profile_details(values)
