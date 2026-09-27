@@ -43,9 +43,12 @@ _SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
 
 _AUTOCOMPLETE_MAP: dict[str, FieldIntent] = {
     "name": FieldIntent("contact.full_name", "contact.full_name", "identity"),
-    "given-name": FieldIntent("contact.first_name", "contact.full_name", "first_name"),
-    "additional-name": FieldIntent("contact.middle_name", "contact.full_name", "middle_name"),
-    "family-name": FieldIntent("contact.last_name", "contact.full_name", "last_name"),
+    # Prefer explicitly confirmed structured name parts when available. The
+    # resolver falls back to a conservative projection of contact.full_name for
+    # older profiles that predate structured name facts.
+    "given-name": FieldIntent("contact.first_name", "contact.first_name", "identity"),
+    "additional-name": FieldIntent("contact.middle_name", "contact.middle_name", "identity"),
+    "family-name": FieldIntent("contact.last_name", "contact.last_name", "identity"),
     "email": FieldIntent("contact.email", "contact.email", "identity", "email"),
     "tel": FieldIntent("contact.phone", "contact.phone", "identity", "phone"),
     "tel-national": FieldIntent("contact.phone", "contact.phone", "identity", "phone"),
@@ -76,6 +79,34 @@ _APPLY_SAFE_SEMANTIC_MAP: dict[str, FieldIntent] = {
     "LAST_NAME": _AUTOCOMPLETE_MAP["family-name"],
     "EMAIL": _AUTOCOMPLETE_MAP["email"],
     "PHONE": _AUTOCOMPLETE_MAP["tel"],
+    # Workday and other ATSs commonly split phone metadata into distinct
+    # controls. Keep these meanings separate so the phone number can never
+    # satisfy device type, country code, or extension.
+    "PHONE_DEVICE_TYPE": FieldIntent(
+        "application.phone_device_type",
+        "application_defaults.phone_device_type",
+        "identity",
+        "choice",
+    ),
+    "PHONE_COUNTRY_CODE": FieldIntent(
+        "contact.phone_country_code",
+        "application_defaults.phone_country_code",
+        "identity",
+        "choice",
+    ),
+    "PHONE_EXTENSION": FieldIntent(
+        "contact.phone_extension",
+        "application_defaults.phone_extension",
+        "identity",
+        "text",
+    ),
+    "AGE_18_PLUS": FieldIntent(
+        "eligibility.age_18_plus",
+        "application_defaults.age_18_plus",
+        "identity",
+        "boolean",
+    ),
+    "SELF_ID_NAME": _AUTOCOMPLETE_MAP["name"],
     "LINKEDIN": FieldIntent("contact.linkedin", "contact.linkedin", "identity", "url"),
     "PORTFOLIO": FieldIntent("contact.portfolio", "contact.portfolio", "identity", "url"),
     "WEBSITE": FieldIntent("contact.portfolio", "contact.portfolio", "identity", "url"),
@@ -106,6 +137,33 @@ _LABEL_RULES: tuple[tuple[re.Pattern[str], FieldIntent], ...] = (
         _AUTOCOMPLETE_MAP["name"],
     ),
     (re.compile(r"\be-?mail(?:\s+address)?\b", re.I), _AUTOCOMPLETE_MAP["email"]),
+    (
+        re.compile(r"\b(phone|telephone|mobile)(?:\s+device)?\s+type\b", re.I),
+        FieldIntent(
+            "application.phone_device_type",
+            "application_defaults.phone_device_type",
+            "identity",
+            "choice",
+        ),
+    ),
+    (
+        re.compile(r"\b(country\s+phone\s+code|phone\s+country\s+code|calling\s+code)\b", re.I),
+        FieldIntent(
+            "contact.phone_country_code",
+            "application_defaults.phone_country_code",
+            "identity",
+            "choice",
+        ),
+    ),
+    (
+        re.compile(r"\b(?:phone(?:\s+number)?\s+)?extension\b|\bext\.?\b", re.I),
+        FieldIntent(
+            "contact.phone_extension",
+            "application_defaults.phone_extension",
+            "identity",
+            "text",
+        ),
+    ),
     (
         re.compile(r"\b(phone|mobile|cell|telephone)(?:\s+number)?\b", re.I),
         _AUTOCOMPLETE_MAP["tel"],
@@ -391,13 +449,23 @@ def resolve_profile_projection(
         # it only projects a component that is explicitly present in the older
         # human-readable contact.location value.
         fallback_projection = {
+            # Prefer structured legal-name facts but remain backwards compatible
+            # with confirmed profiles that only stored contact.full_name.
+            "contact.first_name": "first_name",
+            "contact.middle_name": "middle_name",
+            "contact.last_name": "last_name",
             "contact.city": "location_city",
             "contact.region": "location_region",
             "contact.postal_code": "location_postal",
             "contact.country": "location_country",
         }.get(str(profile_fact_key).strip().casefold())
         if fallback_projection:
-            legacy = _snapshot_fact(snapshot, "contact.location")
+            legacy_key = (
+                "contact.full_name"
+                if fallback_projection in {"first_name", "middle_name", "last_name"}
+                else "contact.location"
+            )
+            legacy = _snapshot_fact(snapshot, legacy_key)
             if legacy is not None and legacy.get("protected") is not True:
                 projected = _project(legacy.get("value"), fallback_projection)
                 if projected:
