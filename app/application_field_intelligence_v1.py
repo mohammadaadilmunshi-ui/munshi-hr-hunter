@@ -474,7 +474,7 @@ def resolve_profile_projection(
                         **legacy,
                         "key": profile_fact_key,
                         "value": projected,
-                        "source": f"{legacy.get('source') or 'candidate_truth'}:legacy-location-projection",
+                        "source": f"{legacy.get('source') or 'candidate_truth'}:legacy-structural-projection",
                     }
     if fact is None:
         return {"status": "NEEDS_INPUT", "reason": "profile_fact_missing"}
