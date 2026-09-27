@@ -1210,6 +1210,26 @@ async def application_execution_protected_answer(request: Request) -> Response:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 
 
+@app.post("/api/application-execution/legal-attestation")
+async def application_execution_legal_attestation(request: Request) -> Response:
+    from app import application_artifact_transport_v2
+    try:
+        body, headers = application_artifact_transport_v2.legal_attestation_response(
+            await request.body(), request.headers
+        )
+        return Response(content=body, media_type="application/json", headers=headers)
+    except PermissionError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(error),
+        ) from error
+    except (LookupError, RuntimeError, ValueError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+
+
 def _account_execution_response_error(error: Exception) -> HTTPException:
     if isinstance(error, PermissionError):
         return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error))
