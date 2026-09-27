@@ -329,10 +329,37 @@ def legal_attestation_response(
     now: int | None = None,
 ):
     """Return one signed, value-free legal-attestation authorization proof."""
-    peek = _decode(body)
-    if peek.get("purpose") != PURPOSE_LEGAL_ATTESTATION:
+    p = _verify_control(body, headers, now=now)
+    if str(p.get("purpose") or "") != PURPOSE_LEGAL_ATTESTATION:
         raise ValueError("Legal attestation execution purpose is invalid.")
-    return _control_response(body, headers, now=now)
+    payload = dict(p["payload"])
+    for key in ("tenant_id", "user_id", "application_id", "plan_id", "plan_digest"):
+        if str(payload.get(key) or "") != str(p[key]):
+            raise PermissionError(
+                f"Legal attestation execution binding mismatch: {key}."
+            )
+    result = application_execution_mandate_v1.authorize_legal_attestation(
+        plan_id=str(p["plan_id"]),
+        plan_digest=str(p["plan_digest"]),
+        attestation_identity=dict(payload.get("attestation_identity") or {}),
+    )
+    out = _canonical(
+        {
+            "version": RESPONSE_VERSION,
+            "request_id": str(p["request_id"]),
+            "purpose": PURPOSE_LEGAL_ATTESTATION,
+            "plan_id": str(p["plan_id"]),
+            "plan_digest": str(p["plan_digest"]),
+            "submission_authority": False,
+            "result": result,
+        }
+    )
+    return out, _headers(
+        request_id=str(p["request_id"]),
+        purpose=PURPOSE_LEGAL_ATTESTATION,
+        body=out,
+        plan_digest=str(p["plan_digest"]),
+    )
 
 
 def current_plan_response(body:bytes,headers:Mapping[str,str],*,now:int|None=None):
