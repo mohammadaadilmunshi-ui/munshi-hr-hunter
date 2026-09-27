@@ -206,6 +206,7 @@ def _capture(
     relationship_strategy_id: str | None,
     application_questions_complete: bool,
     unresolved_question_keys: Sequence[str] | None,
+    legal_attestation_execution: bool = False,
 ) -> dict[str, Any]:
     job_snapshot = safe_owned_job_snapshot(job_id)
     job = dict(job_snapshot["job"])
@@ -279,6 +280,15 @@ def _capture(
         "opportunity": opportunity,
         "relationship": relationship,
         "readiness": readiness,
+        **(
+            {
+                "execution_capabilities": {
+                    "legal_attestation_execution": True,
+                }
+            }
+            if legal_attestation_execution
+            else {}
+        ),
         "submission_authority": False,
         "automatic_actions_executed": False,
     }
@@ -310,6 +320,7 @@ def prepare_preflight_package(
     relationship_strategy_id: str | None = None,
     application_questions_complete: bool = False,
     unresolved_question_keys: Sequence[str] | None = None,
+    legal_attestation_execution: bool = True,
 ) -> dict[str, Any]:
     """Persist one immutable, revalidated application preflight snapshot."""
     try:
@@ -378,6 +389,7 @@ def prepare_preflight_package(
         relationship_strategy_id=relationship_strategy_id,
         application_questions_complete=bool(application_questions_complete),
         unresolved_question_keys=unresolved_question_keys,
+        legal_attestation_execution=bool(legal_attestation_execution),
     )
     first_digest = sha256_json(package_digest_payload(first))
 
@@ -391,6 +403,7 @@ def prepare_preflight_package(
         relationship_strategy_id=relationship_strategy_id,
         application_questions_complete=bool(application_questions_complete),
         unresolved_question_keys=unresolved_question_keys,
+        legal_attestation_execution=bool(legal_attestation_execution),
     )
     second_digest = sha256_json(package_digest_payload(second))
     if first_digest != second_digest:
@@ -649,6 +662,11 @@ def preflight_package_freshness(package_id: str) -> dict[str, Any]:
                     "unresolved_question_keys"
                 )
                 or []
+            ),
+            legal_attestation_execution=bool(
+                (snapshot.get("execution_capabilities") or {}).get(
+                    "legal_attestation_execution"
+                )
             ),
         )
     except (LookupError, RuntimeError, ValueError):
