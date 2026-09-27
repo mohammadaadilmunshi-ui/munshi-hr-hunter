@@ -302,10 +302,10 @@ def _build_registry() -> dict[str, CandidateConcept]:
             "Phone extension is a distinct optional fact and must never reuse phone digits.",
         ),
         CandidateConcept(
-            "eligibility.age_18_plus", "ELIGIBILITY", "boolean", "NORMAL", "DIRECT_FACT", False,
+            "eligibility.age_18_plus", "ELIGIBILITY", "boolean", "PROTECTED", "PROTECTED_POLICY", False,
             ("at least 18", "18 years of age", "eighteen years of age", "minimum age 18"),
             ("AGE_18_PLUS",), ("application_defaults.age_18_plus",), (), False,
-            "User-confirmed age-threshold eligibility fact; exact age is not inferred.",
+            "Protected age-threshold eligibility fact. Exact age and date of birth are never inferred.",
         ),
         CandidateConcept(
             "work.location_eligibility", "WORK_AUTHORIZATION", "boolean", "PROTECTED", "WORK_AUTHORIZATION_POLICY", False,
@@ -464,6 +464,7 @@ def _dynamic_concept(concept_id: str) -> CandidateConcept | None:
             "application_defaults.sponsorship_required",
             "application_defaults.authorized_to_work",
             "application_defaults.location_work_eligible",
+            "application_defaults.age_18_plus",
         }:
             sensitivity = "PROTECTED"
         elif key in {"application_defaults.employee_id"}:
@@ -571,7 +572,11 @@ def legacy_question_family(concept_id: str) -> str:
         return "location"
     if item.category in {"WORK_PREFERENCE", "LOCATION"} or key.startswith(("work.relocation", "preference.", "location.")):
         return "career_preference"
-    if item.category == "WORK_AUTHORIZATION" or item.sensitivity != "NORMAL":
+    if item.sensitivity == "SELF_ID":
+        return "voluntary_self_identification"
+    if item.sensitivity == "POST_OFFER":
+        return "post_offer_sensitive"
+    if item.category == "WORK_AUTHORIZATION" or item.sensitivity == "PROTECTED":
         return "work_authorization"
     return "candidate_fact"
 
