@@ -173,8 +173,37 @@ def test_dynamic_application_defaults_do_not_downgrade_sensitive_domains() -> No
     ).sensitivity == "POST_OFFER"
 
 
-def test_age_threshold_is_not_derived_from_an_exact_birth_date() -> None:
+def test_age_threshold_is_protected_and_not_derived_from_birth_date() -> None:
     age = ontology.require_concept("eligibility.age_18_plus")
-    assert age.sensitivity == "NORMAL"
+    assert age.sensitivity == "PROTECTED"
+    assert age.answer_mode == "PROTECTED_POLICY"
     assert age.autofill_default is False
     assert age.candidate_fact_paths == ("application_defaults.age_18_plus",)
+
+
+def test_browser_semantics_apply_strict_sensitivity_floors() -> None:
+    from app import universal_question_resolver_v1 as questions
+
+    age = questions.resolve_question({
+        "rawText": "Are you at least 18 years of age?",
+        "semanticType": "AGE_18_PLUS",
+        "inputType": "select",
+    })
+    assert age["state"] == "RESOLVED"
+    assert age["sensitivity"] == "PROTECTED"
+
+    hispanic = questions.resolve_question({
+        "rawText": "Do you identify as Hispanic or Latino?",
+        "semanticType": "HISPANIC_LATINO",
+        "inputType": "select",
+    })
+    assert hispanic["state"] == "RESOLVED"
+    assert hispanic["sensitivity"] == "SELF_ID"
+
+    employee_id = questions.resolve_question({
+        "rawText": "Employee ID (if applicable)",
+        "semanticType": "EMPLOYEE_ID",
+        "inputType": "text",
+    })
+    assert employee_id["state"] == "RESOLVED"
+    assert employee_id["sensitivity"] == "POST_OFFER"
