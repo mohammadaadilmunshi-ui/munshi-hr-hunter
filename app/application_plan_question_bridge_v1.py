@@ -17,6 +17,7 @@ from app import application_answer_autofill_v1 as answer_autofill
 from app import application_answer_router_v1 as answer_router
 from app import application_field_intelligence_v1 as field_intelligence
 from app import application_plan_v2
+from app import application_secure_answer_resolver_v1 as secure_answers
 from app import candidate_knowledge_graph_v1 as universal_graph
 from app import universal_brain_shadow_v1 as universal_shadow
 from app import universal_question_resolver_v1 as universal_questions
@@ -159,13 +160,21 @@ def prepare_application_plan_from_questions(
 ) -> dict[str, Any]:
     """Build one Application Plan using path-neutral normalized questions."""
     requirements = normalize_visible_questions(visible_questions)
+    effective_permissions = dict(permissions or {})
+    automatic_refs = secure_answers.automatic_secure_references(
+        requirements,
+        permissions=effective_permissions,
+    )
+    explicit_refs = dict(secure_resolver_refs or {})
+    effective_refs = {**automatic_refs, **explicit_refs}
+
     plan = application_plan_v2.prepare_application_plan(
         preflight_package_id=preflight_package_id,
         idempotency_key=idempotency_key,
         answer_requirements=requirements,
-        permissions=permissions,
+        permissions=effective_permissions,
         provider_policy=provider_policy,
-        secure_resolver_refs=secure_resolver_refs,
+        secure_resolver_refs=effective_refs,
         resume_format=resume_format,
         cover_letter_id=cover_letter_id,
     )
@@ -178,5 +187,7 @@ def prepare_application_plan_from_questions(
         "universal_brain_shadow_version": universal_shadow.SHADOW_VERSION,
         "universal_brain_shadow_enabled": universal_graph.universal_brain_shadow_enabled(),
         "normalized_question_count": len(requirements),
+        "automatic_secure_reference_count": len(automatic_refs),
+        "protected_values_exposed": False,
     }
     return result
