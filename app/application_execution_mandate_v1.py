@@ -109,6 +109,26 @@ def package_review(
     truth = dict(snapshot["application_truth"])
     answer_inventory = dict(snapshot["answer_inventory"])
     decision = _text(cover_letter_decision, "Cover-letter decision", 40).upper()
+    capabilities = dict(snapshot.get("execution_capabilities") or {})
+    execution_policy: dict[str, Any] = {
+        "normal_runtime_questions": "AUTONOMOUS_FROM_CURRENT_TRUTH_OR_POLICY",
+        "account_creation": "AUTONOMOUS_WHEN_PROVIDER_REQUIRES",
+        "email_verification": "AUTONOMOUS_WHEN_ORDINARY_EMAIL_CONTROL",
+        "protected_human_checkpoints": [
+            "CAPTCHA",
+            "SMS_MFA",
+            "PASSKEY",
+            "BIOMETRIC",
+            "IDENTITY_VERIFICATION",
+        ],
+        "post_approval_user_review": False,
+        "post_approval_user_submit_prompt": False,
+        "final_submit": "AUTOMATIC_AFTER_INTERNAL_INTEGRITY_AND_ONE_USE_AUTHORITY",
+    }
+    if capabilities.get("legal_attestation_execution") is True:
+        execution_policy["legal_attestation"] = (
+            "AUTONOMOUS_ONLY_WHEN_EXACT_PROVIDER_TERMS_IDENTITY_IS_BOUND"
+        )
 
     cover: dict[str, Any] | None = None
     if cover_letter is not None:
@@ -171,21 +191,7 @@ def package_review(
                 str(value) for value in truth.get("unresolved_fact_keys") or []
             ),
         },
-        "execution_policy": {
-            "normal_runtime_questions": "AUTONOMOUS_FROM_CURRENT_TRUTH_OR_POLICY",
-            "account_creation": "AUTONOMOUS_WHEN_PROVIDER_REQUIRES",
-            "email_verification": "AUTONOMOUS_WHEN_ORDINARY_EMAIL_CONTROL",
-            "protected_human_checkpoints": [
-                "CAPTCHA",
-                "SMS_MFA",
-                "PASSKEY",
-                "BIOMETRIC",
-                "IDENTITY_VERIFICATION",
-            ],
-            "post_approval_user_review": False,
-            "post_approval_user_submit_prompt": False,
-            "final_submit": "AUTOMATIC_AFTER_INTERNAL_INTEGRITY_AND_ONE_USE_AUTHORITY",
-        },
+        "execution_policy": execution_policy,
         "submission_authority": False,
     }
     reviewed["review_digest"] = sha256_json(reviewed)
