@@ -283,6 +283,66 @@ def _build_registry() -> dict[str, CandidateConcept]:
             ("eligibility.sponsorship_future",), False,
             "Protected future sponsorship policy concept.",
         ),
+        CandidateConcept(
+            "application.phone_device_type", "CONTACT", "choice", "NORMAL", "DIRECT_FACT", False,
+            ("phone device type", "telephone type", "mobile device type"),
+            ("PHONE_DEVICE_TYPE",), ("application_defaults.phone_device_type",), (), False,
+            "Normal phone metadata kept distinct from the candidate phone number.",
+        ),
+        CandidateConcept(
+            "contact.phone_country_code", "CONTACT", "choice", "NORMAL", "DIRECT_FACT", False,
+            ("country phone code", "phone country code", "calling code", "dialing code"),
+            ("PHONE_COUNTRY_CODE",), ("application_defaults.phone_country_code",), (), False,
+            "Country calling code used by segmented phone controls.",
+        ),
+        CandidateConcept(
+            "contact.phone_extension", "CONTACT", "text", "NORMAL", "DIRECT_FACT", False,
+            ("phone extension", "telephone extension", "extension", "ext"),
+            ("PHONE_EXTENSION",), ("application_defaults.phone_extension",), (), False,
+            "Phone extension is a distinct optional fact and must never reuse phone digits.",
+        ),
+        CandidateConcept(
+            "eligibility.age_18_plus", "ELIGIBILITY", "boolean", "NORMAL", "DIRECT_FACT", False,
+            ("at least 18", "18 years of age", "eighteen years of age", "minimum age 18"),
+            ("AGE_18_PLUS",), ("application_defaults.age_18_plus",), (), False,
+            "User-confirmed age-threshold eligibility fact; exact age is not inferred.",
+        ),
+        CandidateConcept(
+            "work.location_eligibility", "WORK_AUTHORIZATION", "boolean", "PROTECTED", "WORK_AUTHORIZATION_POLICY", False,
+            ("eligible to work in this location", "eligible to work in the location", "work location eligibility"),
+            ("WORK_LOCATION_ELIGIBILITY",), ("application_defaults.location_work_eligible",), (), False,
+            "Protected work-location eligibility concept that cannot be inferred from ordinary profile facts.",
+        ),
+        CandidateConcept(
+            "self_id.hispanic_latino", "SELF_ID", "choice", "SELF_ID", "PROTECTED_POLICY", False,
+            ("hispanic or latino", "hispanic latino", "latino ethnicity"),
+            ("HISPANIC_LATINO",), ("application_defaults.hispanic_latino",), (), False,
+            "Voluntary self-identification choice; never infer from name, language, location, or resume.",
+        ),
+        CandidateConcept(
+            "self_id.form_name", "SELF_ID", "text", "NORMAL", "DIRECT_FACT", False,
+            ("self identification name", "self id name", "name on voluntary self identification form"),
+            ("SELF_ID_NAME",), ("contact.full_name",), (), False,
+            "Legal full name used on a voluntary self-identification form.",
+        ),
+        CandidateConcept(
+            "self_id.form_date", "SELF_ID", "date", "NORMAL", "EXECUTION_DATE", False,
+            ("self identification date", "self id date", "date on voluntary self identification form"),
+            ("SELF_ID_DATE",), (), (), False,
+            "Execution-date field on a voluntary self-identification form.",
+        ),
+        CandidateConcept(
+            "employment.employee_id", "EMPLOYMENT", "text", "POST_OFFER", "POST_OFFER_POLICY", False,
+            ("employee id", "employee identifier", "employee number"),
+            ("EMPLOYEE_ID",), ("application_defaults.employee_id",), (), False,
+            "Optional employee identifier; applicants without an explicit value leave it blank.",
+        ),
+        CandidateConcept(
+            "legal.attestation", "LEGAL", "boolean", "NORMAL", "LEGAL_ATTESTATION_POLICY", False,
+            ("terms and conditions", "accept terms", "legal attestation", "certification statement"),
+            ("LEGAL_ATTESTATION",), (), (), False,
+            "Legal checkbox that requires mandate-scoped authorization bound to the exact terms identity.",
+        ),
     )
     for item in extras:
         if item.concept_id not in registry:
@@ -393,6 +453,7 @@ def _dynamic_concept(concept_id: str) -> CandidateConcept | None:
         if key in {
             "application_defaults.gender", "application_defaults.race",
             "application_defaults.race_ethnicity", "application_defaults.ethnicity",
+            "application_defaults.hispanic_latino",
             "application_defaults.veteran_status", "application_defaults.disability_status",
         }:
             sensitivity = "SELF_ID"
@@ -402,11 +463,22 @@ def _dynamic_concept(concept_id: str) -> CandidateConcept | None:
             "application_defaults.visa_or_permit",
             "application_defaults.sponsorship_required",
             "application_defaults.authorized_to_work",
+            "application_defaults.location_work_eligible",
         }:
             sensitivity = "PROTECTED"
+        elif key in {"application_defaults.employee_id"}:
+            sensitivity = "POST_OFFER"
         else:
             sensitivity = "NORMAL"
-        mode = "WORK_AUTHORIZATION_POLICY" if sensitivity == "PROTECTED" else "DIRECT_FACT"
+        mode = (
+            "WORK_AUTHORIZATION_POLICY"
+            if sensitivity == "PROTECTED"
+            else "PROTECTED_POLICY"
+            if sensitivity == "SELF_ID"
+            else "POST_OFFER_POLICY"
+            if sensitivity == "POST_OFFER"
+            else "DIRECT_FACT"
+        )
         return CandidateConcept(
             concept_id=key, category="PROFILE", value_type="text", sensitivity=sensitivity,
             answer_mode=mode, autofill_default=False, aliases=(key.replace(".", " "),),
@@ -482,6 +554,10 @@ def legacy_question_family(concept_id: str) -> str:
     key = item.concept_id
     if item.answer_mode == "OPEN_ENDED_JOB_SPECIFIC":
         return "open_ended_job_specific"
+    if item.answer_mode == "LEGAL_ATTESTATION_POLICY":
+        # Legal attestations stay normal-domain but never default to autofill.
+        # They require an explicit mandate-scoped resolution before execution.
+        return "candidate_fact"
     if item.answer_mode in {"EXPERIENCE_EVIDENCE_BOOLEAN", "SKILL_EVIDENCE", "COMPUTED_FACT", "ENUMERATION"}:
         return "experience_skill"
     if item.category == "COMPENSATION" or key.startswith("compensation."):
