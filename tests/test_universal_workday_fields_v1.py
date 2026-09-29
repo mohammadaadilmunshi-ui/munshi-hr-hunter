@@ -138,12 +138,18 @@ def test_legacy_full_name_fallback_is_conservative(monkeypatch) -> None:
 
 
 def test_workday_universal_concepts_preserve_sensitivity_boundaries() -> None:
+    phone_device_type = ontology.require_concept("application.phone_device_type")
+    phone_country_code = ontology.require_concept("contact.phone_country_code")
     phone_extension = ontology.require_concept("contact.phone_extension")
     location_eligibility = ontology.require_concept("work.location_eligibility")
     hispanic_latino = ontology.require_concept("self_id.hispanic_latino")
     employee_id = ontology.require_concept("employment.employee_id")
     legal = ontology.require_concept("legal.attestation")
 
+    assert phone_device_type.sensitivity == "NORMAL"
+    assert phone_device_type.autofill_default is False
+    assert phone_country_code.sensitivity == "NORMAL"
+    assert phone_country_code.autofill_default is False
     assert phone_extension.sensitivity == "NORMAL"
     assert phone_extension.autofill_default is False
 
