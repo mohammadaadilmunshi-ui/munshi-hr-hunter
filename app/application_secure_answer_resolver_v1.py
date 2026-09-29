@@ -134,6 +134,11 @@ def automatic_secure_references(
     snapshot: Mapping[str, Any] | None = None,
 ) -> dict[str, str]:
     """Build only refs the current plan permissions and Candidate Truth can support."""
+    if (
+        permissions.get("protected_fact_execution") is not True
+        and permissions.get("self_id_execution") is not True
+    ):
+        return {}
     active = dict(snapshot or _current_snapshot())
     result: dict[str, str] = {}
     for requirement in requirements:
