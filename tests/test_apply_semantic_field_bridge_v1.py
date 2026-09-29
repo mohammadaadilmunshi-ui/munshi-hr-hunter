@@ -14,8 +14,8 @@ def test_apply_semantic_first_name_maps_to_candidate_truth_projection() -> None:
     )
     assert requirement is not None
     assert requirement["question_key"] == "contact.first_name"
-    assert requirement["profile_fact_key"] == "contact.full_name"
-    assert requirement["conditions"] == {"profile_projection": "first_name"}
+    assert requirement["profile_fact_key"] == "contact.first_name"
+    assert requirement["conditions"] == {"profile_projection": "identity"}
     assert requirement["field_intelligence"]["classification_source"] == (
         "munshi_apply_semantic_type"
     )
