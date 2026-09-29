@@ -13,8 +13,8 @@ from typing import Any
 from app import autonomous_prepare_admission_v1
 from app import autonomous_prepare_compat_v1
 from app import autonomous_prepare_v1
+from app.database import DB_PATH
 from app.n8n_dispatch import (
-    DB_PATH,
     dispatch_pending,
     ensure_schema,
     get_connection,
