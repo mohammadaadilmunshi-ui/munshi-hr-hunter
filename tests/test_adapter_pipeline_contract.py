@@ -4,7 +4,14 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from app import database, dice_worker, jobspy_board_common, jobspy_pipeline, smartrecruiters_worker
+from app import (
+    dashboard_targeting_gate,
+    database,
+    dice_worker,
+    jobspy_board_common,
+    jobspy_pipeline,
+    smartrecruiters_worker,
+)
 from app.dashboard_adapter_sources_v2_3_1 import SOURCE_SPECS, make_job
 from app.ats_common import parse_location
 from app.dashboard_targeting_gate import filter_dashboard_jobs, record_source_metrics
@@ -73,7 +80,7 @@ def test_description_sections_are_enriched_before_final_targeting(hunter_db) -> 
     assert row["primary_decision"] == "ELIGIBLE"
 
 
-def test_personio_provider_boundary_does_not_fabricate_us_country() -> None:
+def test_personio_provider_boundary_does_not_fabricate_us_country(hunter_db) -> None:
     job = make_job(
         SOURCE_SPECS["personio"],
         company="Fixture GmbH",
@@ -208,7 +215,7 @@ def test_indeed_preserves_provider_fetch_count_when_targeting_input_is_capped(
         ),
     )
     monkeypatch.setattr(
-        jobspy_board_common,
+        dashboard_targeting_gate,
         "filter_dashboard_jobs",
         lambda jobs: {
             "eligible_jobs": list(jobs),
