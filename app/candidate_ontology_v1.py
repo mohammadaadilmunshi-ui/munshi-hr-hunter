@@ -345,8 +345,31 @@ def _build_registry() -> dict[str, CandidateConcept]:
         ),
     )
     for item in extras:
-        if item.concept_id not in registry:
+        current = registry.get(item.concept_id)
+        if current is None:
             registry[item.concept_id] = item
+            continue
+
+        # Explicit policy concepts are authoritative over generic structural
+        # seed defaults. Preserve semantic/fact aliases discovered by the seed,
+        # but keep the stricter sensitivity, answer mode and autofill policy
+        # declared by the explicit concept. This is especially important for
+        # optional segmented-phone metadata: an empty extension is valid and
+        # must never inherit generic structural autofill behavior.
+        registry[item.concept_id] = replace(
+            item,
+            aliases=tuple(dict.fromkeys((*current.aliases, *item.aliases))),
+            browser_semantics=tuple(
+                dict.fromkeys((*current.browser_semantics, *item.browser_semantics))
+            ),
+            candidate_fact_paths=tuple(
+                dict.fromkeys((*current.candidate_fact_paths, *item.candidate_fact_paths))
+            ),
+            legacy_paths=tuple(
+                dict.fromkeys((*current.legacy_paths, *item.legacy_paths))
+            ),
+            repeated_entity=current.repeated_entity or item.repeated_entity,
+        )
 
     capability_aliases = {
         "recruiting": ("recruiting", "recruitment", "recruitment operations"),
