@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from app import (
+    dashboard_adapter_sources_v2_3_1,
     dashboard_targeting_gate,
     database,
     dice_worker,
@@ -80,7 +81,15 @@ def test_description_sections_are_enriched_before_final_targeting(hunter_db) -> 
     assert row["primary_decision"] == "ELIGIBLE"
 
 
-def test_personio_provider_boundary_does_not_fabricate_us_country(hunter_db) -> None:
+def test_personio_provider_boundary_does_not_fabricate_us_country(
+    hunter_db,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        dashboard_adapter_sources_v2_3_1,
+        "_configured_source_tier",
+        lambda _source_name: 1,
+    )
     job = make_job(
         SOURCE_SPECS["personio"],
         company="Fixture GmbH",
