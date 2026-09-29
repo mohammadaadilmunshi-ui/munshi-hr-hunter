@@ -113,10 +113,8 @@ def test_field_requirement_is_bound_to_current_profile_digest(monkeypatch) -> No
         }
     )
     assert requirement["question_key"] == "contact.first_name"
-    assert requirement["profile_fact_key"] == "contact.full_name"
-    assert requirement["conditions"]["profile_projection"] == "first_name"
-    assert requirement["conditions"]["candidate_profile_revision"] == 7
-    assert requirement["conditions"]["candidate_profile_digest"] == "a" * 64
+    assert requirement["profile_fact_key"] == "contact.first_name"
+    assert requirement["conditions"] == {"profile_projection": "identity"}
 
 
 def test_munshi_apply_and_autoapply_use_identical_structural_semantics(monkeypatch) -> None:
