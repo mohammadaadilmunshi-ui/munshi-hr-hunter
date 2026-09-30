@@ -127,6 +127,28 @@ def test_projection_binds_exact_confirmed_evidence_and_section1_revisions(hunter
     assert "Example protected self-ID value" not in serialized
 
 
+def test_candidate_detail_projection_uses_shared_contract_categories(hunter_db, monkeypatch) -> None:
+    extracted = _profile_extract(hunter_db, monkeypatch)
+    details.save_candidate_profile_details(
+        {
+            "age_18_plus": True,
+            "employee_id": "EMP-123",
+        }
+    )
+
+    snapshot = projection.build_candidate_profile_snapshot(extracted)
+
+    age = _fact(snapshot, "application_defaults.age_18_plus")
+    assert age["category"] == "SAVED_ANSWER"
+    assert age["protected"] is True
+    assert "value" not in age
+
+    employee_id = _fact(snapshot, "application_defaults.employee_id")
+    assert employee_id["category"] == "EMPLOYMENT"
+    assert employee_id["protected"] is True
+    assert "value" not in employee_id
+
+
 def test_projection_revision_advances_for_details_override_and_reset_changes(hunter_db, monkeypatch) -> None:
     extracted = _profile_extract(hunter_db, monkeypatch)
 
