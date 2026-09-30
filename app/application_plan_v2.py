@@ -30,6 +30,7 @@ from app import (
     native_resume_artifact_v5,
 )
 from app import application_preflight_package_v1 as preflight_v1
+from app import application_secure_answer_resolver_v1 as secure_answers
 from app import candidate_knowledge_graph_v1 as universal_graph
 from app import candidate_ontology_v1 as universal_ontology
 from app import universal_answer_resolver_v1 as universal_answers
@@ -398,11 +399,19 @@ def _scoped_secure_refs(
             "Secure resolver references require a matching protected application question."
         )
     if refs:
-        # No owner/purpose-bound resolver endpoint exists yet.  A syntactically
-        # valid URI is not authority, so keep protected values unresolved.
-        raise ValueError(
-            "Secure resolver references are unavailable until an owner-scoped resolver is installed."
-        )
+        by_key = {
+            str(requirement["question_key"]): requirement
+            for requirement in requirements
+        }
+        for key, reference in refs.items():
+            requirement = by_key.get(key)
+            if requirement is None:
+                raise ValueError(
+                    "Secure resolver reference has no matching application requirement."
+                )
+            # URI syntax alone is never authority. The reference must resolve
+            # value-free against the current owner-bound protected Candidate Truth.
+            secure_answers.validate_secure_reference(requirement, reference)
     return dict(refs)
 
 

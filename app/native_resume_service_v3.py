@@ -28,6 +28,12 @@ _MAX_PROFILE_RESPONSE_TOKENS = 6000
 
 class ContactProfile(BaseModel):
     full_name: str = ""
+    # Structured legal-name parts are first-class Candidate Truth when the
+    # candidate confirms them. Historical profiles can continue to rely on the
+    # conservative full_name fallback in application field intelligence.
+    first_name: str = ""
+    middle_name: str = ""
+    last_name: str = ""
     location: str = ""
     # Canonical application-address facts are stored separately instead of
     # overloading one display location string.  Providers may ask for any subset

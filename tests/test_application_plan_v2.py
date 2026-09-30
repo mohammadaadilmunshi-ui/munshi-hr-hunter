@@ -256,10 +256,22 @@ def test_protected_answer_never_serializes_plaintext_and_requires_scoped_resolve
     assert blocked["answers"][0]["execution_value"] is None
     assert blocked["answers"][0]["secure_resolver_ref"] is None
 
-    with pytest.raises(ValueError, match="owner-scoped resolver"):
+    monkeypatch.setattr(
+        plans.secure_answers,
+        "_current_snapshot",
+        lambda: {"facts": []},
+    )
+    with pytest.raises(
+        PermissionError,
+        match="not backed by current Candidate Truth",
+    ):
         plans._scoped_secure_refs(
             requirements,
-            {"work.authorization.current": "hunter-secure://candidate-truth/work-authorization/current"},
+            {
+                "work.authorization.current": (
+                    "hunter-secure://candidate-truth/work-authorization/current"
+                )
+            },
         )
 
 

@@ -15,10 +15,13 @@ ATS_FORM_PREPARATION:
 - creates immutable Application Plan V2 with final_review/final_submit false;
 - delivers the signed plan to Apply;
 - starts the durable Apply preparation session/queue;
-- waits only for pre-submit outcomes:
+- waits only for pre-submit browser outcomes:
     WAITING_INPUT -> Hunter NEEDS_INPUT
-    READY_FOR_REVIEW -> Hunter task success / operation convergence
-- never approves final review and never submits.
+    READY_FOR_REVIEW -> freeze the provider Review as internal integrity evidence;
+- when the earlier customer execution mandate is current, derives the internal
+  technical approval and one-use submit authorization from that mandate;
+- may deliver that authority to Apply, but never asks the customer to approve
+  again and never executes the employer final-submit action itself.
 
 A JD-explicit REQUIRED cover letter fails closed to NEEDS_INPUT until the
 separate native cover-letter writer/artifact tranche supplies the exact PDF.

@@ -179,6 +179,22 @@ def resolve_concept(
             extra={"protected_reference_available": bool(refs), "candidate_plaintext_exposed": False},
         )
 
+    if concept.answer_mode == "EXECUTION_DATE":
+        return _base_result(
+            status="POLICY_RESOLVED",
+            concept_id=concept_id,
+            answer_mode=concept.answer_mode,
+            confidence=float(question.get("confidence") or 0.0),
+            sensitivity="NORMAL",
+            autofill_allowed=True,
+            reason="deterministic_execution_date_policy",
+            knowledge_revision=revision,
+            question=question,
+            value_ref=f"hunter-policy://execution-date/{concept_id}",
+            value={"execution_policy": "CURRENT_DATE"},
+            extra={"candidate_plaintext_exposed": False},
+        )
+
     # Direct/pref/policy-normal facts: search all current candidate authorities,
     # not just the field classifier that happened to recognize the question.
     rows = _candidate_rows(concept_id, view)

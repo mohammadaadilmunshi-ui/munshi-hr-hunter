@@ -550,6 +550,26 @@ new_hunter_image_id="$(docker image inspect -f '{{.Id}}' "$hunter_image_name")"
 [[ -n "$new_hunter_image_id" ]] || rollback
 echo "new_hunter_image_id=$new_hunter_image_id"
 
+echo "=== RUN EXACT-IMAGE HUNTER AUTOAPPLY CONTRACT SUITE (NETWORK DISABLED) ==="
+timeout 1200s docker run --rm \
+  --network none \
+  --read-only \
+  --tmpfs /tmp:rw,nosuid,nodev,size=512m \
+  --tmpfs /app/hunter/data:rw,nosuid,nodev,size=256m,uid=10001,gid=10001,mode=0700 \
+  --mount "type=bind,src=$REPO/tests,dst=/app/hunter/tests,readonly" \
+  --entrypoint python \
+  -e CLOUD_SHADOW_MODE=false \
+  "$new_hunter_image_id" \
+  -m pytest -q \
+    /app/hunter/tests/test_universal_workday_fields_v1.py \
+    /app/hunter/tests/test_application_execution_mandate_v1.py \
+    /app/hunter/tests/test_application_review_v2.py \
+    /app/hunter/tests/test_application_submit_authorization_v1.py \
+    /app/hunter/tests/test_submit_authority_delivery_v1.py \
+    /app/hunter/tests/test_application_production_submission_receipt_v1.py \
+    /app/hunter/tests/test_prepare_worker_adapters_v1c.py
+echo "HUNTER_PRODUCTION_EXACT_IMAGE_AUTOAPPLY_TESTS=PASS"
+
 echo "=== PREPARE CURRENT STORAGE-SAFE ROLLBACK SNAPSHOT ==="
 prepare_storage_safe_backup
 migration_attempted=1
