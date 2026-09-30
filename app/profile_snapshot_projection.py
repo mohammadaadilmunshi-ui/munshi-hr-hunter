@@ -340,7 +340,7 @@ def _add_candidate_detail_facts(
         "authorization_status": "WORK_AUTHORIZATION",
         "authorized_to_work": "WORK_AUTHORIZATION",
         "sponsorship_required": "SPONSORSHIP",
-        "age_18_plus": "ELIGIBILITY",
+        "age_18_plus": "SAVED_ANSWER",
         "location_work_eligible": "WORK_AUTHORIZATION",
         "needs_accommodations": "VOLUNTARY_DEMOGRAPHIC",
         "gender": "VOLUNTARY_DEMOGRAPHIC",
@@ -349,7 +349,7 @@ def _add_candidate_detail_facts(
         "hispanic_latino": "VOLUNTARY_DEMOGRAPHIC",
         "veteran": "VOLUNTARY_DEMOGRAPHIC",
         "disability": "VOLUNTARY_DEMOGRAPHIC",
-        "employee_id": "POST_OFFER",
+        "employee_id": "EMPLOYMENT",
     }
     for field, category in protected_categories.items():
         _protected_fact(
