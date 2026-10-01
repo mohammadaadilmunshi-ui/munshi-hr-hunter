@@ -76,5 +76,5 @@ jobs:
         run: |
           set -euo pipefail
           ! grep -E 'submit_application|send_email|playwright|selenium' app/unified_job_workspaces_v1.py
-          grep -F 'Submission authority remains OFF' app/unified_job_workspaces_v1.py
+          grep -F 'keeps all preparation/submission authorities unchanged' app/unified_job_workspaces_v1.py
           grep -F 'product_application_flow_v2' app/unified_job_workspaces_runtime_patch_v1.py
