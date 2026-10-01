@@ -443,9 +443,7 @@ def match_freshness(match_snapshot_id: str) -> dict[str, Any]:
     binding = snapshot["candidate_truth_binding"]
     fresh = (
         current_job["job_snapshot_sha256"] == snapshot["job_snapshot_sha256"]
-        and str(candidate["source_extraction_id"]) == binding["source_extraction_id"]
-        and int(candidate["profile_revision"]) == int(binding["profile_revision"])
-        and str(candidate["profile_digest"]) == binding["profile_digest"]
+        and truth.resume_relevant_binding_matches(binding, candidate)
     )
     return {
         "match_snapshot_id": match_snapshot_id,
