@@ -48,6 +48,12 @@ def _flow(state: str, **overrides):
     [
         ("RUNNING", "Preparing", "preparing", "No action needed"),
         ("READY_FOR_APPROVAL", "Needs review", "needs_you", "Review resume"),
+        (
+            "AWAITING_RUNTIME_RESOLUTION",
+            "Applying now",
+            "applying",
+            "No action needed",
+        ),
         ("SUBMITTING", "Applying now", "applying", "No action needed"),
         ("FAILED_SAFELY", "Needs attention", "needs_attention", "Review the issue"),
         ("VERIFIED", "Submitted", "submitted", "View receipt"),
