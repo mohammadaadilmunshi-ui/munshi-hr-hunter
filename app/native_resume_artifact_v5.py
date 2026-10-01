@@ -223,9 +223,14 @@ def _current_resume(version_id: str) -> dict[str, Any]:
         raise RuntimeError("Native Resume V5 is not bound to the Stage B tailoring plan.")
 
     snapshot = resume_v5.v4.truth_binding.current_candidate_profile_snapshot()
-    binding = record.get("candidate_truth_binding") or {}
-    if not resume_v5.v4.truth_binding.binding_matches_snapshot(binding, snapshot):
-        raise RuntimeError("Candidate Truth changed after this resume was generated.")
+    freshness = resume_v5.v4.truth_binding.resume_binding_is_fresh(
+        version_id,
+        current_snapshot=snapshot,
+    )
+    if freshness.get("fresh") is not True:
+        raise RuntimeError(
+            "Resume-relevant Candidate Truth changed after this resume was generated."
+        )
 
     current_job = resume_v5.v4.safe_owned_job_snapshot(int(record["job_id"]))
     job_binding = record.get("job_snapshot_binding") or {}
