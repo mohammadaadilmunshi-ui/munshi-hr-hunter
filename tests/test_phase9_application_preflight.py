@@ -354,7 +354,7 @@ def test_semantic_truth_extension_allows_only_resourced_or_added_facts() -> None
         ],
     }
     current = copy.deepcopy(stored)
-    current["candidate_profile_binding"] = {"profile_revision": 6}
+    current["candidate_profile_binding"] = {"profile_revision": 7}
     current["facts"][0]["source"] = {"extraction_id": "new"}
     current["facts"].append(
         {
@@ -367,6 +367,10 @@ def test_semantic_truth_extension_allows_only_resourced_or_added_facts() -> None
 
     assert phase9._semantic_truth_extension(stored, current) is True
 
+    current["candidate_profile_binding"] = {"profile_revision": 5}
+    assert phase9._semantic_truth_extension(stored, current) is False
+
+    current["candidate_profile_binding"] = {"profile_revision": 7}
     current["facts"][0]["value_reference"] = "vault://different-email"
     assert phase9._semantic_truth_extension(stored, current) is False
 
