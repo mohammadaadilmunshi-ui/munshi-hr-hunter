@@ -175,6 +175,56 @@ def test_summary_projection_skips_full_review_reconstruction(monkeypatch):
     assert result["package_review"] == {"summary_projection": True}
 
 
+def test_authorized_normal_runtime_resolution_stays_applying(monkeypatch):
+    monkeypatch.setattr(
+        flow,
+        "_latest_prepare",
+        lambda _job_id: {
+            "status": "NEEDS_INPUT",
+            "application_id": "application-1",
+            "tasks": [
+                {
+                    "task_kind": "ATS_FORM_PREPARATION",
+                    "status": "NEEDS_INPUT",
+                    "required": True,
+                    "output": {
+                        "runtime_resolution_tasks": [
+                            {
+                                "task_id": "task-phone",
+                                "question_id": "phone",
+                                "question": "Phone Number",
+                                "semantic_type": "PHONE",
+                                "category": "MISSING_FACT",
+                                "sensitivity_class": "NORMAL",
+                                "risk_level": "MEDIUM",
+                                "requires_user": False,
+                                "reason": "Pending Hunter semantic resolution",
+                            }
+                        ]
+                    },
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(flow, "_latest_lifecycle", lambda _job_id: None)
+    monkeypatch.setattr(
+        flow,
+        "_execution_mandate",
+        lambda _preflight, **_kwargs: {"mandate_id": "mandate-1"},
+    )
+    monkeypatch.setattr(flow, "_customer_review", lambda _plan: None)
+    monkeypatch.setattr(flow, "_production_receipt", lambda _application_id: None)
+    monkeypatch.setattr(flow, "_package_review", lambda _preflight: None)
+
+    result = flow.flow_for_job(1)
+
+    assert result["state"] == "NEEDS_INPUT"
+    assert result["authority"] == "runtime_resolution_in_progress"
+    assert result["display_status"] == "Applying now"
+    assert result["cta_label"] == "Applying now"
+    assert result["customer_review"] is None
+
+
 def test_committed_prepare_identity_survives_secondary_projection_failure(monkeypatch):
     class Connection:
         def close(self):
