@@ -23,11 +23,11 @@ HEARTBEAT_PATH = Path(
     or Path(__file__).resolve().parents[1] / "data" / "prepare_runtime_heartbeat.json"
 )
 
-ACTIVE_STATES = frozenset(
-    {"QUEUED", "RUNNING", "PREPARING", "PREPARING_ATS", "AWAITING_RUNTIME_RESOLUTION"}
-)
+ACTIVE_STATES = frozenset({"QUEUED", "RUNNING", "PREPARING", "PREPARING_ATS"})
 REVIEW_STATES = frozenset({"READY_FOR_APPROVAL", "READY_FOR_REVIEW"})
-APPLYING_STATES = frozenset({"READY_TO_SUBMIT", "SUBMITTING"})
+APPLYING_STATES = frozenset(
+    {"AWAITING_RUNTIME_RESOLUTION", "READY_TO_SUBMIT", "SUBMITTING"}
+)
 SUBMITTED_STATES = frozenset(
     {
         "SUBMITTED",
