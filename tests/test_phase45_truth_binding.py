@@ -20,9 +20,11 @@ from app.answer_brain_v2 import (
     save_answer,
     save_profile_answer,
 )
+from app import phase45_truth_binding as truth_binding
 from app.phase45_truth_binding import (
     current_candidate_profile_snapshot,
     resume_truth_binding,
+    resume_truth_read_set,
 )
 
 
@@ -170,12 +172,98 @@ def test_phase4_generation_is_atomically_bound_and_protected_truth_never_enters_
     assert version["candidate_truth_binding"]["profile_digest"] == snapshot["profile_digest"]
     assert version["diagnostics"]["candidate_truth_binding"]["profile_digest"] == snapshot["profile_digest"]
     assert resume_truth_binding(version["version_id"])["profile_digest"] == snapshot["profile_digest"]
+    read_set = resume_truth_read_set(version["version_id"])
+    assert read_set["binding_mode"] == "GENERATED"
+    expected_fact_ids = {
+        fact["fact_id"]
+        for fact in truth_binding.safe_resume_profile_context(snapshot)["facts"]
+    }
+    assert set(read_set["read_set"]) == expected_fact_ids
+    assert expected_fact_ids
 
     serialized = json.dumps(payloads)
     assert "candidate_truth_profile" in serialized
     assert "SECRET-VISA-VALUE" not in serialized
     assert "application_defaults.visa_or_permit" not in serialized
     assert v4.native_resume_authority_enabled() is False
+
+
+def test_resume_freshness_ignores_application_detail_only_revision(
+    hunter_db, monkeypatch
+) -> None:
+    _confirmed_profile(hunter_db, monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-phase45-resume-key-value")
+    job_id = _job()
+    snapshot = current_candidate_profile_snapshot()
+    bundle = v4._truth_bound_evidence_bundle(snapshot)
+    evidence_id = next(
+        item["evidence_id"]
+        for item in bundle["items"]
+        if item["kind"] == "confirmed_resume_source"
+    )
+    monkeypatch.setattr(
+        v2,
+        "_call_openai_v2",
+        lambda **kwargs: (_resume_document(evidence_id), "resp-v4", "gpt-test"),
+    )
+    version = v4.generate_resume(job_id=job_id)
+
+    profile_details.save_candidate_profile_details(
+        {"phone_device_type": "Mobile"}
+    )
+    current = current_candidate_profile_snapshot()
+
+    assert current["profile_revision"] != snapshot["profile_revision"]
+    assert truth_binding.binding_matches_snapshot(
+        version["candidate_truth_binding"], current
+    ) is False
+    assert truth_binding.resume_relevant_binding_matches(
+        version["candidate_truth_binding"], current
+    ) is True
+    freshness = truth_binding.resume_binding_is_fresh(
+        version["version_id"],
+        current_snapshot=current,
+    )
+    assert freshness["fresh"] is True
+    assert freshness["reason"] == "MATCH"
+
+
+def test_resume_freshness_fails_when_consumed_truth_changes(
+    hunter_db, monkeypatch
+) -> None:
+    extracted = _confirmed_profile(hunter_db, monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-phase45-resume-key-value")
+    job_id = _job()
+    snapshot = current_candidate_profile_snapshot()
+    bundle = v4._truth_bound_evidence_bundle(snapshot)
+    evidence_id = next(
+        item["evidence_id"]
+        for item in bundle["items"]
+        if "People analytics candidate" in item["text"]
+    )
+    monkeypatch.setattr(
+        v2,
+        "_call_openai_v2",
+        lambda **kwargs: (_resume_document(evidence_id), "resp-v4", "gpt-test"),
+    )
+    version = v4.generate_resume(job_id=job_id)
+
+    overrides.save_profile_override(
+        extracted,
+        "professional_summary",
+        "Candidate-confirmed updated analytics summary.",
+    )
+    current = current_candidate_profile_snapshot()
+    freshness = truth_binding.resume_binding_is_fresh(
+        version["version_id"],
+        current_snapshot=current,
+    )
+
+    assert freshness["fresh"] is False
+    assert freshness["reason"] in {
+        "READ_SET_UNAVAILABLE",
+        "CONSUMED_TRUTH_CHANGED",
+    }
 
 
 def test_phase4_refuses_revision_after_candidate_truth_changes(hunter_db, monkeypatch) -> None:

@@ -354,7 +354,8 @@ def test_semantic_truth_extension_allows_only_resourced_or_added_facts() -> None
         ],
     }
     current = copy.deepcopy(stored)
-    current["candidate_profile_binding"] = {"profile_revision": 6}
+    current["candidate_profile_binding"] = {"profile_revision": 9}
+    current["unresolved_fact_keys"] = []
     current["facts"][0]["source"] = {"extraction_id": "new"}
     current["facts"].append(
         {
@@ -367,8 +368,21 @@ def test_semantic_truth_extension_allows_only_resourced_or_added_facts() -> None
 
     assert phase9._semantic_truth_extension(stored, current) is True
 
-    current["facts"][0]["value_reference"] = "vault://different-email"
-    assert phase9._semantic_truth_extension(stored, current) is False
+    changed_existing = copy.deepcopy(current)
+    changed_existing["facts"][0]["value_reference"] = "vault://different-email"
+    assert phase9._semantic_truth_extension(stored, changed_existing) is False
+
+    protected_addition = copy.deepcopy(current)
+    protected_addition["protected_fact_keys"].append("self_id.gender")
+    protected_addition["facts"].append(
+        {
+            "key": "self_id.gender",
+            "value_reference": "hunter-secure://candidate-truth/self_id.gender",
+            "protected": True,
+            "source": {"extraction_id": "new"},
+        }
+    )
+    assert phase9._semantic_truth_extension(stored, protected_addition) is False
 
 
 def test_mid_capture_change_fails_closed_before_any_package_write(hunter_db, monkeypatch) -> None:

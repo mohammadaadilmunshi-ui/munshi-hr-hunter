@@ -503,31 +503,37 @@ def _semantic_truth_extension(
     stored_truth: Mapping[str, Any],
     current_truth: Mapping[str, Any],
 ) -> bool:
-    """Return whether current truth only re-sources/adds facts.
+    """Allow only additive NORMAL application truth after approval.
 
-    A confirmed master-resume replacement can produce a new extraction/profile
-    digest even when every previously approved fact is unchanged.  An in-flight
-    package may remain pinned to its original truth snapshot only when the new
-    projection preserves every stored fact verbatim (apart from provenance),
-    keeps the same protected/unresolved sets, and does not roll the profile
-    revision backward or forward.
+    Every fact already present in the stored package must remain semantically
+    identical (provenance may advance). New protected/self-ID facts are not
+    admissible here and continue to fail closed. Newly supplied non-protected
+    application facts may reduce the unresolved set and advance the composite
+    Candidate Truth revision without invalidating the approved resume/package.
     """
     if any(
         str(stored_truth.get(field) or "") != str(current_truth.get(field) or "")
         for field in ("tenant_id", "user_id")
     ):
         return False
+
     stored_binding = dict(stored_truth.get("candidate_profile_binding") or {})
     current_binding = dict(current_truth.get("candidate_profile_binding") or {})
-    if int(stored_binding.get("profile_revision") or 0) != int(
-        current_binding.get("profile_revision") or 0
+    if int(current_binding.get("profile_revision") or 0) < int(
+        stored_binding.get("profile_revision") or 0
     ):
         return False
+
+    # Protected/self-ID truth must not silently appear/disappear through this
+    # continuation path. Its dedicated standing-consent policy remains separate.
     if list(stored_truth.get("protected_fact_keys") or []) != list(
         current_truth.get("protected_fact_keys") or []
-    ) or list(stored_truth.get("unresolved_fact_keys") or []) != list(
-        current_truth.get("unresolved_fact_keys") or []
     ):
+        return False
+
+    stored_unresolved = set(stored_truth.get("unresolved_fact_keys") or [])
+    current_unresolved = set(current_truth.get("unresolved_fact_keys") or [])
+    if not current_unresolved.issubset(stored_unresolved):
         return False
 
     stored_facts = {
@@ -542,6 +548,7 @@ def _semantic_truth_extension(
     }
     if len(stored_facts) != len(stored_truth.get("facts") or []):
         return False
+
     for key, stored_fact in stored_facts.items():
         current_fact = current_facts.get(key)
         if current_fact is None:
@@ -550,6 +557,13 @@ def _semantic_truth_extension(
             k: v for k, v in current_fact.items() if k != "source"
         }:
             return False
+
+    for key, current_fact in current_facts.items():
+        if key in stored_facts:
+            continue
+        if current_fact.get("protected") is True:
+            return False
+
     return True
 
 

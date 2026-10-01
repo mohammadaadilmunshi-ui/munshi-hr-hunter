@@ -9,6 +9,7 @@ from app import prepare_orchestrator_v1 as prepare
 
 def test_state_labels_cover_complete_loop_states():
     assert flow.STATE_LABELS["NEEDS_INPUT"] == "Action required"
+    assert flow.STATE_LABELS["AWAITING_RUNTIME_RESOLUTION"] == "Applying now"
     assert flow.STATE_LABELS["READY_FOR_APPROVAL"] == "Needs review"
     assert flow.STATE_LABELS["READY_FOR_REVIEW"] == "Needs review"
     assert (
@@ -52,6 +53,8 @@ def test_runtime_question_projection_never_contains_resolution_value():
     ]
     projected = flow._runtime_questions(tasks)
     assert projected[0]["question"] == "Are you willing to relocate?"
+    assert projected[0]["requires_user"] is True
+    assert projected[0]["auto_resolvable"] is False
     assert "resolution" not in projected[0]
     assert "value" not in projected[0]
 
@@ -72,6 +75,58 @@ def test_prepare_state_wins_before_submission_authority():
         "NEEDS_INPUT",
         "prepare",
     )
+
+
+def test_post_approval_normal_runtime_question_stays_resumable(monkeypatch):
+    monkeypatch.setattr(
+        flow,
+        "_latest_prepare",
+        lambda _job_id: {
+            "status": "NEEDS_INPUT",
+            "application_id": "application-1",
+            "tasks": [
+                {
+                    "task_kind": "ATS_FORM_PREPARATION",
+                    "status": "NEEDS_INPUT",
+                    "required": True,
+                    "output": {
+                        "runtime_resolution_tasks": [
+                            {
+                                "task_id": "runtime-1",
+                                "question_id": "contact.phone",
+                                "question": "Phone Number",
+                                "semantic_type": "phone",
+                                "category": "MISSING_FACT",
+                                "sensitivity_class": "NORMAL",
+                                "status": "PENDING",
+                                "risk_level": "MEDIUM",
+                                "auto_resolvable": True,
+                                "requires_user": False,
+                                "reason": "Hunter semantic resolution pending",
+                            }
+                        ]
+                    },
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(flow, "_latest_lifecycle", lambda _job_id: None)
+    monkeypatch.setattr(flow, "_package_review", lambda _preflight: None)
+    monkeypatch.setattr(
+        flow,
+        "_execution_mandate",
+        lambda _preflight, **_kwargs: {"mandate_id": "mandate-1"},
+    )
+    monkeypatch.setattr(flow, "_customer_review", lambda _plan: None)
+    monkeypatch.setattr(flow, "_production_receipt", lambda _application_id: None)
+
+    result = flow.flow_for_job(1)
+
+    assert result["state"] == "AWAITING_RUNTIME_RESOLUTION"
+    assert result["authority"] == "runtime_resolution_pending"
+    assert result["cta_label"] == "Applying now"
+    assert result["runtime_questions"][0]["status"] == "PENDING"
+    assert result["runtime_questions"][0]["auto_resolvable"] is True
 
 
 def test_artifact_summary_reads_bound_outputs_without_submit_authority():
