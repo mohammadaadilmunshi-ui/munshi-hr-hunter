@@ -505,12 +505,13 @@ def _semantic_truth_extension(
 ) -> bool:
     """Return whether current truth only re-sources/adds facts.
 
-    A confirmed master-resume replacement can produce a new extraction/profile
-    digest even when every previously approved fact is unchanged.  An in-flight
-    package may remain pinned to its original truth snapshot only when the new
-    projection preserves every stored fact verbatim (apart from provenance),
-    keeps the same protected/unresolved sets, and does not roll the profile
-    revision backward or forward.
+    Application-only NORMAL truth enrichment can advance the global profile
+    revision even when every fact consumed by the approved resume is unchanged.
+    An in-flight package may remain pinned to its original truth snapshot only
+    when the new projection preserves every stored fact verbatim (apart from
+    provenance), keeps the same protected/unresolved sets, and never rolls the
+    profile revision backward. Newly added NORMAL facts are therefore admissible
+    without invalidating the already-reviewed immutable resume.
     """
     if any(
         str(stored_truth.get(field) or "") != str(current_truth.get(field) or "")
@@ -519,9 +520,9 @@ def _semantic_truth_extension(
         return False
     stored_binding = dict(stored_truth.get("candidate_profile_binding") or {})
     current_binding = dict(current_truth.get("candidate_profile_binding") or {})
-    if int(stored_binding.get("profile_revision") or 0) != int(
-        current_binding.get("profile_revision") or 0
-    ):
+    stored_revision = int(stored_binding.get("profile_revision") or 0)
+    current_revision = int(current_binding.get("profile_revision") or 0)
+    if current_revision < stored_revision:
         return False
     if list(stored_truth.get("protected_fact_keys") or []) != list(
         current_truth.get("protected_fact_keys") or []
