@@ -174,7 +174,12 @@ def test_phase4_generation_is_atomically_bound_and_protected_truth_never_enters_
     assert resume_truth_binding(version["version_id"])["profile_digest"] == snapshot["profile_digest"]
     read_set = resume_truth_read_set(version["version_id"])
     assert read_set["binding_mode"] == "GENERATED"
-    assert evidence_id.removeprefix("truth:") in read_set["read_set"]
+    expected_fact_ids = {
+        fact["fact_id"]
+        for fact in truth_binding.safe_resume_profile_context(snapshot)["facts"]
+    }
+    assert set(read_set["read_set"]) == expected_fact_ids
+    assert expected_fact_ids
 
     serialized = json.dumps(payloads)
     assert "candidate_truth_profile" in serialized
