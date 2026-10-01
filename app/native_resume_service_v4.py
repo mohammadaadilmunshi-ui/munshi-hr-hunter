@@ -289,6 +289,12 @@ def generate_resume(
             ),
         )
         truth_binding.save_resume_truth_binding(connection, version_id=version_id, snapshot=snapshot)
+        truth_binding.save_resume_truth_read_set(
+            connection,
+            version_id=version_id,
+            snapshot=snapshot,
+            document=proposed.model_dump(),
+        )
         job_binding.save_resume_job_binding(
             connection,
             version_id=version_id,
