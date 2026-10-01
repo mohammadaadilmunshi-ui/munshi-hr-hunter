@@ -155,10 +155,17 @@ def safe_resume_profile_context(snapshot: dict[str, Any]) -> dict[str, Any]:
         "certifications.",
         "languages",
     )
+    application_only_contact_keys = {
+        "contact.phone_country_code",
+        "contact.phone_device_type",
+        "contact.phone_extension",
+    }
     facts: list[dict[str, Any]] = []
     for fact in snapshot.get("facts") or []:
         key = str(fact.get("key") or "")
         if fact.get("protected") is True:
+            continue
+        if key in application_only_contact_keys:
             continue
         if not any(key == prefix or key.startswith(prefix) for prefix in allowed_prefixes):
             continue
@@ -238,45 +245,16 @@ def _fact_value_digest(fact: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _document_truth_evidence_ids(document: Mapping[str, Any]) -> list[str]:
-    found: set[str] = set()
-
-    def walk(value: Any) -> None:
-        if isinstance(value, Mapping):
-            for key, nested in value.items():
-                if str(key) == "evidence_ids" and isinstance(nested, list):
-                    for raw in nested:
-                        token = str(raw or "").strip()
-                        if token.startswith("truth:") and len(token) > len("truth:"):
-                            found.add(token[len("truth:"):])
-                else:
-                    walk(nested)
-        elif isinstance(value, list):
-            for nested in value:
-                walk(nested)
-
-    walk(document)
-    return sorted(found)
-
-
 def _read_set_payload(
     *,
     snapshot: Mapping[str, Any],
-    document: Mapping[str, Any],
 ) -> dict[str, str]:
-    facts = {
-        str(fact.get("fact_id") or ""): dict(fact)
-        for fact in snapshot.get("facts") or []
-        if isinstance(fact, Mapping) and str(fact.get("fact_id") or "")
-    }
-    consumed = _document_truth_evidence_ids(document)
+    context = safe_resume_profile_context(dict(snapshot))
     read_set: dict[str, str] = {}
-    for fact_id in consumed:
-        fact = facts.get(fact_id)
-        if fact is None:
-            raise RuntimeError(
-                "Resume consumed Candidate Truth evidence that is absent from the bound snapshot."
-            )
+    for fact in context.get("facts") or []:
+        fact_id = str(fact.get("fact_id") or "")
+        if not fact_id:
+            raise RuntimeError("Resume-safe Candidate Truth fact is missing fact_id.")
         read_set[fact_id] = _fact_value_digest(fact)
     return read_set
 
@@ -296,7 +274,11 @@ def save_resume_truth_read_set(
     mode = str(binding_mode or "").strip().upper()
     if mode not in {"GENERATED", "SAFE_BACKFILL"}:
         raise ValueError("Unsupported resume truth read-set binding mode.")
-    read_set = _read_set_payload(snapshot=snapshot, document=document)
+    # document remains part of the call contract because the immutable resume
+    # is written in the same transaction; freshness is bound to the complete
+    # resume-safe Candidate Truth input set supplied to the writer.
+    _ = document
+    read_set = _read_set_payload(snapshot=snapshot)
     payload = {
         "read_set_version": RESUME_TRUTH_READ_SET_VERSION,
         "projection_version": str(snapshot.get("contract_version") or ""),
@@ -467,6 +449,20 @@ def resume_binding_is_fresh(
             "version_id": str(version_id),
         }
 
+    source_binding = resume_truth_binding(version_id)
+    for field in (
+        "source_extraction_id",
+        "source_profile_sha256",
+        "source_resume_sha256",
+    ):
+        if str(source_binding.get(field) or "") != str(snapshot.get(field) or ""):
+            return {
+                "fresh": False,
+                "reason": "RESUME_SOURCE_CHANGED",
+                "version_id": str(version_id),
+                "field": field,
+            }
+
     if str(binding.get("read_set_version") or "") != RESUME_TRUTH_READ_SET_VERSION:
         return {
             "fresh": False,
@@ -622,6 +618,8 @@ def resume_relevant_binding_matches(
     if str(binding.get("source_extraction_id") or "") != str(
         snapshot.get("source_extraction_id") or ""
     ):
+        return False
+    if "override_revision" not in snapshot:
         return False
     try:
         old_override_revision, _ = _composite_revision_parts(
