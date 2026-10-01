@@ -234,3 +234,15 @@ def test_auto_prepare_deep_links_exact_application_identity() -> None:
     auto_prepare = source[source.index("def auto_prepare()"):source.index("\ndef ", source.index("def auto_prepare()") + 20)]
     assert 'application_url = f"?view=prepare-application&job={item.job_id}"' in auto_prepare
     assert 'application_url += f"&application={item.application_id}"' in auto_prepare
+
+
+def test_auto_prepare_page_does_not_rescan_full_eligible_pool() -> None:
+    source = (Path(__file__).resolve().parents[1] / "app" / "product_pages.py").read_text(
+        encoding="utf-8"
+    )
+    start = source.index("def auto_prepare()")
+    end = source.index("\ndef ", start + 20)
+    auto_prepare = source[start:end]
+    assert "eligible_unprepared_count" not in auto_prepare
+    assert 'metrics[1].metric("Admission", admission_status)' in auto_prepare
+    assert "Eligibility is evaluated by the supervised Netcup worker" in auto_prepare
