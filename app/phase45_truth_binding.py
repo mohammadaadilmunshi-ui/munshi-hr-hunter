@@ -604,6 +604,34 @@ def binding_matches_snapshot(binding: dict[str, Any], snapshot: dict[str, Any]) 
     )
 
 
+def resume_relevant_binding_matches(
+    binding: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+) -> bool:
+    """Ignore application-detail-only revisions for resume/JD freshness.
+
+    Resume/JD consumers read the immutable resume source plus resume-profile
+    overrides. Candidate application details are intentionally outside that
+    read domain. Any source/extraction change or resume-override revision change
+    still fails closed.
+    """
+    if not binding:
+        return False
+    if binding_matches_snapshot(dict(binding), dict(snapshot)):
+        return True
+    if str(binding.get("source_extraction_id") or "") != str(
+        snapshot.get("source_extraction_id") or ""
+    ):
+        return False
+    try:
+        old_override_revision, _ = _composite_revision_parts(
+            int(binding.get("profile_revision") or 0)
+        )
+    except ValueError:
+        return False
+    return old_override_revision == int(snapshot.get("override_revision") or 0)
+
+
 def public_binding_state(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {
         "source_extraction_id": snapshot["source_extraction_id"],
