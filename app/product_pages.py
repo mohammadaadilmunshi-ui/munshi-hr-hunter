@@ -962,6 +962,49 @@ def _render_auto_prepare_rules() -> None:
         st.markdown("<div class='muted-panel'><b>What Unlimited means</b><br>No MUNSHI business quota. Provider throttles, targeting, authorization, dedupe, ATS, and risk controls still apply.<br><br><b>Pause after current batch</b><br>The active batch can finish; a later batch must not start.</div>", unsafe_allow_html=True)
 
 
+def _latest_auto_prepare_admission_evidence() -> dict[str, Any]:
+    """Read the latest durable coordinator admission summary without recomputing eligibility."""
+    from app.database import get_connection
+
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """SELECT payload_json, created_at
+                 FROM events
+                WHERE event_type=?
+                ORDER BY id DESC
+                LIMIT 1""",
+            ("unified_hourly_coordinator_run",),
+        ).fetchone()
+    except Exception:  # noqa: BLE001 - UI evidence must fail soft
+        return {"eligible_count": None, "recorded_at": None}
+    finally:
+        connection.close()
+
+    if row is None:
+        return {"eligible_count": None, "recorded_at": None}
+
+    try:
+        payload = json.loads(str(row["payload_json"] or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {"eligible_count": None, "recorded_at": row["created_at"]}
+
+    admission = payload.get("autonomous_admission_result") or {}
+    if not isinstance(admission, dict):
+        admission = {}
+    raw_count = admission.get("eligible_unprepared_count")
+    if raw_count is None:
+        raw_count = admission.get("candidate_count")
+    try:
+        eligible_count = int(raw_count) if raw_count is not None else None
+    except (TypeError, ValueError):
+        eligible_count = None
+    return {
+        "eligible_count": eligible_count,
+        "recorded_at": row["created_at"],
+    }
+
+
 def _set_auto_prepare_mode(mode: str) -> None:
     policy = volume_policy()
     save_volume_policy(
@@ -1056,12 +1099,8 @@ def auto_prepare() -> None:
     elif not readiness.get("ready"):
         st.warning("The worker is healthy, but automatic admission is blocked by incomplete scoring prerequisites.")
 
-    try:
-        from app.autonomous_prepare_admission_v1 import eligible_unprepared_count
-
-        eligible_count = eligible_unprepared_count()
-    except Exception:  # noqa: BLE001 - operational count must not break the page
-        eligible_count = None
+    admission_evidence = _latest_auto_prepare_admission_evidence()
+    eligible_count = admission_evidence.get("eligible_count")
     queued_count = sum(
         str(getattr(item, "canonical_state", "") or "") == "QUEUED"
         for item in snapshot["applications"]
@@ -1069,7 +1108,10 @@ def auto_prepare() -> None:
 
     metrics = st.columns(8, gap="small")
     metrics[0].metric("Worker", str(worker.get("label") or "Unavailable"))
-    metrics[1].metric("Eligible", eligible_count if eligible_count is not None else "—")
+    metrics[1].metric(
+        "Eligible (last run)",
+        eligible_count if eligible_count is not None else "—",
+    )
     metrics[2].metric("Queued", queued_count)
     metrics[3].metric("Preparing", counts["preparing"])
     metrics[4].metric("Needs review", counts["needs_review"])
@@ -1120,6 +1162,12 @@ def auto_prepare() -> None:
                 )
     if not rendered:
         st.info("No durable application activity is recorded yet.")
+
+    if admission_evidence.get("recorded_at"):
+        st.caption(
+            "Eligible count comes from the most recent durable coordinator run "
+            f"({_relative_time(admission_evidence['recorded_at'])}); opening this page never reruns eligibility."
+        )
 
     st.markdown("### Rules & limits")
     st.caption("Volume, lanes, and scoring readiness affect future admission; they do not prove worker health.")
