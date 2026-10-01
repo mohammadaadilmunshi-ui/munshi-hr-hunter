@@ -49,7 +49,8 @@ jobs:
           grep -F 'product_pages._job_card' app/unified_job_workspaces_v1.py
           grep -F 'tracker_unified' app/unified_job_workspaces_v1.py
           grep -F 'research_opportunity' app/unified_job_workspaces_v1.py
-          grep -F 'application_current' app/unified_job_workspaces_v1.py
+          grep -F 'def render_applications(product_pages: Any, app_workspace: Any)' app/unified_job_workspaces_v1.py
+          grep -F 'application_views(limit=None)' app/unified_job_workspaces_v1.py
           grep -F 'install_unified_job_workspaces(product_pages, application_workspace_page)' app/product_shell.py
 
       - name: Keep telemetry out of normal Research
