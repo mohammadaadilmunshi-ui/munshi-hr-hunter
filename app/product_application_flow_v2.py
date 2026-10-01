@@ -539,9 +539,11 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
             if _protected_human_checkpoint(runtime_questions):
                 state, authority = 'NEEDS_INPUT', 'protected_human_checkpoint'
             else:
-                # After the one customer approval, an ordinary unresolved field
-                # is an AutoApply issue to diagnose/fix, not a second user review.
-                state, authority = 'FAILED_SAFELY', 'unresolved_runtime_issue'
+                # NORMAL runtime questions are still inside the authorized
+                # application attempt. Hunter/Universal Brain owns semantic
+                # answerability and may create an immutable replacement plan;
+                # do not project the resumable Apply checkpoint as terminal.
+                state, authority = 'NEEDS_INPUT', 'runtime_resolution_in_progress'
         elif execution_mandate is not None and state in {
             'RUNNING', 'READY_FOR_REVIEW', 'READY_TO_SUBMIT'
         }:
@@ -572,11 +574,12 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
     elif state in {'READY_FOR_APPROVAL', 'READY_FOR_REVIEW'}:
         cta, cta_label = 'workspace', 'Review resume'
     elif state == 'NEEDS_INPUT':
-        cta, cta_label = 'workspace', (
-            'Complete checkpoint'
-            if authority == 'protected_human_checkpoint'
-            else 'Fix issue'
-        )
+        if authority == 'protected_human_checkpoint':
+            cta, cta_label = 'workspace', 'Complete checkpoint'
+        elif authority == 'runtime_resolution_in_progress':
+            cta, cta_label = 'workspace', 'Applying now'
+        else:
+            cta, cta_label = 'workspace', 'Fix issue'
     elif state in {'FAILED_SAFELY', 'CANCELLED', 'BLOCKED'}:
         cta, cta_label = 'workspace', 'Fix issue'
     elif state in {'READY_TO_SUBMIT', 'SUBMITTING'}:
@@ -600,9 +603,13 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
         'operation_id': (prepare or {}).get('operation_id'),
         'state': state,
         'authority': authority,
-        'display_status': STATE_LABELS.get(
-            state,
-            state.replace('_', ' ').title() if state else 'Not started',
+        'display_status': (
+            'Applying now'
+            if authority == 'runtime_resolution_in_progress'
+            else STATE_LABELS.get(
+                state,
+                state.replace('_', ' ').title() if state else 'Not started',
+            )
         ),
         'progress_percent': progress,
         'prepare': prepare,
