@@ -1078,7 +1078,16 @@ def auto_prepare() -> None:
     metrics[7].metric("Submitted today", counts["submitted_today"])
 
     groups = (
-        ("Needs review", lambda item: item.state_group == "needs_you"),
+        (
+            "Needs review",
+            lambda item: item.state_group == "needs_you"
+            and bool(getattr(item, "resume_review_available", False)),
+        ),
+        (
+            "Needs your input",
+            lambda item: item.state_group == "needs_you"
+            and not bool(getattr(item, "resume_review_available", False)),
+        ),
         ("Preparing now", lambda item: item.state_group == "preparing"),
         ("Applying now", lambda item: item.state_group == "applying"),
         ("Needs attention", lambda item: item.state_group == "needs_attention"),
@@ -1098,10 +1107,15 @@ def auto_prepare() -> None:
                 left.caption(f"{item.location} · {item.safe_progress_stage}")
                 status.markdown(f"**{item.human_state}**")
                 status.caption(f"Updated {item.last_update or 'time unavailable'}")
+                application_url = f"?view=prepare-application&job={item.job_id}"
+                if getattr(item, "application_id", None):
+                    application_url += f"&application={item.application_id}"
                 action.link_button(
                     item.next_action,
-                    f"?view=prepare-application&job={item.job_id}",
-                    type="primary" if item.state_group in {"needs_you", "needs_attention"} else "secondary",
+                    application_url,
+                    type="primary"
+                    if item.state_group in {"needs_you", "needs_attention"}
+                    else "secondary",
                     use_container_width=True,
                 )
     if not rendered:
