@@ -123,20 +123,35 @@ from app import application_view_model_v1 as vm
 from app import auto_prepare_readiness_ui_v1 as readiness
 from app import product_pages
 
-def item(job_id, company, title, group, state, action):
+def item(
+    job_id,
+    company,
+    title,
+    group,
+    state,
+    action,
+    *,
+    resume_review_available=False,
+):
     return SimpleNamespace(
-        job_id=job_id, company=company, title=title, state_group=group,
+        job_id=job_id, application_id=f'application-{job_id}',
+        company=company, title=title, state_group=group,
         human_state=state, next_action=action, location='New York, NY',
         safe_progress_stage='Package checks', last_update='2026-09-22 10:00:00',
+        resume_review_available=resume_review_available,
     )
 
 snapshot = {
     'applications': [
-        item(1,'Acme','Analyst','needs_you','Needs review','Review resume'),
+        item(
+            1,'Acme','Analyst','needs_you','Needs review','Review resume',
+            resume_review_available=True,
+        ),
         item(2,'Beta','Coordinator','preparing','Preparing','No action needed'),
         item(3,'Gamma','Specialist','applying','Applying now','No action needed'),
         item(4,'Delta','Partner','needs_attention','Needs attention','Review the issue'),
         item(5,'Echo','Associate','submitted','Submitted','View receipt'),
+        item(6,'Foxtrot','Advisor','needs_you','Action required','Complete protected checkpoint'),
     ],
     'counts': {'preparing':1,'needs_review':1,'applying':1,'needs_attention':1,'submitted_today':1},
     'worker': {'state':'healthy','label':'Worker healthy','recorded_at':'2026-09-22T10:00:00+00:00'},
@@ -155,8 +170,18 @@ with patch.object(vm, 'control_center_snapshot', lambda limit=250: snapshot), pa
     rendered = _text(app)
 
     assert not app.exception
-    for value in ("Auto Prepare: On", "Worker healthy", "Needs review", "Preparing now", "Applying now", "Needs attention", "Recently submitted"):
+    for value in (
+        "Auto Prepare: On",
+        "Worker healthy",
+        "Needs review",
+        "Needs your input",
+        "Preparing now",
+        "Applying now",
+        "Needs attention",
+        "Recently submitted",
+    ):
         assert value in rendered
+    assert rendered.count("Needs review") == 1
 
 
 def test_sqlite_read_contention_uses_last_good_application_projection(tmp_path: Path) -> None:
@@ -200,3 +225,12 @@ with patch.object(
     assert not app.exception
     assert "Live application state is temporarily busy" in rendered
     assert "Cached Company" in rendered
+
+
+def test_auto_prepare_deep_links_exact_application_identity() -> None:
+    source = (Path(__file__).resolve().parents[1] / "app" / "product_pages.py").read_text(
+        encoding="utf-8"
+    )
+    auto_prepare = source[source.index("def auto_prepare()"):source.index("\ndef ", source.index("def auto_prepare()") + 20)]
+    assert 'application_url = f"?view=prepare-application&job={item.job_id}"' in auto_prepare
+    assert 'application_url += f"&application={item.application_id}"' in auto_prepare
