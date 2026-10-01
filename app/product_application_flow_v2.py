@@ -60,6 +60,7 @@ STATE_LABELS = {
     'QUEUED': 'Queued',
     'RUNNING': 'Preparing',
     'NEEDS_INPUT': 'Action required',
+    'AWAITING_RUNTIME_RESOLUTION': 'Applying now',
     'READY_FOR_APPROVAL': 'Needs review',
     'READY_FOR_REVIEW': 'Needs review',
     'FAILED_SAFELY': 'Needs attention',
@@ -281,6 +282,8 @@ def _runtime_questions(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     'category': raw.get('category'),
                     'sensitivity_class': raw.get('sensitivity_class'),
                     'risk_level': raw.get('risk_level'),
+                    'status': raw.get('status'),
+                    'auto_resolvable': bool(raw.get('auto_resolvable')),
                     'requires_user': bool(raw.get('requires_user')),
                     'reason': raw.get('reason'),
                 }
@@ -539,9 +542,13 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
             if _protected_human_checkpoint(runtime_questions):
                 state, authority = 'NEEDS_INPUT', 'protected_human_checkpoint'
             else:
-                # After the one customer approval, an ordinary unresolved field
-                # is an AutoApply issue to diagnose/fix, not a second user review.
-                state, authority = 'FAILED_SAFELY', 'unresolved_runtime_issue'
+                # A live Apply session waiting on a semantic field is resumable.
+                # Hunter owns answerability and may amend the immutable plan
+                # without creating a second customer approval or application.
+                state, authority = (
+                    'AWAITING_RUNTIME_RESOLUTION',
+                    'runtime_resolution_pending',
+                )
         elif execution_mandate is not None and state in {
             'RUNNING', 'READY_FOR_REVIEW', 'READY_TO_SUBMIT'
         }:
@@ -571,6 +578,8 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
         cta, cta_label = 'workspace', 'Preparing'
     elif state in {'READY_FOR_APPROVAL', 'READY_FOR_REVIEW'}:
         cta, cta_label = 'workspace', 'Review resume'
+    elif state == 'AWAITING_RUNTIME_RESOLUTION':
+        cta, cta_label = 'workspace', 'Applying now'
     elif state == 'NEEDS_INPUT':
         cta, cta_label = 'workspace', (
             'Complete checkpoint'
