@@ -1056,12 +1056,13 @@ def auto_prepare() -> None:
     elif not readiness.get("ready"):
         st.warning("The worker is healthy, but automatic admission is blocked by incomplete scoring prerequisites.")
 
-    try:
-        from app.autonomous_prepare_admission_v1 import eligible_unprepared_count
+    if worker.get("state") != "healthy":
+        admission_status = "Unproven"
+    elif readiness.get("ready"):
+        admission_status = "Ready"
+    else:
+        admission_status = "Blocked"
 
-        eligible_count = eligible_unprepared_count()
-    except Exception:  # noqa: BLE001 - operational count must not break the page
-        eligible_count = None
     queued_count = sum(
         str(getattr(item, "canonical_state", "") or "") == "QUEUED"
         for item in snapshot["applications"]
@@ -1069,13 +1070,17 @@ def auto_prepare() -> None:
 
     metrics = st.columns(8, gap="small")
     metrics[0].metric("Worker", str(worker.get("label") or "Unavailable"))
-    metrics[1].metric("Eligible", eligible_count if eligible_count is not None else "—")
+    metrics[1].metric("Admission", admission_status)
     metrics[2].metric("Queued", queued_count)
     metrics[3].metric("Preparing", counts["preparing"])
     metrics[4].metric("Needs review", counts["needs_review"])
     metrics[5].metric("Applying", counts["applying"])
     metrics[6].metric("Needs attention", counts["needs_attention"])
     metrics[7].metric("Submitted today", counts["submitted_today"])
+    st.caption(
+        "Eligibility is evaluated by the supervised Netcup worker; the dashboard "
+        "does not rescan the full job pool on every page render."
+    )
 
     groups = (
         (
