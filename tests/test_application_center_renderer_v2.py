@@ -234,3 +234,46 @@ def test_auto_prepare_deep_links_exact_application_identity() -> None:
     auto_prepare = source[source.index("def auto_prepare()"):source.index("\ndef ", source.index("def auto_prepare()") + 20)]
     assert 'application_url = f"?view=prepare-application&job={item.job_id}"' in auto_prepare
     assert 'application_url += f"&application={item.application_id}"' in auto_prepare
+
+
+def test_auto_prepare_render_never_recomputes_full_eligibility_pool() -> None:
+    source = (Path(__file__).resolve().parents[1] / "app" / "product_pages.py").read_text(
+        encoding="utf-8"
+    )
+    auto_prepare = source[
+        source.index("def auto_prepare()"):
+        source.index("\ndef ", source.index("def auto_prepare()") + 20)
+    ]
+    assert "_latest_auto_prepare_admission_evidence()" in auto_prepare
+    assert "eligible_unprepared_count" not in auto_prepare
+    assert '"Eligible (last run)"' in auto_prepare
+
+
+def test_durable_auto_prepare_admission_evidence_reads_latest_coordinator_event(
+    monkeypatch,
+) -> None:
+    from app import database, product_pages
+
+    class Row(dict):
+        pass
+
+    class Connection:
+        def execute(self, query, params):
+            assert "unified_hourly_coordinator_run" in params
+            return self
+
+        def fetchone(self):
+            return Row(
+                payload_json='{"autonomous_admission_result":{"eligible_unprepared_count":7,"candidate_count":3}}',
+                created_at="2026-10-01T23:55:00+00:00",
+            )
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(database, "get_connection", lambda: Connection())
+    evidence = product_pages._latest_auto_prepare_admission_evidence()
+    assert evidence == {
+        "eligible_count": 7,
+        "recorded_at": "2026-10-01T23:55:00+00:00",
+    }
