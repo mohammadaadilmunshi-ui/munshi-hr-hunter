@@ -123,7 +123,16 @@ def _native_output(
     if str(candidate.get("profile_digest") or "") != str(
         operation["candidate_profile_digest"]
     ):
-        raise RuntimeError("Native Resume Candidate Truth binding changed.")
+        continuation = preflight_v1.reusable_inflight_preflight(
+            application_id=str(operation["application_id"]),
+            job_id=int(operation["job_id"]),
+            resume_version_id=str(record["version_id"]),
+        )
+        if (
+            continuation is None
+            or bundle.get("immutable_inflight_continuation") is not True
+        ):
+            raise RuntimeError("Native Resume Candidate Truth binding changed.")
 
     job_binding = dict(bundle.get("job_snapshot_binding") or {})
     if str(job_binding.get("job_snapshot_sha256") or "") != str(
