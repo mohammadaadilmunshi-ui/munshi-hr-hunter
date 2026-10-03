@@ -235,6 +235,20 @@ def _sender_domain(sender: str) -> str | None:
     return domain or None
 
 
+def _domain_matches(observed: str, expected_parent: str) -> bool:
+    """Match an exact trusted domain or one of its true subdomains."""
+    observed_domain = str(observed or "").strip().casefold().rstrip(".")
+    expected_domain = str(expected_parent or "").strip().casefold().rstrip(".")
+    return bool(
+        observed_domain
+        and expected_domain
+        and (
+            observed_domain == expected_domain
+            or observed_domain.endswith("." + expected_domain)
+        )
+    )
+
+
 def _decode_text_part(part: Message) -> str:
     try:
         value = part.get_content()
@@ -426,7 +440,10 @@ def _live_verification_candidates(
         except (TypeError, ValueError, json.JSONDecodeError):
             continue
 
-        if expires_at > now and sender_domain in expected:
+        if expires_at > now and any(
+            _domain_matches(sender_domain, expected_domain)
+            for expected_domain in expected
+        ):
             matches.append(row)
 
     return matches
