@@ -72,7 +72,7 @@ _PROVIDER_MAILBOX_POLICIES = {
     # Workday SMTP delivery uses the myworkday.com sending domain. Candidate
     # verification links remain on the provider's external career-site hosts.
     "WORKDAY": {
-        "sender_domains": ["myworkday.com"],
+        "sender_domains": ["myworkday.com", "workday.com"],
         "link_hosts": ["myworkdayjobs.com", "workdayjobs.com"],
     },
 }
