@@ -1498,7 +1498,7 @@ def test_universal_runtime_referral_derives_current_hunter_job_source(monkeypatc
         "safe_owned_job_snapshot",
         lambda job_id, **_kwargs: {
             "job_snapshot_sha256": "d" * 64,
-            "job": {"id": int(job_id), "source": "Indeed"},
+            "job": {"id": int(job_id), "source": "JobSpy/indeed"},
         },
     )
     monkeypatch.setattr(
