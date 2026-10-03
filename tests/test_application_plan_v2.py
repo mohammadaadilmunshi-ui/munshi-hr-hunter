@@ -111,7 +111,11 @@ def _wire_capture_dependencies(hunter_db, monkeypatch: pytest.MonkeyPatch) -> No
         },
     )
     monkeypatch.setattr(plans.resume_v5, "get_version", lambda _id: _resume())
-    monkeypatch.setattr(plans.native_resume_artifact_v5, "materialize", lambda _id: _artifacts())
+    monkeypatch.setattr(
+        plans.native_resume_artifact_v5,
+        "materialize",
+        lambda _id, **_kwargs: _artifacts(),
+    )
     monkeypatch.setattr(
         plans.application_execution_artifact,
         "native",

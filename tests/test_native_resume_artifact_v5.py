@@ -161,6 +161,57 @@ def test_materialize_reuses_persisted_immutable_pair_without_rerender(
     assert second["render_density"] == "stored_immutable"
 
 
+def test_materialize_reuses_stored_pair_for_proven_inflight_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = {"version_id": "resume-v1", "job_id": 42}
+    stored = {
+        "pdf": {"artifact_id": "pdf-1"},
+        "docx": {"artifact_id": "docx-1"},
+    }
+    monkeypatch.setattr(
+        artifacts,
+        "_current_resume",
+        lambda _version_id: (_ for _ in ()).throw(
+            RuntimeError("Candidate Truth changed after this resume was generated.")
+        ),
+    )
+    monkeypatch.setattr(resume_v5, "get_version", lambda _version_id: record)
+    monkeypatch.setattr(
+        "app.application_preflight_package_v1.reusable_inflight_preflight",
+        lambda **_kwargs: {"package_id": "preflight-1"},
+    )
+    monkeypatch.setattr(
+        artifacts,
+        "_stored_materialization",
+        lambda **_kwargs: stored,
+    )
+
+    result = artifacts.materialize(
+        "resume-v1",
+        application_id="application-1",
+    )
+
+    assert result["pdf"]["artifact_id"] == "pdf-1"
+    assert result["immutable_inflight_continuation"] is True
+    assert result["preflight_package_id"] == "preflight-1"
+
+
+def test_materialize_does_not_relax_staleness_without_application_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        artifacts,
+        "_current_resume",
+        lambda _version_id: (_ for _ in ()).throw(
+            RuntimeError("Candidate Truth changed after this resume was generated.")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Candidate Truth changed"):
+        artifacts.materialize("resume-v1")
+
+
 def test_materialize_fails_closed_if_persisted_artifact_bytes_are_corrupt(
     hunter_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:

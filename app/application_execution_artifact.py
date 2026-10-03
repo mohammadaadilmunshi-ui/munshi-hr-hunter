@@ -73,7 +73,10 @@ def _required(value: Any, name: str) -> str:
 
 def native(*, application_id: str, version_id: str) -> dict[str, Any]:
     """Normalize one already-validated immutable Native V5 artifact pair."""
-    materialized = native_resume_artifact_v5.materialize(version_id)
+    materialized = native_resume_artifact_v5.materialize(
+        version_id,
+        application_id=str(application_id),
+    )
     version = resume_v5.get_version(version_id)
     pdf = materialized["pdf"]
     return persist({

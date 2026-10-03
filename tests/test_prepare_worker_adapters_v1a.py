@@ -136,7 +136,7 @@ def test_native_resume_worker_completes_exact_pdf_docx(worker_db, monkeypatch):
     monkeypatch.setattr(
         workers.native_resume_artifact_v5,
         "materialize",
-        lambda version_id: _bundle(),
+        lambda version_id, **_kwargs: _bundle(),
     )
 
     result = workers.run_native_resume_once(
@@ -210,7 +210,7 @@ def test_native_retry_reuses_validated_version_without_second_model_call(
     monkeypatch.setattr(
         workers.native_resume_artifact_v5,
         "materialize",
-        lambda version_id: _bundle(),
+        lambda version_id, **_kwargs: _bundle(),
     )
 
     result = workers.run_native_resume_once(
@@ -253,7 +253,7 @@ def test_native_first_attempt_reuses_exact_validated_version_without_model_call(
     monkeypatch.setattr(
         workers.native_resume_artifact_v5,
         "materialize",
-        lambda version_id: _bundle(),
+        lambda version_id, **_kwargs: _bundle(),
     )
 
     result = workers.run_native_resume_once(
@@ -263,6 +263,42 @@ def test_native_first_attempt_reuses_exact_validated_version_without_model_call(
 
     assert result["task_status"] == "SUCCEEDED"
     assert result["reused_generated_version"] is True
+
+
+def test_inflight_preflight_reuses_exact_prior_resume_after_additive_truth(
+    monkeypatch,
+) -> None:
+    operation = {
+        "application_id": "application-92",
+        "job_id": 92,
+        "candidate_profile_digest": "new-profile-digest",
+        "job_snapshot_sha256": JOB_DIGEST,
+    }
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "list_versions",
+        lambda **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        workers.preflight_v1,
+        "reusable_inflight_preflight",
+        lambda **_kwargs: {"resume_version_id": "resume-approved"},
+    )
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "get_version",
+        lambda version_id: {
+            "version_id": version_id,
+            "job_id": 92,
+            "status": "VALIDATED",
+            "stage_b_bound": True,
+        },
+    )
+
+    record = workers._reusable_generated_resume(operation=operation, task={})
+
+    assert record is not None
+    assert record["version_id"] == "resume-approved"
 
 def test_native_worker_never_claims_n8n_resume(worker_db):
     operation = _start(engine="N8N", key="workers-n8n")
@@ -291,7 +327,7 @@ def test_native_binding_mismatch_fails_closed_and_requeues(worker_db, monkeypatc
     monkeypatch.setattr(
         workers.native_resume_artifact_v5,
         "materialize",
-        lambda version_id: _bundle(job_digest="f" * 64),
+        lambda version_id, **_kwargs: _bundle(job_digest="f" * 64),
     )
 
     with pytest.raises(RuntimeError, match="job snapshot binding"):

@@ -26,6 +26,7 @@ from typing import Any
 
 from app import native_resume_artifact_v5
 from app import native_resume_service_v5
+from app import application_preflight_package_v1 as preflight_v1
 from app import prepare_orchestrator_v1 as orchestrator
 from app import relationship_intelligence_v3
 
@@ -209,6 +210,23 @@ def _reusable_generated_resume(
         ):
             continue
         return record
+    continuation = preflight_v1.reusable_inflight_preflight(
+        application_id=str(operation["application_id"]),
+        job_id=int(operation["job_id"]),
+    )
+    if continuation is not None:
+        try:
+            record = native_resume_service_v5.get_version(
+                str(continuation["resume_version_id"])
+            )
+        except (LookupError, RuntimeError, ValueError):
+            return None
+        if (
+            record.get("stage_b_bound") is True
+            and str(record.get("status") or "") == "VALIDATED"
+            and int(record.get("job_id") or 0) == int(operation["job_id"])
+        ):
+            return record
     return None
 
 
@@ -267,7 +285,10 @@ def run_native_resume_once(
                 instruction=str(instruction or "").strip(),
                 rewrite_mode=str(rewrite_mode or "medium"),
             )
-        bundle = native_resume_artifact_v5.materialize(str(record["version_id"]))
+        bundle = native_resume_artifact_v5.materialize(
+            str(record["version_id"]),
+            application_id=str(operation["application_id"]),
+        )
         output = _native_output(
             operation=operation,
             record=record,

@@ -510,8 +510,10 @@ def _semantic_truth_extension(
     An in-flight package may remain pinned to its original truth snapshot only
     when the new projection preserves every stored fact verbatim (apart from
     provenance), keeps the same protected/unresolved sets, and never rolls the
-    profile revision backward. Newly added NORMAL facts are therefore admissible
-    without invalidating the already-reviewed immutable resume.
+    profile revision backward. Newly added facts are admissible without
+    invalidating the already-reviewed immutable resume, including protected
+    application defaults, only when every prior fact and prior classification
+    is preserved and each newly protected key belongs to a newly added fact.
     """
     if any(
         str(stored_truth.get(field) or "") != str(current_truth.get(field) or "")
@@ -524,13 +526,6 @@ def _semantic_truth_extension(
     current_revision = int(current_binding.get("profile_revision") or 0)
     if current_revision < stored_revision:
         return False
-    if list(stored_truth.get("protected_fact_keys") or []) != list(
-        current_truth.get("protected_fact_keys") or []
-    ) or list(stored_truth.get("unresolved_fact_keys") or []) != list(
-        current_truth.get("unresolved_fact_keys") or []
-    ):
-        return False
-
     stored_facts = {
         str(fact.get("key") or ""): dict(fact)
         for fact in (stored_truth.get("facts") or [])
@@ -543,6 +538,20 @@ def _semantic_truth_extension(
     }
     if len(stored_facts) != len(stored_truth.get("facts") or []):
         return False
+    added_fact_keys = set(current_facts) - set(stored_facts)
+    stored_protected = {
+        str(value) for value in stored_truth.get("protected_fact_keys") or []
+    }
+    current_protected = {
+        str(value) for value in current_truth.get("protected_fact_keys") or []
+    }
+    if (
+        not stored_protected.issubset(current_protected)
+        or not (current_protected - stored_protected).issubset(added_fact_keys)
+        or list(stored_truth.get("unresolved_fact_keys") or [])
+        != list(current_truth.get("unresolved_fact_keys") or [])
+    ):
+        return False
     for key, stored_fact in stored_facts.items():
         current_fact = current_facts.get(key)
         if current_fact is None:
@@ -552,6 +561,61 @@ def _semantic_truth_extension(
         }:
             return False
     return True
+
+
+def reusable_inflight_preflight(
+    *,
+    application_id: str,
+    job_id: int,
+    resume_version_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Return a current immutable package that safely pins an older resume.
+
+    This is preparation evidence only. It never creates an execution mandate or
+    submission authority. The normal freshness policy remains the sole arbiter.
+    """
+    connection = get_connection()
+    try:
+        owner = current_owner_readonly(connection)
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='application_preflight_packages'"
+        ).fetchone() is None:
+            return None
+        rows = connection.execute(
+            """SELECT package_id FROM application_preflight_packages
+               WHERE tenant_id=? AND user_id=? AND application_id=? AND job_id=?
+                 AND status='READY_TO_APPLY'
+               ORDER BY datetime(created_at) DESC,rowid DESC""",
+            (owner.tenant_id, owner.user_id, str(application_id), int(job_id)),
+        ).fetchall()
+    finally:
+        connection.close()
+
+    for row in rows:
+        package = get_preflight_package(str(row["package_id"]))
+        if resume_version_id and str(package.get("resume_version_id") or "") != str(
+            resume_version_id
+        ):
+            continue
+        try:
+            freshness = preflight_package_freshness(str(package["package_id"]))
+        except (LookupError, RuntimeError, ValueError):
+            continue
+        if (
+            freshness.get("fresh") is True
+            and freshness.get("immutable_inflight_continuation") is True
+        ):
+            return {
+                "package_id": str(package["package_id"]),
+                "package_digest": str(package["package_digest"]),
+                "application_id": str(package["application_id"]),
+                "job_id": int(package["job_id"]),
+                "resume_version_id": str(package["resume_version_id"]),
+                "resume_sha256": str(package["resume_sha256"]),
+                "submission_authority": False,
+            }
+    return None
 
 
 def _immutable_inflight_continuation(package: Mapping[str, Any]) -> dict[str, Any]:
