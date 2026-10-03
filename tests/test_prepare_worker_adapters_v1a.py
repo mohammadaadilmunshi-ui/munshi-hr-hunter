@@ -300,6 +300,72 @@ def test_inflight_preflight_reuses_exact_prior_resume_after_additive_truth(
     assert record is not None
     assert record["version_id"] == "resume-approved"
 
+
+def test_native_output_accepts_old_truth_binding_only_for_proven_continuation(
+    monkeypatch,
+) -> None:
+    operation = {
+        "application_id": "application-92",
+        "job_id": 92,
+        "candidate_profile_digest": "new-profile-digest",
+        "job_snapshot_sha256": JOB_DIGEST,
+    }
+    record = {
+        "version_id": "resume-approved",
+        "version_number": 1,
+        "stage_b_bound": True,
+    }
+    bundle = {
+        **_bundle(profile_digest="old-profile-digest"),
+        "immutable_inflight_continuation": True,
+    }
+    monkeypatch.setattr(
+        workers.preflight_v1,
+        "reusable_inflight_preflight",
+        lambda **kwargs: {
+            "application_id": kwargs["application_id"],
+            "job_id": kwargs["job_id"],
+            "resume_version_id": kwargs["resume_version_id"],
+        },
+    )
+
+    output = workers._native_output(
+        operation=operation,
+        record=record,
+        bundle=bundle,
+    )
+
+    assert output["resume_version_id"] == "resume-approved"
+    assert output["candidate_profile_digest"] == "new-profile-digest"
+
+
+def test_native_output_rejects_old_truth_binding_without_proven_continuation(
+    monkeypatch,
+) -> None:
+    operation = {
+        "application_id": "application-92",
+        "job_id": 92,
+        "candidate_profile_digest": "new-profile-digest",
+        "job_snapshot_sha256": JOB_DIGEST,
+    }
+    record = {
+        "version_id": "resume-approved",
+        "version_number": 1,
+        "stage_b_bound": True,
+    }
+    monkeypatch.setattr(
+        workers.preflight_v1,
+        "reusable_inflight_preflight",
+        lambda **_kwargs: None,
+    )
+
+    with pytest.raises(RuntimeError, match="Candidate Truth binding changed"):
+        workers._native_output(
+            operation=operation,
+            record=record,
+            bundle=_bundle(profile_digest="old-profile-digest"),
+        )
+
 def test_native_worker_never_claims_n8n_resume(worker_db):
     operation = _start(engine="N8N", key="workers-n8n")
     result = workers.run_native_resume_once(
