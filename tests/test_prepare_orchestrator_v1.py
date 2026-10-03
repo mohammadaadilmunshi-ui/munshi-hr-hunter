@@ -287,12 +287,50 @@ def test_internal_resolution_requeues_without_user_facing_needs_input(prepare_db
     )
     assert result["task_status"] == "PENDING"
     assert result["operation_status"] == "RUNNING"
+    assert result["attempts_before"] == 1
+    assert result["attempts_after"] == 0
+    assert result["attempt_refunded"] is True
     read = prepare.prepare_operation(operation["operation_id"])
     task = _by_kind(read)[prepare.TASK_ANSWER_RESOLUTION]
     assert task["status"] == "PENDING"
+    assert task["attempts"] == 0
     assert read["unresolved"] == []
     assert task["output"]["universal_brain_auto_resolved"] is True
     assert task["output"]["submission_authority"] is False
+
+
+def test_claim_recovers_legacy_internal_resolution_requeue_at_attempt_limit(prepare_db):
+    operation = _start(key="prepare-legacy-internal-resolution")
+    answer = _claim_one(
+        operation["operation_id"],
+        prepare.TASK_ANSWER_RESOLUTION,
+        "brain-worker",
+    )
+    prepare.requeue_task_after_internal_resolution(
+        task_id=answer["task_id"],
+        worker_id="brain-worker",
+        output={"universal_brain_auto_resolved": True, "value_exposed": False},
+        resolution_kind="UNIVERSAL_BRAIN_NORMAL_FIELDS",
+    )
+
+    # Reproduce a row persisted by the pre-fix implementation without using
+    # production-state mutation: PENDING at its attempt ceiling with canonical
+    # value-free internal-resolution metadata.
+    connection = prepare.get_connection()
+    connection.execute(
+        "UPDATE prepare_tasks_v1 SET attempts=max_attempts WHERE task_id=?",
+        (answer["task_id"],),
+    )
+    connection.commit()
+    connection.close()
+
+    claimed = _claim_one(
+        operation["operation_id"],
+        prepare.TASK_ANSWER_RESOLUTION,
+        "brain-worker-2",
+    )
+    assert claimed["status"] == "RUNNING"
+    assert claimed["attempts"] == claimed["max_attempts"]
 
 
 def test_needs_input_pauses_operation_and_resolution_requeues_task(prepare_db):

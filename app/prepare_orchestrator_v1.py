@@ -658,6 +658,21 @@ def _dependencies_satisfied(
     return all(states.get(str(dep)) == "SUCCEEDED" for dep in dependencies)
 
 
+def _trusted_internal_resolution_requeue(row: sqlite3.Row) -> bool:
+    """Recognize value-free canonical continuations stranded by old retry accounting."""
+    try:
+        output = json.loads(str(row["output_json"] or "{}"))
+        unresolved = json.loads(str(row["unresolved_json"] or "[]"))
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return (
+        isinstance(output, dict)
+        and bool(str(output.get("internal_resolution_kind") or "").strip())
+        and output.get("submission_authority") is False
+        and unresolved == []
+    )
+
+
 def claim_ready_tasks(
     *,
     operation_id: str,
@@ -725,8 +740,26 @@ def claim_ready_tasks(
                 continue
             if not _dependencies_satisfied(row, states=states):
                 continue
-            if int(row["attempts"]) >= int(row["max_attempts"]):
-                continue
+            attempts = int(row["attempts"])
+            max_attempts = int(row["max_attempts"])
+            if attempts >= max_attempts:
+                if not _trusted_internal_resolution_requeue(row):
+                    continue
+                # Compatibility recovery for continuations requeued before
+                # internal-resolution claims began refunding their attempt.
+                connection.execute(
+                    """UPDATE prepare_tasks_v1
+                          SET attempts=?, updated_at=CURRENT_TIMESTAMP
+                        WHERE task_id=? AND tenant_id=? AND user_id=?
+                          AND status='PENDING' AND attempts=?""",
+                    (
+                        max(0, max_attempts - 1),
+                        str(row["task_id"]),
+                        owner.tenant_id,
+                        owner.user_id,
+                        attempts,
+                    ),
+                )
 
             updated = connection.execute(
                 """UPDATE prepare_tasks_v1
@@ -970,9 +1003,12 @@ def requeue_task_after_internal_resolution(
             worker_id=worker_id,
         )
         operation_id = str(row["operation_id"])
+        attempts_before = int(row["attempts"])
+        attempts_after = max(0, attempts_before - 1)
         connection.execute(
             """UPDATE prepare_tasks_v1
                   SET status='PENDING',
+                      attempts=?,
                       output_json=?,
                       output_digest=?,
                       unresolved_json='[]',
@@ -983,7 +1019,7 @@ def requeue_task_after_internal_resolution(
                       completed_at=NULL,
                       updated_at=CURRENT_TIMESTAMP
                 WHERE task_id=?""",
-            (output_json, output_digest, task_id),
+            (attempts_after, output_json, output_digest, task_id),
         )
         status = _refresh_operation(
             connection,
@@ -997,6 +1033,9 @@ def requeue_task_after_internal_resolution(
             "task_status": "PENDING",
             "operation_status": status,
             "internal_resolution_kind": kind,
+            "attempts_before": attempts_before,
+            "attempts_after": attempts_after,
+            "attempt_refunded": attempts_after < attempts_before,
             "output_digest": output_digest,
             "submission_authority": False,
         }
