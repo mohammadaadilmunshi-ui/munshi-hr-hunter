@@ -33,8 +33,8 @@ def _host(value: str) -> str:
 def _domain_matches(observed: str, expected_parent: str) -> bool:
     """Match an exact trusted domain or one of its true subdomains."""
     try:
-        observed_domain = _host(observed)
-        expected_domain = _host(expected_parent)
+        observed_domain = _host(observed).rstrip(".")
+        expected_domain = _host(expected_parent).rstrip(".")
     except VerificationOrchestrationError:
         return False
     return (
