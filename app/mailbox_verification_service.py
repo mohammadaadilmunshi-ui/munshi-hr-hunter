@@ -173,6 +173,19 @@ def _host(value: str) -> str:
     return candidate
 
 
+def _domain_matches(observed: str, expected_parent: str) -> bool:
+    """Match an exact trusted domain or one of its true subdomains."""
+    try:
+        observed_domain = _host(observed)
+        expected_domain = _host(expected_parent)
+    except MailboxVerificationError:
+        return False
+    return (
+        observed_domain == expected_domain
+        or observed_domain.endswith("." + expected_domain)
+    )
+
+
 def _request(
     connection: sqlite3.Connection,
     *,
@@ -267,7 +280,10 @@ def _extract_link(content: dict[str, Any], allowed_hosts: set[str]) -> str:
         host = (parsed.hostname or "").casefold().rstrip(".")
         if parsed.scheme.casefold() != "https" or not host:
             continue
-        if host in allowed_hosts:
+        if any(
+            _domain_matches(host, expected_domain)
+            for expected_domain in allowed_hosts
+        ):
             matches.append(candidate)
     unique = list(dict.fromkeys(matches))
     if len(unique) != 1:
@@ -382,7 +398,10 @@ def claim_artifact(
         allowed_senders = {
             _host(v) for v in json.loads(str(request["expected_sender_domains_json"]))
         }
-        if sender not in allowed_senders:
+        if not any(
+            _domain_matches(sender, expected_domain)
+            for expected_domain in allowed_senders
+        ):
             _audit(
                 connection, tenant_id=tenant_id, user_id=user_id, request_id=request_id,
                 inbound_id=str(message["inbound_id"]), application_key=application_key,

@@ -30,6 +30,19 @@ def _host(value: str) -> str:
     return parsed.hostname.lower()
 
 
+def _domain_matches(observed: str, expected_parent: str) -> bool:
+    """Match an exact trusted domain or one of its true subdomains."""
+    try:
+        observed_domain = _host(observed).rstrip(".")
+        expected_domain = _host(expected_parent).rstrip(".")
+    except VerificationOrchestrationError:
+        return False
+    return (
+        observed_domain == expected_domain
+        or observed_domain.endswith("." + expected_domain)
+    )
+
+
 def ensure_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(
         """
@@ -178,7 +191,10 @@ def observe_message_metadata(
             raise VerificationOrchestrationError("Verification recipient does not match the managed identity.")
         sender = _host(sender_domain)
         expected_senders = set(json.loads(row["expected_sender_domains_json"]))
-        if sender not in expected_senders:
+        if not any(
+            _domain_matches(sender, expected_domain)
+            for expected_domain in expected_senders
+        ):
             next_state = "REJECTED"
             reason = "UNEXPECTED_SENDER_DOMAIN"
             link_host = None
@@ -189,7 +205,10 @@ def observe_message_metadata(
         else:
             expected = set(json.loads(row["expected_hosts_json"]))
             link_host = _host(observed_link_host or "") if observed_link_host else None
-            if link_host is None or link_host not in expected:
+            if link_host is None or not any(
+                _domain_matches(link_host, expected_domain)
+                for expected_domain in expected
+            ):
                 next_state = "REJECTED"
                 reason = "UNEXPECTED_VERIFICATION_HOST"
             else:

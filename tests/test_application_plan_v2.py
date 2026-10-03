@@ -363,7 +363,7 @@ def test_workday_provider_policy_has_narrow_mailbox_verification_allowlist():
     policy = plans._normalize_provider_policy(None, provider="WORKDAY")
 
     assert policy["mailbox_verification"] == {
-        "sender_domains": ["myworkday.com"],
+        "sender_domains": ["myworkday.com", "workday.com"],
         "link_hosts": ["myworkdayjobs.com", "workdayjobs.com"],
     }
 
