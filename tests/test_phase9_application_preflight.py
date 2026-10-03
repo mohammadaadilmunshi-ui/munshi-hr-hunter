@@ -367,6 +367,21 @@ def test_semantic_truth_extension_allows_only_resourced_or_added_facts() -> None
 
     assert phase9._semantic_truth_extension(stored, current) is True
 
+    current["facts"].append(
+        {
+            "key": "application_defaults.age_18_plus",
+            "value_reference": "vault://age-18-plus",
+            "protected": True,
+            "source": {"extraction_id": "new"},
+        }
+    )
+    current["protected_fact_keys"].append("application_defaults.age_18_plus")
+    assert phase9._semantic_truth_extension(stored, current) is True
+
+    current["protected_fact_keys"].append("contact.email")
+    assert phase9._semantic_truth_extension(stored, current) is False
+    current["protected_fact_keys"].remove("contact.email")
+
     current["candidate_profile_binding"] = {"profile_revision": 5}
     assert phase9._semantic_truth_extension(stored, current) is False
 

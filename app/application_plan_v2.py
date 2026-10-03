@@ -849,7 +849,10 @@ def _capture(
     execution_pdf = application_execution_artifact.native(
         application_id=str(package["application_id"]), version_id=resume_version_id
     )
-    materialized = native_resume_artifact_v5.materialize(resume_version_id)
+    materialized = native_resume_artifact_v5.materialize(
+        resume_version_id,
+        application_id=str(package["application_id"]),
+    )
     selected_kind = str(resume_format or "PDF").strip().upper()
     if selected_kind not in {"PDF", "DOCX"}:
         raise ValueError("Resume format must be PDF or DOCX.")

@@ -348,9 +348,40 @@ def _stored_materialization(
     }
 
 
-def materialize(version_id: str) -> dict[str, Any]:
+def materialize(
+    version_id: str,
+    *,
+    application_id: str | None = None,
+) -> dict[str, Any]:
     """Render once, then reuse the immutable DOCX/PDF pair for V5."""
-    record = _current_resume(str(version_id))
+    try:
+        record = _current_resume(str(version_id))
+    except RuntimeError:
+        if not application_id:
+            raise
+        # An already-started application may remain pinned to its exact,
+        # byte-verified resume when the preflight freshness policy proves that
+        # Candidate Truth changed only through monotonic fact additions.
+        from app import application_preflight_package_v1 as preflight_v1
+
+        record = resume_v5.get_version(str(version_id))
+        continuation = preflight_v1.reusable_inflight_preflight(
+            application_id=str(application_id),
+            job_id=int(record["job_id"]),
+            resume_version_id=str(version_id),
+        )
+        if continuation is None:
+            raise
+        stored = _stored_materialization(version_id=str(version_id), record=record)
+        if stored is None:
+            raise RuntimeError(
+                "Immutable in-flight resume continuation requires stored artifacts."
+            )
+        return {
+            **stored,
+            "immutable_inflight_continuation": True,
+            "preflight_package_id": str(continuation["package_id"]),
+        }
     stored = _stored_materialization(version_id=str(version_id), record=record)
     if stored is not None:
         return stored

@@ -323,8 +323,6 @@ def _reusable_preflight_output(
                 WHERE o.tenant_id=? AND o.user_id=?
                   AND o.application_id=? AND o.job_id=?
                   AND o.job_snapshot_sha256=?
-                  AND o.application_truth_projection_digest=?
-                  AND o.candidate_profile_digest=?
                   AND o.operation_id<>?
                   AND t.task_kind='APPLICATION_PREFLIGHT'
                   AND t.status='SUCCEEDED'
@@ -336,8 +334,6 @@ def _reusable_preflight_output(
                 str(operation["application_id"]),
                 int(operation["job_id"]),
                 str(operation["job_snapshot_sha256"]),
-                str(operation["application_truth_projection_digest"]),
-                str(operation["candidate_profile_digest"]),
                 str(operation["operation_id"]),
             ),
         ).fetchall()
@@ -376,15 +372,21 @@ def _reusable_preflight_output(
         package_candidate_binding = dict(
             package_truth.get("candidate_profile_binding") or {}
         )
+        package_truth_matches = (
+            str(package_candidate_binding.get("profile_digest") or "")
+            == str(operation["candidate_profile_digest"])
+        )
         if (
             freshness.get("fresh") is not True
+            or (
+                not package_truth_matches
+                and freshness.get("immutable_inflight_continuation") is not True
+            )
             or str(package.get("application_id") or "")
             != str(operation["application_id"])
             or int(package.get("job_id") or 0) != int(operation["job_id"])
             or str(package.get("job_snapshot_sha256") or "")
             != str(operation["job_snapshot_sha256"])
-            or str(package_candidate_binding.get("profile_digest") or "")
-            != str(operation["candidate_profile_digest"])
             or str(package.get("resume_version_id") or "")
             != str(resume.get("resume_version_id") or "")
             or str(package.get("package_digest") or "")
