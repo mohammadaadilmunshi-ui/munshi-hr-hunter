@@ -44,6 +44,7 @@ def _simple_schema(connection=None) -> None:
                 replacement_plan_id TEXT, replacement_plan_digest TEXT,
                 idempotency_key TEXT NOT NULL, resolution_digest TEXT NOT NULL,
                 resolutions_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(tenant_id,user_id,idempotency_key),
                 UNIQUE(tenant_id,user_id,prior_plan_id),
                 UNIQUE(tenant_id,user_id,replacement_plan_id))"""
@@ -179,6 +180,74 @@ def test_runtime_browser_resolution_creates_exact_replay_safe_supersession(
                 {"question_key": "first_name", "canonical_answer": "Different"}
             ],
         )
+
+
+def test_runtime_browser_resolution_recovers_stale_unfinalized_reservation(
+    hunter_db, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(plans.PLAN_ENV, "true")
+    monkeypatch.setenv(plans.RUNTIME_RESOLUTION_ENV, "true")
+    monkeypatch.setattr(plans, "ensure_schema", _simple_schema)
+    monkeypatch.setattr(plans, "_capture", _capture)
+    prior = plans.prepare_application_plan(
+        preflight_package_id="preflight-1",
+        idempotency_key="runtime-stale-prior",
+        permissions=_permissions(),
+    )
+    with database.get_connection() as connection:
+        connection.execute(
+            """INSERT INTO application_plan_revisions_v2(
+                   revision_id,tenant_id,user_id,prior_plan_id,prior_plan_digest,
+                   replacement_plan_id,replacement_plan_digest,idempotency_key,
+                   resolution_digest,resolutions_json,created_at
+               ) VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now','-10 minutes'))""",
+            (
+                "application-plan-revision-stale",
+                "default",
+                "local-owner",
+                prior["plan_id"],
+                prior["plan_digest"],
+                None,
+                None,
+                "runtime-stale-abandoned",
+                "0" * 64,
+                "{}",
+            ),
+        )
+        connection.commit()
+
+    replacement = plans.reprepare_runtime_needs_input_plan(
+        prior_plan_id=prior["plan_id"],
+        expected_prior_plan_digest=prior["plan_digest"],
+        idempotency_key="runtime-stale-recovery",
+        runtime_context={
+            "session_id": "apply-session-stale",
+            "checkpoint_id": "checkpoint-stale",
+            "browser_form_digest": "f" * 64,
+            "unresolved_questions": [
+                {
+                    "question_key": "referral",
+                    "control_id": "referral",
+                    "question": "How did you hear about us?",
+                    "semantic_type": "REFERRAL",
+                    "sensitivity_class": "NORMAL",
+                }
+            ],
+        },
+        answer_resolutions=[
+            {"question_key": "referral", "canonical_answer": "Indeed"}
+        ],
+    )
+
+    with database.get_connection() as connection:
+        revision = connection.execute(
+            "SELECT * FROM application_plan_revisions_v2 WHERE prior_plan_id=?",
+            (prior["plan_id"],),
+        ).fetchone()
+    assert revision is not None
+    assert revision["revision_id"] == "application-plan-revision-stale"
+    assert revision["idempotency_key"] == "runtime-stale-recovery"
+    assert revision["replacement_plan_id"] == replacement["plan_id"]
 
 
 def test_runtime_browser_resolution_cannot_downgrade_protected_question(
