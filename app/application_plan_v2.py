@@ -1777,43 +1777,68 @@ def reprepare_runtime_needs_input_plan(
                 return replacement
         else:
             prior_revision = connection.execute(
-                """SELECT revision_id FROM application_plan_revisions_v2
+                """SELECT * FROM application_plan_revisions_v2
                    WHERE tenant_id=? AND user_id=? AND prior_plan_id=?""",
                 (owner.tenant_id, owner.user_id, str(prior["plan_id"])),
             ).fetchone()
             if prior_revision is not None:
-                raise ValueError(
-                    "Application Plan already has an immutable replacement revision."
+                if str(prior_revision["replacement_plan_id"] or ""):
+                    raise ValueError(
+                        "Application Plan already has an immutable replacement revision."
+                    )
+                rebound = connection.execute(
+                    """UPDATE application_plan_revisions_v2
+                          SET idempotency_key=?,resolution_digest=?,resolutions_json=?,
+                              created_at=CURRENT_TIMESTAMP
+                        WHERE revision_id=? AND tenant_id=? AND user_id=?
+                          AND replacement_plan_id IS NULL
+                          AND replacement_plan_digest IS NULL
+                          AND created_at<=datetime('now','-5 minutes')""",
+                    (
+                        key,
+                        resolution_digest,
+                        revision_json,
+                        str(prior_revision["revision_id"]),
+                        owner.tenant_id,
+                        owner.user_id,
+                    ),
                 )
-            occupied_plan_key = connection.execute(
-                """SELECT plan_id FROM application_plans_v2
-                   WHERE tenant_id=? AND user_id=? AND idempotency_key=?""",
-                (owner.tenant_id, owner.user_id, key),
-            ).fetchone()
-            if occupied_plan_key is not None:
-                raise ValueError(
-                    "Application Plan revision idempotency key already belongs to an Application Plan."
+                if rebound.rowcount != 1:
+                    raise ValueError(
+                        "Application Plan already has an active replacement revision reservation."
+                    )
+                revision_id = str(prior_revision["revision_id"])
+                connection.commit()
+            else:
+                occupied_plan_key = connection.execute(
+                    """SELECT plan_id FROM application_plans_v2
+                       WHERE tenant_id=? AND user_id=? AND idempotency_key=?""",
+                    (owner.tenant_id, owner.user_id, key),
+                ).fetchone()
+                if occupied_plan_key is not None:
+                    raise ValueError(
+                        "Application Plan revision idempotency key already belongs to an Application Plan."
+                    )
+                connection.execute(
+                    """INSERT INTO application_plan_revisions_v2(
+                           revision_id,tenant_id,user_id,prior_plan_id,prior_plan_digest,
+                           replacement_plan_id,replacement_plan_digest,idempotency_key,
+                           resolution_digest,resolutions_json
+                       ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        revision_id,
+                        owner.tenant_id,
+                        owner.user_id,
+                        prior["plan_id"],
+                        prior["plan_digest"],
+                        None,
+                        None,
+                        key,
+                        resolution_digest,
+                        revision_json,
+                    ),
                 )
-            connection.execute(
-                """INSERT INTO application_plan_revisions_v2(
-                       revision_id,tenant_id,user_id,prior_plan_id,prior_plan_digest,
-                       replacement_plan_id,replacement_plan_digest,idempotency_key,
-                       resolution_digest,resolutions_json
-                   ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (
-                    revision_id,
-                    owner.tenant_id,
-                    owner.user_id,
-                    prior["plan_id"],
-                    prior["plan_digest"],
-                    None,
-                    None,
-                    key,
-                    resolution_digest,
-                    revision_json,
-                ),
-            )
-            connection.commit()
+                connection.commit()
     except sqlite3.IntegrityError as error:
         connection.rollback()
         raise ValueError(
