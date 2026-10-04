@@ -1123,16 +1123,25 @@ def _universal_runtime_auto_resolution(
 
     browser_form_digest = str(resolution_payload.get("browser_form_digest") or "")
     checkpoint_id = str(resolution_payload.get("checkpoint_id") or "")
+    import hashlib
+    answer_resolution_digest = hashlib.sha256(
+        json.dumps(
+            answers,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
     stable_material = json.dumps(
         {
             "plan_id": str(plan["plan_id"]),
             "form_digest": browser_form_digest,
             "questions": sorted((q["question_key"], q["control_id"]) for q in questions),
+            "answer_resolution_digest": answer_resolution_digest,
         },
         sort_keys=True,
         separators=(",", ":"),
     )
-    import hashlib
     token = hashlib.sha256(stable_material.encode("utf-8")).hexdigest()[:32]
     revision_key = f"prepare:{operation_id}:universal-runtime:{token}"
     replacement = application_plan_resolution_v2.resolve_runtime_needs_input(
