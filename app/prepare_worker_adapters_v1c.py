@@ -82,6 +82,16 @@ _RUNNING_APPLY_STATES = frozenset({"QUEUED", "RUNNING"})
 _TERMINAL_APPLY_STATES = frozenset(
     {"WAITING_INPUT", "READY_FOR_REVIEW", "BLOCKED", "FAILED_SAFELY", "CANCELLED"}
 )
+_PREPARABLE_APPLY_SESSION_STATES = frozenset(
+    {
+        "SESSION_STARTING",
+        "JOB_VERIFIED",
+        "FORM_DISCOVERED",
+        "PREPARING",
+        "NEEDS_INPUT",
+        "READY_FOR_REVIEW",
+    }
+)
 
 
 def _truthy(name: str) -> bool:
@@ -713,7 +723,7 @@ def _start_apply_session(plan: Mapping[str, Any]) -> dict[str, Any]:
     if (
         str(result.get("plan_id") or "") != str(plan["plan_id"])
         or str(result.get("application_id") or "") != str(plan["application_id"])
-        or str(result.get("state") or "") != "SESSION_STARTING"
+        or str(result.get("state") or "") not in _PREPARABLE_APPLY_SESSION_STATES
         or not str(result.get("session_id") or "")
     ):
         raise RuntimeError("Apply preparation session acknowledgement is not correlated.")

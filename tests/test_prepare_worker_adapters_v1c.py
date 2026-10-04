@@ -1630,6 +1630,73 @@ def test_apply_semantic_interpretation_bridge_is_value_free(monkeypatch):
     assert "execution_value" not in repr(sent)
 
 
+def test_start_apply_session_accepts_correlated_needs_input_replay(monkeypatch):
+    monkeypatch.setattr(workers, "_apply_base_url", lambda: "http://apply.internal")
+    monkeypatch.setattr(workers, "_apply_headers", lambda **kwargs: {})
+    monkeypatch.setattr(
+        workers,
+        "_json_request",
+        lambda **kwargs: {
+            "session_id": "session-94",
+            "application_id": "application-94",
+            "plan_id": "plan-94",
+            "state": "NEEDS_INPUT",
+            "preparation_job": {
+                "job_id": "prepare-job-94",
+                "session_id": "session-94",
+                "application_id": "application-94",
+                "plan_id": "plan-94",
+                "state": "WAITING_INPUT",
+            },
+        },
+    )
+
+    result = workers._start_apply_session(
+        {
+            "tenant_id": "tenant-a",
+            "user_id": "user-a",
+            "application_id": "application-94",
+            "plan_id": "plan-94",
+        }
+    )
+
+    assert result["session_id"] == "session-94"
+    assert result["state"] == "NEEDS_INPUT"
+    assert result["preparation_job"]["state"] == "WAITING_INPUT"
+
+
+def test_start_apply_session_rejects_post_review_replay(monkeypatch):
+    monkeypatch.setattr(workers, "_apply_base_url", lambda: "http://apply.internal")
+    monkeypatch.setattr(workers, "_apply_headers", lambda **kwargs: {})
+    monkeypatch.setattr(
+        workers,
+        "_json_request",
+        lambda **kwargs: {
+            "session_id": "session-94",
+            "application_id": "application-94",
+            "plan_id": "plan-94",
+            "state": "READY_TO_SUBMIT",
+            "preparation_job": {
+                "job_id": "prepare-job-94",
+                "session_id": "session-94",
+                "application_id": "application-94",
+                "plan_id": "plan-94",
+                "state": "READY_FOR_REVIEW",
+            },
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="session acknowledgement"):
+        workers._start_apply_session(
+            {
+                "tenant_id": "tenant-a",
+                "user_id": "user-a",
+                "application_id": "application-94",
+                "plan_id": "plan-94",
+            }
+        )
+
+
 def test_apply_semantic_bridge_rejects_provider_contract_leak(monkeypatch):
     monkeypatch.setattr(workers, "_apply_base_url", lambda: "http://apply.internal")
     monkeypatch.setattr(workers, "_apply_headers", lambda **kwargs: {})
