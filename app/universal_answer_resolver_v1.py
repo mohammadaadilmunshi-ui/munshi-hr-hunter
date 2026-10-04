@@ -15,6 +15,7 @@ from app import candidate_derivation_engine_v1 as derivation
 from app import candidate_knowledge_graph_v1 as graph
 from app import candidate_knowledge_ingestion_v1 as ingestion
 from app import candidate_ontology_v1 as ontology
+from app import job_destination_v1
 from app import universal_question_resolver_v1 as question_resolver
 
 ANSWER_RESOLVER_VERSION = "universal-answer-resolver-v1"
@@ -224,7 +225,8 @@ def resolve_concept(
         )
 
     if concept.answer_mode == "JOB_CONTEXT_DERIVED":
-        source = " ".join(str((job_context or {}).get("source") or "").split())
+        raw_source = " ".join(str((job_context or {}).get("source") or "").split())
+        source = job_destination_v1.source_platform(job_context or {}) if raw_source else ""
         job_id = str((job_context or {}).get("id") or "").strip()
         if graph.universal_derivation_enabled() and source and job_id and len(source) <= 200:
             row = {

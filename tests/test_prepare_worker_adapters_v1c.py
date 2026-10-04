@@ -1485,7 +1485,8 @@ def test_universal_runtime_referral_derives_current_hunter_job_source(monkeypatc
             },
         }
     )
-    seen = {}
+    seen = []
+    job_source = {"value": "JobSpy/indeed"}
     monkeypatch.setattr(workers.universal_graph, "universal_normal_autofill_enabled", lambda: True)
     monkeypatch.setattr(workers.universal_graph, "universal_derivation_enabled", lambda: True)
     monkeypatch.setattr(
@@ -1498,7 +1499,7 @@ def test_universal_runtime_referral_derives_current_hunter_job_source(monkeypatc
         "safe_owned_job_snapshot",
         lambda job_id, **_kwargs: {
             "job_snapshot_sha256": "d" * 64,
-            "job": {"id": int(job_id), "source": "Indeed"},
+            "job": {"id": int(job_id), "source": job_source["value"]},
         },
     )
     monkeypatch.setattr(
@@ -1508,7 +1509,7 @@ def test_universal_runtime_referral_derives_current_hunter_job_source(monkeypatc
     )
 
     def resolve_runtime_needs_input(**kwargs):
-        seen.update(kwargs)
+        seen.append(kwargs)
         return {
             "success": True,
             "prior_plan_id": "plan-94",
@@ -1539,13 +1540,31 @@ def test_universal_runtime_referral_derives_current_hunter_job_source(monkeypatc
     )
 
     assert result is not None
-    assert seen["answer_resolutions"] == [
+    assert seen[0]["answer_resolutions"] == [
         {
             "question_key": "q-referral",
             "canonical_answer": "Indeed",
             "provenance": "universal_brain_derived_evidence",
         }
     ]
+
+    first_revision_key = result["revision_idempotency_key"]
+    job_source["value"] = "JobSpy/linkedin"
+    second = workers._universal_runtime_auto_resolution(
+        operation_id="operation-94",
+        plan={
+            "plan_id": "plan-94",
+            "plan_digest": "8" * 64,
+            "job_id": 4465,
+            "snapshot": {"job": {"id": 4465, "job_snapshot_digest": "d" * 64}},
+        },
+        session_id="session-94",
+        resolution_payload=payload,
+        runtime_tasks=[task],
+    )
+    assert second is not None
+    assert seen[1]["answer_resolutions"][0]["canonical_answer"] == "LinkedIn"
+    assert second["revision_idempotency_key"] != first_revision_key
 
 
 def test_universal_runtime_auto_resolution_falls_through_when_any_fact_is_missing(monkeypatch):
