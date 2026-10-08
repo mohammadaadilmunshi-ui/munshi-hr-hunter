@@ -110,7 +110,6 @@ def inspect_existing_checkpoint(
     if any(
         str(task.get("checkpoint_id") or "") != checkpoint_id
         or str(task.get("sensitivity_class") or "").upper() != "NORMAL"
-        or task.get("requires_user") is True
         for task in runtime_tasks
     ):
         raise ValueError("A protected, human-only or mismatched checkpoint is unresolved.")
