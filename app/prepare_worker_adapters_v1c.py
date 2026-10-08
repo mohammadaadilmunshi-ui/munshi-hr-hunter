@@ -1032,6 +1032,56 @@ def _resolve_universal_runtime_observation(
     return resolved, binding_row
 
 
+def _previously_approved_referral_answer(
+    *, plan: Mapping[str, Any], task: Mapping[str, Any]
+) -> str | None:
+    """Reuse one exact NORMAL referral already approved in this immutable plan.
+
+    This is intentionally *not* a general missing-fact fallback. In particular,
+    it never reuses phone, authorization, employment, or repeated-row values.
+    The live browser still must commit and validate the provider option.
+    """
+    if str(task.get("sensitivity_class") or "").upper() != "NORMAL":
+        return None
+    if str(task.get("semantic_type") or "").upper() != "REFERRAL":
+        return None
+    observation = task.get("question_observation")
+    if not isinstance(observation, Mapping):
+        return None
+    if str(observation.get("apply_semantic_type") or "").upper() != "REFERRAL":
+        return None
+    control_id = str(task.get("control_id") or "").strip()
+    if not control_id or str(observation.get("control_id") or "") != control_id:
+        return None
+    key = str(task.get("group_key") or task.get("question_id") or "").strip()
+    # The fallback is scoped to the exact observed input, not just a semantic label.
+    if key != "q-" + control_id:
+        return None
+    normalized = lambda text: " ".join(str(text or "").split()).casefold()
+    question = normalized(task.get("question"))
+    if not question or question != normalized(observation.get("raw_question")):
+        return None
+    answers = list(dict(plan.get("snapshot") or {}).get("answers") or [])
+    candidates = [
+        dict(answer) for answer in answers
+        if isinstance(answer, Mapping)
+        and str(answer.get("question_key") or "") == key
+    ]
+    if len(candidates) != 1:
+        return None
+    answer = candidates[0]
+    if (
+        str(answer.get("sensitivity_class") or "").upper() != "NORMAL"
+        or answer.get("autofill_allowed") is not True
+        or normalized(answer.get("normalized_question")) != question
+    ):
+        return None
+    value = answer.get("execution_value")
+    if not isinstance(value, str) or not value.strip() or len(value) > 8000:
+        return None
+    return value
+
+
 def _universal_runtime_auto_resolution(
     *,
     operation_id: str,
@@ -1088,25 +1138,44 @@ def _universal_runtime_auto_resolution(
             }
         )
         status = str(resolved.get("answer_status") or "")
+        prior_referral = None
         if (
-            status not in {"ANSWERED", "DERIVED", "POLICY_RESOLVED", "GENERATED"}
-            or resolved.get("autofill_allowed") is not True
-            or resolved.get("value") is None
+            status == "MISSING_FACT"
+            and resolved.get("value") is None
+            and str(resolved.get("sensitivity") or "NORMAL").upper() == "NORMAL"
+            and str(resolved.get("concept_id") or "application.referral_source")
+            == "application.referral_source"
         ):
-            return None
+            prior_referral = _previously_approved_referral_answer(plan=plan, task=task)
+        if prior_referral is not None:
+            # A prior approved plan answer is not newly learned Candidate Truth.
+            # Only exact same-control NORMAL referral answers may be reused.
+            resolved_value = prior_referral
+            provenance = "prior_approved_normal_referral_answer"
+            traces[-1]["answer_status"] = "PRIOR_APPROVED_NORMAL_REFERRAL"
+            traces[-1]["autofill_allowed"] = True
+            traces[-1]["prior_approved_answer_reused"] = True
+        else:
+            if (
+                status not in {"ANSWERED", "DERIVED", "POLICY_RESOLVED", "GENERATED"}
+                or resolved.get("autofill_allowed") is not True
+                or resolved.get("value") is None
+            ):
+                return None
+            resolved_value = _universal_runtime_execution_text(resolved.get("value"))
+            provenance = {
+                "ANSWERED": "universal_brain_existing_knowledge",
+                "DERIVED": "universal_brain_derived_evidence",
+                "POLICY_RESOLVED": "universal_brain_policy_resolution",
+                "GENERATED": "universal_brain_generated_evidence",
+            }[status]
         question_key = str(task.get("group_key") or task.get("question_id") or "").strip()
         if not question_key:
             return None
-        provenance = {
-            "ANSWERED": "universal_brain_existing_knowledge",
-            "DERIVED": "universal_brain_derived_evidence",
-            "POLICY_RESOLVED": "universal_brain_policy_resolution",
-            "GENERATED": "universal_brain_generated_evidence",
-        }[status]
         answers.append(
             {
                 "question_key": question_key,
-                "canonical_answer": _universal_runtime_execution_text(resolved.get("value")),
+                "canonical_answer": resolved_value,
                 "provenance": provenance,
             }
         )

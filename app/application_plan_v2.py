@@ -1594,6 +1594,7 @@ def _runtime_resolution_inputs(
         "universal_brain_derived_evidence",
         "universal_brain_policy_resolution",
         "universal_brain_generated_evidence",
+        "prior_approved_normal_referral_answer",
     }
     result: list[dict[str, str]] = []
     for raw in values:
