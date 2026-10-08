@@ -474,10 +474,95 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                 )
 
         st.caption(
-            'Answer submission/resume is intentionally not added in this '
-            'source tranche; the immutable replacement-plan authority '
-            'remains the backend boundary.'
+            'For a paused, previously accepted Workday plan, use the exact '
+            'existing-checkpoint continuation below. Other unresolved or protected '
+            'questions must be completed through their authorized workflow.'
         )
+
+    # Explicit same-session continuation is different from generic Retry:
+    # it retains the accepted immutable plan, Apply session, and browser job.
+    has_accepted_checkpoint_plan = False
+    if (
+        state in {'NEEDS_INPUT', 'FAILED_SAFELY'}
+        and flow.get('execution_mandate')
+        and flow.get('application_id')
+    ):
+        from app import application_checkpoint_continuation_v1 as checkpoint_recovery
+
+        try:
+            accepted_plan_id = checkpoint_recovery._latest_accepted_plan(
+                str(flow['application_id'])
+            )
+            has_accepted_checkpoint_plan = True
+        except (LookupError, PermissionError, RuntimeError, ValueError):
+            accepted_plan_id = ''
+
+        if has_accepted_checkpoint_plan:
+            with st.expander('Continue the existing employer browser checkpoint'):
+                st.caption(
+                    'Use the existing Apply session and checkpoint from your runtime '
+                    'diagnostics. This does not create another application, regenerate '
+                    'your resume, or approve an employer submission.'
+                )
+                with st.form(f'checkpoint_continue_{job_id}'):
+                    st.text_input('Accepted immutable plan', value=accepted_plan_id, disabled=True)
+                    session_input = st.text_input(
+                        'Existing Apply session ID',
+                        key=f'checkpoint_session_{job_id}',
+                    )
+                    prepare_input = st.text_input(
+                        'Existing Apply preparation job ID',
+                        key=f'checkpoint_prepare_job_{job_id}',
+                    )
+                    checkpoint_input = st.text_input(
+                        'Current Workday checkpoint ID',
+                        key=f'checkpoint_current_{job_id}',
+                    )
+                    confirmed = st.checkbox(
+                        'Continue only this existing application and stop if identity '
+                        'or browser evidence has changed.',
+                        key=f'checkpoint_confirm_{job_id}',
+                    )
+                    go = st.form_submit_button('Continue existing checkpoint')
+                    finalize = st.form_submit_button('Finalize verified Workday Review')
+                if go or finalize:
+                    if not confirmed:
+                        st.error('Confirm same-application continuation first.')
+                    else:
+                        try:
+                            with st.spinner('Validating original Workday checkpoint…'):
+                                action = (
+                                    checkpoint_recovery.finalize_existing_review
+                                    if finalize else
+                                    checkpoint_recovery.continue_existing_checkpoint
+                                )
+                                outcome = action(
+                                    job_id=int(job_id),
+                                    plan_id=accepted_plan_id,
+                                    session_id=session_input,
+                                    prepare_job_id=prepare_input,
+                                    checkpoint_id=checkpoint_input,
+                                )
+                        except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+                            st.error('Checkpoint not continued: ' + str(error))
+                        else:
+                            if finalize:
+                                st.success(
+                                    'Frozen Workday Review reconciled with the original '
+                                    'mandate. One-use submission authority was delivered.'
+                                )
+                                st.caption('No employer receipt has been verified yet.')
+                            else:
+                                st.success(
+                                    'Existing session accepted a signed replacement plan. '
+                                    'Workday preparation can continue without a new application.'
+                                )
+                                st.caption(
+                                    'Replacement plan: '
+                                    + str(outcome['replacement_plan_id'])
+                                    + '. No employer submission has been claimed.'
+                                )
+                            st.rerun()
 
     artifacts = flow.get('artifacts') or {}
     resume = artifacts.get('resume') or {}
@@ -747,9 +832,14 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
     if state in {'FAILED_SAFELY', 'BLOCKED', 'CANCELLED'}:
         st.warning(
             'Preparation stopped without claiming submission success. '
-            'You can retry after reviewing the recorded issue.'
+            + (
+                'Continue the accepted checkpoint above; do not create a second '
+                'preparation operation.'
+                if has_accepted_checkpoint_plan
+                else 'You can retry after reviewing the recorded issue.'
+            )
         )
-        if st.button(
+        if not has_accepted_checkpoint_plan and st.button(
             'Retry preparation',
             type='primary',
             key=f'complete_loop_retry_{job_id}',
