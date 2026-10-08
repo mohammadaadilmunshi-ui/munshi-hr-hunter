@@ -524,13 +524,19 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                         key=f'checkpoint_confirm_{job_id}',
                     )
                     go = st.form_submit_button('Continue existing checkpoint')
-                if go:
+                    finalize = st.form_submit_button('Finalize verified Workday Review')
+                if go or finalize:
                     if not confirmed:
                         st.error('Confirm same-application continuation first.')
                     else:
                         try:
                             with st.spinner('Validating original Workday checkpoint…'):
-                                outcome = checkpoint_recovery.continue_existing_checkpoint(
+                                action = (
+                                    checkpoint_recovery.finalize_existing_review
+                                    if finalize else
+                                    checkpoint_recovery.continue_existing_checkpoint
+                                )
+                                outcome = action(
                                     job_id=int(job_id),
                                     plan_id=accepted_plan_id,
                                     session_id=session_input,
@@ -540,15 +546,22 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                         except (LookupError, PermissionError, RuntimeError, ValueError) as error:
                             st.error('Checkpoint not continued: ' + str(error))
                         else:
-                            st.success(
-                                'Existing session accepted a signed replacement plan. '
-                                'Workday preparation can continue without a new application.'
-                            )
-                            st.caption(
-                                'Replacement plan: '
-                                + str(outcome['replacement_plan_id'])
-                                + '. No employer submission has been claimed.'
-                            )
+                            if finalize:
+                                st.success(
+                                    'Frozen Workday Review reconciled with the original '
+                                    'mandate. One-use submission authority was delivered.'
+                                )
+                                st.caption('No employer receipt has been verified yet.')
+                            else:
+                                st.success(
+                                    'Existing session accepted a signed replacement plan. '
+                                    'Workday preparation can continue without a new application.'
+                                )
+                                st.caption(
+                                    'Replacement plan: '
+                                    + str(outcome['replacement_plan_id'])
+                                    + '. No employer submission has been claimed.'
+                                )
                             st.rerun()
 
     artifacts = flow.get('artifacts') or {}
