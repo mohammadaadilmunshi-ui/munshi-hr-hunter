@@ -1344,18 +1344,55 @@ def _follow_content_addressed_runtime_replacement(
     operation: Mapping[str, Any],
     preflight: Mapping[str, Any],
 ) -> tuple[dict[str, Any], str | None]:
-    """Follow saved runtime lineage when plan de-duplication returns its prior."""
-    plan_id = str(plan.get("plan_id") or "")
-    if not application_plan_v2.runtime_plan_is_superseded(plan_id):
-        return dict(plan), None
-    replacement, prior_plan_id = _runtime_replacement_plan(
-        operation=operation,
-        pending_task={"output": {"plan_id": plan_id}},
-        preflight=preflight,
+    """Follow stored runtime supersession lineage to the latest executable plan.
+
+    Content-addressed plan de-duplication may return an ancestor that has already
+    been superseded more than once by runtime resolution. Walk that immutable
+    lineage until the current unsuperseded replacement is reached. Return the
+    immediate prior plan for the final hop so Apply receives the correct
+    same-session supersession binding.
+    """
+    current = dict(plan)
+    followed_prior_plan_id: str | None = None
+    visited: set[str] = set()
+
+    for _ in range(16):
+        plan_id = str(current.get("plan_id") or "").strip()
+        if not plan_id:
+            raise RuntimeError("Application Plan has no plan id.")
+        if plan_id in visited:
+            raise RuntimeError(
+                "Runtime Application Plan supersession lineage contains a cycle."
+            )
+        visited.add(plan_id)
+
+        if not application_plan_v2.runtime_plan_is_superseded(plan_id):
+            return current, followed_prior_plan_id
+
+        replacement, prior_plan_id = _runtime_replacement_plan(
+            operation=operation,
+            pending_task={"output": {"plan_id": plan_id}},
+            preflight=preflight,
+        )
+        if replacement is None or not prior_plan_id:
+            raise RuntimeError("Superseded Application Plan has no valid replacement.")
+        if str(prior_plan_id) != plan_id:
+            raise RuntimeError(
+                "Runtime Application Plan supersession lineage is not contiguous."
+            )
+
+        replacement_id = str(replacement.get("plan_id") or "").strip()
+        if not replacement_id or replacement_id == plan_id:
+            raise RuntimeError(
+                "Runtime Application Plan supersession did not advance."
+            )
+
+        followed_prior_plan_id = plan_id
+        current = dict(replacement)
+
+    raise RuntimeError(
+        "Runtime Application Plan supersession lineage exceeds safe depth."
     )
-    if replacement is None or not prior_plan_id:
-        raise RuntimeError("Superseded Application Plan has no valid replacement.")
-    return replacement, prior_plan_id
 
 
 def run_ats_form_preparation_once(

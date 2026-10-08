@@ -1346,6 +1346,83 @@ def test_content_addressed_plan_follows_existing_runtime_replacement(
     assert seen["pending_task"] == {"output": {"plan_id": "plan-prior"}}
 
 
+def test_content_addressed_plan_follows_chained_runtime_replacements(
+    monkeypatch,
+) -> None:
+    plans = {
+        "plan-prior": {"plan_id": "plan-prior"},
+        "plan-middle": {
+            "plan_id": "plan-middle",
+            "idempotency_key": "runtime-middle-key",
+        },
+        "plan-current": {
+            "plan_id": "plan-current",
+            "idempotency_key": "runtime-current-key",
+        },
+    }
+    replacements = {
+        "plan-prior": "plan-middle",
+        "plan-middle": "plan-current",
+    }
+    seen = []
+
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "runtime_plan_is_superseded",
+        lambda plan_id: plan_id in replacements,
+    )
+
+    def runtime_replacement(**kwargs):
+        prior_id = kwargs["pending_task"]["output"]["plan_id"]
+        seen.append(prior_id)
+        replacement_id = replacements[prior_id]
+        return plans[replacement_id], prior_id
+
+    monkeypatch.setattr(workers, "_runtime_replacement_plan", runtime_replacement)
+
+    resolved, prior_id = workers._follow_content_addressed_runtime_replacement(
+        plan=plans["plan-prior"],
+        operation={"operation_id": "operation-94-chain"},
+        preflight={"preflight_package_id": "preflight-94-chain"},
+    )
+
+    assert resolved == plans["plan-current"]
+    assert prior_id == "plan-middle"
+    assert seen == ["plan-prior", "plan-middle"]
+
+
+def test_content_addressed_plan_rejects_runtime_replacement_cycle(
+    monkeypatch,
+) -> None:
+    plans = {
+        "plan-a": {"plan_id": "plan-a"},
+        "plan-b": {"plan_id": "plan-b"},
+    }
+    replacements = {
+        "plan-a": "plan-b",
+        "plan-b": "plan-a",
+    }
+
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "runtime_plan_is_superseded",
+        lambda _plan_id: True,
+    )
+
+    def runtime_replacement(**kwargs):
+        prior_id = kwargs["pending_task"]["output"]["plan_id"]
+        return plans[replacements[prior_id]], prior_id
+
+    monkeypatch.setattr(workers, "_runtime_replacement_plan", runtime_replacement)
+
+    with pytest.raises(RuntimeError, match="contains a cycle"):
+        workers._follow_content_addressed_runtime_replacement(
+            plan=plans["plan-a"],
+            operation={"operation_id": "operation-94-cycle"},
+            preflight={"preflight_package_id": "preflight-94-cycle"},
+        )
+
+
 def test_ats_browser_waits_for_single_prebrowser_mandate(
     worker_db, monkeypatch
 ):
