@@ -172,7 +172,6 @@ def test_runtime_recovery_fails_closed_on_mismatch(scene, key, replace, reason):
     "change",
     [
         {"sensitivity_class": "PROTECTED"},
-        {"requires_user": True},
         {"checkpoint_id": "checkpoint-stale"},
     ],
 )
@@ -353,3 +352,12 @@ def test_review_delivery_failure_never_claims_submission(scene, monkeypatch):
     )
     with pytest.raises(RuntimeError, match="not acknowledged"):
         finalize()
+
+
+def test_normal_provider_requires_user_flag_is_not_a_candidate_truth_block(scene):
+    # The Apply UI flag means unresolved in its browser; Hunter may still safely
+    # derive the NORMAL answer using approved Candidate Truth.
+    scene["tasks"][0]["requires_user"] = True
+    outcome = recover()
+    assert outcome["replacement_plan_id"] == "application-plan-2"
+    assert len(scene["resolved_calls"]) == 1
