@@ -11,7 +11,7 @@ from typing import Any, Mapping
 
 from app.database import get_connection
 from app.phase67_common import safe_mapping_digest
-from app.tenant_foundation import current_owner
+from app.tenant_foundation import current_owner, current_owner_readonly
 
 SCHEMA_STATEMENTS = (
     """CREATE TABLE IF NOT EXISTS native_resume_job_bindings (
@@ -81,12 +81,17 @@ def resume_job_binding(
     version_id: str,
     *,
     connection: sqlite3.Connection | None = None,
+    readonly: bool = False,
 ) -> dict[str, Any]:
     owns = connection is None
     connection = connection or get_connection()
     try:
-        ensure_schema(connection)
-        owner = current_owner(connection)
+        if readonly:
+            connection.execute("PRAGMA query_only = ON")
+            owner = current_owner_readonly(connection)
+        else:
+            ensure_schema(connection)
+            owner = current_owner(connection)
         row = connection.execute(
             """SELECT * FROM native_resume_job_bindings
                WHERE version_id=? AND tenant_id=? AND user_id=?""",

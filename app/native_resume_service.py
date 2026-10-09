@@ -40,7 +40,7 @@ from app.native_resume_studio import (
     evidence_ids as resume_evidence_ids,
     render_ats_html,
 )
-from app.tenant_foundation import current_owner, ensure_schema as ensure_tenant_schema
+from app.tenant_foundation import current_owner, current_owner_readonly, ensure_schema as ensure_tenant_schema
 
 MODEL_ENV = "MUNSHI_RESUME_MODEL"
 API_KEY_ENV = "OPENAI_API_KEY"
@@ -782,8 +782,10 @@ def _apply_locks(
     return ResumeDocument.model_validate(payload)
 
 
-def _owner_version(connection: sqlite3.Connection, version_id: str) -> dict[str, Any]:
-    owner = current_owner(connection)
+def _owner_version(
+    connection: sqlite3.Connection, version_id: str, *, readonly: bool = False
+) -> dict[str, Any]:
+    owner = current_owner_readonly(connection) if readonly else current_owner(connection)
     row = connection.execute(
         "SELECT * FROM native_resume_versions WHERE version_id=? AND tenant_id=? AND user_id=?",
         (str(version_id), owner.tenant_id, owner.user_id),
@@ -797,11 +799,19 @@ def _owner_version(connection: sqlite3.Connection, version_id: str) -> dict[str,
     return result
 
 
-def get_version(version_id: str) -> dict[str, Any]:
+def get_version(version_id: str, *, readonly: bool = False) -> dict[str, Any]:
+    """Read saved résumé without requesting a SQLite write lock during preflight.
+
+    Legacy lazy schema initialization remains available to normal callers.
+    Preflight must fail closed on missing tables rather than write migrations.
+    """
     connection = get_connection()
     try:
-        ensure_schema(connection)
-        return _owner_version(connection, version_id)
+        if readonly:
+            connection.execute("PRAGMA query_only = ON")
+        else:
+            ensure_schema(connection)
+        return _owner_version(connection, version_id, readonly=readonly)
     finally:
         connection.close()
 

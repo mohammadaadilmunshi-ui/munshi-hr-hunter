@@ -140,7 +140,7 @@ def _answer_inventory(planning: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _resume_reference(version_id: str) -> dict[str, Any]:
-    resume = resume_v4.get_version(version_id)
+    resume = resume_v4.get_version(version_id, readonly=True)
     digest = _sha(resume.get("html_sha256"), "Resume rendered artifact digest")
     return {
         "version_id": str(resume["version_id"]),

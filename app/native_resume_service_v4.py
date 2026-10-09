@@ -98,10 +98,16 @@ def _assert_generation_inputs_still_current(
         )
 
 
-def get_version(version_id: str) -> dict[str, Any]:
-    record = v1.get_version(version_id)
-    binding = truth_binding.resume_truth_binding(version_id)
-    job_state = job_binding.resume_job_binding(version_id)
+def get_version(version_id: str, *, readonly: bool = False) -> dict[str, Any]:
+    if readonly:
+        record = v1.get_version(version_id, readonly=True)
+        binding = truth_binding.resume_truth_binding(version_id, readonly=True)
+        job_state = job_binding.resume_job_binding(version_id, readonly=True)
+    else:
+        # Preserve the exact legacy call shape for callers and test doubles.
+        record = v1.get_version(version_id)
+        binding = truth_binding.resume_truth_binding(version_id)
+        job_state = job_binding.resume_job_binding(version_id)
     record["candidate_truth_binding"] = {
         key: binding[key]
         for key in (
