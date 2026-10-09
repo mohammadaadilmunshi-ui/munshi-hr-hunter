@@ -551,9 +551,13 @@ new_hunter_image_id="$(docker image inspect -f '{{.Id}}' "$hunter_image_name")"
 echo "new_hunter_image_id=$new_hunter_image_id"
 
 echo "=== RUN EXACT-IMAGE HUNTER AUTOAPPLY CONTRACT SUITE (NETWORK DISABLED) ==="
+# Git's private umask preserves owner-only (0600) test files. This isolated
+# network-disabled, read-only runner needs uid 0 to READ that owner-only bind;
+# production data, secrets, and Docker socket are not mounted into it.
 timeout 1200s docker run --rm \
   --network none \
   --read-only \
+  --user 0:0 \
   --tmpfs /tmp:rw,nosuid,nodev,size=512m \
   --tmpfs /app/hunter/data:rw,nosuid,nodev,size=256m,uid=10001,gid=10001,mode=0700 \
   --mount "type=bind,src=$REPO/tests,dst=/app/hunter/tests,readonly" \
