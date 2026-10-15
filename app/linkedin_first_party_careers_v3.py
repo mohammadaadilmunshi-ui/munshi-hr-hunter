@@ -260,6 +260,8 @@ def resolve_linkedin_job_from_approved_careers(
     allow_network: bool = False,
     approved_site_fetcher: Any = None,
     ats_opener: Any = None,
+    allow_offline_js: bool = False,
+    offline_js_renderer: Any = None,
 ):
     """Resolve exactly one job via verified employer website -> documented ATS API.
 
@@ -300,14 +302,38 @@ def resolve_linkedin_job_from_approved_careers(
                 "error_type": type(error).__name__,
             },
         )
+    hint_method = "static_html"
+    if not hints and allow_offline_js:
+        from app.linkedin_offline_careers_renderer_v4 import (
+            render_approved_snapshot_offline,
+        )
+
+        render = offline_js_renderer or render_approved_snapshot_offline
+        try:
+            # Network-blocked Chromium operates on the downloaded snapshot only.
+            outcome = render(site, html, enable_browser=True)
+            hints = outcome.result.board_hints
+            hint_method = "offline_javascript"
+        except (OSError, RuntimeError, ValueError) as error:
+            return _base(
+                linkedin_job,
+                "UNKNOWN",
+                "verified_first_party_careers",
+                {
+                    "reason": "offline_renderer_failed",
+                    "error_type": type(error).__name__,
+                    "application_url_verified": False,
+                },
+            )
     if not hints:
         return _base(
             linkedin_job,
             "UNKNOWN",
             "verified_first_party_careers",
             {
-                "reason": "no_public_static_ats_board_hints",
-                "needs_controlled_renderer": True,
+                "reason": "no_public_ats_board_hints",
+                "needs_controlled_renderer": not allow_offline_js,
+                "offline_renderer_used": allow_offline_js,
                 "official_careers_url": site.careers_url,
             },
         )
@@ -349,6 +375,7 @@ def resolve_linkedin_job_from_approved_careers(
             "official_careers_url": site.careers_url,
             "employer_approval_reference": site.approval_reference,
             "ats_board_from_official_website": True,
+            "board_hint_method": hint_method,
             "submit_authorized": False,
         },
     )
