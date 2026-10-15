@@ -126,11 +126,27 @@ def normalize_location(value: Any) -> str:
     return result
 
 
+def location_variants(value: Any) -> set[str]:
+    """Normalize genuine alternative office locations without equating cities."""
+    raw = str(value or "")
+    pieces = re.split(r"\s*(?:•|;|\||\s&\s|\sor\s)\s*", raw, flags=re.IGNORECASE)
+    result = {normalize_location(part) for part in pieces}
+    result.discard("")
+    result.difference_update(
+        {
+            "remote",
+            "nationwide",
+            "us",
+            "usa",
+            "united states",
+            "united states of america",
+        }
+    )
+    return result
+
+
 def location_agrees(first: Any, second: Any) -> bool:
-    a, b = normalize_location(first), normalize_location(second)
-    if not a or not b or a in {"remote", "nationwide"} or b in {"remote", "nationwide"}:
-        return False
-    return a == b
+    return bool(location_variants(first) & location_variants(second))
 
 
 def _req(row: Mapping[str, Any]) -> str:
@@ -251,12 +267,16 @@ def resolve_stored(
         if not target:
             continue
         # Two different concrete locations are not automatically the same job.
-        first_location = normalize(job.get("location_raw"))
-        candidate_location = normalize(
-            candidate.get("location_raw") or candidate.get("location")
-        )
+        first_location = job.get("location_raw")
+        candidate_location = candidate.get("location_raw") or candidate.get("location")
+        # Preserve separators and alternative office locations until AFTER
+        # location_variants() has extracted the individual city/state options.
         same_location = location_agrees(first_location, candidate_location)
-        if first_location and candidate_location and not same_location:
+        if (
+            normalize(first_location)
+            and normalize(candidate_location)
+            and not same_location
+        ):
             continue
         expected_req, candidate_req = _req(job), _req(candidate)
         if expected_req and candidate_req and expected_req != candidate_req:

@@ -330,6 +330,9 @@ def test_linkedin_job_url_is_immutable_during_resolution():
         ("New York, NY", "New York, New York, USA", True),
         ("San Francisco, CA", "San Francisco, California", True),
         ("New York, NY", "New York City", True),
+        ("San Francisco, CA", "San Francisco, CA • New York, NY • United States", True),
+        ("Chicago, IL", "San Francisco, CA • New York, NY • United States", False),
+        ("New York, NY", "New York, NY & Pittsburgh, PA", True),
         ("Hackensack, NJ", "Perth Amboy, NJ", False),
         ("Remote", "New York, NY", False),
     ],
@@ -377,3 +380,18 @@ def test_verified_board_rejects_untrusted_employer_source_pair():
         )
         is None
     )
+
+
+def test_multi_location_official_record_can_match_its_real_city():
+    result = resolve_stored(
+        job(location_raw="San Francisco, CA"),
+        [
+            employer(
+                location_raw="San Francisco, CA • New York, NY • United States",
+                description_raw=job()["description_raw"],
+            )
+        ],
+        official=True,
+        official_provider="Greenhouse",
+    )
+    assert result.resolution_status == "VERIFIED"
