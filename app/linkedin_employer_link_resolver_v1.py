@@ -399,6 +399,7 @@ def official_feed_jobs(
                 "apply_url": application,
                 "description_raw": description,
                 "requisition_id": requisition,
+                "source_job_id": item.get("id"),
             }
         )
     return normalized

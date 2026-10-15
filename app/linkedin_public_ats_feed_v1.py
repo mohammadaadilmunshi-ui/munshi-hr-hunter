@@ -19,6 +19,7 @@ from app.linkedin_employer_link_resolver_v1 import (
 
 BOARD_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 MAX_BYTES = 2_000_000
+ASHBY_MAX_BYTES = 16_000_000  # large public job boards can exceed 10 MB
 PUBLIC_ENDPOINTS = {
     "Greenhouse": "https://boards-api.greenhouse.io/v1/boards/{}/jobs",
     "Lever": "https://api.lever.co/v0/postings/{}?mode=json",
@@ -50,6 +51,7 @@ def fetch_official_jobs(
 ) -> list[dict[str, Any]]:
     """Use only documented public GET endpoints; fail closed on redirects/errors."""
     url = verified_board_endpoint(provider, board_name)
+    response_cap = ASHBY_MAX_BYTES if provider == "Ashby" else MAX_BYTES
     client = opener if opener is not None else build_opener(NoRedirects())
     request = Request(
         url,
@@ -62,10 +64,10 @@ def fetch_official_jobs(
     with client.open(request, timeout=7) as response:
         if response.status != 200:
             raise ValueError("Public ATS feed did not return HTTP 200")
-        if int(response.headers.get("Content-Length", "0")) > MAX_BYTES:
+        if int(response.headers.get("Content-Length", "0")) > response_cap:
             raise ValueError("ATS feed exceeded maximum response size")
-        raw = response.read(MAX_BYTES + 1)
-        if len(raw) > MAX_BYTES:
+        raw = response.read(response_cap + 1)
+        if len(raw) > response_cap:
             raise ValueError("ATS feed exceeded maximum response size")
     payload = json.loads(raw)
     return official_feed_jobs(provider, payload, company_name)
@@ -92,6 +94,27 @@ def resolve_from_verified_board(
     jobs = fetch_official_jobs(
         provider, board_name, verified_employer_name, opener=opener
     )
+    if provider == "Greenhouse":
+        from app.linkedin_employer_link_resolver_v1 import location_agrees
+
+        shortlisted = [
+            job
+            for job in jobs
+            if normalize(job.get("title")) == normalize(linkedin_job.get("title"))
+            and location_agrees(
+                job.get("location_raw"), linkedin_job.get("location_raw")
+            )
+            and job.get("source_job_id") is not None
+        ]
+        # Cap follow-up reads. Multiple matching postings remain ambiguous.
+        for candidate in shortlisted[:3]:
+            try:
+                candidate["description_raw"] = fetch_greenhouse_job_detail(
+                    board_name, candidate["source_job_id"], opener=opener
+                )
+            except (OSError, ValueError):
+                # Missing/blocked detail means candidate-only, never verified.
+                candidate["description_raw"] = None
     return resolve_stored(linkedin_job, jobs, official=True, official_provider=provider)
 
 
@@ -132,3 +155,57 @@ def verified_board_from_existing_job(
         ):
             return provider, source_slug
     return None
+
+
+def greenhouse_detail_url(board_name: str, posting_id: Any) -> str:
+    """Only construct documented official Greenhouse job-detail GET URLs."""
+    if not BOARD_NAME_RE.fullmatch(board_name):
+        raise ValueError("Unverified Greenhouse board token")
+    value = str(posting_id)
+    if not re.fullmatch(r"[0-9]{1,18}", value) or int(value) < 1:
+        raise ValueError("Untrusted Greenhouse posting identifier")
+    return f"https://boards-api.greenhouse.io/v1/boards/{board_name}/jobs/{value}?content=true"
+
+
+def fetch_greenhouse_job_detail(
+    board_name: str, posting_id: Any, *, opener: Any = None
+) -> str | None:
+    """Fetch a single published job's description from the documented public API."""
+    from html import unescape
+    from html.parser import HTMLParser
+
+    class PlainText(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.parts = []
+
+        def handle_data(self, data):
+            self.parts.append(data)
+
+    endpoint = greenhouse_detail_url(board_name, posting_id)
+    client = opener if opener is not None else build_opener(NoRedirects())
+    request = Request(
+        endpoint,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "MUNSHI-Employer-Link-Resolver/1.0",
+        },
+        method="GET",
+    )
+    with client.open(request, timeout=7) as response:
+        if response.status != 200:
+            raise ValueError("Greenhouse job detail did not return HTTP 200")
+        if int(response.headers.get("Content-Length", "0")) > MAX_BYTES:
+            raise ValueError("Greenhouse detail response exceeded maximum size")
+        payload_bytes = response.read(MAX_BYTES + 1)
+    if len(payload_bytes) > MAX_BYTES:
+        raise ValueError("Greenhouse detail response exceeded maximum size")
+    payload = json.loads(payload_bytes)
+    if not isinstance(payload, dict) or str(payload.get("id")) != str(posting_id):
+        raise ValueError("Greenhouse returned the wrong posting identity")
+    html_content = payload.get("content")
+    if not isinstance(html_content, str):
+        return None
+    parser = PlainText()
+    parser.feed(unescape(html_content))
+    return " ".join(part.strip() for part in parser.parts if part.strip())[:120_000]
