@@ -1,21 +1,90 @@
 from __future__ import annotations
 
+import base64
 import sqlite3
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from app.linkedin_employer_link_resolver_v1 import LinkResolution
+from app.linkedin_verified_link_proof_v5 import (
+    canonical_content_hash,
+    canonical_proof_message,
+)
 from app.linkedin_verified_url_evidence_v5 import (
     destination_buttons,
     initialize_schema,
     latest_verified_for_job,
-    persist_verified_evidence,
     validate_verified_evidence,
+)
+from app.linkedin_verified_url_evidence_v5 import (
+    persist_verified_evidence as _persist_verified_evidence,
 )
 
 NOW = datetime(2026, 10, 15, 21, 0, tzinfo=timezone.utc)
+
+
+def _sign_content(content, *, ts=NOW):
+    private = Ed25519PrivateKey.generate()
+    public = private.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    core = {
+        "schema": "munshi-linkedin-exact-job-link-proof-v1",
+        "key_id": "test-operator",
+        "content_sha256": canonical_content_hash(content),
+        "signed_at": ts.isoformat(),
+        "expires_at": (ts + timedelta(days=1)).isoformat(),
+    }
+    record = {
+        **core,
+        "signature": base64.urlsafe_b64encode(
+            private.sign(canonical_proof_message(core))
+        ).decode("ascii"),
+    }
+    return record, {"test-operator": public}
+
+
+def persist_verified_evidence(
+    connection,
+    record,
+    result,
+    *,
+    verified_at,
+    now=None,
+    allow_write=False,
+):
+    """Test-only authorized signer: production code has no embedded private key."""
+    if not allow_write:
+        return _persist_verified_evidence(
+            connection,
+            record,
+            result,
+            verified_at=verified_at,
+            now=now,
+            allow_write=False,
+        )
+    canonical = validate_verified_evidence(
+        record,
+        result,
+        verified_at=verified_at,
+        now=now,
+    )
+    proof, keys = _sign_content(canonical, ts=now or NOW)
+    return _persist_verified_evidence(
+        connection,
+        record,
+        result,
+        verified_at=verified_at,
+        now=now,
+        allow_write=True,
+        signed_link_proof=proof,
+        trusted_link_public_keys=keys,
+    )
 
 
 def job(**kw):
@@ -279,3 +348,102 @@ def test_evidence_write_cannot_override_live_canonical_job():
         ]
         == 0
     )
+
+
+def test_unsigned_forged_boolean_flag_is_blocked_before_insert():
+    c = setup()
+    with pytest.raises(PermissionError, match="Signed exact-job"):
+        _persist_verified_evidence(
+            c,
+            job(),
+            verified(),
+            verified_at=NOW,
+            now=NOW,
+            allow_write=True,
+        )
+    assert (
+        c.execute("SELECT count(*) FROM linkedin_employer_url_evidence_v5").fetchone()[
+            0
+        ]
+        == 0
+    )
+
+
+def test_changed_employer_url_invalidates_signed_approval():
+    c = setup()
+    canonical = validate_verified_evidence(job(), verified(), verified_at=NOW, now=NOW)
+    signed, keys = _sign_content(canonical)
+    modified = replace(
+        verified(),
+        employer_apply_url="https://job-boards.greenhouse.io/example/jobs/988",
+        employer_job_url="https://job-boards.greenhouse.io/example/jobs/988",
+    )
+    with pytest.raises(PermissionError, match="does not match"):
+        _persist_verified_evidence(
+            c,
+            job(),
+            modified,
+            verified_at=NOW,
+            now=NOW,
+            allow_write=True,
+            signed_link_proof=signed,
+            trusted_link_public_keys=keys,
+        )
+    assert (
+        c.execute("SELECT count(*) FROM linkedin_employer_url_evidence_v5").fetchone()[
+            0
+        ]
+        == 0
+    )
+
+
+def test_untrusted_authority_revocation_and_signature_tampering_blocked():
+    c = setup()
+    canonical = validate_verified_evidence(job(), verified(), verified_at=NOW, now=NOW)
+    signed, keys = _sign_content(canonical)
+    variants = [
+        (signed, {}, frozenset()),
+        ({**signed, "signature": "bad"}, keys, frozenset()),
+    ]
+    import hashlib
+
+    approval_id = hashlib.sha256(
+        canonical_proof_message({k: v for k, v in signed.items() if k != "signature"})
+    ).hexdigest()
+    variants.append((signed, keys, frozenset({approval_id})))
+    for candidate, trust, revoked in variants:
+        with pytest.raises(PermissionError):
+            _persist_verified_evidence(
+                c,
+                job(),
+                verified(),
+                verified_at=NOW,
+                now=NOW,
+                allow_write=True,
+                signed_link_proof=candidate,
+                trusted_link_public_keys=trust,
+                revoked_link_proof_ids=revoked,
+            )
+    assert (
+        c.execute("SELECT count(*) FROM linkedin_employer_url_evidence_v5").fetchone()[
+            0
+        ]
+        == 0
+    )
+
+
+def test_expired_proof_blocks_submission_independently_of_evidence_expiry():
+    c = setup()
+    canonical = validate_verified_evidence(job(), verified(), verified_at=NOW, now=NOW)
+    signed, keys = _sign_content(canonical, ts=NOW - timedelta(days=2))
+    with pytest.raises(PermissionError, match="expired"):
+        _persist_verified_evidence(
+            c,
+            job(),
+            verified(),
+            verified_at=NOW,
+            now=NOW,
+            allow_write=True,
+            signed_link_proof=signed,
+            trusted_link_public_keys=keys,
+        )

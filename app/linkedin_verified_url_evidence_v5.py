@@ -226,6 +226,9 @@ def persist_verified_evidence(
     verified_at: datetime,
     now: datetime | None = None,
     allow_write: bool = False,
+    signed_link_proof: Mapping[str, Any] | None = None,
+    trusted_link_public_keys: Mapping[str, bytes] | None = None,
+    revoked_link_proof_ids: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Only after controlled migration and explicit write approval.
 
@@ -263,6 +266,18 @@ def persist_verified_evidence(
     if _fingerprint(actual) != _fingerprint(job) or _posting(actual) != _posting(job):
         raise ValueError("Persisted canonical job differs from proposed link evidence")
     content = validate_verified_evidence(job, result, verified_at=verified_at, now=now)
+    # A plain 'signed_approval_validated' flag is NOT proof of verification:
+    # require an independent authorized Ed25519 signature over the complete
+    # canonical job/URL/provenance payload at the persistence boundary.
+    from app.linkedin_verified_link_proof_v5 import verify_signed_link_proof
+
+    verify_signed_link_proof(
+        content,
+        signed_link_proof,
+        trusted_link_public_keys,
+        now=_utc(now or datetime.now(timezone.utc)),
+        revoked_proof_ids=revoked_link_proof_ids,
+    )
     existing = latest_verified_for_job(connection, job, now=now)
     if existing and existing["employer_apply_url"] != content["employer_apply_url"]:
         raise ValueError(
