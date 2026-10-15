@@ -123,3 +123,149 @@ def test_search_queries_are_nonexecuting_plain_strings():
 def test_large_snapshot_is_rejected():
     with pytest.raises(ValueError, match="too large"):
         discover_from_approved_html(approved(), "x" * 3_000_001)
+
+
+def linkedin_job(**changes):
+    return {
+        "company_name": "Example Inc",
+        "title": "HR Analyst",
+        "location_raw": "New York, NY",
+        "job_url": "https://www.linkedin.com/jobs/view/4455550011",
+        "ats_job_id": "4455550011",
+        "description_raw": (
+            "Build people dashboards and track employee compensation trends. "
+            "Partner with payroll and recruiting to improve HR analytics reporting. "
+            "Review benefits strategy, headcount forecasting and performance data."
+        ),
+        **changes,
+    }
+
+
+def test_official_site_resolution_defaults_to_no_network():
+    from app.linkedin_first_party_careers_v3 import (
+        resolve_linkedin_job_from_approved_careers,
+    )
+
+    result = resolve_linkedin_job_from_approved_careers(
+        linkedin_job(), approved(), allow_network=False
+    )
+    assert result.resolution_status == "UNKNOWN"
+    assert result.evidence["reason"] == "network_opt_in_required"
+
+
+def test_wrong_company_rejected_before_network_request():
+    from app.linkedin_first_party_careers_v3 import (
+        resolve_linkedin_job_from_approved_careers,
+    )
+
+    result = resolve_linkedin_job_from_approved_careers(
+        linkedin_job(company_name="Other Company"), approved(), allow_network=True
+    )
+    assert result.resolution_status == "UNAVAILABLE"
+
+
+def test_static_js_shell_is_not_assumed_easy_apply():
+    from app.linkedin_first_party_careers_v3 import (
+        resolve_linkedin_job_from_approved_careers,
+    )
+
+    result = resolve_linkedin_job_from_approved_careers(
+        linkedin_job(),
+        approved(),
+        allow_network=True,
+        approved_site_fetcher=lambda _site: (
+            "<html><script src='/app.js'></script></html>"
+        ),
+    )
+    assert result.resolution_status == "UNKNOWN"
+    assert result.evidence["needs_controlled_renderer"] is True
+
+
+def test_multiple_boards_are_ambiguous_and_never_submitted():
+    from app.linkedin_first_party_careers_v3 import (
+        resolve_linkedin_job_from_approved_careers,
+    )
+
+    html = (
+        "<a href='https://job-boards.greenhouse.io/example/jobs/123'></a>"
+        "<a href='https://jobs.ashbyhq.com/example/abc'></a>"
+    )
+    result = resolve_linkedin_job_from_approved_careers(
+        linkedin_job(),
+        approved(),
+        allow_network=True,
+        approved_site_fetcher=lambda _site: html,
+    )
+    assert result.resolution_status == "AMBIGUOUS"
+    assert result.employer_apply_url is None
+
+
+def test_first_party_site_to_exact_official_ats_job_e2e_mock():
+    import json
+
+    from app.linkedin_first_party_careers_v3 import (
+        resolve_linkedin_job_from_approved_careers,
+    )
+
+    description = linkedin_job()["description_raw"]
+
+    class FakeResponse:
+        status = 200
+
+        def __init__(self, payload):
+            self.raw = json.dumps(payload).encode()
+            self.headers = {"Content-Length": str(len(self.raw))}
+
+        def read(self, limit):
+            return self.raw[:limit]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    class FakeATS:
+        def __init__(self):
+            self.called = []
+
+        def open(self, request, timeout):
+            assert request.get_method() == "GET"
+            assert timeout == 7
+            url = request.full_url
+            self.called.append(url)
+            if url.endswith("/jobs"):
+                return FakeResponse(
+                    {
+                        "jobs": [
+                            {
+                                "id": 123,
+                                "title": "HR Analyst",
+                                "location": {"name": "New York, NY • Pittsburgh, PA"},
+                                "absolute_url": "https://job-boards.greenhouse.io/example/jobs/123",
+                            }
+                        ]
+                    }
+                )
+            if url.endswith("/jobs/123?content=true"):
+                return FakeResponse({"id": 123, "content": f"<p>{description}</p>"})
+            raise AssertionError("Unexpected network operation")
+
+    ats = FakeATS()
+    result = resolve_linkedin_job_from_approved_careers(
+        linkedin_job(),
+        approved(),
+        allow_network=True,
+        approved_site_fetcher=lambda _site: (
+            "<a href='https://job-boards.greenhouse.io/example/jobs/123'>Role</a>"
+        ),
+        ats_opener=ats,
+    )
+    assert result.resolution_status == "VERIFIED"
+    assert result.ats_platform == "Greenhouse"
+    assert (
+        result.employer_apply_url == "https://job-boards.greenhouse.io/example/jobs/123"
+    )
+    assert result.evidence["ats_board_from_official_website"] is True
+    assert result.evidence["submit_authorized"] is False
+    assert len(ats.called) == 2

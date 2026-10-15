@@ -251,3 +251,104 @@ def candidate_job_urls_from_official_html(
                 }
             )
     return output
+
+
+def resolve_linkedin_job_from_approved_careers(
+    linkedin_job: dict[str, Any],
+    site: ApprovedEmployerSite,
+    *,
+    allow_network: bool = False,
+    approved_site_fetcher: Any = None,
+    ats_opener: Any = None,
+):
+    """Resolve exactly one job via verified employer website -> documented ATS API.
+
+    Production must authorize the ApprovedEmployerSite using a signed registry
+    before calling. No result can be used by auto-apply without lifecycle
+    preflight, active-posting recheck, and candidate approval.
+    """
+    from app.linkedin_employer_link_resolver_v1 import LinkResolution, _base
+    from app.linkedin_official_site_fetch_v3 import fetch_approved_careers_page
+    from app.linkedin_public_ats_feed_v1 import resolve_from_verified_board
+
+    validate_approved_site(site)
+    if normalize(linkedin_job.get("company_name")) != normalize(site.company_name):
+        return _base(
+            linkedin_job,
+            "UNAVAILABLE",
+            "verified_first_party_careers",
+            {"reason": "linkedin_employer_identity_mismatch"},
+        )
+    if not allow_network:
+        return _base(
+            linkedin_job,
+            "UNKNOWN",
+            "verified_first_party_careers",
+            {"reason": "network_opt_in_required"},
+        )
+    fetcher = approved_site_fetcher or fetch_approved_careers_page
+    try:
+        html = fetcher(site)
+        hints = discover_from_approved_html(site, html).board_hints
+    except (OSError, ValueError) as error:
+        return _base(
+            linkedin_job,
+            "UNKNOWN",
+            "verified_first_party_careers",
+            {
+                "reason": "official_careers_site_read_failed",
+                "error_type": type(error).__name__,
+            },
+        )
+    if not hints:
+        return _base(
+            linkedin_job,
+            "UNKNOWN",
+            "verified_first_party_careers",
+            {
+                "reason": "no_public_static_ats_board_hints",
+                "needs_controlled_renderer": True,
+                "official_careers_url": site.careers_url,
+            },
+        )
+    if len(hints) != 1:
+        return _base(
+            linkedin_job,
+            "AMBIGUOUS",
+            "verified_first_party_careers",
+            {"reason": "multiple_public_ats_boards", "board_count": len(hints)},
+        )
+    hint = hints[0]
+    try:
+        candidate = resolve_from_verified_board(
+            linkedin_job,
+            provider=hint.provider,
+            board_name=hint.board_name,
+            verified_employer_name=site.company_name,
+            opener=ats_opener,
+        )
+    except (OSError, ValueError) as error:
+        return _base(
+            linkedin_job,
+            "UNKNOWN",
+            "verified_first_party_careers",
+            {
+                "reason": "official_ats_job_read_failed",
+                "error_type": type(error).__name__,
+            },
+        )
+    return LinkResolution(
+        linkedin_job_url=candidate.linkedin_job_url,
+        employer_job_url=candidate.employer_job_url,
+        employer_apply_url=candidate.employer_apply_url,
+        ats_platform=candidate.ats_platform,
+        resolution_status=candidate.resolution_status,
+        resolution_source="verified_first_party_careers",
+        evidence={
+            **candidate.evidence,
+            "official_careers_url": site.careers_url,
+            "employer_approval_reference": site.approval_reference,
+            "ats_board_from_official_website": True,
+            "submit_authorized": False,
+        },
+    )

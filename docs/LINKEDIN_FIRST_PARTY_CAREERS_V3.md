@@ -76,3 +76,21 @@ specific approved-domain tests. All new changes are additive except the
 conservative multi-location comparison fix. Rollback by reverting the draft
 branch; no schema rollback necessary. Future release requires explicit
 approval, CI/staging, exact SHA reconciliation with Netcup production.
+
+## V3 end-to-end approved first-party resolver
+
+The source-only operation resolve_linkedin_job_from_approved_careers() now
+orchestrates explicitly approved corporate careers URL -> restricted static
+HTML GET -> exactly one ATS board hint -> documented public ATS list/detail
+GET -> exact job corroboration. Network execution is opt-in, defaults off.
+Unapproved company identity, ambiguous boards, public errors, and JavaScript
+shells fail closed. The result records submit_authorized=False.
+
+A live read-only Figma HRIS Analyst test completed this full chain:
+LinkedIn Figma HRIS Analyst -> figma.com/careers -> Greenhouse figma board ->
+official Greenhouse HRIS Analyst job detail -> VERIFIED employer URL.
+No application or candidate information was sent to the employer.
+
+Note: the present operator-approval reference is not a digital signature.
+A production trust store and signed approval validation must be implemented
+before this operation is callable from the dashboard or a scheduled worker.
