@@ -114,8 +114,16 @@ _STATE_NAMES = {
 def normalize_location(value: Any) -> str:
     """Conservative city/state normalization; never equate different cities."""
     result = normalize(value)
-    if result in {"new york city", "nyc"}:
-        return "new york ny"
+    # Only unambiguous US city names where the ATS sometimes omits the state.
+    # Never normalize a city to a different office, or guess generic "remote".
+    _BARE_CITY_EQUIVALENTS = {
+        "new york city": "new york ny",
+        "nyc": "new york ny",
+        "san francisco": "san francisco ca",
+        "pittsburgh": "pittsburgh pa",
+    }
+    if result in _BARE_CITY_EQUIVALENTS:
+        return _BARE_CITY_EQUIVALENTS[result]
     for country in ("united states of america", "united states", "usa", "us"):
         if result.endswith(" " + country):
             result = result[: -(len(country) + 1)]
