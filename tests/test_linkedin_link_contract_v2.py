@@ -229,6 +229,7 @@ class _UIContext:
 class _LinkedInCardUI:
     def __init__(self) -> None:
         self.links: list[tuple[str, str]] = []
+        self.buttons: list[tuple[str, bool]] = []
         self.session_state: dict[str, object] = {}
 
     def container(self, **_kwargs):
@@ -241,7 +242,8 @@ class _LinkedInCardUI:
     def markdown(self, *_args, **_kwargs):
         return None
 
-    def button(self, *_args, **_kwargs):
+    def button(self, label, **kwargs):
+        self.buttons.append((str(label), bool(kwargs.get("disabled"))))
         return False
 
     def link_button(self, label, url, **_kwargs):
@@ -296,4 +298,9 @@ def test_jobspy_linkedin_result_reaches_clickable_card_with_separate_apply(
 
     product_pages._job_card(row, key_prefix="acceptance")
 
-    assert ("Open original job", direct) in fake_ui.links
+    assert normalized["apply_url"] == direct  # Raw external URL remains stored.
+    assert ("Open LinkedIn listing", normalized["job_url"]) in fake_ui.links
+    assert ("Open original job", direct) not in fake_ui.links
+    assert ("Open employer application (verified)", direct) not in fake_ui.links
+    assert ("Employer application link unavailable", True) in fake_ui.buttons
+    assert ("Prepare application", False) in fake_ui.buttons

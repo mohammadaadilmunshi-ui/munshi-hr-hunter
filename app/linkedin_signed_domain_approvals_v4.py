@@ -177,7 +177,9 @@ def resolve_from_signed_approval(
         at=at,
         revoked_approval_ids=revoked_approval_ids,
     )
-    return resolve_linkedin_job_from_approved_careers(
+    from dataclasses import replace
+
+    result = resolve_linkedin_job_from_approved_careers(
         linkedin_job,
         site,
         allow_network=allow_network,
@@ -186,3 +188,9 @@ def resolve_from_signed_approval(
         allow_offline_js=allow_offline_js,
         offline_js_renderer=offline_js_renderer,
     )
+    if result.resolution_status == "VERIFIED":
+        return replace(
+            result,
+            evidence={**result.evidence, "signed_approval_validated": True},
+        )
+    return result

@@ -22,10 +22,58 @@ from app.product_state import (
 )
 from app.product_ui import esc, page_intro, pastel_for, safe_link, score_ring
 from app.job_destination_v1 import describe_job_destination
+from app.linkedin_verified_url_evidence_v5 import (
+    destination_buttons as linkedin_destination_buttons,
+    latest_verified_for_job,
+)
 
 
 _LOGGER = logging.getLogger(__name__)
 _PREPARE_ERROR_KEY_PREFIX = "product_prepare_error_"
+
+
+def _linkedin_link_actions(job: dict[str, Any]) -> dict[str, Any]:
+    """Query verified employer-link evidence without creating database tables."""
+    from app.database import get_connection
+
+    if "linkedin" not in str(job.get("source") or "").casefold():
+        return {"is_linkedin": False}
+    verified = None
+    try:
+        connection = get_connection()
+        try:
+            verified = latest_verified_for_job(connection, job)
+        finally:
+            connection.close()
+    except Exception as error:  # noqa: BLE001 - link UI cannot block browsing
+        _LOGGER.warning(
+            "LINKEDIN_LINK_EVIDENCE_READ_FAILED job_id=%s error_type=%s",
+            job.get("id"), type(error).__name__,
+        )
+    return linkedin_destination_buttons(job, verified)
+
+
+def _render_linkedin_source_and_employer(job: dict[str, Any], *, key_prefix: str) -> None:
+    links = _linkedin_link_actions(job)
+    if not links.get("is_linkedin"):
+        return
+    if links.get("linkedin_job_url"):
+        st.link_button("Open LinkedIn listing", links["linkedin_job_url"], use_container_width=True)
+    else:
+        st.button(
+            "LinkedIn listing unavailable", disabled=True,
+            key=f"{key_prefix}_linkedin_missing", use_container_width=True,
+        )
+    if links.get("employer_apply_url"):
+        st.link_button(
+            "Open employer application (verified)",
+            links["employer_apply_url"], use_container_width=True,
+        )
+    else:
+        st.button(
+            "Employer application link unavailable", disabled=True,
+            key=f"{key_prefix}_employer_missing", use_container_width=True,
+        )
 
 
 def _sync_subroute(parameter: str, state_key: str, values: dict[str, str]) -> None:
@@ -257,7 +305,11 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
             on_click=_open_job_detail,
             args=(job_id,),
         )
-        if destination.original_url:
+        if "linkedin" in str(row.get("source") or "").casefold():
+            _render_linkedin_source_and_employer(
+                row, key_prefix=f"{key_prefix}_card_{job_id}",
+            )
+        elif destination.original_url:
             st.link_button(
                 "Open original job",
                 destination.original_url,
@@ -396,7 +448,11 @@ def _job_detail_dialog(job_id: int) -> None:
                 use_container_width=True,
             )
     with action_columns[3]:
-        if destination.original_url:
+        if "linkedin" in str(row.get("source") or "").casefold():
+            _render_linkedin_source_and_employer(
+                row, key_prefix=f"dialog_{job_id}",
+            )
+        elif destination.original_url:
             st.link_button("Open original job", destination.original_url, use_container_width=True)
         else:
             st.button("No application URL", disabled=True, use_container_width=True)
