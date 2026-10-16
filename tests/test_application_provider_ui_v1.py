@@ -275,3 +275,61 @@ def test_provider_ui_fails_closed_on_invalid_eligibility_flag():
         tsenta_backend_connected=True,
     )
     assert not state["can_select_native"]
+
+
+
+def test_connected_original_dashboard_renders_multi_ats_learning_controls(monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.setattr(
+        "app.tsenta_backend_readiness_v1.connection_status",
+        lambda: {"authenticated_backend": True, "profile_read_verified": True},
+    )
+    monkeypatch.setattr(
+        "app.tsenta_oauth_v1.status",
+        lambda: {"authorized": True, "profile_read_verified": True},
+    )
+    monkeypatch.setattr(ui, "learning_summary", lambda: {
+        "form_fields": 35, "provider_events": 12,
+    })
+    monkeypatch.setattr(
+        "app.tsenta_learning_cohort_v1.learning_cohort_snapshot",
+        lambda: {
+            "processed_applications_total": 12,
+            "cohort_processed": 12,
+            "cohort_target": 15,
+            "unique_ats_in_cohort": 4,
+            "ats_coverage": {
+                "ashby": 2, "oracle": 3,
+                "custom-new-ats": 3, "workday": 4,
+            },
+            "phase": "EVALUATION_READY",
+            "shadow_improvement_candidates": [{
+                "ats_type": "oracle",
+                "deployment_state": "SHADOW_ONLY",
+            }],
+        },
+    )
+    called = []
+    monkeypatch.setattr(
+        "app.tsenta_learning_sync_v1.sync_authorized_learning",
+        lambda **kwargs: (
+            called.append(kwargs)
+            or {"status_observations": 12, "candidate_answers_stored": False}
+        ),
+    )
+    app = AppTest.from_string(
+        "from app.application_provider_ui_v1 import render_dashboard_summary\n"
+        "render_dashboard_summary()\n"
+    ).run(timeout=15)
+    assert not list(app.exception)
+    assert any(m.label == "Processed applications" and str(m.value) == "12"
+               for m in app.metric)
+    assert any(m.label == "ATS platforms observed" and str(m.value) == "4"
+               for m in app.metric)
+    sync_button = next(b for b in app.button
+                       if b.label == "Import read-only Tsenta learning evidence")
+    assert not sync_button.disabled
+    sync_button.click().run()
+    assert not list(app.exception)
+    assert called == [{"page": 1}]

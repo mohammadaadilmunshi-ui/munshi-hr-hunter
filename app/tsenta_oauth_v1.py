@@ -306,7 +306,9 @@ def status() -> dict[str, Any]:
         usable = not expiry or datetime.fromisoformat(expiry) > _now()+timedelta(minutes=2)
         return {
             "authorized": True, "profile_read_verified": verified,
-            "execution_ready": verified and (usable or refreshable),
+            # OAuth/profile reads never imply a validated dispatch worker.
+            "execution_ready": False,
+            "profile_token_usable_or_refreshable": usable or refreshable,
             "reason_code": "CONNECTED_VERIFIED" if verified else "PROFILE_READ_PENDING",
         }
     finally:

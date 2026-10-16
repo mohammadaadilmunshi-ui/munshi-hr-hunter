@@ -273,6 +273,83 @@ def render_dashboard_summary() -> None:
             "Engine selection is in Applications. "
             "No engine is authorized to submit from this panel."
         )
+        from app.tsenta_learning_cohort_v1 import learning_cohort_snapshot
+
+        with st.expander("Native learning from Tsenta · all ATS platforms", expanded=False):
+            try:
+                cohort = learning_cohort_snapshot()
+            except (sqlite3.OperationalError, LookupError, PermissionError, RuntimeError):
+                cohort = {
+                    "phase": "UNAVAILABLE",
+                    "processed_applications_total": 0,
+                    "cohort_processed": 0, "cohort_target": 15,
+                    "unique_ats_in_cohort": 0,
+                    "ats_coverage": {},
+                    "shadow_improvement_candidates": [],
+                }
+            st.progress(
+                min(int(cohort["cohort_processed"]) / max(1, int(cohort["cohort_target"])), 1.0),
+                text=(
+                    f"{cohort['cohort_processed']}/{cohort['cohort_target']} "
+                    "distinct processed applications in this learning cycle"
+                ),
+            )
+            p1, p2 = st.columns(2)
+            p1.metric("Processed applications", cohort["processed_applications_total"])
+            p2.metric("ATS platforms observed", cohort["unique_ats_in_cohort"])
+            st.caption(
+                "10 applications starts evaluation; 15 complete the cohort. "
+                "A provider status is not an independently verified employer receipt."
+            )
+            ats_coverage = cohort.get("ats_coverage") or {}
+            if ats_coverage:
+                st.caption(
+                    "Observed platforms: "
+                    + ", ".join(f"{ats} ({count})" for ats, count in sorted(ats_coverage.items()))
+                )
+            if connection.get("profile_read_verified") is True:
+                from app.tsenta_learning_sync_v1 import sync_authorized_learning
+
+                learning_page = st.number_input(
+                    "Tsenta application history page",
+                    min_value=1, max_value=20, value=1, step=1,
+                    key="tsenta_learning_sync_page",
+                )
+                if st.button(
+                    "Import read-only Tsenta learning evidence",
+                    key="tsenta_learning_sync",
+                    help=(
+                        "Reads up to 15 existing applications and their "
+                        "available form reviews. Never creates or submits one."
+                    ),
+                ):
+                    try:
+                        imported = sync_authorized_learning(page=int(learning_page))
+                    except (RuntimeError, ValueError, TypeError, LookupError):
+                        st.error("Tsenta learning sync could not be verified.")
+                    else:
+                        st.success(
+                            f"Read {imported['status_observations']} existing application "
+                            "statuses. No answers or receipts were invented."
+                        )
+                        st.rerun()
+            else:
+                st.caption(
+                    "Connect and verify your Tsenta backend account before "
+                    "importing authorized application learning."
+                )
+            shadow = cohort.get("shadow_improvement_candidates") or []
+            if shadow:
+                st.info(
+                    f"{len(shadow)} Native improvement hypotheses are ready for "
+                    "isolated replay evaluation. No changes to live answers "
+                    "or submission behavior have been enabled."
+                )
+            else:
+                st.caption(
+                    "Collect authorized, privacy-safe provider form evidence "
+                    "before proposing Native field-mapping improvements."
+                )
         render_connection_panel()
 
 

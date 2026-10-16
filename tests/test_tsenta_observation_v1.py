@@ -159,3 +159,64 @@ def test_sanitized_mcp_review_fixture_covers_observed_ats_shapes():
     assert any(row["field_kind"] == "file" for row in rows)
     assert any(row["required"] and not row["has_value"] for row in rows)
     assert all(row["answer_value_recorded"] is False for row in rows)
+
+
+
+def test_unseen_ats_display_names_are_normalized_without_allowlist():
+    assert observations._ats_slug("Oracle Cloud HCM") == "oracle-cloud-hcm"
+    assert observations._ats_slug("UKG / Pro") == "ukg-pro"
+    assert observations._ats_slug("Future ATS Vendor") == "future-ats-vendor"
+    import pytest
+
+    with pytest.raises(ValueError):
+        observations._ats_slug("private@example.com")
+    with pytest.raises(ValueError):
+        observations._ats_slug("https://candidate.example.com")
+
+
+
+def test_personalized_question_text_is_not_persisted(hunter_db):
+    del hunter_db
+    from app.database import get_connection
+
+    rows = observations.observations_from_review(
+        provider_application_id="private-id-not-stored",
+        ats_type="future_ats",
+        review={"awaitingReview": True, "fields": [
+            {"label": "Dear Personal Name Here, your birth city?",
+             "kind": "text", "required": True, "value": "PRIVATE_BIRTH_CITY"},
+        ]},
+    )
+    observations.persist_observations(rows)
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT label_template, observed_json FROM tsenta_observations_v1"
+        ).fetchone()
+    assert row["label_template"] is None
+    assert "Personal Name Here" not in row["observed_json"]
+    assert "PRIVATE_BIRTH_CITY" not in row["observed_json"]
+
+
+
+def test_provider_error_content_never_persists_as_error_code(hunter_db):
+    del hunter_db
+    from app.database import get_connection
+
+    item = observations.observation_from_status(
+        provider_application_id="private-app-status-999",
+        ats_type="unknown-new-platform",
+        status={
+            "status": "FAILED", "isTerminal": True,
+            "errorCode": "Applicant private@example.com failed validation",
+            "statusMessage": {"title": "Private applicant personal details"},
+        },
+    )
+    assert item["error_code"] is None
+    observations.persist_observations([item])
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT error_code,observed_json FROM tsenta_observations_v1"
+        ).fetchone()
+    assert row["error_code"] is None
+    assert "private@example.com" not in row["observed_json"]
+    assert "personal details" not in row["observed_json"]

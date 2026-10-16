@@ -133,7 +133,8 @@ def test_backend_profile_verification_uses_actual_mcp_read_without_persisting_pr
         assert auth.verify_profile(client=mcp_client)=={
             "authenticated_backend":True,"profile_read_verified":True}
     assert auth.status()["profile_read_verified"] is True
-    assert auth.status()["execution_ready"] is True
+    assert auth.status()["execution_ready"] is False
+    assert auth.status()["profile_token_usable_or_refreshable"] is True
     assert len(mcp_calls)==4
     assert all(x.url.host=="api.autojobs.me" for x in mcp_calls)
     assert all("Bearer" in x.headers.get("authorization","") for x in mcp_calls)

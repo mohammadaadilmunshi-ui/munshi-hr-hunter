@@ -1530,3 +1530,40 @@ def get_application_provider_status_by_application(
         "raw_candidate_data_included": False,
         "submission_authority": False,
     }
+
+@app.post(
+    "/api/integrations/tsenta/learning/sync",
+    dependencies=[Depends(require_api_secret)],
+)
+def sync_tsenta_learning_observations(
+    page: int = 1, limit: int = 15,
+) -> dict[str, Any]:
+    """Read only existing authorized Tsenta application observations."""
+    from app.tsenta_learning_sync_v1 import sync_authorized_learning
+
+    try:
+        return sync_authorized_learning(page=page, limit=limit)
+    except (ValueError, RuntimeError, TypeError, LookupError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Tsenta learning sync is unavailable or its data was invalid.",
+        ) from error
+
+
+@app.get(
+    "/api/integrations/tsenta/learning/cohort",
+    dependencies=[Depends(require_api_secret)],
+)
+def tsenta_learning_cohort_status() -> dict[str, Any]:
+    """Read owner-scoped, platform-agnostic 10-15 application learning progress."""
+    import sqlite3
+
+    from app.tsenta_learning_cohort_v1 import learning_cohort_snapshot
+
+    try:
+        return learning_cohort_snapshot()
+    except (ValueError, RuntimeError, sqlite3.Error, LookupError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Tsenta learning evidence is unavailable.",
+        ) from error

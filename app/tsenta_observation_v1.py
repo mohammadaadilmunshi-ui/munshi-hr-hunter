@@ -24,6 +24,8 @@ from app.tenant_foundation import ensure_schema as ensure_tenant_schema
 OBSERVATION_VERSION = "munshi-tsenta-observation-v1"
 EVIDENCE_GRADES = frozenset({"OBSERVED", "INFERRED", "UNAVAILABLE"})
 _KIND = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_ATS = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_STATUS_TOKEN = re.compile(r"^[A-Z0-9][A-Z0-9_-]{0,79}$")
 _SECRETISH = re.compile(
     r"(?i)(bearer\s+[a-z0-9._-]+|api[_ -]?key|oauth|password|cookie|session[_ -]?token)"
 )
@@ -81,6 +83,21 @@ def _sanitize_label(value: Any) -> str:
     return text
 
 
+def _ats_slug(value: Any) -> str:
+    """Accept unknown ATS families; reject values containing private content."""
+    result = re.sub(r"[\s/]+", "-", str(value or "unknown").strip().casefold())
+    if not _ATS.fullmatch(result):
+        raise ValueError("ATS type must be a bounded platform identifier.")
+    return result
+
+
+def _status_token(value: Any) -> str:
+    result = str(value or "UNKNOWN").strip().upper()
+    if not _STATUS_TOKEN.fullmatch(result):
+        raise ValueError("Provider status must be a bounded machine token.")
+    return result
+
+
 def _application_ref(value: str) -> str:
     resolved = str(value or "").strip()
     if not resolved:
@@ -126,7 +143,7 @@ def observations_from_review(
     if not isinstance(review, Mapping):
         raise TypeError("Tsenta review must be an object.")
     reference = _application_ref(provider_application_id)
-    ats = str(ats_type or "unknown").strip().casefold()[:64] or "unknown"
+    ats = _ats_slug(ats_type)
     timestamp = str(observed_at or _now())
     if review.get("awaitingReview") is not True:
         return [
@@ -211,11 +228,17 @@ def observation_from_status(
     return {
         "version": OBSERVATION_VERSION,
         "provider_application_ref_sha256": _application_ref(provider_application_id),
-        "ats_type": str(ats_type or "unknown").strip().casefold()[:64] or "unknown",
+        "ats_type": _ats_slug(ats_type),
         "observation_kind": "APPLICATION_STATUS",
         "evidence_grade": "OBSERVED",
-        "provider_status": str(status.get("status") or "UNKNOWN").upper()[:80],
-        "error_code": str(status.get("errorCode") or "")[:120] or None,
+        "provider_status": _status_token(status.get("status")),
+        # Provider error codes may unexpectedly contain applicant text.
+        "error_code": (
+            _status_token(status["errorCode"])
+            if isinstance(status.get("errorCode"), str)
+            and _STATUS_TOKEN.fullmatch(status["errorCode"].strip().upper())
+            else None
+        ),
         "error_title": error_title,
         "needs_action": status.get("needsAction") is True,
         "is_terminal": status.get("isTerminal") is True,
@@ -351,7 +374,6 @@ def persist_observations(observations: Sequence[Mapping[str, Any]]) -> dict[str,
                     "observation_kind",
                     "evidence_grade",
                     "field_fingerprint",
-                    "label_template",
                     "semantic_question_key",
                     "field_kind",
                     "required",
@@ -361,7 +383,6 @@ def persist_observations(observations: Sequence[Mapping[str, Any]]) -> dict[str,
                     "provider_status",
                     "error_code",
                     "unavailable_reason",
-                    "error_title",
                     "needs_action",
                     "is_terminal",
                     "is_refunded",
@@ -374,7 +395,7 @@ def persist_observations(observations: Sequence[Mapping[str, Any]]) -> dict[str,
             ref = str(observation.get("provider_application_ref_sha256") or "")
             if not re.fullmatch(r"[0-9a-f]{64}", ref):
                 raise ValueError("Provider application reference digest is invalid.")
-            ats = str(observation.get("ats_type") or "unknown")[:64]
+            ats = _ats_slug(observation.get("ats_type"))
             observed_at = str(observation.get("observed_at") or _now())
             identity = {
                 "ref": ref,
@@ -405,7 +426,7 @@ def persist_observations(observations: Sequence[Mapping[str, Any]]) -> dict[str,
                     str(observation.get("observation_kind") or "UNKNOWN")[:80],
                     grade,
                     observation.get("field_fingerprint"),
-                    observation.get("label_template"),
+                    None,  # No provider-supplied question text in durable storage.
                     observation.get("semantic_question_key"),
                     observation.get("field_kind"),
                     int(bool(observation.get("required")))
@@ -429,6 +450,22 @@ def persist_observations(observations: Sequence[Mapping[str, Any]]) -> dict[str,
             if cursor.rowcount:
                 inserted += 1
             else:
+                # Status can legitimately return to an earlier machine state.
+                # Update its latest sanitized observation time so the learning
+                # cohort never treats the intermediate status as permanent.
+                # Unique application counts still cannot increase on replay.
+                if identity["kind"] == "APPLICATION_STATUS":
+                    connection.execute(
+                        """UPDATE tsenta_observations_v1
+                              SET observed_at=?,observed_json=?,evidence_grade=?
+                            WHERE observation_id=? AND tenant_id=? AND user_id=?
+                              AND observed_at < ?""",
+                        (
+                            observed_at, _canonical(safe), grade,
+                            observation_id, owner.tenant_id, owner.user_id,
+                            observed_at,
+                        ),
+                    )
                 replayed += 1
         connection.commit()
         return {"inserted": inserted, "replayed": replayed}
