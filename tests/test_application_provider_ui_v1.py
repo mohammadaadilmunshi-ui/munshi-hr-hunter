@@ -338,3 +338,37 @@ def test_connected_original_dashboard_renders_multi_ats_learning_controls(monkey
     sync_button.click().run()
     assert not list(app.exception)
     assert called == [{"page": 1}]
+
+
+
+def test_tsenta_verified_oauth_is_not_reported_as_disconnected():
+    from app.application_provider_ui_v1 import tsenta_status_text
+
+    caption, notice = tsenta_status_text({
+        "authenticated_backend": True,
+        "profile_read_verified": True,
+        "execution_ready": False,
+        "reason_code": "DISPATCH_WORKER_NOT_VALIDATED",
+    })
+    assert "connected and profile verified" in caption
+    assert "not connected" not in caption
+    assert "cannot execute" in notice
+    assert "independently validated" in notice
+
+
+def test_tsenta_connection_states_are_distinct():
+    from app.application_provider_ui_v1 import tsenta_status_text
+
+    pending, _ = tsenta_status_text({
+        "authenticated_backend": True, "profile_read_verified": False, "execution_ready": False
+    })
+    disconnected, _ = tsenta_status_text({
+        "authenticated_backend": False, "profile_read_verified": False, "execution_ready": False
+    })
+    ready, ready_notice = tsenta_status_text({
+        "authenticated_backend": True, "profile_read_verified": True, "execution_ready": True
+    })
+    assert "verification is pending" in pending
+    assert "not connected" in disconnected
+    assert "dispatcher are ready" in ready
+    assert "available for eligible" in ready_notice

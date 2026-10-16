@@ -98,6 +98,35 @@ def provider_readiness(
     }
 
 
+def tsenta_status_text(status: Mapping[str, Any]) -> tuple[str, str]:
+    """Distinguish server-side OAuth verification from dispatch readiness."""
+    if status.get("execution_ready") is True:
+        return (
+            "Tsenta backend account and execution dispatcher are ready.",
+            "Tsenta is available for eligible, verified application packages.",
+        )
+    if status.get("authenticated_backend") is True:
+        if status.get("profile_read_verified") is True:
+            return (
+                "Tsenta account connected and profile verified; execution dispatcher pending.",
+                (
+                    "Tsenta cannot execute applications until its dispatcher has been independently validated. "
+                    "Use MUNSHI Native for eligible application packages."
+                ),
+            )
+        return (
+            "Tsenta account connected; backend profile verification is pending.",
+            "Verify Tsenta profile access in Dashboard → Application engines before selecting Tsenta.",
+        )
+    return (
+        "Tsenta backend account is not connected. Local Codex OAuth is not server access.",
+        (
+            "Connect Tsenta securely in Dashboard → Application engines, then verify profile access. "
+            "Execution also requires separate dispatcher validation."
+        ),
+    )
+
+
 def provider_progress(route: Mapping[str, Any] | None) -> dict[str, Any]:
     if not route:
         return {
@@ -421,7 +450,8 @@ def render_workspace(job_id: int) -> None:
             return
 
         st.caption(state["reason"])
-        st.caption("Tsenta: backend connection not configured. Local Codex OAuth is not server access.")
+        tsenta_caption, tsenta_warning = tsenta_status_text(backend_status)
+        st.caption(tsenta_caption)
         provider_label = st.radio(
             "Execution provider",
             options=tuple(PROVIDER_LABELS.values()),
@@ -432,10 +462,8 @@ def render_workspace(job_id: int) -> None:
             key for key, label in PROVIDER_LABELS.items() if label == provider_label
         )
         if provider == "TSENTA":
-            st.warning(
-                "Tsenta execution is unavailable until an authorized backend "
-                "account connection and staged verification are completed."
-            )
+            if not state["can_select_tsenta"]:
+                st.warning(tsenta_warning)
         else:
             st.caption("MUNSHI Native uses the existing hosted Apply preparation pipeline.")
 
