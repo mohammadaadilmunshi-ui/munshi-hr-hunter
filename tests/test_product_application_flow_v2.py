@@ -116,6 +116,7 @@ def test_application_center_projection_uses_readonly_owner_resolution():
         flow._latest_prepare,
         flow._latest_lifecycle,
         flow._production_receipt,
+        flow._provider_route,
         flow._pipeline_candidate_jobs,
     ):
         source = inspect.getsource(projection)

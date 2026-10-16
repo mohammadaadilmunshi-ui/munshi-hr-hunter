@@ -1,0 +1,112 @@
+{
+  "version": "sanitized-tsenta-mcp-review-fixtures-v1",
+  "privacy": {
+    "application_ids": false,
+    "field_ids": false,
+    "answer_values": false,
+    "option_wire_values": false,
+    "employer_names": false,
+    "job_urls": false
+  },
+  "cases": [
+    {
+      "case": "dayforce-legal-fields",
+      "ats_type": "dayforce",
+      "review": {
+        "awaitingReview": true,
+        "fields": [
+          {
+            "label": "I certify that the information provided is accurate",
+            "kind": "checkbox",
+            "required": true,
+            "editable": true,
+            "value": true
+          },
+          {
+            "label": "I agree to the applicant privacy notice",
+            "kind": "checkbox",
+            "required": true,
+            "editable": true,
+            "value": true
+          }
+        ]
+      }
+    },
+    {
+      "case": "successfactors-required-region",
+      "ats_type": "successfactors",
+      "review": {
+        "awaitingReview": true,
+        "fields": [
+          {
+            "label": "State/Province",
+            "kind": "select",
+            "required": true,
+            "editable": true,
+            "value": null,
+            "options": [
+              {"label": "New Jersey"},
+              {"label": "New York"},
+              {"label": "Pennsylvania"}
+            ]
+          },
+          {
+            "label": "Gender",
+            "kind": "select",
+            "required": true,
+            "editable": true,
+            "value": null,
+            "options": [
+              {"label": "Decline to self-identify"}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "case": "brassring-authorization-and-resume",
+      "ats_type": "brassring",
+      "review": {
+        "awaitingReview": true,
+        "fields": [
+          {
+            "label": "Are you legally authorized to work in the United States?",
+            "kind": "select",
+            "required": true,
+            "editable": true,
+            "hasValue": true,
+            "options": [
+              {"label": "Yes"},
+              {"label": "No"}
+            ]
+          },
+          {
+            "label": "Will you now or in the future require sponsorship?",
+            "kind": "select",
+            "required": true,
+            "editable": true,
+            "hasValue": true,
+            "options": [
+              {"label": "Yes"},
+              {"label": "No"}
+            ]
+          },
+          {
+            "label": "Resume/CV",
+            "kind": "file",
+            "required": true,
+            "editable": false,
+            "hasValue": true
+          },
+          {
+            "label": "I accept the legal attestation",
+            "kind": "checkbox",
+            "required": true,
+            "editable": true,
+            "value": null
+          }
+        ]
+      }
+    }
+  ]
+}

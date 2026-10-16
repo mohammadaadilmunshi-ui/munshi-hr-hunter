@@ -910,6 +910,46 @@ def test_poll_timeout_requeues_without_submission(worker_db, monkeypatch):
     assert result["submission_authority"] is False
 
 
+def test_apply_bridge_failure_preserves_safe_machine_code(worker_db, monkeypatch):
+    operation = _ready_ats(worker_db, monkeypatch, "v1c-bridge-code")
+    monkeypatch.setattr(
+        workers.application_plan_v2,
+        "prepare_application_plan",
+        lambda **kwargs: _fake_plan(),
+    )
+
+    def fail_delivery(**_kwargs):
+        raise workers.ApplyRuntimeRequestError(
+            "STALE_HOSTED_PLAN",
+            "private provider details must not persist",
+            retryable=True,
+        )
+
+    with pytest.raises(workers.ApplyRuntimeRequestError):
+        workers.run_ats_form_preparation_once(
+            operation_id=operation["operation_id"],
+            worker_id="ats-worker",
+            poll_interval_seconds=0,
+            plan_delivery=fail_delivery,
+        )
+
+    task = _task(
+        operation["operation_id"], orchestrator.TASK_ATS_FORM_PREPARATION
+    )
+    assert task["status"] == "PENDING"
+    assert task["error_code"] == "STALE_HOSTED_PLAN"
+    assert "private provider details" not in str(task)
+
+
+def test_apply_terminal_diagnostic_redacts_pii_and_credentials():
+    assert workers._safe_apply_diagnostic(
+        "Upload failed for person@example.com at https://ats.example/path"
+    ) == "Upload failed for <email> at <url>"
+    assert "secret-value" not in workers._safe_apply_diagnostic(
+        "OAuth session_token secret-value"
+    )
+
+
 def test_v1c_workers_disabled_before_any_claim(worker_db, monkeypatch):
     operation = _start("v1c-disabled")
     _ready_dependencies(operation["operation_id"])

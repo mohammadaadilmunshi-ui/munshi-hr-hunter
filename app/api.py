@@ -1025,6 +1025,13 @@ class ApplicationApproveAndSubmitRequest(BaseModel):
     expected_browser_form_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class ApplicationProviderSelectionRequest(BaseModel):
+    provider: str = Field(pattern=r"^(?i:NATIVE|TSENTA)$")
+    verified_employer_url: str = Field(min_length=9, max_length=4096)
+    preflight_package_id: str = Field(min_length=1, max_length=240)
+    idempotency_key: str = Field(min_length=1, max_length=240)
+
+
 
 @app.post(
     "/api/application-reviews",
@@ -1042,6 +1049,42 @@ def create_application_review(
             idempotency_key=payload.idempotency_key,
         )
     except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.get(
+    "/api/jobs/{job_id}/application-flow",
+    dependencies=[Depends(require_api_secret)],
+)
+def get_job_application_flow(job_id: int) -> dict[str, Any]:
+    from app import product_application_flow_v2
+
+    try:
+        return product_application_flow_v2.flow_for_job(int(job_id))
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.post(
+    "/api/jobs/{job_id}/application-provider",
+    dependencies=[Depends(require_api_secret)],
+)
+def select_job_application_provider(
+    job_id: int,
+    payload: ApplicationProviderSelectionRequest,
+) -> dict[str, Any]:
+    """Acquire the ownership lock only; this endpoint never starts execution."""
+    from app import application_provider_router_v1
+
+    try:
+        return application_provider_router_v1.select_provider(
+            job_id=int(job_id),
+            provider=payload.provider,
+            verified_employer_url=payload.verified_employer_url,
+            preflight_package_id=payload.preflight_package_id,
+            idempotency_key=payload.idempotency_key,
+        )
+    except (FileExistsError, LookupError, PermissionError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 
 

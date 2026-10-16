@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -92,6 +93,67 @@ _PREPARABLE_APPLY_SESSION_STATES = frozenset(
         "READY_FOR_REVIEW",
     }
 )
+_SAFE_ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{2,80}$")
+_DIAGNOSTIC_EMAIL = re.compile(
+    r"(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b"
+)
+_DIAGNOSTIC_URL = re.compile(r"https?://\S+", re.IGNORECASE)
+_DIAGNOSTIC_SECRET = re.compile(
+    r"(?i)(bearer\s+[a-z0-9._-]+|api[_ -]?key|oauth|password|cookie|session[_ -]?token)"
+)
+
+
+class ApplyRuntimeRequestError(RuntimeError):
+    """Bounded machine-readable failure from the Hunter -> Apply bridge."""
+
+    def __init__(self, code: str, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.code = str(code)
+        self.retryable = bool(retryable)
+
+
+def _safe_apply_error_code(payload: Any) -> str | None:
+    if not isinstance(payload, Mapping):
+        return None
+    candidates = [payload.get("error_code"), payload.get("code")]
+    detail = payload.get("detail")
+    if isinstance(detail, Mapping):
+        candidates.extend((detail.get("error_code"), detail.get("code")))
+    for value in candidates:
+        code = str(value or "").strip().upper().replace("-", "_")
+        if _SAFE_ERROR_CODE.fullmatch(code):
+            return code
+    return None
+
+
+def _safe_apply_diagnostic(value: Any) -> str:
+    text = " ".join(str(value or "").split())[:1000]
+    text = _DIAGNOSTIC_EMAIL.sub("<email>", text)
+    text = _DIAGNOSTIC_URL.sub("<url>", text)
+    if _DIAGNOSTIC_SECRET.search(text):
+        return "Apply diagnostic contained protected configuration and was redacted."
+    return text
+
+
+def _ats_failure(error_value: Exception) -> tuple[str, bool]:
+    if isinstance(error_value, ApplyRuntimeRequestError):
+        return error_value.code, error_value.retryable
+    text = str(error_value).casefold()
+    if "acknowledgement is not correlated" in text:
+        return "APPLY_ACK_CORRELATION_FAILED", False
+    if "stale" in text or "superseded" in text:
+        return "APPLY_PLAN_STALE", True
+    if "command secret is not configured" in text:
+        return "APPLY_BRIDGE_AUTH_NOT_CONFIGURED", False
+    if "base url" in text or "private docker bridge" in text:
+        return "APPLY_BRIDGE_CONFIGURATION_INVALID", False
+    if "sync api" in text and "asyncio" in text:
+        return "APPLY_BROWSER_EVENT_LOOP_CONFLICT", False
+    if "upload" in text and "timeout" in text:
+        return "APPLY_FILE_UPLOAD_TIMEOUT", True
+    if isinstance(error_value, TimeoutError) or "timed out" in text:
+        return "APPLY_BRIDGE_TIMEOUT", True
+    return "ATS_FORM_PREPARATION_FAILED", True
 
 
 def _truthy(name: str) -> bool:
@@ -694,17 +756,51 @@ def _json_request(
             code = int(getattr(response, "status", 0) or 0)
             payload = response.read()
     except error.HTTPError as exc:
-        raise RuntimeError(f"Apply runtime returned HTTP {exc.code}.") from exc
+        provider_code = None
+        try:
+            provider_code = _safe_apply_error_code(json.loads(exc.read(65536)))
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            provider_code = None
+        http_code = int(exc.code)
+        failure_code = provider_code or f"APPLY_BRIDGE_HTTP_{http_code}"
+        retryable = http_code == 429 or http_code >= 500
+        raise ApplyRuntimeRequestError(
+            failure_code,
+            f"Apply runtime returned HTTP {http_code}.",
+            retryable=retryable,
+        ) from exc
     except error.URLError as exc:
-        raise RuntimeError("Apply runtime transport failed.") from exc
+        raise ApplyRuntimeRequestError(
+            "APPLY_BRIDGE_TRANSPORT_FAILED",
+            "Apply runtime transport failed.",
+            retryable=True,
+        ) from exc
+    except TimeoutError as exc:
+        raise ApplyRuntimeRequestError(
+            "APPLY_BRIDGE_TIMEOUT",
+            "Apply runtime timed out.",
+            retryable=True,
+        ) from exc
     if code not in {200, 201, 202}:
-        raise RuntimeError(f"Apply runtime returned unexpected HTTP {code}.")
+        raise ApplyRuntimeRequestError(
+            f"APPLY_BRIDGE_HTTP_{code}",
+            f"Apply runtime returned unexpected HTTP {code}.",
+            retryable=code == 429 or code >= 500,
+        )
     try:
         value = json.loads(payload)
     except (TypeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("Apply runtime returned invalid JSON.") from exc
+        raise ApplyRuntimeRequestError(
+            "APPLY_BRIDGE_INVALID_JSON",
+            "Apply runtime returned invalid JSON.",
+            retryable=False,
+        ) from exc
     if not isinstance(value, dict):
-        raise RuntimeError("Apply runtime response must be an object.")
+        raise ApplyRuntimeRequestError(
+            "APPLY_BRIDGE_INVALID_RESPONSE",
+            "Apply runtime response must be an object.",
+            retryable=False,
+        )
     return value
 
 
@@ -1981,9 +2077,7 @@ def run_ats_form_preparation_once(
             # Preserve Apply's bounded terminal diagnostic instead of collapsing
             # every browser/runtime failure into the same opaque Hunter error.
             # This is observability only: it grants no retry or submission authority.
-            apply_last_error = " ".join(
-                str(latest.get("last_error") or "").split()
-            )[:1000]
+            apply_last_error = _safe_apply_diagnostic(latest.get("last_error"))
             terminal_message = (
                 f"Apply background preparation ended in {state}."
                 + (
@@ -2026,13 +2120,14 @@ def run_ats_form_preparation_once(
         # If the task is still RUNNING and owned by this worker, return it to the
         # orchestrator retry budget. If a branch above already completed/paused/
         # failed it, fail_task itself will reject and we preserve the original.
+        error_code, retryable = _ats_failure(error)
         try:
             orchestrator.fail_task(
                 task_id=str(task["task_id"]),
                 worker_id=str(worker_id),
-                error_code="ATS_FORM_PREPARATION_FAILED",
+                error_code=error_code,
                 error_message="ATS form preparation failed closed.",
-                retryable=True,
+                retryable=retryable,
             )
         except (LookupError, PermissionError, RuntimeError, ValueError):
             pass

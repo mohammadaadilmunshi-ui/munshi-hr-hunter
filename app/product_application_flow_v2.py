@@ -468,6 +468,30 @@ def _production_receipt(application_id: str | None) -> dict[str, Any] | None:
         connection.close()
 
 
+def _provider_route(job_id: int) -> dict[str, Any] | None:
+    """Read the shared Native/Tsenta ownership projection without exposing IDs."""
+    connection = get_connection()
+    try:
+        if not _table_exists(connection, 'application_provider_routes_v1'):
+            return None
+        owner = current_owner_readonly(connection)
+        row = connection.execute(
+            '''SELECT route_id,application_id,job_id,employer_url_sha256,
+                      destination_evidence,provider,state,preflight_package_id,
+                      package_digest,candidate_profile_digest,resume_sha256,
+                      attempt_count,max_attempts,next_attempt_at,last_error_code,
+                      receipt_method,provider_submitted_at,employer_confirmed_at,
+                      updated_at
+                 FROM application_provider_routes_v1
+                WHERE tenant_id=? AND user_id=? AND job_id=?
+                ORDER BY datetime(updated_at) DESC,rowid DESC LIMIT 1''',
+            (owner.tenant_id, owner.user_id, int(job_id)),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        connection.close()
+
+
 def _effective_state(
     prepare: dict[str, Any] | None,
     lifecycle: dict[str, Any] | None,
@@ -487,6 +511,7 @@ def _effective_state(
 def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
     prepare = _latest_prepare(int(job_id))
     lifecycle = _latest_lifecycle(int(job_id))
+    provider_route = _provider_route(int(job_id))
     state, authority = _effective_state(prepare, lifecycle)
     tasks = list((prepare or {}).get('tasks') or [])
     runtime_questions = _runtime_questions(tasks)
@@ -623,6 +648,7 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
         # Retired user-facing late-review field: deliberately never populated.
         'customer_review': None,
         'production_receipt': production_receipt,
+        'provider_route': provider_route,
         'cta': cta,
         'cta_label': cta_label,
         'submission_authority': False,
