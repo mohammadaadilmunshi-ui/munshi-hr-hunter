@@ -363,3 +363,26 @@ until PR #103 and #104 pass CI, the new migration is proven in isolated staging
 with rollback, and the original-dashboard staging URL has been smoke-tested.
 The initial UI intentionally stops at read-only learning and provider
 reservation; real execution is not yet available.
+
+## Backend Tsenta authorization readiness
+
+A read-only check of Tsenta's public OAuth authorization-server metadata
+confirmed authorization-code, S256 PKCE, refresh-token and dynamic-client
+registration capabilities. This is protocol discovery, **not** a Netcup
+authorization or completed secure callback configuration.
+
+The initial dashboard uses `app/tsenta_backend_readiness_v1.py` as a single
+fail-closed server-authentication status source. The authenticated provider
+selection API rejects Tsenta with HTTP 503 until there is a genuinely verified
+backend OAuth connection. Neither a local Codex MCP session nor flipping a
+feature flag can make this status pass. Production and staging remain on their
+previous SHAs.
+
+Completing backend authorization will require a securely routed HTTPS callback
+on the initial dashboard, tenant-bound short-lived PKCE state, encrypted
+per-tenant OAuth access and refresh token storage, refresh/revocation handling,
+verification of a real authenticated Tsenta profile read, and explicit user
+authorization. No token or account value is embedded in source or copied from
+Codex. The current dashboard HTTPS front door returns HTTP 401 without browser
+authentication; its OAuth callback/reverse-proxy routing requires review before
+any live authorization attempt.

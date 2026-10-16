@@ -171,7 +171,7 @@ def render_workspace(job_id: int) -> None:
     import streamlit as st
 
     from app import application_provider_router_v1 as router
-    from app import product_application_flow_v2
+    from app import product_application_flow_v2, tsenta_backend_readiness_v1
     from app.database import get_connection
 
     flow = product_application_flow_v2.flow_for_job(int(job_id), summary=True)
@@ -189,13 +189,13 @@ def render_workspace(job_id: int) -> None:
     finally:
         connection.close()
 
-    # No backend OAuth transport has been deployed. Never infer connectivity from
-    # the Mac's authenticated Codex session or a string environment flag.
+    # Never infer connectivity from a Mac Codex session or env flag.
+    backend_status = tsenta_backend_readiness_v1.connection_status()
     state = provider_readiness(
         job=job,
         flow=flow,
         employer_apply_url=employer_url,
-        tsenta_backend_connected=False,
+        tsenta_backend_connected=backend_status["execution_ready"] is True,
     )
     progress = provider_progress(state["route"])
     with st.container(border=True):

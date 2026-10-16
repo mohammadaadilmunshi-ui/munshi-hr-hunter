@@ -1074,7 +1074,15 @@ def select_job_application_provider(
     payload: ApplicationProviderSelectionRequest,
 ) -> dict[str, Any]:
     """Acquire the ownership lock only; this endpoint never starts execution."""
-    from app import application_provider_router_v1
+    from app import application_provider_router_v1, tsenta_backend_readiness_v1
+
+    if payload.provider.upper() == "TSENTA":
+        readiness = tsenta_backend_readiness_v1.connection_status()
+        if readiness.get("execution_ready") is not True:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Tsenta is not yet authorized on the MUNSHI backend.",
+            )
 
     try:
         return application_provider_router_v1.select_provider(
