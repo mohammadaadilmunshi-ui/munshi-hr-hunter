@@ -303,3 +303,17 @@ These tests do **not** authenticate Netcup to Tsenta, create a real candidate
 application, verify an employer receipt or prove a real ATS form completion.
 Such effects remain disabled pending the documented staging and authorization
 checks.
+
+
+## Existing-account status reconciliation (read-only)
+
+`app/tsenta_provider_status_sync_v1.py` can poll a bounded number of
+`list_applications` pages using the injected authenticated transport and
+match only a previously stored SHA-256 of a Tsenta application identity.
+It does not guess identity from company names, titles or employer URLs, and
+will not create, retry or approve provider applications. The provider's raw
+application IDs and candidate details are processed only in memory. Matching
+provider `COMPLETED` advances MUNSHI only to `PROVIDER_SUBMITTED`, never
+to `EMPLOYER_CONFIRMED`. An independent receipt process remains a required
+future integration. The reconciler is a tested library function, not a
+configured Netcup scheduled worker.
