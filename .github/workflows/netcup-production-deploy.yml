@@ -114,5 +114,9 @@ jobs:
               -o BatchMode=yes \
               -o IdentitiesOnly=yes \
               -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=15 \
+              -o ServerAliveInterval=20 \
+              -o ServerAliveCountMax=15 \
+              -o TCPKeepAlive=yes \
               "$NETCUP_USER@$NETCUP_HOST" \
               "$DEPLOY_COMMAND"
