@@ -28,6 +28,7 @@ MIGRATIONS = (
     "migrations.057_universal_brain_v1",
     "migrations.058_tsenta_provider_learning_foundation_v1",
     "migrations.059_tsenta_backend_oauth_v1",
+    "migrations.060_linkedin_verified_url_evidence_v5",
 )
 
 REQUIRED_TABLES = {
@@ -65,6 +66,7 @@ REQUIRED_TABLES = {
     "tsenta_observations_v1",
     "tsenta_oauth_intents_v1",
     "tsenta_oauth_connections_v1",
+    "linkedin_employer_url_evidence_v5",
 }
 REQUIRED_CALLBACK_COLUMNS = {"payload_sha256", "execution_artifact_id"}
 REQUIRED_NOTIFICATION_PREFERENCE_COLUMNS = {
