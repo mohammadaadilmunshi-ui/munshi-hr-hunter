@@ -12,6 +12,7 @@ import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
+from app.product_experience_vnext import product_href
 from app.linkedin_employer_link_resolver_v1 import external_url
 from app.linkedin_verified_url_evidence_v5 import latest_verified_for_job
 
@@ -447,9 +448,27 @@ def render_workspace(job_id: int) -> None:
                     "A provider-reported submission is not an employer receipt. "
                     "Application IDs and private answers are intentionally hidden."
                 )
+            st.link_button(
+                "Continue application workflow",
+                product_href("prepare-application", job_id=int(job_id)),
+                use_container_width=True,
+            )
             return
 
         st.caption(state["reason"])
+        st.link_button(
+            "Open application package and review",
+            product_href("prepare-application", job_id=int(job_id)),
+            use_container_width=True,
+        )
+        if employer_url:
+            st.link_button("Open saved application link", employer_url)
+        if str(flow.get("state") or "") in {"FAILED_SAFELY", "BLOCKED"}:
+            st.warning(
+                "This application has an earlier stopped preparation attempt. "
+                "Check its recovery controls before resuming; reserving an engine "
+                "does not retry, apply, or submit."
+            )
         tsenta_caption, tsenta_warning = tsenta_status_text(backend_status)
         st.caption(tsenta_caption)
         provider_label = st.radio(

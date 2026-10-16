@@ -544,6 +544,9 @@ def _filter_application_views(
     ]
 
 
+from app.product_experience_vnext import application_action_copy, application_stage_markup
+
+
 def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
     st.markdown("### Application Center")
     # The default shows every durable application, already priority-sorted by
@@ -593,7 +596,7 @@ def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
             if destination:
                 st.caption(destination)
             st.caption(f"Updated {_updated_label(item.last_update)}")
-            st.caption(f"Next: {item.next_action}")
+            st.caption(f"Next: {application_action_copy(item.canonical_state, item.next_action)}")
             st.button(
                 "Selected" if selected_id == item.job_id else "Open application",
                 key=f"application_rail_{item.job_id}",
@@ -606,18 +609,16 @@ def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
 
 
 def _render_lifecycle(model: Any) -> None:
-    stages = (
-        "Job intelligence",
-        "Resume tailoring",
-        "Package checks",
-        "Needs review",
-        "Applying now",
-        "Submitted",
+    receipt = dict(model.receipt_summary or {})
+    confirmed = (
+        bool(receipt.get("receipt_id"))
+        and receipt.get("verification_status") == "VERIFIED"
     )
-    columns = st.columns(len(stages), gap="small")
-    for index, (column, label) in enumerate(zip(columns, stages), 1):
-        marker = "●" if index == model.stage_index else "✓" if index < model.stage_index else "○"
-        column.markdown(f"**{marker} {label}**" if index == model.stage_index else f"{marker} {label}")
+    st.markdown(
+        application_stage_markup(model.stage_index, receipt_verified=confirmed),
+        unsafe_allow_html=True,
+    )
+
 
 
 def _render_application_header(model: Any) -> None:
@@ -627,7 +628,7 @@ def _render_application_header(model: Any) -> None:
         <strong>{esc(model.company, 'Company')} · {esc(model.title, 'Untitled role')}</strong>
         <span>{esc(model.location, 'Location not recorded')} · {esc(model.work_arrangement)} · {match}</span>
         <span>Apply via: {esc(model.apply_via, 'Destination not recorded')} · Source: {esc(model.source_platform, 'Not recorded')}</span>
-        <span>Updated {_updated_label(model.last_update)} · Next: {esc(model.next_action)}</span>
+        <span>Updated {_updated_label(model.last_update)} · Next: {esc(application_action_copy(model.canonical_state, model.next_action))}</span>
         </div><span class="status-chip">{esc(model.human_state)}</span></div>""",
         unsafe_allow_html=True,
     )
@@ -819,6 +820,15 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
     if hasattr(product_pages, "_show_action_feedback"):
         product_pages._show_action_feedback()
     _render_application_visibility_feedback()
+    st.button(
+        "↻ Refresh live application statuses",
+        key="application_center_refresh",
+        help="Reread stored application states. This does not retry or submit.",
+    )
+    st.caption(
+        "Application statuses update from durable records when you open or refresh this page. "
+        "Submission requires a separately verified employer receipt."
+    )
 
     try:
         # Pagination bounds the rendered rail; the read projection includes every
