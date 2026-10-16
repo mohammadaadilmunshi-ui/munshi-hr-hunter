@@ -107,3 +107,35 @@ def test_unobserved_native_extra_control_is_not_a_safe_gain():
     )
     assert result["state"] == "NO_SAFE_GAIN"
     assert result["ats_regressions"] > 0
+
+
+
+def test_fingerprint_without_metadata_is_not_correct_field_recognition():
+    cases = _replays()
+    for case in cases:
+        # Previously a fingerprint alone was scored as fully correct because
+        # absent metadata was treated as a match on all properties.
+        case["candidate_predictions"] = [
+            {"field_fingerprint": "a" * 64},
+            {"field_fingerprint": "b" * 64},
+        ]
+    result = evaluate_native_replay(
+        cohort=_cohort(),
+        replay_cases=cases,
+        training_application_digests=_training(),
+    )
+    assert result["state"] == "NO_SAFE_GAIN"
+    assert result["candidate_field_accuracy"] == 0.0
+
+
+def test_incorrect_required_status_blocks_false_improvement():
+    cases = _replays()
+    for case in cases:
+        case["candidate_predictions"][1]["required"] = False
+    result = evaluate_native_replay(
+        cohort=_cohort(),
+        replay_cases=cases,
+        training_application_digests=_training(),
+    )
+    assert result["state"] == "NO_SAFE_GAIN"
+    assert result["field_accuracy_gain"] == 0.0

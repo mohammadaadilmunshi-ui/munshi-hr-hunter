@@ -92,21 +92,36 @@ def evaluate_native_replay(
         if not observed_by_id:
             raise ValueError("Replay has no independently observed field shape.")
 
-        def _evaluate(predictions: list[dict[str, Any]], observed_by_id: dict[str, Any] = observed_by_id) -> tuple[int, int]:
+        def _evaluate(
+            predictions: list[dict[str, Any]],
+            observed_by_id: dict[str, Any] = observed_by_id,
+        ) -> tuple[int, int]:
+            """Credit recognition only when observed field metadata is matched.
+
+            A predicted fingerprint with *no properties* is not a successful
+            field match. Missing required attributes must not count as
+            correct by vacuous truth.
+            """
             by_id = {
                 str(row.get("field_fingerprint") or ""): row
                 for row in predictions
-                if _SHA.fullmatch(str(row.get("field_fingerprint") or ""))
+                if isinstance(row, dict)
+                and _SHA.fullmatch(str(row.get("field_fingerprint") or ""))
             }
             correct = 0
+            keys = ("required", "editable", "has_value", "option_count")
             for fingerprint, observed_field in observed_by_id.items():
                 candidate = by_id.get(fingerprint)
                 if candidate is None:
                     continue
-                keys = ("required", "editable", "has_value", "option_count")
-                if all(
-                    key not in candidate or candidate[key] == observed_field.get(key)
-                    for key in keys
+                comparable = [key for key in keys if key in observed_field]
+                if (
+                    comparable
+                    and all(
+                        key in candidate
+                        and candidate[key] == observed_field[key]
+                        for key in comparable
+                    )
                 ):
                     correct += 1
             extras = len(set(by_id) - set(observed_by_id))

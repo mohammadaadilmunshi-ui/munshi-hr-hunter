@@ -364,7 +364,16 @@ def render_workspace(job_id: int) -> None:
     flow = product_application_flow_v2.flow_for_job(int(job_id), summary=True)
     connection = get_connection()
     try:
-        row = connection.execute("SELECT * FROM jobs WHERE id=?", (int(job_id),)).fetchone()
+        try:
+            row = connection.execute(
+                "SELECT * FROM jobs WHERE id=?", (int(job_id),)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            # A fresh/unmigrated dashboard or compact application review must
+            # remain usable without a broken engine panel. Never initialize
+            # tables as a side effect of a read-only UI render.
+            st.caption("Application engine is unavailable until job data is restored.")
+            return
         if row is None:
             return
         job = dict(row)
