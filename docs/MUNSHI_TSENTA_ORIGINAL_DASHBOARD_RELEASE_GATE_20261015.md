@@ -117,3 +117,15 @@ The Native ATS browser completion, actual Tsenta authorization, secure
 Cloudflare-to-original-dashboard routing, installed extension version
 reconciliation, and independent employer receipt evidence remain unverified.
 No irreversible live submit is authorized by the above read-only work.
+
+### Docker env propagation correction
+
+The original dashboard Hunter Compose now passes four new server-side keys:
+MUNSHI_HUNTER_STATUS_BRIDGE_SECRET, MUNSHI_TSENTA_OAUTH_REDIRECT_URI,
+MUNSHI_TSENTA_OAUTH_CLIENT_ID, and MUNSHI_TSENTA_OAUTH_CALLBACK_VERIFIED.
+All default to empty/false (no status authorization, no OAuth connect).
+The release operator must separately provision high-entropy credentials in
+Netcup's protected runtime env, and set the OAuth ingress verification flag
+only AFTER the exact original-dashboard HTTPS callback is externally proven.
+The Apply owner workspace gets the same independently scoped status-bridge
+credential in private server settings; the browser extension never sees it.

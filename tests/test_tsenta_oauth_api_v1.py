@@ -65,3 +65,26 @@ def test_api_verify_failure_is_safe(monkeypatch):
         api.verify_tsenta_authorization()
     assert error.value.status_code==409
     assert "internal-private-error" not in str(error.value.detail)
+
+
+
+def test_compose_forwards_oauth_and_status_only_secret_fail_closed():
+    from pathlib import Path
+
+    source = Path("compose.yaml").read_text()
+    for name in (
+        "MUNSHI_HUNTER_STATUS_BRIDGE_SECRET",
+        "MUNSHI_TSENTA_OAUTH_REDIRECT_URI",
+        "MUNSHI_TSENTA_OAUTH_CLIENT_ID",
+        "MUNSHI_TSENTA_OAUTH_CALLBACK_VERIFIED",
+    ):
+        assert f"      {name}: " in source
+    prefix = chr(36)
+    assert (
+        "MUNSHI_TSENTA_OAUTH_CALLBACK_VERIFIED: "
+        + prefix + "{MUNSHI_TSENTA_OAUTH_CALLBACK_VERIFIED:-false}"
+    ) in source
+    assert (
+        "MUNSHI_HUNTER_STATUS_BRIDGE_SECRET: "
+        + prefix + "{MUNSHI_HUNTER_STATUS_BRIDGE_SECRET:-}"
+    ) in source
