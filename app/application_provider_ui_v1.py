@@ -62,11 +62,19 @@ def provider_readiness(
         "SUBMISSION_UNVERIFIED", "ASSESSMENT", "INTERVIEW",
         "OFFER", "REJECTED", "WITHDRAWN",
     }
+    # Match the authoritative provider router's opt/work-authorization traps,
+    # so the screen cannot show an action that the backend must later refuse.
+    try:
+        already_applied = bool(int(job.get("already_applied") or 0))
+        cpt_trapdoor = bool(int(job.get("cpt_trapdoor") or 0))
+    except (TypeError, ValueError, OverflowError):
+        already_applied, cpt_trapdoor = True, True
     eligible = (
         not completed_or_ambiguous
         and str(job.get("status") or "found") == "found"
         and not job.get("hard_rejection_reason")
-        and not bool(job.get("already_applied"))
+        and not already_applied
+        and not cpt_trapdoor
         and str(job.get("primary_decision") or "") == "ELIGIBLE"
     )
     signed_destination = bool(external_url(employer_apply_url))

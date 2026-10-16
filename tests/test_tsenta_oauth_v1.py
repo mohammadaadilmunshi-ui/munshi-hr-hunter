@@ -255,3 +255,21 @@ def test_unknown_public_callback_never_installs_tables_or_touches_provider(hunte
         )}
     assert after==before
     assert not calls
+
+
+
+def test_oauth_registration_response_is_rejected_before_unbounded_buffering(monkeypatch):
+    monkeypatch.delenv(auth.CLIENT_ID_ENV)
+    calls=[]
+    def oversized(request):
+        calls.append(request)
+        return httpx.Response(
+            200,content=b"{" + b"x"*60_000 + b"}",
+            headers={"content-type":"application/json"},
+        )
+    with (
+        httpx.Client(transport=httpx.MockTransport(oversized)) as client,
+        pytest.raises(auth.TsentaOAuthError, match="safe limits"),
+    ):
+        auth.begin(client=client)
+    assert len(calls)==1

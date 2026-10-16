@@ -1469,3 +1469,44 @@ def get_job_application_provider_status(job_id: int) -> dict[str, Any]:
         "raw_candidate_data_included": False,
         "submission_authority": False,
     }
+
+@app.get(
+    "/api/application-provider-status/by-application/{application_id}",
+    dependencies=[Depends(require_api_secret)],
+)
+def get_application_provider_status_by_application(
+    application_id: str,
+) -> dict[str, Any]:
+    """Read-only Hunter source of truth for an existing Apply/extension ID."""
+    from app import application_provider_router_v1
+    from app.application_provider_ui_v1 import provider_progress
+
+    try:
+        route = application_provider_router_v1.get_route_by_application_id(
+            application_id
+        )
+    except (RuntimeError, ValueError, LookupError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application provider state was not found.",
+        ) from error
+    if route is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application provider state was not found.",
+        )
+    progress = provider_progress(route)
+    return {
+        "version": "munshi-application-provider-summary-v1",
+        "job_id": int(route["job_id"]),
+        "application_id": str(route["application_id"]),
+        "route_id": str(route["route_id"]),
+        "engine": str(route["provider"]),
+        "provider_state": str(route["state"]),
+        "status_label": progress["status"],
+        "employer_receipt_confirmed": progress["is_employer_confirmed"],
+        "attempt_count": int(route["attempt_count"]),
+        "updated_at": route.get("updated_at"),
+        "raw_candidate_data_included": False,
+        "submission_authority": False,
+    }

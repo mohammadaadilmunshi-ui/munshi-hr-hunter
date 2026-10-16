@@ -44,3 +44,35 @@
 **"Source tests passed"** does not mean Netcup OAuth is authorized, a resume was uploaded to an employer, Workday completed, the extension installed, or an employer receipt was confirmed. The release is not finished until those separate real-world checks are evidenced.
 
 The code deliberately declines an unauthenticated / duplicate / unsupported live route and never fabricates a "Submitted" result.
+
+## October 16 hardening and extension contract
+
+- The original dashboard provider selection now mirrors the backend's work
+  authorization hard reject, including cpt_trapdoor and numeric already_applied
+  values. Invalid eligibility flags fail closed rather than enabling a route.
+- Tsenta OAuth and MCP JSON responses are bounded while streaming, not after
+  buffering entire provider payloads. Regression tests cover oversized bodies.
+- The staging callback generator at deploy/netcup/tsenta_callback_caddy_patch.py
+  operates on a copy of the Caddyfile, excludes ONLY the exact OAuth callback
+  from staging Basic Auth, preserves the production site unchanged, and was
+  parser-validated with the installed Caddy CLI against a synthetic fixture.
+  It has NOT been applied to the Netcup Caddyfile.
+- A new read-only Hunter status API resolves by exact existing application_id,
+  tenant-scoped, and never installs schemas on unknown application reads:
+  GET /api/application-provider-status/by-application/{application_id}.
+- The companion Apply repo has a separate clean feature worktree for a
+  server-only Hunter bridge, paired-workspace allowlist, and extension AutoPilot
+  and Diagnostics read-only status. It does not contain Hunter credentials.
+
+### Staging worker evidence (read-only October 16)
+
+- munshi-apply-staging-prepare-worker-1: Exited 137 since October 1;
+  Docker OOMKilled=false.
+- munshi-apply-staging-submit-worker-1: Exited 137 since October 1;
+  Docker OOMKilled=false.
+- munshi-apply-production-submit-worker-1: Exited 137 since October 5;
+  Docker OOMKilled=false.
+- Cause not proven; do not label this as an OOM without more diagnostics.
+  No workers were started, no containers or DBs were mutated.
+- Staging Native Prepare -> Fill -> Review and production independent receipt
+  remain unverified. No real employer submission is proven.

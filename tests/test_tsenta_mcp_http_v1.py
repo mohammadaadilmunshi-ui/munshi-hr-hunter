@@ -64,3 +64,27 @@ def test_provider_tool_error_never_returns_as_valid_profile_data():
         with pytest.raises(TsentaOAuthError) as failure:
             mcp.call_read("get_profile_status")
         assert "private profile" not in str(failure.value)
+
+
+
+def test_mcp_large_json_response_is_bounded():
+    def handler(request):
+        body=json.loads(request.content)
+        if body["method"]=="initialize":
+            return httpx.Response(200,json={"jsonrpc":"2.0","id":body["id"],
+                "result":{"protocolVersion":"2025-11-25"}})
+        if body["method"]=="notifications/initialized":
+            return httpx.Response(202)
+        if body["method"]=="tools/list":
+            return httpx.Response(200,json={"jsonrpc":"2.0","id":body["id"],
+                "result":{"tools":[{"name":"get_profile_status"}]}})
+        return httpx.Response(200,content=b'{"jsonrpc":"2.0","id":'
+            +str(body["id"]).encode()+b',"result":{"content":"'
+            +b"x"*(2_000_001)+b'"}}',headers={"content-type":"application/json"})
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler)) as client,
+        TsentaMcpReadClient("synthetic-bearer",client) as mcp,
+    ):
+        mcp.initialize()
+        with pytest.raises(TsentaOAuthError,match="too large"):
+            mcp.call_read("get_profile_status")

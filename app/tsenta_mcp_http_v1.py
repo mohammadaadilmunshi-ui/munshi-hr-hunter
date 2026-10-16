@@ -72,9 +72,11 @@ class TsentaMcpReadClient:
                     self._session=session
                 content_type=response.headers.get("content-type","").split(";")[0].strip().lower()
                 if content_type=="application/json":
-                    body=response.read()
-                    if len(body)>MAX_RESPONSE_BYTES:
-                        raise TsentaOAuthError("Tsenta MCP response was too large.")
+                    body=bytearray()
+                    for chunk in response.iter_bytes(chunk_size=65536):
+                        body.extend(chunk)
+                        if len(body)>MAX_RESPONSE_BYTES:
+                            raise TsentaOAuthError("Tsenta MCP response was too large.")
                     result=json.loads(body)
                     return self._extract(result, request_id)
                 if content_type=="text/event-stream":

@@ -272,3 +272,47 @@ def test_status_codes_fail_closed_and_error_details_are_redacted(hunter_db, monk
     assert stored["last_error_code"] == "PROVIDER_FAILURE_UNCLASSIFIED"
     assert "candidate@example.com" not in str(stored)
     assert "private.example" not in str(stored)
+
+
+
+def test_readonly_route_lookup_matches_exact_existing_extension_application(
+    hunter_db, monkeypatch
+):
+    del hunter_db
+    url = "https://jobs.lever.co/example/provider-bridge"
+    job_id = _job(fingerprint="bridge-lookup", url=url)
+    monkeypatch.setattr(router, "_preflight_binding", lambda p: _binding(job_id,p))
+    route = router.select_provider(
+        job_id=job_id, provider="NATIVE", verified_employer_url=url,
+        preflight_package_id="package-bridge", idempotency_key="route-bridge",
+    )
+    linked = router.get_route_by_application_id(f"application-{job_id}")
+    assert linked is not None
+    assert linked["route_id"] == route["route_id"]
+    assert "provider_application_id_sha256" not in linked
+    assert router.get_route_by_application_id("application-not-this-one") is None
+    with pytest.raises(ValueError):
+        router.get_route_by_application_id("../../secrets")
+
+
+def test_unknown_extension_application_id_is_readonly_on_unmigrated_db(hunter_db):
+    del hunter_db
+    connection = database.get_connection()
+    try:
+        connection.execute("DROP TABLE IF EXISTS application_provider_route_events_v1")
+        connection.execute("DROP TABLE IF EXISTS application_provider_routes_v1")
+        connection.commit()
+        before={row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )}
+    finally:
+        connection.close()
+    assert router.get_route_by_application_id("application-not-registered") is None
+    connection = database.get_connection()
+    try:
+        after={row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )}
+    finally:
+        connection.close()
+    assert before == after

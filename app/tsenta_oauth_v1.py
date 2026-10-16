@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import secrets
 import sqlite3
@@ -93,21 +94,31 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 def _provider_post(client: httpx.Client, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    # Reject redirects and enforce provider hostname; no arbitrary URL accepted.
-    response = client.post(
-        OAUTH_BASE + path,
-        data=payload if path.endswith("/token") else None,
-        json=payload if not path.endswith("/token") else None,
-        headers={"Accept": "application/json"},
-        timeout=15,
-        follow_redirects=False,
-    )
-    if response.status_code not in (200, 201):
-        raise TsentaOAuthError("Tsenta authorization server rejected the request.")
-    if len(response.content) > 50_000:
-        raise TsentaOAuthError("Tsenta authorization response exceeded safe limits.")
+    """Only supported provider endpoints, streamed with a hard response cap."""
+    if path not in {"/oauth/register", "/oauth/token", "/oauth/revoke"}:
+        raise TsentaOAuthError("Unsupported Tsenta OAuth endpoint.")
     try:
-        data = response.json()
+        with client.stream(
+            "POST", OAUTH_BASE + path,
+            data=payload if path == "/oauth/token" else None,
+            json=payload if path != "/oauth/token" else None,
+            headers={"Accept": "application/json"},
+            timeout=15,
+            follow_redirects=False,
+        ) as response:
+            if response.status_code not in (200, 201):
+                raise TsentaOAuthError("Tsenta authorization server rejected the request.")
+            body = bytearray()
+            for chunk in response.iter_bytes(chunk_size=4096):
+                body.extend(chunk)
+                if len(body) > 50_000:
+                    raise TsentaOAuthError(
+                        "Tsenta authorization response exceeded safe limits."
+                    )
+    except httpx.HTTPError as error:
+        raise TsentaOAuthError("Tsenta authorization server was unavailable.") from error
+    try:
+        data = json.loads(body)
     except ValueError as error:
         raise TsentaOAuthError("Tsenta authorization server returned invalid JSON.") from error
     if not isinstance(data, dict):

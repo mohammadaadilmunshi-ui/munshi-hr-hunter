@@ -46,3 +46,41 @@ def test_shared_provider_summary_requires_independent_receipt_evidence(monkeypat
 def test_product_flow_selects_the_actual_receipt_digest_column():
     source=inspect.getsource(flow._provider_route)
     assert "receipt_evidence_digest" in source
+
+
+
+def test_extension_application_lookup_returns_exact_sanitized_state(monkeypatch):
+    monkeypatch.setenv("HUNTER_API_SECRET","synthetic-only-api-secret")
+    api=importlib.import_module("app.api")
+    from app import application_provider_router_v1 as router
+    monkeypatch.setattr(router,"get_route_by_application_id",
+        lambda _value:{
+            "route_id":"route-safe",
+            "application_id":"application-example",
+            "job_id":45,
+            "provider":"NATIVE",
+            "state":"PROVIDER_SUBMITTED",
+            "attempt_count":2,
+            "updated_at":"2026-10-15T00:00:00Z",
+            "receipt_evidence_digest":None,
+            "private_response":"candidate-secret",
+        })
+    result=api.get_application_provider_status_by_application("application-example")
+    assert result["employer_receipt_confirmed"] is False
+    assert result["submission_authority"] is False
+    assert result["application_id"]=="application-example"
+    assert "candidate-secret" not in str(result)
+
+
+def test_extension_lookup_missing_route_is_generic_404(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    monkeypatch.setenv("HUNTER_API_SECRET","synthetic-only-api-secret")
+    api=importlib.import_module("app.api")
+    from app import application_provider_router_v1 as router
+    monkeypatch.setattr(router,"get_route_by_application_id",lambda _:None)
+    with pytest.raises(HTTPException) as error:
+        api.get_application_provider_status_by_application("application-not-found")
+    assert error.value.status_code == 404
+    assert "not found" in error.value.detail.lower()

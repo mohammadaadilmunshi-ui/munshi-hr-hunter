@@ -21,7 +21,7 @@ from app import application_preflight_package_v1 as preflight_v1
 from app.database import get_connection
 from app.linkedin_employer_link_resolver_v1 import external_url
 from app.linkedin_verified_url_evidence_v5 import latest_verified_for_job
-from app.tenant_foundation import current_owner
+from app.tenant_foundation import current_owner, current_owner_readonly
 from app.tenant_foundation import ensure_schema as ensure_tenant_schema
 
 ROUTER_VERSION = "munshi-application-provider-router-v1"
@@ -427,6 +427,37 @@ def get_route(route_id: str) -> dict[str, Any]:
         if row is None:
             raise LookupError("Provider route was not found for the current owner.")
         return dict(row)
+    finally:
+        connection.close()
+
+
+def get_route_by_application_id(application_id: str) -> dict[str, Any] | None:
+    """Tenant-scoped read-only lookup for the existing extension application ID.
+
+    Unlike get_route, this does not install schemas or write audit records.
+    It cannot identify jobs by company/title or create a new provider route.
+    """
+    raw = str(application_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", raw):
+        raise ValueError("A bounded application identity is required.")
+    connection = get_connection()
+    try:
+        installed = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='application_provider_routes_v1'"
+        ).fetchone()
+        if installed is None:
+            return None
+        owner = current_owner_readonly(connection)
+        row = connection.execute(
+            """SELECT route_id, application_id, job_id, provider, state,
+                      attempt_count, updated_at, receipt_evidence_digest
+                 FROM application_provider_routes_v1
+                WHERE tenant_id=? AND user_id=? AND application_id=?
+                ORDER BY datetime(updated_at) DESC, rowid DESC LIMIT 1""",
+            (owner.tenant_id, owner.user_id, raw),
+        ).fetchone()
+        return dict(row) if row else None
     finally:
         connection.close()
 

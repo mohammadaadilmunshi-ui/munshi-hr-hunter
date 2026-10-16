@@ -239,3 +239,39 @@ def test_streamlit_dashboard_summary_is_readonly(monkeypatch):
     assert any(m.label == "Learning signals" and str(m.value) == "17"
                for m in app.metric)
     assert not list(app.button)
+
+
+
+def test_provider_ui_respects_work_authorization_trapdoor():
+    job = eligible_job() | {"cpt_trapdoor": 1}
+    state = ui.provider_readiness(
+        job=job,
+        flow=ready_flow(),
+        employer_apply_url="https://jobs.lever.co/example/verified-role",
+        tsenta_backend_connected=True,
+    )
+    assert not state["can_select_native"]
+    assert not state["can_select_tsenta"]
+    assert "eligibility" in state["reason"].casefold()
+
+
+def test_provider_ui_accepts_string_zero_without_falsely_marking_applied():
+    job = eligible_job() | {"already_applied": "0", "cpt_trapdoor": "0"}
+    state = ui.provider_readiness(
+        job=job,
+        flow=ready_flow(),
+        employer_apply_url="https://jobs.lever.co/example/verified-role",
+        tsenta_backend_connected=True,
+    )
+    assert state["can_select_native"]
+
+
+def test_provider_ui_fails_closed_on_invalid_eligibility_flag():
+    job = eligible_job() | {"already_applied": "untrusted-value"}
+    state = ui.provider_readiness(
+        job=job,
+        flow=ready_flow(),
+        employer_apply_url="https://jobs.lever.co/example/verified-role",
+        tsenta_backend_connected=True,
+    )
+    assert not state["can_select_native"]
