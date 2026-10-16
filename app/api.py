@@ -360,6 +360,26 @@ def require_api_secret(
         )
 
 
+def require_status_bridge_secret(
+    x_munshi_status_bridge_secret: str | None = Header(default=None),
+) -> None:
+    """Authorize only the extension's read-only application status endpoint.
+
+    This credential never grants Hunter's other API operations. A shared
+    owner-workspace bridge must not possess the general HUNTER_API_SECRET.
+    """
+    expected = str(os.getenv("MUNSHI_HUNTER_STATUS_BRIDGE_SECRET") or "").strip()
+    if (
+        len(expected) < 32
+        or not x_munshi_status_bridge_secret
+        or not secrets.compare_digest(x_munshi_status_bridge_secret, expected)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Application status bridge is not authorized.",
+        )
+
+
 def serialize_row(row: Any) -> dict[str, Any]:
     return dict(row) if row is not None else {}
 
@@ -1472,7 +1492,7 @@ def get_job_application_provider_status(job_id: int) -> dict[str, Any]:
 
 @app.get(
     "/api/application-provider-status/by-application/{application_id}",
-    dependencies=[Depends(require_api_secret)],
+    dependencies=[Depends(require_status_bridge_secret)],
 )
 def get_application_provider_status_by_application(
     application_id: str,

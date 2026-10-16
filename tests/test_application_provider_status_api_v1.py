@@ -84,3 +84,63 @@ def test_extension_lookup_missing_route_is_generic_404(monkeypatch):
         api.get_application_provider_status_by_application("application-not-found")
     assert error.value.status_code == 404
     assert "not found" in error.value.detail.lower()
+
+
+
+def test_status_bridge_secret_is_scoped_and_fail_closed(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    monkeypatch.delenv("MUNSHI_HUNTER_STATUS_BRIDGE_SECRET", raising=False)
+    api = importlib.import_module("app.api")
+    with pytest.raises(HTTPException) as missing:
+        api.require_status_bridge_secret("fake-but-long-secret-for-tests")
+    assert missing.value.status_code == 401
+
+    correct = "synthetic-status-only-" + "q" * 48
+    monkeypatch.setenv("MUNSHI_HUNTER_STATUS_BRIDGE_SECRET", correct)
+    api.require_status_bridge_secret(correct)
+    with pytest.raises(HTTPException) as wrong:
+        api.require_status_bridge_secret("synthetic-other-" + "q" * 48)
+    assert wrong.value.status_code == 401
+
+    from fastapi.routing import APIRoute
+    route = next(
+        value for value in api.app.routes
+        if isinstance(value, APIRoute)
+        and value.path == "/api/application-provider-status/by-application/{application_id}"
+    )
+    declared = {dependency.call.__name__ for dependency in route.dependant.dependencies}
+    assert "require_status_bridge_secret" in declared
+    assert "require_api_secret" not in declared
+
+
+
+def test_bridge_secret_only_works_for_readonly_status_http_route(
+    hunter_db, monkeypatch
+):
+    del hunter_db
+    from fastapi.testclient import TestClient
+
+    expected = "synthetic-specific-status-token-" + "z" * 48
+    monkeypatch.setenv("MUNSHI_HUNTER_STATUS_BRIDGE_SECRET", expected)
+    monkeypatch.setenv("HUNTER_API_SECRET", "fake-general-secret")
+    api = importlib.import_module("app.api")
+    client = TestClient(api.app)
+
+    path = "/api/application-provider-status/by-application/application-no-route"
+    assert client.get(path).status_code == 401
+    assert client.get(path, headers={"X-Hunter-Secret": expected}).status_code == 401
+
+    authorized = client.get(
+        path, headers={"X-Munshi-Status-Bridge-Secret": expected}
+    )
+    assert authorized.status_code == 404
+    assert "not found" in authorized.json()["detail"].lower()
+
+    # The status-only credential MUST NOT authorize general Hunter APIs.
+    other = client.get(
+        "/api/jobs/7/application-flow",
+        headers={"X-Munshi-Status-Bridge-Secret": expected},
+    )
+    assert other.status_code == 401

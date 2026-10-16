@@ -76,3 +76,44 @@ The code deliberately declines an unauthenticated / duplicate / unsupported live
   No workers were started, no containers or DBs were mutated.
 - Staging Native Prepare -> Fill -> Review and production independent receipt
   remain unverified. No real employer submission is proven.
+
+
+## October 16: original dashboard, not a replacement staging website
+
+**Customer-facing release target: https://dashboard.munshi.systems only.**
+All staging infrastructure is an isolated internal acceptance environment. No
+new staging customer UI is part of the product or rollout.
+
+The exact current production Caddyfile was streamed in read-only mode through
+deploy/netcup/original_dashboard_callback_caddy_patch.py and verified using
+Caddy's config adapter. The generator adds only two FastAPI routes under the
+**original** dashboard hostname:
+- The exact Tsenta OAuth GET callback path, required to return from consent.
+- A GET-only /api/application-provider-status/by-application/* proxy to the
+  existing Hunter FastAPI upstream, requiring the dedicated
+  X-Munshi-Status-Bridge-Secret header.
+
+Other dashboard paths remain behind existing HTTP Basic Auth. The preview
+never edits the live file or restarts Caddy. It is not yet enabled.
+
+**Credential separation:** Cloudflare's authenticated Apply owner workspace
+gets only MUNSHI_HUNTER_STATUS_BRIDGE_SECRET (minimum 32 chars), unrelated
+to HUNTER_API_SECRET. Only the status-by-application handler accepts it.
+Live TestClient checks prove a missing or incorrect credential fails HTTP 401,
+a valid status credential cannot access the general application flow API,
+and an unknown exact application returns 404 without writing DB tables.
+
+**Unsafe staging worker discovery:** October 16 Netcup Docker inspection found
+stopped staging prepare/submit containers with
+MUNSHI_FINAL_SUBMIT_ENABLED=true and
+MUNSHI_APPLY_PRODUCTION_SUBMIT_AUTHORITY_ENABLED=true. They are stopped and
+Docker did not report OOMKilled. They MUST NOT be restarted unchanged. The
+companion Apply source was patched to hard-code false for all irreversible
+staging submission flags, including submit-worker profiles, regardless of
+external runtime env. The preexisting containers have not been recreated.
+The original production site was left untouched.
+
+The Native ATS browser completion, actual Tsenta authorization, secure
+Cloudflare-to-original-dashboard routing, installed extension version
+reconciliation, and independent employer receipt evidence remain unverified.
+No irreversible live submit is authorized by the above read-only work.
