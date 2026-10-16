@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import inspect
 
+import app.application_provider_router_v1  # noqa: F401
 from app import application_provider_ui_v1 as ui
 from app import product_pages, unified_job_workspaces_v1
+
+# Import the router before Streamlit tests temporarily replace database.get_connection.
+# Otherwise its module-level database alias can retain a test fake after monkeypatch
+# teardown and contaminate later API tests in focused test-order runs.
 
 
 def eligible_job(source="manual"):

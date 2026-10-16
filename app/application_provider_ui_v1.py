@@ -422,12 +422,14 @@ def render_workspace(job_id: int) -> None:
 
         st.caption(state["reason"])
         st.caption("Tsenta: backend connection not configured. Local Codex OAuth is not server access.")
-        provider = st.radio(
+        provider_label = st.radio(
             "Execution provider",
-            options=("NATIVE", "TSENTA"),
-            format_func=lambda value: PROVIDER_LABELS[value],
+            options=tuple(PROVIDER_LABELS.values()),
             horizontal=True,
             key=f"application_provider_choice_{int(job_id)}",
+        )
+        provider = next(
+            key for key, label in PROVIDER_LABELS.items() if label == provider_label
         )
         if provider == "TSENTA":
             st.warning(
