@@ -132,7 +132,7 @@ def _toggle_job_skipped(job_id: int, currently_skipped: bool) -> None:
 def _application_flow(job_id: int) -> dict[str, Any]:
     try:
         from app import product_application_flow_v2 as complete_loop
-        from app import application_archive_v1
+        from app import application_archive_v1 as application_archive
 
         result = complete_loop.flow_for_job(int(job_id))
         prepare = dict(result.get("prepare") or {})
@@ -284,6 +284,9 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
     tags = [row.get("remote_type"), row.get("employment_type"), row.get("salary_raw")]
     if flow.get("state"):
         tags.append(flow.get("display_status"))
+    provider_route = flow.get("provider_route") or {}
+    if provider_route.get("provider") in {"NATIVE", "TSENTA"}:
+        tags.append("Engine: " + ("Tsenta" if provider_route["provider"] == "TSENTA" else "MUNSHI"))
     if row.get("saved"):
         tags.append("Saved")
     tags_html = "".join(f'<span class="tag">{esc(tag)}</span>' for tag in tags if str(tag or "").strip())
@@ -397,6 +400,14 @@ def _job_detail_dialog(job_id: int) -> None:
     st.caption(f"{row.get('company_name') or 'Company not recorded'} · {row.get('location_raw') or 'Location unknown'}")
     st.caption(f"Apply via: {destination.apply_via} · Source: {destination.source}")
     flow = _application_flow(job_id)
+    from app.application_provider_ui_v1 import provider_progress
+
+    provider_summary = provider_progress(flow.get("provider_route"))
+    st.caption(
+        f"Application engine: {provider_summary['provider']} · "
+        f"{provider_summary['status']} · "
+        f"Employer receipt: {provider_summary['receipt']}"
+    )
     st.markdown(
         f"""<div class="product-callout"><div>
         <strong>Application · {esc(flow.get('display_status'))}</strong>
@@ -590,6 +601,9 @@ def dashboard() -> None:
     activity = activity_summary()
     label = {"unlimited": "Unlimited", "custom_limit": f"Custom target: {policy.get('daily_limit')}", "paused": "Paused", "pause_after_batch": "Pausing after current batch"}[policy["mode"]]
     filters = _search_filters("dashboard")
+    from app.application_provider_ui_v1 import render_dashboard_summary
+
+    render_dashboard_summary()
     with st.container(key="product_dashboard_metrics"):
         summary = st.columns(5, gap="small")
         summary[0].metric("Prepared today", activity["prepared_today"])

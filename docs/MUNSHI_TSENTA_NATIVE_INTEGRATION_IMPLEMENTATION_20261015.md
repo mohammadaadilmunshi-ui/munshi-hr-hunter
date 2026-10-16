@@ -317,3 +317,49 @@ provider `COMPLETED` advances MUNSHI only to `PROVIDER_SUBMITTED`, never
 to `EMPLOYER_CONFIRMED`. An independent receipt process remains a required
 future integration. The reconciler is a tested library function, not a
 configured Netcup scheduled worker.
+
+## Original Dashboard UI/UX implementation
+
+The Tsenta/Native controls are integrated into the **original MUNSHI Hunter
+dashboard**, not an alternative standalone Tsenta dashboard.
+
+User journey:
+
+1. **Dashboard:** A compact Application engines panel shows that MUNSHI Native
+   preparation exists, Tsenta backend connection is pending, and displays
+   privacy-minimized form-observation/event counts from the user's tenant.
+2. **Job cards and Job details:** Existing Original Job, employer Apply Job,
+   and Prepare application actions remain intact. Already-routed jobs display
+   their owning engine; job details display separate engine/progress and
+   employer-receipt wording without exposing provider IDs.
+3. **Applications workspace:** The existing Prepare/Review/Apply/Receipt
+   sequence remains authoritative. An Application engine section renders
+   the selected provider, provider-progress state, verification status,
+   and safe diagnostics (attempt count, never raw answers).
+4. **Selection preconditions:** No route is created when a job is ineligible,
+   a signed LinkedIn employer destination is absent, a preflight package is
+   missing or not READY_TO_APPLY, an application is already submitted, or
+   an exact opening is already reserved.
+5. **Tsenta backend disconnected:** The provider can be inspected in the UI,
+   but the Save action is disabled. Local Codex OAuth is never presented as
+   an authenticated Netcup backend connection.
+6. **Eligible Native choice:** Only a deliberate, checkbox-confirmed Save
+   action may create one durable provider ownership record. It never starts
+   a browser, calls MCP, submits, or claims an employer receipt.
+
+UI code:
+- `app/application_provider_ui_v1.py`
+- `app/product_pages.py`
+- `app/unified_job_workspaces_v1.py`
+
+UI regression coverage:
+- `tests/test_application_provider_ui_v1.py`
+- Real Streamlit `AppTest` smoke validates the radio choice and disabled
+  Tsenta action before supported backend authorization, without real
+  applications or database mutations.
+
+**UI deployment gate:** Do not deploy this source to the original dashboard
+until PR #103 and #104 pass CI, the new migration is proven in isolated staging
+with rollback, and the original-dashboard staging URL has been smoke-tested.
+The initial UI intentionally stops at read-only learning and provider
+reservation; real execution is not yet available.

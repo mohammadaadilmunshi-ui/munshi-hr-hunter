@@ -876,6 +876,10 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
             _render_application_header(selected)
             _render_application_visibility_actions(selected)
             _render_application_state(app_workspace, selected)
+            if not selected.archived:
+                from app.application_provider_ui_v1 import render_workspace
+
+                render_workspace(selected.job_id)
 
 
 def install_unified_job_workspaces(product_pages: Any, application_workspace_page: Any) -> None:
