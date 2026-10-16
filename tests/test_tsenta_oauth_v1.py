@@ -233,3 +233,25 @@ def test_oauth_migration_059_is_additive_and_idempotent(hunter_db):
         assert "tsenta_oauth_connections_v1" in tables
         assert conn.execute("SELECT marker FROM migration_sentinel").fetchone()[0]=="keep"
         assert conn.execute("PRAGMA integrity_check").fetchone()[0]=="ok"
+
+
+
+def test_unknown_public_callback_never_installs_tables_or_touches_provider(hunter_db):
+    del hunter_db
+    from app.database import get_connection
+
+    client,calls=make_client()
+    with get_connection() as conn:
+        before={row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )}
+    assert "tsenta_oauth_intents_v1" not in before
+    with pytest.raises(auth.TsentaOAuthError,match="not initiated"):
+        auth.complete(state="synthetic-long-invalid-callback-state",
+                      code="synthetic-code",client=client)
+    with get_connection() as conn:
+        after={row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )}
+    assert after==before
+    assert not calls

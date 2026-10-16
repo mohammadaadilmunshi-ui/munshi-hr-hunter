@@ -188,8 +188,21 @@ def complete(*, state: str, code: str, client: httpx.Client | None = None) -> di
     digest = hashlib.sha256(state.encode()).hexdigest()
     conn = get_connection()
     try:
-        ensure_schema(conn)
-        conn.commit()
+        installed = conn.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type='table' AND name='tsenta_oauth_intents_v1'"
+        ).fetchone()
+        if installed is None:
+            raise TsentaOAuthError("Tsenta authorization was not initiated.")
+        initial = conn.execute(
+            "SELECT consumed_at,expires_at FROM tsenta_oauth_intents_v1 "
+            "WHERE state_sha256=?", (digest,)
+        ).fetchone()
+        # Unknown callback state is read-only. Do not acquire a write lock.
+        if initial is None or initial["consumed_at"] is not None:
+            raise TsentaOAuthError("Tsenta authorization state is invalid or used.")
+        if datetime.fromisoformat(initial["expires_at"]) <= _now():
+            raise TsentaOAuthError("Tsenta authorization state has expired.")
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT * FROM tsenta_oauth_intents_v1 WHERE state_sha256=?", (digest,)
@@ -199,7 +212,8 @@ def complete(*, state: str, code: str, client: httpx.Client | None = None) -> di
         if datetime.fromisoformat(row["expires_at"]) <= _now():
             raise TsentaOAuthError("Tsenta authorization state has expired.")
         conn.execute(
-            "UPDATE tsenta_oauth_intents_v1 SET consumed_at=? WHERE state_sha256=? AND consumed_at IS NULL",
+            "UPDATE tsenta_oauth_intents_v1 SET consumed_at=? "
+            "WHERE state_sha256=? AND consumed_at IS NULL",
             (_now().isoformat(),digest),
         )
         conn.commit()  # Consume before network call; uncertain retry must start afresh.

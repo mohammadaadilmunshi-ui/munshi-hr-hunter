@@ -1435,3 +1435,37 @@ def disconnect_tsenta_authorization() -> dict[str, bool]:
             status_code=status.HTTP_409_CONFLICT,
             detail="Tsenta connection could not be disconnected safely.",
         ) from error
+
+
+@app.get(
+    "/api/jobs/{job_id}/application-provider-status",
+    dependencies=[Depends(require_api_secret)],
+)
+def get_job_application_provider_status(job_id: int) -> dict[str, Any]:
+    """Single redacted provider-state contract for dashboard/extension clients."""
+    from app import product_application_flow_v2
+    from app.application_provider_ui_v1 import provider_progress
+
+    try:
+        flow = product_application_flow_v2.flow_for_job(int(job_id), summary=True)
+    except (LookupError, RuntimeError, ValueError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Application provider status is temporarily unavailable.",
+        ) from error
+    route = flow.get("provider_route") or {}
+    progress = provider_progress(route)
+    return {
+        "version": "munshi-application-provider-summary-v1",
+        "job_id": int(job_id),
+        "route_id": str(route.get("route_id") or "") or None,
+        "application_id": str(route.get("application_id") or "") or None,
+        "engine": str(route.get("provider") or "") or None,
+        "provider_state": str(route.get("state") or "") or None,
+        "status_label": progress["status"],
+        "employer_receipt_confirmed": progress["is_employer_confirmed"],
+        "attempt_count": int(route.get("attempt_count") or 0),
+        "updated_at": route.get("updated_at"),
+        "raw_candidate_data_included": False,
+        "submission_authority": False,
+    }

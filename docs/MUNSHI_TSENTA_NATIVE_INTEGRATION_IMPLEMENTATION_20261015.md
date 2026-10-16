@@ -435,3 +435,24 @@ tool results, forbidden execution tools, API callbacks and migration replay.
 
 **The original dashboard code is a reviewed development candidate, not a
 completed production application-execution service.**
+
+
+## Final cross-surface provider status contract
+
+Hunter now exposes the authenticated, read-only
+`GET /api/jobs/{job_id}/application-provider-status` endpoint, using the
+identical owner/state source as the original Applications workspace. Only
+route ID, application ID, provider engine, bounded machine state, attempt
+count, last update and separately verified employer receipt status are
+published; raw ATS values, profile content and provider identities are not.
+
+The original dashboard's internal state projection was fixed to select
+`receipt_evidence_digest` for a genuinely independent confirmation label.
+There is **no claim** that the unmodified extension consumes this contract.
+A clean Apply extension feature branch and staging version-consistency proof
+are required before stating extension/dashboard synchronization is complete.
+
+The public Tsenta OAuth callback now preflights unknown state with read-only
+queries and never installs tables or obtains a write lock for arbitrary
+requests. Source tests prove invalid calls do not trigger external provider
+calls or change database schema.

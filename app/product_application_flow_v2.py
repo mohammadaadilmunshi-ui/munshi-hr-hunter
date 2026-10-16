@@ -480,7 +480,8 @@ def _provider_route(job_id: int) -> dict[str, Any] | None:
                       destination_evidence,provider,state,preflight_package_id,
                       package_digest,candidate_profile_digest,resume_sha256,
                       attempt_count,max_attempts,next_attempt_at,last_error_code,
-                      receipt_method,provider_submitted_at,employer_confirmed_at,
+                      receipt_method,receipt_evidence_digest,
+                      provider_submitted_at,employer_confirmed_at,
                       updated_at
                  FROM application_provider_routes_v1
                 WHERE tenant_id=? AND user_id=? AND job_id=?
