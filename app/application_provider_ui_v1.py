@@ -144,6 +144,99 @@ def learning_summary() -> dict[str, int]:
         connection.close()
 
 
+def render_connection_panel() -> None:
+    """Explicit OAuth actions; never auto-connect or copy a local Codex grant."""
+    import os
+
+    import streamlit as st
+
+    from app import tsenta_oauth_v1
+
+    with st.expander("Tsenta account connection", expanded=False):
+        try:
+            current = tsenta_oauth_v1.status()
+        except (sqlite3.OperationalError, RuntimeError, ValueError, OSError):
+            current = {"authorized": False, "profile_read_verified": False}
+        authorized = current.get("authorized") is True
+        verified = current.get("profile_read_verified") is True
+        if not authorized:
+            st.caption("No Netcup Tsenta account has been connected.")
+            ingress = (
+                str(os.getenv(tsenta_oauth_v1.INGRESS_ENV) or "").lower()
+                in {"true", "1", "yes"}
+            )
+            if not ingress:
+                st.info(
+                    "Connect is unavailable until the dashboard HTTPS callback "
+                    "is verified in staging."
+                )
+            elif st.button(
+                "Connect Tsenta securely",
+                key="tsenta_oauth_connect",
+                use_container_width=True,
+            ):
+                try:
+                    intent = tsenta_oauth_v1.begin()
+                    st.session_state["_tsenta_oauth_authorization_url"] = (
+                        intent["authorization_url"]
+                    )
+                except (RuntimeError, ValueError):
+                    st.error(
+                        "Tsenta authorization could not start safely. "
+                        "Review the connection configuration."
+                    )
+            pending = st.session_state.get("_tsenta_oauth_authorization_url")
+            if pending and ingress:
+                st.link_button(
+                    "Continue to Tsenta authorization",
+                    pending,
+                    use_container_width=True,
+                )
+                st.caption("Approve access on Tsenta; you return to this dashboard.")
+        else:
+            st.success(
+                "Backend profile verified."
+                if verified
+                else "OAuth connected. Verify profile access to finish setup."
+            )
+            if not verified and st.button(
+                "Verify Tsenta profile access",
+                key="tsenta_oauth_verify",
+                use_container_width=True,
+            ):
+                try:
+                    tsenta_oauth_v1.verify_profile()
+                except (RuntimeError, ValueError):
+                    st.error(
+                        "The Tsenta account could not be verified. "
+                        "No provider application was started."
+                    )
+                else:
+                    st.session_state.pop("_tsenta_oauth_authorization_url", None)
+                    st.rerun()
+            st.caption(
+                "OAuth connection alone does not enable application submission. "
+                "The verified execution worker remains a separate release gate."
+            )
+            approved = st.checkbox(
+                "Disconnect this local MUNSHI account connection",
+                key="tsenta_oauth_disconnect_confirm",
+            )
+            if st.button(
+                "Disconnect",
+                key="tsenta_oauth_disconnect",
+                disabled=not approved,
+                use_container_width=True,
+            ):
+                tsenta_oauth_v1.disconnect()
+                st.session_state.pop("_tsenta_oauth_authorization_url", None)
+                st.info(
+                    "Local credentials disconnected. Review Tsenta account "
+                    "settings separately to revoke provider-side access."
+                )
+                st.rerun()
+
+
 def render_dashboard_summary() -> None:
     """Compact operator status on the original dashboard, with no account reads."""
     import streamlit as st
@@ -154,7 +247,15 @@ def render_dashboard_summary() -> None:
         native.markdown("**MUNSHI Native**")
         native.caption("Existing preparation engine")
         tsenta.markdown("**Tsenta**")
-        tsenta.caption("Backend connection required")
+        from app import tsenta_backend_readiness_v1
+
+        connection = tsenta_backend_readiness_v1.connection_status()
+        if connection["profile_read_verified"]:
+            tsenta.caption("Profile verified · execution pending")
+        elif connection["authenticated_backend"]:
+            tsenta.caption("Connected · verification pending")
+        else:
+            tsenta.caption("Backend connection required")
         try:
             totals = learning_summary()
         except (sqlite3.OperationalError, LookupError, PermissionError, RuntimeError):
@@ -164,6 +265,7 @@ def render_dashboard_summary() -> None:
             "Engine selection is in Applications. "
             "No engine is authorized to submit from this panel."
         )
+        render_connection_panel()
 
 
 def render_workspace(job_id: int) -> None:

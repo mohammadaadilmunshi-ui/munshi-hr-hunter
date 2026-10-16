@@ -11,6 +11,7 @@ from app import tsenta_backend_readiness_v1
 def test_backend_never_confuses_local_codex_auth_with_server_authorization(monkeypatch):
     monkeypatch.setenv("MUNSHI_TSENTA_EXTERNAL_EXECUTION_ENABLED", "true")
     monkeypatch.setenv("MUNSHI_EXTERNAL_APPLICATION_EXECUTION_ENABLED", "true")
+    monkeypatch.setattr("app.tsenta_oauth_v1.status", lambda: {"authorized": False, "profile_read_verified": False})
     state = tsenta_backend_readiness_v1.connection_status()
     assert state["authenticated_backend"] is False
     assert state["execution_ready"] is False

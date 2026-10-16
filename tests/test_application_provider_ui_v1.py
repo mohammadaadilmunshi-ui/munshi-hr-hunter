@@ -140,6 +140,11 @@ def test_streamlit_workspace_shows_disabled_tsenta_when_backend_absent(monkeypat
     """Exercise the actual initial-dashboard control tree without touching DB."""
     from streamlit.testing.v1 import AppTest
 
+    # The UI harness uses a fake jobs DB; never read real OAuth state.
+    monkeypatch.setattr(
+        "app.tsenta_oauth_v1.status",
+        lambda: {"authorized": False, "profile_read_verified": False},
+    )
     from app import database
     from app import product_application_flow_v2 as flow
 
@@ -174,6 +179,11 @@ def test_streamlit_workspace_shows_disabled_tsenta_when_backend_absent(monkeypat
 def test_streamlit_reserved_route_is_readonly_and_has_separate_receipt(monkeypatch):
     from streamlit.testing.v1 import AppTest
 
+    # The UI harness uses a fake jobs DB; never read real OAuth state.
+    monkeypatch.setattr(
+        "app.tsenta_oauth_v1.status",
+        lambda: {"authorized": False, "profile_read_verified": False},
+    )
     from app import database
     from app import product_application_flow_v2 as flow
 
@@ -209,9 +219,18 @@ def test_streamlit_reserved_route_is_readonly_and_has_separate_receipt(monkeypat
 def test_streamlit_dashboard_summary_is_readonly(monkeypatch):
     from streamlit.testing.v1 import AppTest
 
+    # The UI harness uses a fake jobs DB; never read real OAuth state.
+    monkeypatch.setattr(
+        "app.tsenta_oauth_v1.status",
+        lambda: {"authorized": False, "profile_read_verified": False},
+    )
     monkeypatch.setattr(ui, "learning_summary", lambda: {
         "form_fields": 14, "provider_events": 3,
     })
+    monkeypatch.setattr(
+        "app.tsenta_backend_readiness_v1.connection_status",
+        lambda: {"authenticated_backend": False, "profile_read_verified": False},
+    )
     app = AppTest.from_string(
         "from app.application_provider_ui_v1 import render_dashboard_summary\n"
         "render_dashboard_summary()\n"

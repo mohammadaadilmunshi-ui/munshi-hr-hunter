@@ -1355,3 +1355,83 @@ async def application_execution_mailbox_cancel(request: Request) -> Response:
         return Response(content=body, media_type="application/json", headers=headers)
     except (LookupError, PermissionError, RuntimeError, ValueError) as error:
         raise _account_execution_response_error(error) from error
+
+
+# ---------------------------------------------------------------------------
+# Tsenta backend OAuth: explicit user action, tenant-bound, no token exposure.
+# ---------------------------------------------------------------------------
+
+
+@app.get(
+    "/api/integrations/tsenta/status",
+    dependencies=[Depends(require_api_secret)],
+)
+def get_tsenta_connection_status() -> dict[str, Any]:
+    from app import tsenta_backend_readiness_v1
+    return tsenta_backend_readiness_v1.connection_status()
+
+
+@app.post(
+    "/api/integrations/tsenta/oauth/start",
+    dependencies=[Depends(require_api_secret)],
+)
+def start_tsenta_authorization() -> dict[str, str]:
+    from app import tsenta_oauth_v1
+    try:
+        return tsenta_oauth_v1.begin()
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Tsenta authorization could not start safely.",
+        ) from error
+
+
+@app.get("/api/integrations/tsenta/oauth/callback")
+def complete_tsenta_authorization(
+    state: str = Query(min_length=20, max_length=200),
+    code: str = Query(min_length=2, max_length=4096),
+):
+    from fastapi.responses import RedirectResponse
+
+    from app import tsenta_oauth_v1
+    try:
+        tsenta_oauth_v1.complete(state=state, code=code)
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Tsenta authorization was not completed. Start a new connection.",
+        ) from error
+    return RedirectResponse(
+        url="/?view=dashboard&tsenta_connection=verify_required",
+        status_code=303,
+    )
+
+
+@app.post(
+    "/api/integrations/tsenta/oauth/verify",
+    dependencies=[Depends(require_api_secret)],
+)
+def verify_tsenta_authorization() -> dict[str, Any]:
+    from app import tsenta_oauth_v1
+    try:
+        return tsenta_oauth_v1.verify_profile()
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Tsenta profile could not be verified through the backend.",
+        ) from error
+
+
+@app.post(
+    "/api/integrations/tsenta/disconnect",
+    dependencies=[Depends(require_api_secret)],
+)
+def disconnect_tsenta_authorization() -> dict[str, bool]:
+    from app import tsenta_oauth_v1
+    try:
+        return tsenta_oauth_v1.disconnect()
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Tsenta connection could not be disconnected safely.",
+        ) from error

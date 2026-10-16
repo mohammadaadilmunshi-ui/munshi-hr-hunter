@@ -31,7 +31,7 @@ Implemented:
 
 Not implemented or activated:
 
-- no Netcup Tsenta OAuth connection;
+- no **authorized live** Netcup Tsenta OAuth connection (source-level PKCE flow now implemented);
 - no real Tsenta application call;
 - no real custom-resume upload;
 - no production or staging migration;
@@ -386,3 +386,52 @@ authorization. No token or account value is embedded in source or copied from
 Codex. The current dashboard HTTPS front door returns HTTP 401 without browser
 authentication; its OAuth callback/reverse-proxy routing requires review before
 any live authorization attempt.
+
+
+## October 15 implementation extension — OAuth source and initial-dashboard UX
+
+Code added on PR #104, still **disabled for live connection**:
+
+- \`app/tsenta_oauth_v1.py\`: explicit PKCE start, DCR or configured client ID,
+  hashed expiring one-use state, AES-GCM tenant-bound encrypted verifier/access/
+  refresh tokens, one-time callback exchange, expiration/refresh and local
+  disconnect. No Codex tokens or secrets ever copied.
+- \`app/tsenta_mcp_http_v1.py\`: bounded JSON-RPC Streamable HTTP read transport
+  with legacy session initialization, JSON and SSE response handling, named
+  read-only tool allowlist, and provider error redaction.
+- \`app/tsenta_backend_readiness_v1.py\`: reports actual account authorization
+  and provider profile-read verification, while \`execution_ready\` remains
+  **false** until independently verified application dispatch exists.
+- \`app/api.py\`: authenticated connection start/status/verify/disconnect
+  endpoints and one-time OAuth callback endpoint.
+- \`app/application_provider_ui_v1.py\`: original dashboard expandable
+  connection controls and account-state captions, not a new dashboard.
+- \`migrations/059_tsenta_backend_oauth_v1.py\`: additive tenant OAuth tables.
+- \`.env.example\`: documented non-secret redirect/client/ingress guard
+  settings, all disabled by default.
+
+The authenticated provider OAuth metadata lists authorization, token, dynamic
+registration and revocation endpoints under \`/oauth\`. Contract tests use
+synthetic HTTP clients and exercise expired states, DCR request, replay
+prevention, encrypted token storage, refresh, MCP profile verification, SSE
+tool results, forbidden execution tools, API callbacks and migration replay.
+
+**Netcup/staging operational blockers:**
+1. Read-only October 15 inspection identified the staging Caddyfile at
+   \`/home/munshi/munshi-staging-edge/Caddyfile\`; it contains proxy/auth rules,
+   but no explicit Tsenta callback route. The public dashboard returned 401
+   for an unauthenticated request. A deliberately scoped HTTPS callback route
+   must be reviewed, applied and externally tested before the ingress-ready
+   switch can be enabled.
+2. An actual user approval on Tsenta for the Netcup OAuth connection remains
+   necessary. The Mac's authenticated Codex MCP session is not Netcup OAuth.
+3. OAuth profile verification is read-only and does not provide a tested
+   dispatch worker, correct custom-resume upload, ATS complete-form evidence,
+   employer submission or independent employer receipt.
+4. Workday/native Prepare -> Fill -> Review and hosted Apply/extension state
+   alignment must pass independent isolated staging end-to-end tests.
+5. Staging database backups, migration 058/059 apply/replay/rollback, CI and
+   exact production SHA/rollback must be reviewed before release.
+
+**The original dashboard code is a reviewed development candidate, not a
+completed production application-execution service.**
