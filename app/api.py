@@ -1202,10 +1202,14 @@ def approve_and_submit_job_package(
     """The sole customer approval, bound to the selected engine."""
     from app import product_application_flow_v2
 
-    choice=(payload.execution_provider if payload else "NATIVE").upper()
     try:
+        if payload is None:
+            # Preserve existing body-free Native API callers exactly.
+            return product_application_flow_v2.approve_and_submit_for_job(
+                int(job_id)
+            )
         return product_application_flow_v2.approve_and_submit_for_job(
-            int(job_id),execution_provider=choice,
+            int(job_id),execution_provider=payload.execution_provider.upper(),
         )
     except (LookupError, PermissionError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
