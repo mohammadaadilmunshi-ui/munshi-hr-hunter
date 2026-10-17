@@ -74,3 +74,30 @@ def test_bad_sha_stops_locally_without_contacting_production():
     )
     assert result.returncode != 0
     assert "Exact target SHA required" in result.stderr
+
+def test_actual_reviewed_source_delta_is_strictly_whitelisted():
+    import re
+
+    script = SCRIPT.read_text()
+    match = re.search(r"allowed_files=\(\n(?P<paths>.*?)\n\)", script, re.DOTALL)
+    assert match is not None
+    allowlist = {
+        line.strip()
+        for line in match.group("paths").splitlines()
+        if line.strip()
+    }
+    changed = subprocess.run(
+        [
+            "git", "-C", str(ROOT), "diff", "--name-only",
+            "3b4e400c3ef9c8f32bcb8b4c037b036ef2a37e0b", "HEAD",
+        ],
+        check=True, capture_output=True, text=True, timeout=10,
+    )
+    files = {line.strip() for line in changed.stdout.splitlines() if line.strip()}
+    assert files
+    assert files <= allowlist, f"Unreviewed changes: {files - allowlist}"
+    assert not any(
+        path.startswith(("scripts/", "migrations/"))
+        or path in {"Dockerfile", "compose.yaml", "compose.netcup-shadow.yaml"}
+        for path in files
+    )
