@@ -31,13 +31,23 @@ def _profile():
 def _route():
     return {
         "provider": "TSENTA", "state": "PREPARATION",
-        "resume_sha256": hashlib.sha256(DOC).hexdigest(),
+        "resume_sha256": "f" * 64,
+    }
+
+
+
+
+def _accepted_binding():
+    return {
+        "rendered_output_sha256": "f" * 64,
+        "artifact_sha256": hashlib.sha256(DOC).hexdigest(),
     }
 
 
 def test_preflight_requires_bound_pdf_verified_profile_and_tools():
     s = submission_readiness(
         route=_route(), profile=_profile(), resume_pdf=DOC,
+        accepted_resume_binding=_accepted_binding(),
         managed_email=ALIAS, relay_ready=True, profile_verified=True,
         available_tools=REQUIRED_TOOLS,
     )
@@ -50,6 +60,7 @@ def test_wrong_provider_or_stale_document_fails_closed():
     s = submission_readiness(
         route=_route() | {"provider": "NATIVE"},
         profile=_profile(), resume_pdf=DOC+b"tampered",
+        accepted_resume_binding=_accepted_binding(),
         managed_email=ALIAS, relay_ready=True, profile_verified=True,
         available_tools=REQUIRED_TOOLS,
     )
@@ -62,6 +73,7 @@ def test_prior_dispatch_never_retreated_as_first_attempt():
     s = submission_readiness(
         route=_route() | {"state": "FILLING", "provider_application_id_sha256": "a"*64},
         profile=_profile(), resume_pdf=DOC,
+        accepted_resume_binding=_accepted_binding(),
         managed_email=ALIAS, relay_ready=True, profile_verified=True,
         available_tools=REQUIRED_TOOLS,
     )
@@ -154,3 +166,25 @@ def test_application_write_needs_explicit_one_use_claim_and_known_exact_tool():
                 {"fileBase64": "AAAA"}, claimed_for_single_use=True)
             assert "structuredContent" in result
             assert seen == ["upload-custom-resume"]
+
+
+def test_rendered_digest_is_not_mistaken_for_pdf_sha256():
+    result = submission_readiness(
+        route=_route(), profile=_profile(), resume_pdf=DOC,
+        accepted_resume_binding=_accepted_binding(),
+        managed_email=ALIAS, relay_ready=True, profile_verified=True,
+        available_tools=REQUIRED_TOOLS,
+    )
+    assert result["ready_for_review"] is True
+
+
+def test_renderer_output_binding_mismatch_is_independently_blocked():
+    result = submission_readiness(
+        route=_route(), profile=_profile(), resume_pdf=DOC,
+        accepted_resume_binding=_accepted_binding() | {
+            "rendered_output_sha256": "a" * 64,
+        },
+        managed_email=ALIAS, relay_ready=True, profile_verified=True,
+        available_tools=REQUIRED_TOOLS,
+    )
+    assert "RESUME_RENDER_BINDING_MISMATCH" in result["blockers"]

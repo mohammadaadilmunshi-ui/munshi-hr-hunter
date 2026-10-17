@@ -425,6 +425,42 @@ class TsentaMcpAdapter:
             "employer_receipt_confirmed": False,
         }
 
+    @staticmethod
+    def _verified_custom_resume(
+        checked: Mapping[str, Any],
+        *,
+        upload_id: str,
+        expected_byte_size: int | None = None,
+    ) -> bool:
+        """Accept either the documented boolean or live metadata response.
+
+        Live Tsenta check-custom-resume currently echoes uploadId, byteSize,
+        viewUrl instead of a valid boolean. The identity and nonzero size
+        must agree; never accept mismatched IDs, explicit invalid results,
+        or failed/incomplete staging records.
+        """
+        if checked.get("valid") is False:
+            return False
+        returned_id = checked.get("uploadId")
+        if returned_id is not None and str(returned_id) != upload_id:
+            return False
+        size = checked.get("byteSize")
+        if expected_byte_size is not None and (
+            type(size) is not int or size != expected_byte_size
+        ):
+            return False
+        if checked.get("valid") is True:
+            return True
+        view = checked.get("viewUrl")
+        return bool(
+            isinstance(returned_id, str)
+            and returned_id == upload_id
+            and type(size) is int
+            and size >= 100
+            and isinstance(view, str)
+            and view.startswith("https://")
+        )
+
     def apply_with_custom_resume(
         self,
         *,
@@ -432,6 +468,7 @@ class TsentaMcpAdapter:
         upload_id: str,
         complete_profile: Mapping[str, Any],
         execution_authorized: bool = False,
+        expected_byte_size: int | None = None,
     ) -> dict[str, Any]:
         if not execution_authorized:
             raise PermissionError("Tsenta custom-resume execution was not authorized.")
@@ -447,7 +484,10 @@ class TsentaMcpAdapter:
         # Upload IDs are temporary.  A prior successful check can go stale while
         # a request is queued; revalidate immediately before any execution call.
         checked = self.check_custom_resume(str(upload_id))
-        if checked.get("valid") is not True:
+        if not self._verified_custom_resume(
+            checked, upload_id=str(upload_id),
+            expected_byte_size=expected_byte_size,
+        ):
             raise RuntimeError("Tsenta custom resume was not verified for dispatch.")
         result = _mapping(
             self._call(

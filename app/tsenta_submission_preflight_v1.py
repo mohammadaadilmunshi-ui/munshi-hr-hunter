@@ -33,6 +33,7 @@ def submission_readiness(
     route: Mapping[str, Any],
     profile: Mapping[str, Any],
     resume_pdf: bytes,
+    accepted_resume_binding: Mapping[str, Any],
     managed_email: str,
     relay_ready: bool,
     available_tools: frozenset[str],
@@ -56,10 +57,20 @@ def submission_readiness(
         not 100 <= len(resume_pdf) <= 8_000_000
     ):
         reasons.append("VERIFIED_PDF_ARTIFACT_UNAVAILABLE")
-    digest = str(route.get("resume_sha256") or "")
-    if not SHA256.fullmatch(digest) or (
-        isinstance(resume_pdf, bytes)
-        and hashlib.sha256(resume_pdf).hexdigest() != digest
+    # Router.resume_sha256 binds the renderer OUTPUT digest, not the PDF
+    # bytes. Apply's accepted plan independently binds the PDF artifact.
+    # Both must match; conflating them incorrectly rejects valid MUNSHI PDFs.
+    rendered_digest = str(route.get("resume_sha256") or "")
+    bound_renderer = str(
+        accepted_resume_binding.get("rendered_output_sha256") or ""
+    )
+    pdf_digest = str(accepted_resume_binding.get("artifact_sha256") or "")
+    if not SHA256.fullmatch(rendered_digest) or rendered_digest != bound_renderer:
+        reasons.append("RESUME_RENDER_BINDING_MISMATCH")
+    if (
+        not SHA256.fullmatch(pdf_digest)
+        or not isinstance(resume_pdf, bytes)
+        or hashlib.sha256(resume_pdf).hexdigest() != pdf_digest
     ):
         reasons.append("RESUME_BYTES_DIFFER_FROM_BOUND_PACKAGE")
     selected = profile.get("data") if isinstance(profile, Mapping) else None

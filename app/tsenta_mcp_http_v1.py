@@ -20,6 +20,8 @@ READ_TOOLS = frozenset({
     "get_profile_status", "list_resume_profiles", "get_resume_profile",
     "get_apply_preferences", "get_auto_apply_state", "list_applications",
     "get_application_status", "get_application_review",
+    # Exact public job-description lookup, never an application mutation.
+    "fetch_job_description",
 })
 PROTO = "2025-11-25"
 
