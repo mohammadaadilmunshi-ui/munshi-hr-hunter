@@ -102,3 +102,15 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
         or path in {"Dockerfile", "compose.yaml", "compose.netcup-shadow.yaml"}
         for path in files
     )
+
+def test_nonroot_hunter_can_read_ephemeral_test_snapshot_without_source_chmod():
+    content = SCRIPT.read_text()
+    assert 'test_copy="$(mktemp -d "$ROOT/runtime/codeonly-test-source.XXXXXXXX")"' in content
+    assert 'cp -a "$REPO/tests/." "$test_copy/tests/"' in content
+    assert 'chmod -R a+rX "$test_copy/tests"' in content
+    assert '--mount "type=bind,src=$test_copy/tests,dst=/app/hunter/tests,readonly"' in content
+    assert "ISOLATED_TEST_SOURCE=EPHEMERAL_COPY" in content
+    assert '[[ -z "$test_copy" ]] || rm -rf -- "$test_copy" || true' in content
+    assert 'chmod -R a+rX "$REPO/tests"' not in content
+    assert "docker run --rm --network none --read-only" in content
+    assert '-p no:cacheprovider' in content
