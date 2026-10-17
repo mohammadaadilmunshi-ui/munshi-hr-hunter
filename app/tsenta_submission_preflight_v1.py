@@ -1,6 +1,6 @@
-"""Non-executing validation for a future one-shot Tsenta submission.
+"""Non-executing validation for a future one-shot MUNSHI Relay submission.
 
-Never infer application authority from OAuth, an env flag, or Tsenta's own
+Never infer application authority from OAuth, an env flag, or MUNSHI Relay's own
 auto-submit preferences. A live write path additionally needs the durable,
 single-use route claim and MUNSHI's explicit package approval.
 """
@@ -97,18 +97,18 @@ def submission_readiness(
 def tsenta_profile_with_managed_email(
     *, profile: Mapping[str, Any], managed_email: str
 ) -> dict[str, Any]:
-    """Use Tsenta saved resume data but MUNSHI's existing verified inbox.
+    """Use MUNSHI Relay saved resume data but MUNSHI's existing verified inbox.
 
     Returns an ephemeral deep copy used only with the custom-resume tool.
-    Tsenta's saved profile is not silently modified.
+    MUNSHI Relay's saved profile is not silently modified.
     """
     email = _email(managed_email)
     if not isinstance(profile, Mapping):
-        raise TypeError("A verified Tsenta profile is required.")
+        raise TypeError("A verified MUNSHI Relay profile is required.")
     data = profile.get("data")
     personal = data.get("personalInformation") if isinstance(data, Mapping) else None
     if not isinstance(personal, Mapping):
-        raise TypeError("Tsenta's personal-information profile is incomplete.")
+        raise TypeError("MUNSHI Relay's personal-information profile is incomplete.")
     if not (str(personal.get("firstName") or "").strip() and
             str(personal.get("lastName") or "").strip()):
         raise ValueError("A truthful name is required for this application.")

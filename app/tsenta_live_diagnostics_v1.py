@@ -1,6 +1,6 @@
-"""Explicit, read-only privacy-safe Tsenta submission diagnostic.
+"""Explicit, read-only privacy-safe MUNSHI Relay submission diagnostic.
 
-Never transmits MUNSHI alias, Candidate Truth, or a resume to Tsenta.
+Never transmits MUNSHI alias, Candidate Truth, or a resume to MUNSHI Relay.
 Never enables submission. A refresh token may be rotated by the OAuth layer.
 """
 from __future__ import annotations

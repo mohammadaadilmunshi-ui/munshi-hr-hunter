@@ -126,7 +126,7 @@ def test_dashboard_exposes_explicit_readonly_diagnostic(monkeypatch):
     assert not list(a.exception)
     controls = [
         button for button in a.button
-        if button.label == "Check Tsenta application readiness"
+        if button.label == "Check MUNSHI Relay application readiness"
     ]
     assert len(controls) == 1
 

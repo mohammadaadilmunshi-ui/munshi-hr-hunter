@@ -286,7 +286,7 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
         tags.append(flow.get("display_status"))
     provider_route = flow.get("provider_route") or {}
     if provider_route.get("provider") in {"NATIVE", "TSENTA"}:
-        tags.append("Engine: " + ("Tsenta" if provider_route["provider"] == "TSENTA" else "MUNSHI"))
+        tags.append("Engine: " + ("MUNSHI Relay" if provider_route["provider"] == "TSENTA" else "MUNSHI"))
     if row.get("saved"):
         tags.append("Saved")
     tags_html = "".join(f'<span class="tag">{esc(tag)}</span>' for tag in tags if str(tag or "").strip())

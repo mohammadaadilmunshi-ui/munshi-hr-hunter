@@ -1,4 +1,4 @@
-"""Bounded authenticated MCP Streamable HTTP client for Tsenta read-only calls.
+"""Bounded authenticated MCP Streamable HTTP client for MUNSHI Relay read-only calls.
 
 Legacy initialize/session protocol compatible; supports JSON and finite SSE.
 No cookie copying, logging of token/response bodies, or application execution.
@@ -29,7 +29,7 @@ PROTO = "2025-11-25"
 class TsentaMcpReadClient:
     def __init__(self, access_token: str, client: httpx.Client | None = None):
         if not isinstance(access_token,str) or not access_token.strip():
-            raise TsentaOAuthError("An authenticated Tsenta server token is required.")
+            raise TsentaOAuthError("An authenticated MUNSHI Relay server token is required.")
         self._token=access_token
         self._client=client or httpx.Client(timeout=15)
         self._owned=client is None
@@ -62,12 +62,12 @@ class TsentaMcpReadClient:
             with self._client.stream("POST", MCP_URL, headers=headers, json=message,
                                      timeout=15, follow_redirects=False) as response:
                 if response.status_code==401:
-                    raise TsentaOAuthError("Tsenta backend authorization is expired.")
+                    raise TsentaOAuthError("MUNSHI Relay backend authorization is expired.")
                 if response.status_code not in (200,202):
-                    raise TsentaOAuthError("Tsenta MCP server rejected the request.")
+                    raise TsentaOAuthError("MUNSHI Relay MCP server rejected the request.")
                 if notification:
                     if response.status_code != 202:
-                        raise TsentaOAuthError("Tsenta MCP did not acknowledge initialization.")
+                        raise TsentaOAuthError("MUNSHI Relay MCP did not acknowledge initialization.")
                     return None
                 session=response.headers.get("mcp-session-id")
                 if session and len(session) <= 256 and all(33 <= ord(x) <= 126 for x in session):
@@ -78,7 +78,7 @@ class TsentaMcpReadClient:
                     for chunk in response.iter_bytes(chunk_size=65536):
                         body.extend(chunk)
                         if len(body)>MAX_RESPONSE_BYTES:
-                            raise TsentaOAuthError("Tsenta MCP response was too large.")
+                            raise TsentaOAuthError("MUNSHI Relay MCP response was too large.")
                     result=json.loads(body)
                     return self._extract(result, request_id)
                 if content_type=="text/event-stream":
@@ -86,7 +86,7 @@ class TsentaMcpReadClient:
                     for line in response.iter_lines():
                         size+=len(line)
                         if size>MAX_RESPONSE_BYTES:
-                            raise TsentaOAuthError("Tsenta MCP stream exceeded safe limits.")
+                            raise TsentaOAuthError("MUNSHI Relay MCP stream exceeded safe limits.")
                         if not line.startswith("data:"):
                             continue
                         try:
@@ -95,19 +95,19 @@ class TsentaMcpReadClient:
                             continue
                         if isinstance(result,Mapping) and result.get("id")==request_id:
                             return self._extract(result,request_id)
-                    raise TsentaOAuthError("Tsenta MCP stream contained no matching response.")
-                raise TsentaOAuthError("Tsenta MCP response media type is unsupported.")
+                    raise TsentaOAuthError("MUNSHI Relay MCP stream contained no matching response.")
+                raise TsentaOAuthError("MUNSHI Relay MCP response media type is unsupported.")
         except (httpx.HTTPError,ValueError) as error:
-            raise TsentaOAuthError("Tsenta MCP transport was unavailable.") from error
+            raise TsentaOAuthError("MUNSHI Relay MCP transport was unavailable.") from error
 
     @staticmethod
     def _extract(response: Any, request_id: int) -> Any:
         if not isinstance(response,Mapping) or response.get("id")!=request_id:
-            raise TsentaOAuthError("Tsenta MCP response identity did not match.")
+            raise TsentaOAuthError("MUNSHI Relay MCP response identity did not match.")
         if "error" in response:
-            raise TsentaOAuthError("Tsenta MCP reported a tool error.")
+            raise TsentaOAuthError("MUNSHI Relay MCP reported a tool error.")
         if "result" not in response:
-            raise TsentaOAuthError("Tsenta MCP response is missing its result.")
+            raise TsentaOAuthError("MUNSHI Relay MCP response is missing its result.")
         return response["result"]
 
     def initialize(self) -> None:
@@ -117,11 +117,11 @@ class TsentaMcpReadClient:
             "capabilities":{},
         })
         if not isinstance(info,Mapping) or not info.get("protocolVersion"):
-            raise TsentaOAuthError("Tsenta MCP initialization was not confirmed.")
+            raise TsentaOAuthError("MUNSHI Relay MCP initialization was not confirmed.")
         self._send("notifications/initialized",notification=True)
         tools=self._send("tools/list",{})
         if not isinstance(tools,Mapping) or not isinstance(tools.get("tools"),list):
-            raise TsentaOAuthError("Tsenta MCP tool inventory was unavailable.")
+            raise TsentaOAuthError("MUNSHI Relay MCP tool inventory was unavailable.")
         for row in tools["tools"]:
             if not isinstance(row,Mapping):
                 continue
@@ -132,14 +132,14 @@ class TsentaMcpReadClient:
 
     def call_read(self,tool_name:str,arguments:Mapping[str,Any] | None=None) -> Any:
         if tool_name not in READ_TOOLS or tool_name not in self._tools:
-            raise TsentaOAuthError("Tsenta read tool is not supported by this account.")
+            raise TsentaOAuthError("MUNSHI Relay read tool is not supported by this account.")
         result=self._send("tools/call",{
             "name":self._tools[tool_name],"arguments":dict(arguments or {}),
         })
         if not isinstance(result,Mapping):
-            raise TsentaOAuthError("Tsenta MCP tool result was invalid.")
+            raise TsentaOAuthError("MUNSHI Relay MCP tool result was invalid.")
         if result.get("isError") is True or result.get("is_error") is True:
-            raise TsentaOAuthError("Tsenta MCP tool reported an error.")
+            raise TsentaOAuthError("MUNSHI Relay MCP tool reported an error.")
         return result
 
 
@@ -164,7 +164,7 @@ class TsentaMcpApplicationClient(TsentaMcpReadClient):
         # the authenticated provider inventory, filtering to this tight list.
         tools = self._send("tools/list", {})
         if not isinstance(tools, Mapping) or not isinstance(tools.get("tools"), list):
-            raise TsentaOAuthError("Tsenta application tool catalog unavailable.")
+            raise TsentaOAuthError("MUNSHI Relay application tool catalog unavailable.")
         for item in tools["tools"]:
             if not isinstance(item, Mapping):
                 continue
@@ -181,24 +181,24 @@ class TsentaMcpApplicationClient(TsentaMcpReadClient):
         claimed_for_single_use: bool = False,
     ) -> Any:
         if not claimed_for_single_use:
-            raise PermissionError("Durable one-time Tsenta dispatch claim required.")
+            raise PermissionError("Durable one-time MUNSHI Relay dispatch claim required.")
         if tool_name not in APPLICATION_TOOLS or tool_name not in self._tools:
-            raise TsentaOAuthError("Tsenta application tool unavailable or unsupported.")
+            raise TsentaOAuthError("MUNSHI Relay application tool unavailable or unsupported.")
         if not isinstance(arguments, Mapping):
-            raise TypeError("Validated Tsenta tool arguments required.")
+            raise TypeError("Validated MUNSHI Relay tool arguments required.")
         allowed_fields = {
             "upload_custom_resume": {"fileBase64"},
             "check_custom_resume": {"uploadId"},
             "apply_with_custom_resume": {"uploadId", "profile", "url"},
         }
         if set(arguments) != allowed_fields[tool_name]:
-            raise ValueError("Unexpected or missing Tsenta application arguments.")
+            raise ValueError("Unexpected or missing MUNSHI Relay application arguments.")
         result = self._send("tools/call", {
             "name": self._tools[tool_name],
             "arguments": dict(arguments),
         })
         if not isinstance(result, Mapping):
-            raise TsentaOAuthError("Tsenta application tool result invalid.")
+            raise TsentaOAuthError("MUNSHI Relay application tool result invalid.")
         if result.get("isError") is True or result.get("is_error") is True:
-            raise TsentaOAuthError("Tsenta application tool returned an error.")
+            raise TsentaOAuthError("MUNSHI Relay application tool returned an error.")
         return result

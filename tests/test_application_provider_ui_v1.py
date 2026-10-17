@@ -173,11 +173,11 @@ def test_streamlit_workspace_shows_disabled_tsenta_when_backend_absent(monkeypat
         "render_workspace(8)\n"
     ).run(timeout=15)
     assert not list(app.exception)
-    assert app.radio[0].options == ["MUNSHI Native", "Tsenta"]
+    assert app.radio[0].options == ["MUNSHI Native", "MUNSHI Relay"]
     assert app.button[0].label == "Save engine selection"
     assert app.button[0].disabled is True
 
-    app.radio[0].set_value("Tsenta").run()
+    app.radio[0].set_value("MUNSHI Relay").run()
     assert not list(app.exception)
     assert app.button[0].disabled is True
 
@@ -219,8 +219,9 @@ def test_streamlit_reserved_route_is_readonly_and_has_separate_receipt(monkeypat
     assert len(app.radio) == 1
     assert app.radio[0].label == "Submission engine"
     assert app.radio[0].disabled is True
-    assert app.radio[0].value == "Tsenta"
-    assert len(app.button) == 0
+    assert app.radio[0].value == "MUNSHI Relay"
+    assert len(app.button) == 1
+    assert app.button[0].label == "Refresh MUNSHI Relay submission status"
     assert "Not independently verified" in [metric.value for metric in app.metric]
 
 
@@ -336,7 +337,7 @@ def test_connected_original_dashboard_renders_multi_ats_learning_controls(monkey
     assert any(m.label == "ATS platforms observed" and str(m.value) == "4"
                for m in app.metric)
     sync_button = next(b for b in app.button
-                       if b.label == "Import read-only Tsenta learning evidence")
+                       if b.label == "Import read-only MUNSHI Relay learning evidence")
     assert not sync_button.disabled
     sync_button.click().run()
     assert not list(app.exception)

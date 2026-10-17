@@ -19,7 +19,7 @@ def test_unlocked_native_and_tsenta_visible_but_not_false_ready():
             "execution_ready": False,
         },
     )
-    assert state["labels"] == ("MUNSHI Native", "Tsenta")
+    assert state["labels"] == ("MUNSHI Native", "MUNSHI Relay")
     assert state["selected"] == "MUNSHI Native"
     assert state["locked"] is False
     assert state["can_submit_tsenta"] is False
@@ -41,18 +41,42 @@ def test_existing_tsenta_route_stays_tsenta_not_native():
         route={"provider": "TSENTA", "state": "PAUSED"},
         tsenta_backend={"execution_ready": False},
     )
-    assert state["selected"] == "Tsenta"
+    assert state["selected"] == "MUNSHI Relay"
     assert state["locked"] is True
 
 
-def test_tsenta_approval_fails_before_native_mandate(monkeypatch):
+def test_relay_approval_routes_to_one_use_dispatch_not_native_mandate(
+    monkeypatch,
+):
+    from app import relay_application_dispatch_v1 as dispatcher
+    from app import application_execution_mandate_v1 as mandate
+
     monkeypatch.setattr(
-        flow,
-        "flow_for_job",
-        lambda _job_id: pytest.fail("No flow fetch before dispatcher proof"),
+        flow,"flow_for_job",lambda _job_id: {
+            "package_review":{"review_digest":"a"*64},
+            "artifacts":{"preflight":{"preflight_package_id":"package-1"}},
+        },
     )
-    with pytest.raises(PermissionError, match="not yet validated"):
-        flow.approve_and_submit_for_job(6198, execution_provider="TSENTA")
+    monkeypatch.setattr(
+        mandate,"approve_package",
+        lambda **kwargs: pytest.fail("Must not authorize the Native worker"),
+    )
+    captured={}
+    def dispatch(**kwargs):
+        captured.update(kwargs)
+        return {"status":"PROVIDER_SUBMITTED"}
+    monkeypatch.setattr(dispatcher,"submit_from_dashboard",dispatch)
+    result=flow.approve_and_submit_for_job(6198,execution_provider="TSENTA")
+    assert result["status"]=="PROVIDER_SUBMITTED"
+    assert captured=={
+        "job_id":6198,"review_digest":"a"*64,
+        "preflight_package_id":"package-1",
+    }
+    with pytest.raises(PermissionError):
+        flow.approve_and_submit_for_job(
+            6198,approval_source="STANDING_POLICY",
+            execution_provider="TSENTA",
+        )
 
 
 def test_approval_workspace_has_explicit_engine_selection():

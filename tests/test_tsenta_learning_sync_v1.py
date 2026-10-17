@@ -96,14 +96,14 @@ def test_provider_errors_do_not_create_successful_learning(hunter_db):
     class Malformed(ExistingApplicationsMcp):
         def call_read(self, name, params):
             if name == "get_application_status":
-                raise RuntimeError("private Tsenta provider error")
+                raise RuntimeError("private MUNSHI Relay provider error")
             return super().call_read(name, params)
 
     report = sync.sync_observations_from_mcp(mcp=Malformed(count=3))
     assert report["status_observations"] == 0
     assert report["skipped"] == 3
     assert cohort.learning_cohort_snapshot()["processed_applications_total"] == 0
-    assert "private Tsenta" not in str(report)
+    assert "private MUNSHI Relay" not in str(report)
 
 
 def test_sync_api_is_api_key_protected_and_never_mutates_applications(monkeypatch):

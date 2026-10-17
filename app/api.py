@@ -1101,7 +1101,7 @@ def select_job_application_provider(
         if readiness.get("execution_ready") is not True:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Tsenta is not yet authorized on the MUNSHI backend.",
+                detail="MUNSHI Relay is not yet authorized on the MUNSHI backend.",
             )
 
     try:
@@ -1185,16 +1185,28 @@ def approve_and_submit_application_review(
     )
 
 
+class JobSubmissionEngineRequest(BaseModel):
+    """Optional engine choice; existing body-free Native callers still work."""
+    execution_provider: str = Field(
+        default="NATIVE",pattern=r"^(?i:NATIVE|TSENTA)$"
+    )
+
+
 @app.post(
     "/api/jobs/{job_id}/approve-and-submit",
     dependencies=[Depends(require_api_secret)],
 )
-def approve_and_submit_job_package(job_id: int) -> dict[str, Any]:
-    """The sole customer approval boundary, before unattended ATS execution."""
+def approve_and_submit_job_package(
+    job_id: int, payload: JobSubmissionEngineRequest | None = None,
+) -> dict[str, Any]:
+    """The sole customer approval, bound to the selected engine."""
     from app import product_application_flow_v2
 
+    choice=(payload.execution_provider if payload else "NATIVE").upper()
     try:
-        return product_application_flow_v2.approve_and_submit_for_job(int(job_id))
+        return product_application_flow_v2.approve_and_submit_for_job(
+            int(job_id),execution_provider=choice,
+        )
     except (LookupError, PermissionError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 
@@ -1402,7 +1414,7 @@ def start_tsenta_authorization() -> dict[str, str]:
     except (ValueError, RuntimeError) as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Tsenta authorization could not start safely.",
+            detail="MUNSHI Relay authorization could not start safely.",
         ) from error
 
 
@@ -1419,7 +1431,7 @@ def complete_tsenta_authorization(
     except (ValueError, RuntimeError) as error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Tsenta authorization was not completed. Start a new connection.",
+            detail="MUNSHI Relay authorization was not completed. Start a new connection.",
         ) from error
     return RedirectResponse(
         url="/?view=dashboard&tsenta_connection=verify_required",
@@ -1438,7 +1450,7 @@ def verify_tsenta_authorization() -> dict[str, Any]:
     except (ValueError, RuntimeError) as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Tsenta profile could not be verified through the backend.",
+            detail="MUNSHI Relay profile could not be verified through the backend.",
         ) from error
 
 
@@ -1453,7 +1465,7 @@ def disconnect_tsenta_authorization() -> dict[str, bool]:
     except (ValueError, RuntimeError) as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Tsenta connection could not be disconnected safely.",
+            detail="MUNSHI Relay connection could not be disconnected safely.",
         ) from error
 
 
@@ -1538,7 +1550,7 @@ def get_application_provider_status_by_application(
 def sync_tsenta_learning_observations(
     page: int = 1, limit: int = 15,
 ) -> dict[str, Any]:
-    """Read only existing authorized Tsenta application observations."""
+    """Read only existing authorized MUNSHI Relay application observations."""
     from app.tsenta_learning_sync_v1 import sync_authorized_learning
 
     try:
@@ -1546,7 +1558,7 @@ def sync_tsenta_learning_observations(
     except (ValueError, RuntimeError, TypeError, LookupError) as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Tsenta learning sync is unavailable or its data was invalid.",
+            detail="MUNSHI Relay learning sync is unavailable or its data was invalid.",
         ) from error
 
 
@@ -1565,5 +1577,5 @@ def tsenta_learning_cohort_status() -> dict[str, Any]:
     except (ValueError, RuntimeError, sqlite3.Error, LookupError) as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Tsenta learning evidence is unavailable.",
+            detail="MUNSHI Relay learning evidence is unavailable.",
         ) from error

@@ -1,8 +1,8 @@
-"""Offline Tsenta-account observation and MUNSHI application handoff contracts.
+"""Offline MUNSHI Relay-account observation and MUNSHI application handoff contracts.
 
-A connected user's authorized Tsenta MCP/export data can be normalized only
+A connected user's authorized MUNSHI Relay MCP/export data can be normalized only
 AFTER the caller separately authenticates and obtains explicit read access.
-No API endpoints, MCP tool names, login automation or hidden Tsenta internals
+No API endpoints, MCP tool names, login automation or hidden MUNSHI Relay internals
 are assumed. This module cannot submit an application or mutate Candidate Truth.
 """
 
@@ -238,7 +238,7 @@ def _candidate_projection(
 def _tsenta_projection(profile: Mapping[str, Any]) -> dict[str, Any]:
     root = profile.get("data") or profile.get("profile") or profile
     if not isinstance(root, Mapping):
-        raise ValueError("Tsenta resume profile data is not an object.")
+        raise ValueError("MUNSHI Relay resume profile data is not an object.")
     projected = {
         field: _first_present(root, paths) for field, paths in _TSENTA_PATHS.items()
     }
@@ -280,7 +280,7 @@ def compare_candidate_truth_snapshot(
     """
     if not explicit_profile_read_approval or source != "authorized_tsenta_mcp":
         raise PermissionError(
-            "Authenticated Tsenta profile comparison requires approval."
+            "Authenticated MUNSHI Relay profile comparison requires approval."
         )
     if not all(
         isinstance(item, Mapping)
@@ -290,7 +290,7 @@ def compare_candidate_truth_snapshot(
             tsenta_resume_profile,
         )
     ):
-        raise TypeError("Candidate and Tsenta profile evidence must be mappings.")
+        raise TypeError("Candidate and MUNSHI Relay profile evidence must be mappings.")
     candidate = _candidate_projection(candidate_snapshot, protected_candidate_values)
     tsenta = _tsenta_projection(tsenta_resume_profile)
     statuses: dict[str, str] = {}
@@ -341,7 +341,7 @@ def compare_authorized_profile(
         "authorized_tsenta_mcp",
         "user_exported_tsenta_profile",
     }:
-        raise PermissionError("Tsenta profile read requires user authorization")
+        raise PermissionError("MUNSHI Relay profile read requires user authorization")
     if not isinstance(confirmed_munshi_facts, Mapping) or not isinstance(
         observed_tsenta_fields, Mapping
     ):
@@ -350,9 +350,9 @@ def compare_authorized_profile(
         any(blocked in str(key).casefold() for blocked in _SENSITIVE_NAMES)
         for key in observed_tsenta_fields
     ):
-        raise ValueError("Sensitive credential or ID field in Tsenta observation")
+        raise ValueError("Sensitive credential or ID field in MUNSHI Relay observation")
     if len(observed_tsenta_fields) > 100:
-        raise ValueError("Tsenta field observations exceed read-only budget")
+        raise ValueError("MUNSHI Relay field observations exceed read-only budget")
     statuses: dict[str, str] = {}
     unknown_count = 0
     for key, val in observed_tsenta_fields.items():
@@ -397,7 +397,7 @@ def build_inert_tsenta_handoff(
 ) -> dict[str, Any]:
     """Prepare a provider-neutral, non-executable request envelope.
 
-    Never send to Tsenta until its *actual* authorized capabilities, endpoint,
+    Never send to MUNSHI Relay until its *actual* authorized capabilities, endpoint,
     OAuth scope and per-action approval contract have been inspected.
     """
     if not isinstance(job_id, int) or job_id <= 0:

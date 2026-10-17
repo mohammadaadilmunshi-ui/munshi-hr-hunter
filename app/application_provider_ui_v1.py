@@ -16,7 +16,7 @@ from app.linkedin_employer_link_resolver_v1 import external_url
 from app.linkedin_verified_url_evidence_v5 import latest_verified_for_job
 from app.product_experience_vnext import product_href
 
-PROVIDER_LABELS = {"NATIVE": "MUNSHI Native", "TSENTA": "Tsenta"}
+PROVIDER_LABELS = {"NATIVE": "MUNSHI Native", "TSENTA": "MUNSHI Relay"}
 STATUS_LABELS = {
     "PREPARATION": "Package selected",
     "FILLING": "Completing application",
@@ -103,26 +103,26 @@ def tsenta_status_text(status: Mapping[str, Any]) -> tuple[str, str]:
     """Distinguish server-side OAuth verification from dispatch readiness."""
     if status.get("execution_ready") is True:
         return (
-            "Tsenta backend account and execution dispatcher are ready.",
-            "Tsenta is available for eligible, verified application packages.",
+            "MUNSHI Relay backend account and execution dispatcher are ready.",
+            "MUNSHI Relay is available for eligible, verified application packages.",
         )
     if status.get("authenticated_backend") is True:
         if status.get("profile_read_verified") is True:
             return (
-                "Tsenta account connected and profile verified; execution dispatcher pending.",
+                "MUNSHI Relay account connected and profile verified; execution dispatcher pending.",
                 (
-                    "Tsenta cannot execute applications until its dispatcher has been independently validated. "
+                    "MUNSHI Relay cannot execute applications until its dispatcher has been independently validated. "
                     "Use MUNSHI Native for eligible application packages."
                 ),
             )
         return (
-            "Tsenta account connected; backend profile verification is pending.",
-            "Verify Tsenta profile access in Dashboard → Application engines before selecting Tsenta.",
+            "MUNSHI Relay account connected; backend profile verification is pending.",
+            "Verify MUNSHI Relay profile access in Dashboard → Application engines before selecting MUNSHI Relay.",
         )
     return (
-        "Tsenta backend account is not connected. Local Codex OAuth is not server access.",
+        "MUNSHI Relay backend account is not connected. Local Codex OAuth is not server access.",
         (
-            "Connect Tsenta securely in Dashboard → Application engines, then verify profile access. "
+            "Connect MUNSHI Relay securely in Dashboard → Application engines, then verify profile access. "
             "Execution also requires separate dispatcher validation."
         ),
     )
@@ -153,7 +153,7 @@ def engine_selector_state(
             "This opening already belongs to an engine. Changing it requires "
             "a checked handoff. Any existing approval cannot be reused."
             if reserved else
-            "Tsenta is connected, but its write dispatcher is not yet validated."
+            "MUNSHI Relay is connected, but its write dispatcher is not yet validated."
             if not tsenta_ready else
             "Choose an engine before granting the one-time application approval."
         ),
@@ -251,7 +251,7 @@ def render_connection_panel() -> None:
 
     from app import tsenta_oauth_v1
 
-    with st.expander("Tsenta account connection", expanded=False):
+    with st.expander("MUNSHI Relay account connection", expanded=False):
         try:
             current = tsenta_oauth_v1.status()
         except (sqlite3.OperationalError, RuntimeError, ValueError, OSError):
@@ -259,7 +259,7 @@ def render_connection_panel() -> None:
         authorized = current.get("authorized") is True
         verified = current.get("profile_read_verified") is True
         if not authorized:
-            st.caption("No Netcup Tsenta account has been connected.")
+            st.caption("No Netcup MUNSHI Relay account has been connected.")
             ingress = (
                 str(os.getenv(tsenta_oauth_v1.INGRESS_ENV) or "").lower()
                 in {"true", "1", "yes"}
@@ -270,7 +270,7 @@ def render_connection_panel() -> None:
                     "is verified in staging."
                 )
             elif st.button(
-                "Connect Tsenta securely",
+                "Connect MUNSHI Relay securely",
                 key="tsenta_oauth_connect",
                 use_container_width=True,
             ):
@@ -281,17 +281,17 @@ def render_connection_panel() -> None:
                     )
                 except (RuntimeError, ValueError):
                     st.error(
-                        "Tsenta authorization could not start safely. "
+                        "MUNSHI Relay authorization could not start safely. "
                         "Review the connection configuration."
                     )
             pending = st.session_state.get("_tsenta_oauth_authorization_url")
             if pending and ingress:
                 st.link_button(
-                    "Continue to Tsenta authorization",
+                    "Continue to MUNSHI Relay authorization",
                     pending,
                     use_container_width=True,
                 )
-                st.caption("Approve access on Tsenta; you return to this dashboard.")
+                st.caption("Approve access on MUNSHI Relay; you return to this dashboard.")
         else:
             st.success(
                 "Backend profile verified."
@@ -299,7 +299,7 @@ def render_connection_panel() -> None:
                 else "OAuth connected. Verify profile access to finish setup."
             )
             if not verified and st.button(
-                "Verify Tsenta profile access",
+                "Verify MUNSHI Relay profile access",
                 key="tsenta_oauth_verify",
                 use_container_width=True,
             ):
@@ -307,7 +307,7 @@ def render_connection_panel() -> None:
                     tsenta_oauth_v1.verify_profile()
                 except (RuntimeError, ValueError):
                     st.error(
-                        "The Tsenta account could not be verified. "
+                        "The MUNSHI Relay account could not be verified. "
                         "No provider application was started."
                     )
                 else:
@@ -318,7 +318,7 @@ def render_connection_panel() -> None:
                 "The verified execution worker remains a separate release gate."
             )
             if st.button(
-                "Check Tsenta application readiness",
+                "Check MUNSHI Relay application readiness",
                 key="tsenta_application_diagnostics",
                 use_container_width=True,
             ):
@@ -331,7 +331,7 @@ def render_connection_panel() -> None:
                 except (RuntimeError, ValueError, TypeError, OSError, sqlite3.Error):
                     st.session_state.pop("_tsenta_safe_diagnostics", None)
                     st.warning(
-                        "Tsenta diagnostics could not complete. "
+                        "MUNSHI Relay diagnostics could not complete. "
                         "No application was submitted."
                     )
             report = st.session_state.get("_tsenta_safe_diagnostics")
@@ -339,7 +339,7 @@ def render_connection_panel() -> None:
                 st.caption(
                     "Managed email active: "
                     + ("Yes" if report.get("managed_email_active") else "No")
-                    + " · Matches Tsenta profile: "
+                    + " · Matches MUNSHI Relay profile: "
                     + ("Yes" if report.get("managed_email_matches_tsenta") else "No")
                 )
                 st.caption(
@@ -351,7 +351,7 @@ def render_connection_panel() -> None:
                 )
                 for reason in report.get("reason_codes") or []:
                     st.caption("Setup check: " + str(reason).replace("_", " ").title())
-                st.info("This diagnostic does not enable Tsenta submissions.")
+                st.info("This diagnostic does not enable MUNSHI Relay submissions.")
             approved = st.checkbox(
                 "Disconnect this local MUNSHI account connection",
                 key="tsenta_oauth_disconnect_confirm",
@@ -365,7 +365,7 @@ def render_connection_panel() -> None:
                 tsenta_oauth_v1.disconnect()
                 st.session_state.pop("_tsenta_oauth_authorization_url", None)
                 st.info(
-                    "Local credentials disconnected. Review Tsenta account "
+                    "Local credentials disconnected. Review MUNSHI Relay account "
                     "settings separately to revoke provider-side access."
                 )
                 st.rerun()
@@ -380,11 +380,13 @@ def render_dashboard_summary() -> None:
         native, tsenta, signals = st.columns(3, gap="small")
         native.markdown("**MUNSHI Native**")
         native.caption("Existing preparation engine")
-        tsenta.markdown("**Tsenta**")
+        tsenta.markdown("**MUNSHI Relay**")
         from app import tsenta_backend_readiness_v1
 
         connection = tsenta_backend_readiness_v1.connection_status()
-        if connection["profile_read_verified"]:
+        if connection.get("execution_ready"):
+            tsenta.caption("Connected · Relay submission ready")
+        elif connection["profile_read_verified"]:
             tsenta.caption("Profile verified · execution pending")
         elif connection["authenticated_backend"]:
             tsenta.caption("Connected · verification pending")
@@ -401,7 +403,7 @@ def render_dashboard_summary() -> None:
         )
         from app.tsenta_learning_cohort_v1 import learning_cohort_snapshot
 
-        with st.expander("Native learning from Tsenta · all ATS platforms", expanded=False):
+        with st.expander("Native learning from MUNSHI Relay · all ATS platforms", expanded=False):
             try:
                 cohort = learning_cohort_snapshot()
             except (sqlite3.OperationalError, LookupError, PermissionError, RuntimeError):
@@ -437,12 +439,12 @@ def render_dashboard_summary() -> None:
                 from app.tsenta_learning_sync_v1 import sync_authorized_learning
 
                 learning_page = st.number_input(
-                    "Tsenta application history page",
+                    "MUNSHI Relay application history page",
                     min_value=1, max_value=20, value=1, step=1,
                     key="tsenta_learning_sync_page",
                 )
                 if st.button(
-                    "Import read-only Tsenta learning evidence",
+                    "Import read-only MUNSHI Relay learning evidence",
                     key="tsenta_learning_sync",
                     help=(
                         "Reads up to 15 existing applications and their "
@@ -452,7 +454,7 @@ def render_dashboard_summary() -> None:
                     try:
                         imported = sync_authorized_learning(page=int(learning_page))
                     except (RuntimeError, ValueError, TypeError, LookupError):
-                        st.error("Tsenta learning sync could not be verified.")
+                        st.error("MUNSHI Relay learning sync could not be verified.")
                     else:
                         st.success(
                             f"Read {imported['status_observations']} existing application "
@@ -461,7 +463,7 @@ def render_dashboard_summary() -> None:
                         st.rerun()
             else:
                 st.caption(
-                    "Connect and verify your Tsenta backend account before "
+                    "Connect and verify your MUNSHI Relay backend account before "
                     "importing authorized application learning."
                 )
             shadow = cohort.get("shadow_improvement_candidates") or []
@@ -523,8 +525,10 @@ def render_workspace(job_id: int) -> None:
     with st.container(border=True):
         st.markdown("### Application engine")
         st.caption(
-            "The dashboard owns the application. Selecting an engine reserves "
-            "this opening; submitting requires a separate authorized execution."
+            "The dashboard owns the application. MUNSHI Relay uses a connected "
+            "external application service to process documents and candidate "
+            "answers after approval. Submissions are limited to one verified "
+            "opening and a single dispatch claim."
         )
         metrics = st.columns(2, gap="small")
         metrics[0].metric("Engine", progress["provider"])
@@ -567,6 +571,75 @@ def render_workspace(job_id: int) -> None:
                     "A provider-reported submission is not an employer receipt. "
                     "Application IDs and private answers are intentionally hidden."
                 )
+            route = state["route"] or {}
+            if route.get("provider") == "NATIVE" and (
+                route.get("state") in {"PREPARATION","FAILED","PAUSED"}
+                and str(flow.get("state") or "") in {"FAILED_SAFELY","BLOCKED"}
+                and not flow.get("production_receipt")
+                and (flow.get("prepare") or {}).get("status") in {
+                    "FAILED_SAFELY","BLOCKED","FAILED"
+                }
+                and backend_status.get("execution_ready") is True
+            ):
+                st.info(
+                    "This Native attempt stopped safely. MUNSHI Relay can "
+                    "take over the same verified opening without a second "
+                    "Native submission."
+                )
+                consent = st.checkbox(
+                    "Switch the failed application to MUNSHI Relay and submit once",
+                    key=f"relay_handoff_consent_{job_id}",
+                )
+                if st.button(
+                    "Switch engine & submit",
+                    key=f"relay_handoff_submit_{job_id}",
+                    disabled=not consent,
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    from app.relay_application_dispatch_v1 import (
+                        recover_failed_native_from_dashboard,
+                    )
+                    try:
+                        with st.spinner("Revalidating route and submitting once…"):
+                            result = recover_failed_native_from_dashboard(
+                                int(job_id)
+                            )
+                        st.success(
+                            "Submission status: "
+                            + str(result["status"]).replace("_"," ").title()
+                        )
+                        st.rerun()
+                    except (RuntimeError,ValueError,PermissionError,
+                            FileExistsError,LookupError,OSError):
+                        st.error(
+                            "Engine handoff did not complete. Check the "
+                            "application status before trying anything else."
+                        )
+            if route.get("provider") == "TSENTA" and route.get("state") in {
+                "PREPARATION","FILLING","PAUSED","PROVIDER_SUBMITTED",
+            }:
+                if st.button(
+                    "Refresh MUNSHI Relay submission status",
+                    key=f"relay_refresh_status_{job_id}",
+                ):
+                    from app.relay_application_dispatch_v1 import (
+                        reconcile_from_dashboard,
+                    )
+                    try:
+                        with st.spinner("Checking the existing application…"):
+                            result=reconcile_from_dashboard(int(job_id))
+                        st.info(
+                            "Submission state: "
+                            + str(result["status"]).replace("_"," ").title()
+                        )
+                        st.rerun()
+                    except (RuntimeError,ValueError,PermissionError,
+                            LookupError,OSError):
+                        st.error(
+                            "The current application status could not be "
+                            "reconciled. No additional submission was sent."
+                        )
             st.link_button(
                 "Continue application workflow",
                 product_href("prepare-application", job_id=int(job_id)),

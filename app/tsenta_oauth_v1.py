@@ -1,4 +1,4 @@
-"""Tenant-bound Tsenta OAuth connection and short-lived one-use PKCE handoff.
+"""Tenant-bound MUNSHI Relay OAuth connection and short-lived one-use PKCE handoff.
 
 External provider operations occur only after explicit user-facing calls.
 Never copy Codex OAuth tokens to Netcup. No production callback routing assumed.
@@ -64,7 +64,7 @@ def _open(cipher: bytes, nonce: bytes, aad: bytes) -> str:
     try:
         return _aesgcm()(_key()).decrypt(nonce, cipher, aad).decode()
     except Exception as error:
-        raise TsentaOAuthError("Tsenta OAuth credentials could not be decrypted.") from error
+        raise TsentaOAuthError("MUNSHI Relay OAuth credentials could not be decrypted.") from error
 
 
 def _aad(tenant: str, user: str, kind: str, identity: str = "") -> bytes:
@@ -96,7 +96,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 def _provider_post(client: httpx.Client, path: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Only supported provider endpoints, streamed with a hard response cap."""
     if path not in {"/oauth/register", "/oauth/token", "/oauth/revoke"}:
-        raise TsentaOAuthError("Unsupported Tsenta OAuth endpoint.")
+        raise TsentaOAuthError("Unsupported MUNSHI Relay OAuth endpoint.")
     try:
         with client.stream(
             "POST", OAUTH_BASE + path,
@@ -107,22 +107,22 @@ def _provider_post(client: httpx.Client, path: str, payload: dict[str, Any]) -> 
             follow_redirects=False,
         ) as response:
             if response.status_code not in (200, 201):
-                raise TsentaOAuthError("Tsenta authorization server rejected the request.")
+                raise TsentaOAuthError("MUNSHI Relay authorization server rejected the request.")
             body = bytearray()
             for chunk in response.iter_bytes(chunk_size=4096):
                 body.extend(chunk)
                 if len(body) > 50_000:
                     raise TsentaOAuthError(
-                        "Tsenta authorization response exceeded safe limits."
+                        "MUNSHI Relay authorization response exceeded safe limits."
                     )
     except httpx.HTTPError as error:
-        raise TsentaOAuthError("Tsenta authorization server was unavailable.") from error
+        raise TsentaOAuthError("MUNSHI Relay authorization server was unavailable.") from error
     try:
         data = json.loads(body)
     except ValueError as error:
-        raise TsentaOAuthError("Tsenta authorization server returned invalid JSON.") from error
+        raise TsentaOAuthError("MUNSHI Relay authorization server returned invalid JSON.") from error
     if not isinstance(data, dict):
-        raise TsentaOAuthError("Tsenta authorization server returned invalid metadata.")
+        raise TsentaOAuthError("MUNSHI Relay authorization server returned invalid metadata.")
     return data
 
 
@@ -158,7 +158,7 @@ def begin(*, client: httpx.Client | None = None) -> dict[str, str]:
             )
             client_id = str(registered.get("client_id") or "").strip()
         if not client_id or len(client_id) > 300:
-            raise TsentaOAuthError("Tsenta OAuth client registration was not verified.")
+            raise TsentaOAuthError("MUNSHI Relay OAuth client registration was not verified.")
         conn = get_connection()
         try:
             ensure_schema(conn)
@@ -195,7 +195,7 @@ def complete(*, state: str, code: str, client: httpx.Client | None = None) -> di
     state = str(state or "").strip()
     code = str(code or "").strip()
     if not (20 <= len(state) <= 200 and 2 <= len(code) <= 4096):
-        raise TsentaOAuthError("Tsenta authorization callback is incomplete.")
+        raise TsentaOAuthError("MUNSHI Relay authorization callback is incomplete.")
     digest = hashlib.sha256(state.encode()).hexdigest()
     conn = get_connection()
     try:
@@ -204,24 +204,24 @@ def complete(*, state: str, code: str, client: httpx.Client | None = None) -> di
             "WHERE type='table' AND name='tsenta_oauth_intents_v1'"
         ).fetchone()
         if installed is None:
-            raise TsentaOAuthError("Tsenta authorization was not initiated.")
+            raise TsentaOAuthError("MUNSHI Relay authorization was not initiated.")
         initial = conn.execute(
             "SELECT consumed_at,expires_at FROM tsenta_oauth_intents_v1 "
             "WHERE state_sha256=?", (digest,)
         ).fetchone()
         # Unknown callback state is read-only. Do not acquire a write lock.
         if initial is None or initial["consumed_at"] is not None:
-            raise TsentaOAuthError("Tsenta authorization state is invalid or used.")
+            raise TsentaOAuthError("MUNSHI Relay authorization state is invalid or used.")
         if datetime.fromisoformat(initial["expires_at"]) <= _now():
-            raise TsentaOAuthError("Tsenta authorization state has expired.")
+            raise TsentaOAuthError("MUNSHI Relay authorization state has expired.")
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT * FROM tsenta_oauth_intents_v1 WHERE state_sha256=?", (digest,)
         ).fetchone()
         if row is None or row["consumed_at"] is not None:
-            raise TsentaOAuthError("Tsenta authorization state is invalid or used.")
+            raise TsentaOAuthError("MUNSHI Relay authorization state is invalid or used.")
         if datetime.fromisoformat(row["expires_at"]) <= _now():
-            raise TsentaOAuthError("Tsenta authorization state has expired.")
+            raise TsentaOAuthError("MUNSHI Relay authorization state has expired.")
         conn.execute(
             "UPDATE tsenta_oauth_intents_v1 SET consumed_at=? "
             "WHERE state_sha256=? AND consumed_at IS NULL",
@@ -248,9 +248,9 @@ def complete(*, state: str, code: str, client: httpx.Client | None = None) -> di
         access = response.get("access_token")
         refresh = response.get("refresh_token")
         if not isinstance(access,str) or len(access) < 12:
-            raise TsentaOAuthError("Tsenta did not return a usable access token.")
+            raise TsentaOAuthError("MUNSHI Relay did not return a usable access token.")
         if refresh is not None and not isinstance(refresh,str):
-            raise TsentaOAuthError("Tsenta returned invalid refresh token metadata.")
+            raise TsentaOAuthError("MUNSHI Relay returned invalid refresh token metadata.")
         access_cipher,access_nonce = _seal(access,_aad(owner_tenant,owner_user,"access"))
         refresh_cipher,refresh_nonce = (None,None)
         if refresh:
@@ -344,14 +344,14 @@ def _token_for_current_owner(client: httpx.Client | None = None) -> str:
             (owner.tenant_id,owner.user_id),
         ).fetchone()
         if row is None:
-            raise TsentaOAuthError("Tsenta backend account is not connected.")
+            raise TsentaOAuthError("MUNSHI Relay backend account is not connected.")
         access=_open(bytes(row["access_ciphertext"]),bytes(row["access_nonce"]),
                      _aad(owner.tenant_id,owner.user_id,"access"))
         expires=row["expires_at"]
         if not expires or datetime.fromisoformat(expires)>_now()+timedelta(minutes=2):
             return access
         if not row["refresh_ciphertext"] or not row["refresh_nonce"]:
-            raise TsentaOAuthError("Tsenta account requires fresh authorization.")
+            raise TsentaOAuthError("MUNSHI Relay account requires fresh authorization.")
         refresh=_open(bytes(row["refresh_ciphertext"]),bytes(row["refresh_nonce"]),
                       _aad(owner.tenant_id,owner.user_id,"refresh"))
         response=_provider_post(client,"/oauth/token",{
@@ -360,13 +360,13 @@ def _token_for_current_owner(client: httpx.Client | None = None) -> str:
         })
         replacement=response.get("access_token")
         if not isinstance(replacement,str) or len(replacement)<12:
-            raise TsentaOAuthError("Tsenta token refresh returned an invalid access token.")
+            raise TsentaOAuthError("MUNSHI Relay token refresh returned an invalid access token.")
         next_refresh=response.get("refresh_token") or refresh
         if not isinstance(next_refresh,str):
-            raise TsentaOAuthError("Tsenta refresh token was invalid.")
+            raise TsentaOAuthError("MUNSHI Relay refresh token was invalid.")
         lifetime=response.get("expires_in")
         if not isinstance(lifetime,(int,float)) or not 60 <= lifetime <= 365*86400:
-            raise TsentaOAuthError("Tsenta token refresh lacked safe expiry metadata.")
+            raise TsentaOAuthError("MUNSHI Relay token refresh lacked safe expiry metadata.")
         ac,an=_seal(replacement,_aad(owner.tenant_id,owner.user_id,"access"))
         rc,rn=_seal(next_refresh,_aad(owner.tenant_id,owner.user_id,"refresh"))
         conn.execute(
@@ -386,7 +386,7 @@ def _token_for_current_owner(client: httpx.Client | None = None) -> str:
 
 
 def verify_profile(*, client: httpx.Client | None = None) -> dict[str,bool]:
-    """Authenticated read only: never persist or log raw Tsenta candidate data."""
+    """Authenticated read only: never persist or log raw MUNSHI Relay candidate data."""
     from app.tsenta_mcp_adapter_v1 import _unwrap
     from app.tsenta_mcp_http_v1 import TsentaMcpReadClient
 
@@ -397,7 +397,7 @@ def verify_profile(*, client: httpx.Client | None = None) -> dict[str,bool]:
     if not isinstance(result,dict) or not (
         "onboardingComplete" in result or "hasResume" in result
     ):
-        raise TsentaOAuthError("Tsenta account profile was not verified.")
+        raise TsentaOAuthError("MUNSHI Relay account profile was not verified.")
     conn=get_connection()
     try:
         owner=current_owner_readonly(conn)
@@ -409,7 +409,7 @@ def verify_profile(*, client: httpx.Client | None = None) -> dict[str,bool]:
         ).rowcount
         conn.commit()
         if not updated:
-            raise TsentaOAuthError("The verified Tsenta connection is no longer present.")
+            raise TsentaOAuthError("The verified MUNSHI Relay connection is no longer present.")
     finally:
         conn.close()
     return {"authenticated_backend":True,"profile_read_verified":True}
