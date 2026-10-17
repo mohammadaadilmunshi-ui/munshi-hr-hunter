@@ -245,6 +245,7 @@ def learning_summary() -> dict[str, int]:
 def render_connection_panel() -> None:
     """Explicit OAuth actions; never auto-connect or copy a local Codex grant."""
     import os
+    from collections.abc import Mapping
 
     import streamlit as st
 
@@ -316,6 +317,41 @@ def render_connection_panel() -> None:
                 "OAuth connection alone does not enable application submission. "
                 "The verified execution worker remains a separate release gate."
             )
+            if st.button(
+                "Check Tsenta application readiness",
+                key="tsenta_application_diagnostics",
+                use_container_width=True,
+            ):
+                from app.tsenta_live_diagnostics_v1 import diagnose_submission_setup
+
+                try:
+                    st.session_state["_tsenta_safe_diagnostics"] = (
+                        diagnose_submission_setup()
+                    )
+                except (RuntimeError, ValueError, TypeError, OSError, sqlite3.Error):
+                    st.session_state.pop("_tsenta_safe_diagnostics", None)
+                    st.warning(
+                        "Tsenta diagnostics could not complete. "
+                        "No application was submitted."
+                    )
+            report = st.session_state.get("_tsenta_safe_diagnostics")
+            if isinstance(report, Mapping):
+                st.caption(
+                    "Managed email active: "
+                    + ("Yes" if report.get("managed_email_active") else "No")
+                    + " · Matches Tsenta profile: "
+                    + ("Yes" if report.get("managed_email_matches_tsenta") else "No")
+                )
+                st.caption(
+                    "Custom-resume tools: "
+                    + ("Available" if report.get("custom_resume_tools_present")
+                       else "Unavailable")
+                    + " · MUNSHI mailbox: "
+                    + ("Ready" if report.get("mailbox_ready") else "Not ready")
+                )
+                for reason in report.get("reason_codes") or []:
+                    st.caption("Setup check: " + str(reason).replace("_", " ").title())
+                st.info("This diagnostic does not enable Tsenta submissions.")
             approved = st.checkbox(
                 "Disconnect this local MUNSHI account connection",
                 key="tsenta_oauth_disconnect_confirm",
