@@ -128,7 +128,42 @@ def tsenta_status_text(status: Mapping[str, Any]) -> tuple[str, str]:
     )
 
 
-def provider_progress(route: Mapping[str, Any] | None) -> dict[str, Any]:
+def provider_progress(
+    route: Mapping[str, Any] | None,
+    production_receipt: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Combine provider status with the independent Hunter receipt authority.
+
+    Do not infer employer confirmation from a browser click, a provider-reported
+    submission, or a PREPARATION route. A durable, owner-scoped receipt requires
+    the receipt ID, digest, method and verification timestamp.
+    """
+    receipt = dict(production_receipt or {})
+    provider = str((route or {}).get("provider") or "")
+    provider_confirmed = (
+        str((route or {}).get("state") or "") == "EMPLOYER_CONFIRMED"
+        and bool((route or {}).get("receipt_evidence_digest"))
+    )
+    independently_confirmed = (
+        bool(receipt.get("receipt_id"))
+        and bool(receipt.get("receipt_digest"))
+        and bool(receipt.get("verification_method"))
+        and bool(receipt.get("verified_at"))
+        and (
+            not provider
+            or str(receipt.get("provider") or "") == provider
+        )
+    )
+    if independently_confirmed or provider_confirmed:
+        return {
+            "provider": PROVIDER_LABELS.get(
+                provider or str(receipt.get("provider") or ""),
+                "Execution provider",
+            ),
+            "status": "Employer confirmation verified",
+            "receipt": "Independently verified",
+            "is_employer_confirmed": True,
+        }
     if not route:
         return {
             "provider": "Not selected",
@@ -136,19 +171,12 @@ def provider_progress(route: Mapping[str, Any] | None) -> dict[str, Any]:
             "receipt": "Not recorded",
             "is_employer_confirmed": False,
         }
-    provider = str(route.get("provider") or "")
     state = str(route.get("state") or "")
     return {
         "provider": PROVIDER_LABELS.get(provider, "Execution provider"),
         "status": STATUS_LABELS.get(state, "Status unavailable"),
-        "receipt": (
-            "Independently verified"
-            if state == "EMPLOYER_CONFIRMED" and route.get("receipt_evidence_digest")
-            else "Not independently verified"
-        ),
-        "is_employer_confirmed": (
-            state == "EMPLOYER_CONFIRMED" and bool(route.get("receipt_evidence_digest"))
-        ),
+        "receipt": "Not independently verified",
+        "is_employer_confirmed": False,
     }
 
 
@@ -423,7 +451,7 @@ def render_workspace(job_id: int) -> None:
         employer_apply_url=employer_url,
         tsenta_backend_connected=backend_status["execution_ready"] is True,
     )
-    progress = provider_progress(state["route"])
+    progress = provider_progress(state["route"], flow.get("production_receipt"))
     with st.container(border=True):
         st.markdown("### Application engine")
         st.caption(
@@ -433,6 +461,15 @@ def render_workspace(job_id: int) -> None:
         metrics = st.columns(2, gap="small")
         metrics[0].metric("Engine", progress["provider"])
         metrics[1].metric("Employer receipt", progress["receipt"])
+
+        if progress["is_employer_confirmed"] and not state["route_exists"]:
+            st.success("Employer confirmation is independently verified.")
+            st.link_button(
+                "View application and receipt",
+                product_href("prepare-application", job_id=int(job_id)),
+                use_container_width=True,
+            )
+            return
 
         if state["route_exists"]:
             if progress["is_employer_confirmed"]:
