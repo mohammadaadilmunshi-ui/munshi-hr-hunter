@@ -48,8 +48,8 @@ def test_existing_tsenta_route_stays_tsenta_not_native():
 def test_relay_approval_routes_to_one_use_dispatch_not_native_mandate(
     monkeypatch,
 ):
-    from app import relay_application_dispatch_v1 as dispatcher
     from app import application_execution_mandate_v1 as mandate
+    from app import relay_application_dispatch_v1 as dispatcher
 
     monkeypatch.setattr(
         flow,"flow_for_job",lambda _job_id: {
@@ -90,3 +90,50 @@ def test_locked_engine_is_visible_in_application_panel():
     source = inspect.getsource(ui.render_workspace)
     assert "application_provider_locked_engine_" in source
     assert "disabled=True" in source
+
+
+def test_saved_relay_reservation_can_proceed_to_its_first_approval():
+    route = {
+        "provider":"TSENTA","state":"PREPARATION","attempt_count":0,
+        "dispatch_claim_exists":False,
+        "provider_status":None,"provider_application_id_sha256":None,
+    }
+    result = ui.engine_selector_state(
+        route=route,tsenta_backend={"execution_ready":True},
+    )
+    assert result["selected"] == "MUNSHI Relay"
+    assert result["locked"] is True  # do not allow switching provider freely
+    assert result["can_submit_tsenta"] is True
+    assert "existing reservation once" in result["reason"]
+    source = inspect.getsource(workspace._render_complete_loop)
+    assert "not selector['locked']" not in source[source.index("submit_enabled = ("):]
+
+
+@pytest.mark.parametrize("changed",[
+    {"dispatch_claim_exists":True},
+    {"attempt_count":1},
+    {"state":"FILLING"},
+    {"state":"PAUSED"},
+    {"state":"PROVIDER_SUBMITTED"},
+    {"provider_status":"DISPATCH_CLAIMED"},
+    {"provider_application_id_sha256":"a"*64},
+    {"provider_submitted_at":"2026-10-17T01:00:00Z"},
+    {"employer_confirmed_at":"2026-10-17T02:00:00Z"},
+    {"receipt_method":"EMAIL"},
+])
+def test_relay_reservations_with_dispatch_or_receipt_evidence_are_locked(changed):
+    route = {"provider":"TSENTA","state":"PREPARATION","attempt_count":0}
+    route.update(changed)
+    state=ui.engine_selector_state(
+        route=route,tsenta_backend={"execution_ready":True},
+    )
+    assert state["locked"] is True
+    assert state["can_submit_tsenta"] is False
+
+
+def test_relay_reserved_route_not_submittable_when_backend_disconnects():
+    state=ui.engine_selector_state(
+        route={"provider":"TSENTA","state":"PREPARATION"},
+        tsenta_backend={"execution_ready":False},
+    )
+    assert state["can_submit_tsenta"] is False

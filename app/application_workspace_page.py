@@ -808,8 +808,7 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                 chosen_engine == 'NATIVE'
                 and selector['selected'] == 'MUNSHI Native'
                 or (
-                    not selector['locked']
-                    and chosen_engine == 'TSENTA'
+                    chosen_engine == 'TSENTA'
                     and selector['can_submit_tsenta']
                 )
             )
