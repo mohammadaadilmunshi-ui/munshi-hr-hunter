@@ -227,6 +227,49 @@ def test_unsupported_numeric_candidate_claim_fails_closed():
         writer._validate_draft(value, context())
 
 
+def test_exact_employer_role_title_ordinal_is_not_candidate_metric():
+    candidate = context()
+    candidate["job"]["title"] = "Human Resources Coordinator 2nd"
+    value = draft(
+        "I am excited to apply for the Human Resources Coordinator 2nd position "
+        "and to contribute my recruiting operations experience."
+    )
+    result, _ = writer._validate_draft(value, candidate)
+    assert len(result.paragraphs) == 2
+
+
+def test_role_title_exemption_does_not_hide_unverified_candidate_tenure():
+    candidate = context()
+    candidate["job"]["title"] = "Human Resources Coordinator 2nd"
+    value = draft(
+        "I am excited to apply for the Human Resources Coordinator 2nd position "
+        "after spending 2 years in payroll operations."
+    )
+    with pytest.raises(ValueError, match="unsupported quantified"):
+        writer._validate_draft(value, candidate)
+
+
+def test_unverified_past_role_title_cannot_bypass_quantified_claim_guard():
+    candidate = context()
+    candidate["job"]["title"] = "Human Resources Coordinator 2nd"
+    value = draft(
+        "In my previous role I was Human Resources Coordinator 2nd "
+        "and supported recruiting operations."
+    )
+    with pytest.raises(ValueError, match="unsupported quantified"):
+        writer._validate_draft(value, candidate)
+
+
+def test_bare_ordinal_is_not_exempted_as_role_title():
+    candidate = context()
+    candidate["job"]["title"] = "Human Resources Coordinator 2nd"
+    value = draft(
+        "I have worked in a 2nd shift lead position and supported recruiting operations."
+    )
+    with pytest.raises(ValueError, match="unsupported quantified"):
+        writer._validate_draft(value, candidate)
+
+
 def test_generation_repairs_forbidden_jd_language_once(wired, monkeypatch):
     unsafe = draft(
         "I have managed recruiting operations and have Five years of compensation experience."

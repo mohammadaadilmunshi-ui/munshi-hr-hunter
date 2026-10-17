@@ -171,8 +171,9 @@ def presentation_css() -> str:
       color:var(--mn-forest)!important;font-size:.85rem;font-weight:720;
       text-decoration:none!important}
     .munshi-breadcrumb a:hover{background:#e4efe9}
-    .munshi-stage-track{list-style:none;padding:0;margin:1rem 0;
-      display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:.55rem}
+    .stApp ol.munshi-stage-track{list-style:none!important;padding:0!important;margin:1rem 0;
+      display:grid!important;grid-template-columns:repeat(6,minmax(0,1fr))!important;
+      width:100%;gap:.55rem}
     .munshi-stage{display:flex;gap:.45rem;align-items:center;
       min-width:0;padding:.65rem .55rem;border-radius:12px;
       border:1px solid var(--mn-border);background:#fff;
@@ -259,10 +260,11 @@ def presentation_css() -> str:
       .stApp [data-testid="stSelectbox"]{min-width:0}
       .stApp .product-callout{flex-direction:column;align-items:stretch}
       .stApp .surface,.stApp .split-panel{padding:.9rem}
-      .munshi-stage-track{grid-template-columns:none;display:grid;
-        grid-auto-flow:column;grid-auto-columns:minmax(165px,60%);
+      .stApp ol.munshi-stage-track{grid-template-columns:none!important;
+        display:grid!important;grid-auto-flow:column;
+        grid-auto-columns:minmax(165px,60%);
         overflow-x:auto;scroll-snap-type:x proximity;
-        -webkit-overflow-scrolling:touch;padding:.15rem 0 .5rem}
+        -webkit-overflow-scrolling:touch;padding:.15rem 0 .5rem!important}
       .munshi-stage{scroll-snap-align:start}
       .munshi-journey{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(210px,78%);
         grid-template-columns:none;overflow-x:auto;overscroll-behavior-x:contain;
