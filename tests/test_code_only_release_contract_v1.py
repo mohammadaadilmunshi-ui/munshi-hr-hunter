@@ -55,8 +55,10 @@ def test_production_action_pinned_source_and_shared_serialization():
     assert "NETCUP_SSH_PRIVATE_KEY" in workflow
     assert "StrictHostKeyChecking=yes" in workflow
     assert "Checkout exact tested release SHA" in workflow
-    assert "/opt/munshi/runtime/code-only" in workflow
-    assert "chmod 700" in workflow
+    assert "/opt/munshi/bin/deploy-code-only-release" in workflow
+    assert 'cat "$RUNNER_TEMP/munshi-codeonly.bundle"' in workflow
+    assert "scp " not in workflow
+    assert "mkdir -p '$REMOTE_DIR'" not in workflow
 
 
 def test_bad_sha_stops_locally_without_contacting_production():
@@ -65,7 +67,6 @@ def test_bad_sha_stops_locally_without_contacting_production():
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
             "--expected-base", "3b4e400c3ef9c8f32bcb8b4c037b036ef2a37e0b",
-            "--bundle", "/tmp/nonexistent",
         ],
         check=False,
         capture_output=True,
