@@ -17,6 +17,7 @@ O=munshi-netcup-shadow-ollama-1
 target=""
 branch=""
 bundle=""
+test_copy=""
 expected_base=""
 changed_repo=0
 new_container=0
@@ -123,6 +124,7 @@ echo 'LIVE_DISPATCH_QUEUE=EMPTY'
 rollback() {
   exit_code="$?"
   [[ -z "$bundle" ]] || rm -f -- "$bundle" || true
+  [[ -z "$test_copy" ]] || rm -rf -- "$test_copy" || true
   if (( exit_code != 0 && succeeded == 0 )); then
     printf 'CODE_ONLY_FAILED=1; ORIGINAL_IMAGE_ROLLBACK=STARTED\n' >&2
     if (( changed_repo )); then
@@ -215,13 +217,25 @@ python3 -m compileall -q app
 "${compose[@]}" build hunter
 new_image="$(docker image inspect -f '{{.Id}}' "$image_tag")"
 [[ "$new_image" != "$old_image" ]] || block 'New image identical to old running image'
+# The production repository's private tests are owner-only (0600, munshi).
+# The image runs as unprivileged hunter (uid 10001), which cannot read the
+# original tests via a bind mount. Never chmod or chown live source files.
+# Make a disposable copy that is readable only during this no-network test;
+# the EXIT trap deletes it on success or failure.
+test_copy="$(mktemp -d "$ROOT/runtime/codeonly-test-source.XXXXXXXX")"
+mkdir -m 0700 "$test_copy/tests"
+cp -a "$REPO/tests/." "$test_copy/tests/"
+chmod -R a+rX "$test_copy/tests"
+[[ -r "$test_copy/tests/test_native_cover_letter_writer_v1.py" ]] ||
+  block 'Private test snapshot could not be created'
+echo 'ISOLATED_TEST_SOURCE=EPHEMERAL_COPY (production permissions unchanged)'
 timeout 900 docker run --rm --network none --read-only \
   --tmpfs /tmp:rw,nosuid,nodev,size=512m \
   --tmpfs /app/hunter/data:rw,nosuid,nodev,size=256m,uid=10001,gid=10001,mode=0700 \
-  --mount "type=bind,src=$REPO/tests,dst=/app/hunter/tests,readonly" \
+  --mount "type=bind,src=$test_copy/tests,dst=/app/hunter/tests,readonly" \
   --entrypoint python -e CLOUD_SHADOW_MODE=false \
   -e HUNTER_API_SECRET=isolated-codeonly-ci-tests-not-production-12345 \
-  "$new_image" -m pytest -q \
+  "$new_image" -m pytest -q -p no:cacheprovider \
     /app/hunter/tests/test_native_cover_letter_writer_v1.py \
     /app/hunter/tests/test_native_approval_provider_lock_v1.py \
     /app/hunter/tests/test_product_application_flow_v2.py \
