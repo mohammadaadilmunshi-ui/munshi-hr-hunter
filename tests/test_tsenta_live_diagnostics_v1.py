@@ -124,5 +124,22 @@ def test_dashboard_exposes_explicit_readonly_diagnostic(monkeypatch):
         lambda: {"authorized": True, "profile_read_verified": True})
     a = AppTest.from_function(render_connection_panel).run()
     assert not list(a.exception)
-    assert any(button.label == "Check Tsenta application readiness"
-               for button in a.button)
+    controls = [
+        button for button in a.button
+        if button.label == "Check Tsenta application readiness"
+    ]
+    assert len(controls) == 1
+
+    monkeypatch.setattr(diag, "diagnose_submission_setup", lambda: {
+        "profile_verified": True,
+        "managed_email_active": True,
+        "managed_email_matches_tsenta": False,
+        "custom_resume_tools_present": True,
+        "mailbox_ready": True,
+        "execution_ready": False,
+        "reason_codes": ["TSENTA_PROFILE_EMAIL_DIFFERS_FROM_MUNSHI_ALIAS"],
+        "raw_identity_in_response": False,
+    })
+    controls[0].click().run()
+    assert not list(a.exception)
+    assert a.session_state["_tsenta_safe_diagnostics"]["execution_ready"] is False
