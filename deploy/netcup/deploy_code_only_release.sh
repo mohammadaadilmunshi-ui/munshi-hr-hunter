@@ -28,7 +28,6 @@ while (($#)); do
     --commit) target="${2:-}";shift 2 ;;
     --branch) branch="${2:-}";shift 2 ;;
     --expected-base) expected_base="${2:-}";shift 2 ;;
-    --bundle) bundle="${2:-}";shift 2 ;;
     *) block 'Unsupported arguments' ;;
   esac
 done
@@ -36,8 +35,6 @@ done
 [[ "$expected_base" == "$LIVE_BASE" ]] || block 'Expected production baseline changed'
 [[ "$branch" == "$RELEASE_BRANCH" ]] || block 'Only the approved production source branch is allowed'
 [[ "$(id -un)" == munshi ]] || block 'Must run as authorized munshi owner'
-[[ "$bundle" == "$ROOT/runtime/code-only/munshi-codeonly-$target.bundle" && -s "$bundle" ]] || block 'Exact target bundle missing'
-[[ -r "$bundle" ]] || block 'Cannot read release bundle'
 [[ -f "$REPO/compose.yaml" ]] || block 'Missing production compose'
 [[ -f "$ROOT/runtime/stage12-production.override.yaml" ]] || block 'Missing production runtime override'
 [[ -z "$(git -C "$REPO" status --porcelain)" ]] || block 'Production repository is dirty'
@@ -125,6 +122,7 @@ echo 'LIVE_DISPATCH_QUEUE=EMPTY'
 
 rollback() {
   exit_code="$?"
+  [[ -z "$bundle" ]] || rm -f -- "$bundle" || true
   if (( exit_code != 0 && succeeded == 0 )); then
     printf 'CODE_ONLY_FAILED=1; ORIGINAL_IMAGE_ROLLBACK=STARTED\n' >&2
     if (( changed_repo )); then
@@ -145,6 +143,13 @@ rollback() {
 }
 trap rollback EXIT
 
+# Read the same authenticated bundle-over-stdin transport used by the
+# existing forced-command production gateway. This path never needs SCP,
+# remote shell access, or an arbitrary uploaded script.
+bundle="$(mktemp "$ROOT/runtime/codeonly-incoming.XXXXXXXX.bundle")"
+timeout 120 dd bs=1048576 count=256 status=none of="$bundle"
+[[ -s "$bundle" ]] || block 'Empty authenticated git bundle'
+[[ "$(stat -c '%s' "$bundle")" -le 268435456 ]] || block 'Bundle exceeds 256 MiB bound'
 cd "$REPO"
 git bundle verify "$bundle" >/dev/null
 deploy_ref="refs/remotes/github-codeonly/$branch"
@@ -175,6 +180,8 @@ allowed_files=(
   tests/test_native_standing_consent_v1.py
   tests/test_autonomous_prepare_v1.py
   deploy/netcup/deploy_code_only_release.sh
+  deploy/netcup/github_deploy_gateway.sh
+  tests/test_code_only_gateway_transport_v1.py
   .github/workflows/netcup-code-only-deploy.yml
   tests/test_code_only_release_contract_v1.py
 )
