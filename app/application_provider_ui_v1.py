@@ -12,9 +12,9 @@ import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
-from app.product_experience_vnext import product_href
 from app.linkedin_employer_link_resolver_v1 import external_url
 from app.linkedin_verified_url_evidence_v5 import latest_verified_for_job
+from app.product_experience_vnext import product_href
 
 PROVIDER_LABELS = {"NATIVE": "MUNSHI Native", "TSENTA": "Tsenta"}
 STATUS_LABELS = {
@@ -126,6 +126,38 @@ def tsenta_status_text(status: Mapping[str, Any]) -> tuple[str, str]:
             "Execution also requires separate dispatcher validation."
         ),
     )
+
+
+def engine_selector_state(
+    *, route: Mapping[str, Any] | None,
+    tsenta_backend: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Read-only engine choices; never grants submission authority.
+
+    An existing provider reservation is immutable in the customer-facing UI.
+    A cross-provider handoff requires its own atomic approval/revocation
+    workflow after checking active mandates, claims and employer receipts.
+    """
+    selected = str((route or {}).get("provider") or "NATIVE").upper()
+    if selected not in PROVIDER_LABELS:
+        selected = "NATIVE"
+    reserved = bool(route)
+    tsenta_ready = tsenta_backend.get("execution_ready") is True
+    return {
+        "labels": tuple(PROVIDER_LABELS.values()),
+        "selected": PROVIDER_LABELS[selected],
+        "locked": reserved,
+        "tsenta_dispatch_ready": tsenta_ready,
+        "can_submit_tsenta": tsenta_ready and not reserved,
+        "reason": (
+            "This opening already belongs to an engine. Changing it requires "
+            "a checked handoff. Any existing approval cannot be reused."
+            if reserved else
+            "Tsenta is connected, but its write dispatcher is not yet validated."
+            if not tsenta_ready else
+            "Choose an engine before granting the one-time application approval."
+        ),
+    }
 
 
 def provider_progress(
@@ -471,7 +503,21 @@ def render_workspace(job_id: int) -> None:
             )
             return
 
+        selector = engine_selector_state(
+            route=state["route"], tsenta_backend=backend_status
+        )
         if state["route_exists"]:
+            # Always show the engine control; do not silently hide it once a
+            # Native approval has already reserved the exact opening.
+            st.radio(
+                "Submission engine",
+                options=selector["labels"],
+                index=selector["labels"].index(selector["selected"]),
+                horizontal=True,
+                disabled=True,
+                key=f"application_provider_locked_engine_{int(job_id)}",
+            )
+            st.caption(selector["reason"])
             if progress["is_employer_confirmed"]:
                 st.success(progress["status"])
             else:

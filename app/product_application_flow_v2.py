@@ -18,10 +18,9 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.database import get_connection
-from app.phase67_common import safe_owned_job_snapshot
 from app.phase8_application_truth import current_application_truth_projection
+from app.phase67_common import safe_owned_job_snapshot
 from app.tenant_foundation import current_owner, current_owner_readonly
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -846,6 +845,7 @@ def _reserve_native_route_for_approval(
 def approve_and_submit_for_job(
     job_id: int, *, approval_source: str = "CUSTOMER_CLICK",
     consent_policy_id: str = "", consent_slot: str = "",
+    execution_provider: str = "NATIVE",
 ) -> dict[str, Any]:
     """Record the sole customer package approval before browser execution.
 
@@ -854,6 +854,16 @@ def approve_and_submit_for_job(
     snapshot and derives the one-use submit authority from this mandate.
     """
     from app import application_execution_mandate_v1 as mandate_v1
+
+    selected_engine = str(execution_provider or '').strip().upper()
+    if selected_engine != 'NATIVE':
+        # Do not mint a Native mandate for Tsenta, or represent a provider
+        # reservation as an executable Tsenta application. A separate
+        # validated dispatcher and one-use authorization are required.
+        raise PermissionError(
+            'Tsenta submission dispatcher is not yet validated; '
+            'no application or approval was created.'
+        )
 
     flow = flow_for_job(int(job_id))
     if str(flow.get('state') or '') != 'READY_FOR_APPROVAL':

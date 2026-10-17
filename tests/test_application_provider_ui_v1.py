@@ -216,7 +216,10 @@ def test_streamlit_reserved_route_is_readonly_and_has_separate_receipt(monkeypat
         "render_workspace(11)\n"
     ).run(timeout=15)
     assert not list(app.exception)
-    assert len(app.radio) == 0
+    assert len(app.radio) == 1
+    assert app.radio[0].label == "Submission engine"
+    assert app.radio[0].disabled is True
+    assert app.radio[0].value == "Tsenta"
     assert len(app.button) == 0
     assert "Not independently verified" in [metric.value for metric in app.metric]
 

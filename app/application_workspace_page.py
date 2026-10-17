@@ -14,11 +14,13 @@ from typing import Any
 
 import streamlit as st
 
-from app.product_ui import esc, page_intro
-from app.product_experience_vnext import render_application_breadcrumb, render_lifecycle_steps
 from app import product_application_flow_v2 as complete_loop
 from app.phase67_common import safe_owned_job_snapshot
-
+from app.product_experience_vnext import (
+    render_application_breadcrumb,
+    render_lifecycle_steps,
+)
+from app.product_ui import esc, page_intro
 
 _LIVE_PROGRESS_STATES = frozenset({
     "QUEUED",
@@ -753,6 +755,58 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                 'ATS execution remains blocked.'
             )
         else:
+            from app import tsenta_backend_readiness_v1
+            from app.application_provider_ui_v1 import (
+                engine_selector_state,
+                tsenta_status_text,
+            )
+            # The engine is selected at the same immutable package-review
+            # boundary as the sole approval; never silently reserve Native
+            # while hiding the alternative.
+            selector = engine_selector_state(
+                route=flow.get('provider_route'),
+                tsenta_backend=tsenta_backend_readiness_v1.connection_status(),
+            )
+            st.markdown('**Submission engine**')
+            choice = st.radio(
+                'Choose the application submission engine',
+                options=selector['labels'],
+                index=selector['labels'].index(selector['selected']),
+                horizontal=True,
+                key=f'complete_loop_submission_engine_{job_id}',
+                disabled=selector['locked'],
+            )
+            if choice == 'Tsenta' and not selector['can_submit_tsenta']:
+                st.warning(
+                    tsenta_status_text(
+                        tsenta_backend_readiness_v1.connection_status()
+                    )[1]
+                )
+            if selector['locked']:
+                st.info(
+                    selector['reason']
+                    + (' The current Native reservation can still use the '
+                       'normal first approval if one has not been issued.'
+                       if choice == 'MUNSHI Native' else '')
+                )
+            elif not selector['tsenta_dispatch_ready']:
+                st.caption(
+                    'Tsenta is visible for transparency but cannot submit '
+                    'until its authenticated dispatch worker and receipt '
+                    'reconciliation pass production validation.'
+                )
+            chosen_engine = (
+                'TSENTA' if choice == 'Tsenta' else 'NATIVE'
+            )
+            submit_enabled = (
+                chosen_engine == 'NATIVE'
+                and selector['selected'] == 'MUNSHI Native'
+                or (
+                    not selector['locked']
+                    and chosen_engine == 'TSENTA'
+                    and selector['can_submit_tsenta']
+                )
+            )
             skip_col, submit_col = st.columns([1, 2], gap='small')
             with skip_col:
                 if st.button(
@@ -773,11 +827,12 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                     type='primary',
                     use_container_width=True,
                     key=f'complete_loop_approve_submit_{job_id}',
+                    disabled=not submit_enabled,
                 ):
                     try:
                         with st.spinner('Recording package approval…'):
                             complete_loop.approve_and_submit_for_job(
-                                int(job_id)
+                                int(job_id), execution_provider=chosen_engine
                             )
                     except Exception as error:
                         st.error(
