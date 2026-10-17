@@ -1,4 +1,4 @@
-"""Held-out, provider-neutral validation gate for Tsenta-derived Native hypotheses.
+"""Held-out, provider-neutral validation gate for MUNSHI Relay-derived Native hypotheses.
 
 This module cannot perform submissions, change candidate truth, or promote a
 new field mapping by itself. It evaluates evidence-backed candidate rules

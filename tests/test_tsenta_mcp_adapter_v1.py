@@ -219,3 +219,73 @@ def test_custom_resume_stale_upload_cannot_reach_application_submission(monkeypa
             execution_authorized=True,
         )
     assert [tool for tool, _ in transport.calls] == ["check_custom_resume"]
+
+
+def test_live_tsenta_custom_resume_metadata_can_verify_upload(monkeypatch):
+    transport = FakeTransport()
+    original_call = transport.__call__
+
+    def live_metadata(tool_name, arguments):
+        if tool_name == "check_custom_resume":
+            transport.calls.append((tool_name, arguments))
+            return {
+                "result": {
+                    "uploadId": "upload-private",
+                    "byteSize": 53133,
+                    "viewUrl": "https://example.com/private-preview",
+                }
+            }
+        return original_call(tool_name, arguments)
+
+    adapter = TsentaMcpAdapter(live_metadata)
+    monkeypatch.setenv(EXECUTION_ENV, "true")
+    result = adapter.apply_with_custom_resume(
+        url="https://jobs.smartrecruiters.com/example/123",
+        upload_id="upload-private",
+        complete_profile={"personalInformation": {"firstName": "Fixture"}},
+        execution_authorized=True,
+        expected_byte_size=53133,
+    )
+    assert result["provider"] == "TSENTA"
+    assert [name for name, _ in transport.calls] == [
+        "check_custom_resume", "apply_with_custom_resume",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("change", "expected_size"),
+    [
+        ({"uploadId": "other"}, 53133),
+        ({"byteSize": 150}, 53133),
+        ({"viewUrl": "http://example.com/file"}, 53133),
+        ({"valid": False}, 53133),
+        ({}, 1),
+    ],
+)
+def test_unverifiable_live_resume_metadata_blocks_submission(
+    monkeypatch, change, expected_size
+):
+    transport = FakeTransport()
+
+    def unverified(tool_name, arguments):
+        assert tool_name == "check_custom_resume"
+        transport.calls.append((tool_name, arguments))
+        value = {
+            "uploadId": "upload-private",
+            "byteSize": 53133,
+            "viewUrl": "https://example.com/private-preview",
+        }
+        value.update(change)
+        return {"result": value}
+
+    adapter = TsentaMcpAdapter(unverified)
+    monkeypatch.setenv(EXECUTION_ENV, "true")
+    with pytest.raises(RuntimeError, match="not verified"):
+        adapter.apply_with_custom_resume(
+            url="https://jobs.smartrecruiters.com/example/123",
+            upload_id="upload-private",
+            complete_profile={"personalInformation": {"firstName": "Fixture"}},
+            execution_authorized=True,
+            expected_byte_size=expected_size,
+        )
+    assert [name for name, _ in transport.calls] == ["check_custom_resume"]

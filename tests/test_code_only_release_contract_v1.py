@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "a9704e5861c6741c3df3fe7caf085410ddafaefa" in content
+    assert "ce4594efba094dd0cd7ffcb5462c206d41beee23" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "a9704e5861c6741c3df3fe7caf085410ddafaefa",
+            "--expected-base", "ce4594efba094dd0cd7ffcb5462c206d41beee23",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "a9704e5861c6741c3df3fe7caf085410ddafaefa", "HEAD",
+            "ce4594efba094dd0cd7ffcb5462c206d41beee23", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )
@@ -114,3 +114,17 @@ def test_nonroot_hunter_can_read_ephemeral_test_snapshot_without_source_chmod():
     assert 'chmod -R a+rX "$REPO/tests"' not in content
     assert "docker run --rm --network none --read-only" in content
     assert '-p no:cacheprovider' in content
+
+
+
+def test_relay_release_acceptance_cannot_skip_atomic_dispatch_tests():
+    script = (
+        ROOT / "deploy/netcup/deploy_code_only_release.sh"
+    ).read_text(encoding="utf-8")
+    assert "app/relay_application_dispatch_v1.py" in script
+    assert "tests/test_relay_application_dispatch_v1.py" in script
+    assert "/app/hunter/tests/test_relay_application_dispatch_v1.py" in script
+    assert "/app/hunter/tests/test_tsenta_learning_monitor_v1.py" in script
+    assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE" in script
+    assert "CODE_ONLY_SCHEMA_MIGRATIONS=NONE" in script
+    assert "stop submit-worker" not in script

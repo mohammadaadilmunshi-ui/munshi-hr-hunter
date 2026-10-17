@@ -98,7 +98,7 @@ def test_sync_denies_native_provider_even_when_id_is_bound(hunter_db, monkeypatc
     route = create_route(monkeypatch, provider="NATIVE")
     adapter = FakeReadOnlyAdapter([])
     import pytest
-    with pytest.raises(PermissionError, match="Tsenta-owned"):
+    with pytest.raises(PermissionError, match="MUNSHI Relay-owned"):
         sync.sync_existing_application_status(route_id=route["route_id"], adapter=adapter)
     assert adapter.calls == []
 

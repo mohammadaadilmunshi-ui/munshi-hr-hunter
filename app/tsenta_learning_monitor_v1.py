@@ -1,7 +1,7 @@
-"""Opt-in, bounded, privacy-minimized Tsenta learning cycle.
+"""Opt-in, bounded, privacy-minimized MUNSHI Relay learning cycle.
 
 Run once from an external scheduler *after* the owner authorizes the Netcup
-Tsenta backend. No background daemon, network access, or submit permission
+MUNSHI Relay backend. No background daemon, network access, or submit permission
 is created by importing this module.
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ MAX_PAGES = 10
 
 
 def learning_cycle(*, pages: int = DEFAULT_PAGES, limit: int = 15) -> dict[str, Any]:
-    """Read Tsenta application history only; never authorize an application."""
+    """Read MUNSHI Relay application history only; never authorize an application."""
     if not 1 <= pages <= MAX_PAGES or not 1 <= limit <= sync.MAX_BATCH:
         raise ValueError("Read-only learning pages/limits are out of bounds.")
 
@@ -68,7 +68,7 @@ def learning_cycle(*, pages: int = DEFAULT_PAGES, limit: int = 15) -> dict[str, 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Opt-in Tsenta read-only learning iteration")
+    parser = argparse.ArgumentParser(description="Opt-in MUNSHI Relay read-only learning iteration")
     parser.add_argument("--once", action="store_true", required=True)
     parser.add_argument("--pages", type=int, default=DEFAULT_PAGES)
     args = parser.parse_args()

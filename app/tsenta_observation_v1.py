@@ -1,4 +1,4 @@
-"""Privacy-minimized Tsenta observation and Native prediction deltas.
+"""Privacy-minimized MUNSHI Relay observation and Native prediction deltas.
 
 Only data returned by authorized user-facing MCP tools is accepted.  Submitted
 answer values, candidate identifiers, employer URLs, raw resumes and browser
@@ -79,7 +79,7 @@ def _sanitize_label(value: Any) -> str:
     text = _URL.sub("<url>", text)
     text = _LONG_NUMBER.sub("<number>", text)
     if _SECRETISH.search(text):
-        raise ValueError("Tsenta observation contains credential-like text.")
+        raise ValueError("MUNSHI Relay observation contains credential-like text.")
     return text
 
 
@@ -141,7 +141,7 @@ def observations_from_review(
 ) -> list[dict[str, Any]]:
     """Create value-free field observations from get_application_review."""
     if not isinstance(review, Mapping):
-        raise TypeError("Tsenta review must be an object.")
+        raise TypeError("MUNSHI Relay review must be an object.")
     reference = _application_ref(provider_application_id)
     ats = _ats_slug(ats_type)
     timestamp = str(observed_at or _now())
@@ -161,9 +161,9 @@ def observations_from_review(
 
     fields = review.get("fields") or []
     if not isinstance(fields, Sequence) or isinstance(fields, (str, bytes, bytearray)):
-        raise TypeError("Tsenta review fields must be a list.")
+        raise TypeError("MUNSHI Relay review fields must be a list.")
     if len(fields) > 500:
-        raise ValueError("Tsenta review exceeds the bounded observation budget.")
+        raise ValueError("MUNSHI Relay review exceeds the bounded observation budget.")
     result: list[dict[str, Any]] = []
     for index, raw in enumerate(fields):
         if not isinstance(raw, Mapping):
@@ -220,7 +220,7 @@ def observation_from_status(
     observed_at: str | None = None,
 ) -> dict[str, Any]:
     if not isinstance(status, Mapping):
-        raise TypeError("Tsenta status must be an object.")
+        raise TypeError("MUNSHI Relay status must be an object.")
     message = status.get("statusMessage")
     error_title = None
     if isinstance(message, Mapping):
@@ -362,10 +362,10 @@ def persist_observations(observations: Sequence[Mapping[str, Any]]) -> dict[str,
             observation = dict(raw)
             grade = str(observation.get("evidence_grade") or "")
             if grade not in EVIDENCE_GRADES:
-                raise ValueError("Invalid Tsenta observation evidence grade.")
+                raise ValueError("Invalid MUNSHI Relay observation evidence grade.")
             if observation.get("answer_value_recorded") is not False:
                 raise ValueError(
-                    "Tsenta observation attempted to persist an answer value."
+                    "MUNSHI Relay observation attempted to persist an answer value."
                 )
             safe = {
                 key: observation.get(key)

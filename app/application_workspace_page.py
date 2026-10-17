@@ -776,7 +776,13 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                 key=f'complete_loop_submission_engine_{job_id}',
                 disabled=selector['locked'],
             )
-            if choice == 'Tsenta' and not selector['can_submit_tsenta']:
+            if choice == 'MUNSHI Relay':
+                st.caption(
+                    'MUNSHI Relay securely sends your verified resume and '
+                    'application profile to a connected external service '
+                    'only after you select Approve & Submit.'
+                )
+            if choice == 'MUNSHI Relay' and not selector['can_submit_tsenta']:
                 st.warning(
                     tsenta_status_text(
                         tsenta_backend_readiness_v1.connection_status()
@@ -791,12 +797,12 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                 )
             elif not selector['tsenta_dispatch_ready']:
                 st.caption(
-                    'Tsenta is visible for transparency but cannot submit '
+                    'MUNSHI Relay is visible for transparency but cannot submit '
                     'until its authenticated dispatch worker and receipt '
                     'reconciliation pass production validation.'
                 )
             chosen_engine = (
-                'TSENTA' if choice == 'Tsenta' else 'NATIVE'
+                'TSENTA' if choice == 'MUNSHI Relay' else 'NATIVE'
             )
             submit_enabled = (
                 chosen_engine == 'NATIVE'
@@ -831,7 +837,7 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                 ):
                     try:
                         with st.spinner('Recording package approval…'):
-                            complete_loop.approve_and_submit_for_job(
+                            result = complete_loop.approve_and_submit_for_job(
                                 int(job_id), execution_provider=chosen_engine
                             )
                     except Exception as error:
@@ -839,8 +845,20 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                             'AutoApply could not start safely: ' + str(error)
                         )
                     else:
+                        if chosen_engine == 'TSENTA' and result.get('status') not in {
+                            'PROVIDER_SUBMITTED','EMPLOYER_CONFIRMED',
+                        }:
+                            st.warning(
+                                'Relay submission outcome needs verification. '
+                                'Do not start another application for this opening.'
+                            )
                         st.toast(
-                            'Approval recorded. Browser preparation is pending.',
+                            (
+                                'MUNSHI Relay: '
+                                + str(result.get('status') or '').replace('_',' ').title()
+                                if chosen_engine == 'TSENTA'
+                                else 'Approval recorded. Browser preparation is pending.'
+                            ),
                             icon='✅',
                         )
                         st.rerun()

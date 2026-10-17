@@ -1,9 +1,9 @@
-"""Bounded, privacy-safe Tsenta application status synchronization.
+"""Bounded, privacy-safe MUNSHI Relay application status synchronization.
 
 Reconcile an already-owned application using one-way hashed provider IDs, never
-storing Tsenta credentials, raw IDs, applicant details, employer URLs or answers.
+storing MUNSHI Relay credentials, raw IDs, applicant details, employer URLs or answers.
 
-This module is read-only toward Tsenta.  It will not create applications,
+This module is read-only toward MUNSHI Relay.  It will not create applications,
 approve forms, upload files, retry jobs, or claim independent employer receipts.
 """
 
@@ -38,7 +38,7 @@ def sync_existing_application_status(
         raise ValueError("Status sync pagination must be bounded.")
     route = routes.get_route(route_id)
     if route["provider"] != "TSENTA":
-        raise PermissionError("Only Tsenta-owned routes may be synced with Tsenta.")
+        raise PermissionError("Only MUNSHI Relay-owned routes may be synced with MUNSHI Relay.")
     if route["state"] == "EMPLOYER_CONFIRMED":
         return {
             "route_id": route_id,
@@ -55,7 +55,7 @@ def sync_existing_application_status(
         payload = adapter.list_applications(page=page, limit=PAGE_LIMIT)
         records = payload.get("applications")
         if not isinstance(records, list):
-            raise TypeError("Tsenta application listing has unsupported shape.")
+            raise TypeError("MUNSHI Relay application listing has unsupported shape.")
         for record in records:
             if not isinstance(record, Mapping):
                 continue
@@ -67,7 +67,7 @@ def sync_existing_application_status(
                 continue
             state = str(record.get("status") or "").strip().upper()
             if not _STATUS.fullmatch(state):
-                raise RuntimeError("Tsenta provided an invalid machine status.")
+                raise RuntimeError("MUNSHI Relay provided an invalid machine status.")
             error_code = record.get("errorCode")
             safe = routes.record_provider_status(
                 route_id=route_id,

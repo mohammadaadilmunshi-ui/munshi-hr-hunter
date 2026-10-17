@@ -1,4 +1,4 @@
-"""Provider-neutral, privacy-minimized Tsenta -> MUNSHI Native learning cohorts.
+"""Provider-neutral, privacy-minimized MUNSHI Relay -> MUNSHI Native learning cohorts.
 
 A 'processed application' is one unique provider application with a terminal,
 observed status. Neither form-field counts nor provider-submitted status imply
@@ -133,7 +133,7 @@ def summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def learning_cohort_snapshot() -> dict[str, Any]:
-    """Read-only owner-scoped snapshot; never install schemas or fetch Tsenta."""
+    """Read-only owner-scoped snapshot; never install schemas or fetch MUNSHI Relay."""
     connection = get_connection()
     try:
         exists = connection.execute(

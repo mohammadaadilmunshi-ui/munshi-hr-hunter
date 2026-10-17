@@ -1,7 +1,7 @@
 """Provider-neutral application ownership, routing and receipt states.
 
-Hunter owns one durable route for an exact employer opening.  Selecting Tsenta
-does not transfer the application ledger to Tsenta, and selecting Native does
+Hunter owns one durable route for an exact employer opening.  Selecting MUNSHI Relay
+does not transfer the application ledger to MUNSHI Relay, and selecting Native does
 not permit a second provider to race it.  Provider-reported completion and an
 independently confirmed employer receipt are deliberately separate states.
 """

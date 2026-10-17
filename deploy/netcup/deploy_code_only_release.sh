@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=a9704e5861c6741c3df3fe7caf085410ddafaefa
+LIVE_BASE=ce4594efba094dd0cd7ffcb5462c206d41beee23
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -165,6 +165,35 @@ git merge-base --is-ancestor "$old_head" "$target" || block 'Target is not a des
 # needs the original DB-backed guarded full release.
 allowed_files=(
   app/native_cover_letter_writer_v1.py
+  app/api.py
+  app/application_provider_router_v1.py
+  app/application_provider_ui_v1.py
+  app/application_workspace_page.py
+  app/product_application_flow_v2.py
+  app/product_pages.py
+  app/profile_workspace_v2.py
+  app/relay_application_dispatch_v1.py
+  app/tsenta_backend_readiness_v1.py
+  app/tsenta_learning_cohort_v1.py
+  app/tsenta_learning_monitor_v1.py
+  app/tsenta_learning_replay_v1.py
+  app/tsenta_learning_sync_v1.py
+  app/tsenta_live_diagnostics_v1.py
+  app/tsenta_mcp_adapter_v1.py
+  app/tsenta_mcp_http_v1.py
+  app/tsenta_oauth_v1.py
+  app/tsenta_observation_v1.py
+  app/tsenta_profile_bridge_v1.py
+  app/tsenta_provider_status_sync_v1.py
+  app/tsenta_submission_preflight_v1.py
+  tests/test_application_provider_ui_v1.py
+  tests/test_engine_selector_recovery_v1.py
+  tests/test_relay_application_dispatch_v1.py
+  tests/test_tsenta_learning_sync_v1.py
+  tests/test_tsenta_live_diagnostics_v1.py
+  tests/test_tsenta_mcp_adapter_v1.py
+  tests/test_tsenta_provider_status_sync_v1.py
+  tests/test_tsenta_submission_preflight_v1.py
   app/product_experience_vnext.py
   app/application_provider_ui_v1.py
   app/product_application_flow_v2.py
@@ -241,7 +270,14 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_native_approval_provider_lock_v1.py \
     /app/hunter/tests/test_product_application_flow_v2.py \
     /app/hunter/tests/test_application_provider_ui_v1.py \
-    /app/hunter/tests/test_engine_selector_recovery_v1.py
+    /app/hunter/tests/test_engine_selector_recovery_v1.py \
+    /app/hunter/tests/test_relay_application_dispatch_v1.py \
+    /app/hunter/tests/test_tsenta_mcp_adapter_v1.py \
+    /app/hunter/tests/test_tsenta_submission_preflight_v1.py \
+    /app/hunter/tests/test_tsenta_live_diagnostics_v1.py \
+    /app/hunter/tests/test_tsenta_learning_sync_v1.py \
+    /app/hunter/tests/test_tsenta_backend_readiness_v1.py \
+    /app/hunter/tests/test_tsenta_learning_monitor_v1.py
 echo 'EXACT_IMAGE_TESTS=PASS'
 
 new_container=1

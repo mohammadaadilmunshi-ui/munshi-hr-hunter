@@ -1,6 +1,6 @@
-"""Explicit, authorized, read-only Tsenta observation intake across ATSs.
+"""Explicit, authorized, read-only MUNSHI Relay observation intake across ATSs.
 
-Imports up to 15 already-existing Tsenta account applications per call. Uses
+Imports up to 15 already-existing MUNSHI Relay account applications per call. Uses
 MCP read tools only; no external submit, retry, or candidate answer storage.
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ _APPLICATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 def _as_mapping(raw: Any, tool: str) -> dict[str, Any]:
     unwrapped = _unwrap(raw, tool_name=tool)
     if not isinstance(unwrapped, Mapping):
-        raise TsentaOAuthError("Tsenta returned an unsupported application response.")
+        raise TsentaOAuthError("MUNSHI Relay returned an unsupported application response.")
     return dict(unwrapped)
 
 
@@ -38,7 +38,7 @@ def sync_observations_from_mcp(*, mcp: Any, page: int = 1,
                                limit: int = MAX_BATCH) -> dict[str, Any]:
     """Boundary supports injected read-only clients for deterministic tests."""
     if not 1 <= int(page) <= MAX_PAGE or not 1 <= int(limit) <= MAX_BATCH:
-        raise ValueError("Tsenta learning batches must be small and paginated.")
+        raise ValueError("MUNSHI Relay learning batches must be small and paginated.")
     listed = _as_mapping(
         mcp.call_read("list_applications", {
             "filter": "all", "includeCounts": False,
@@ -48,7 +48,7 @@ def sync_observations_from_mcp(*, mcp: Any, page: int = 1,
     )
     records = listed.get("applications")
     if not isinstance(records, list) or len(records) > int(limit):
-        raise TsentaOAuthError("Tsenta application list is not safely bounded.")
+        raise TsentaOAuthError("MUNSHI Relay application list is not safely bounded.")
 
     incoming: list[dict[str, Any]] = []
     status_observed = reviews_observed = unavailable_reviews = skipped = 0

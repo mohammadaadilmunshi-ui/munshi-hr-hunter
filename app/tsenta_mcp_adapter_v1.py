@@ -1,4 +1,4 @@
-"""Authenticated Tsenta MCP boundary for MUNSHI.
+"""Authenticated MUNSHI Relay MCP boundary for MUNSHI.
 
 The adapter knows only the documented MCP tool contracts.  Authentication and
 transport are injected by the caller, so OAuth tokens, cookies and endpoint
@@ -122,7 +122,7 @@ def _unwrap(response: Any, *, tool_name: str) -> Any:
     and never surface raw provider error text containing private fields.
     """
     if getattr(response, "isError", False):
-        raise RuntimeError(f"Tsenta MCP {tool_name} reported a tool error.")
+        raise RuntimeError(f"MUNSHI Relay MCP {tool_name} reported a tool error.")
     if hasattr(response, "structuredContent"):
         structured = response.structuredContent
         if isinstance(structured, Mapping):
@@ -130,14 +130,14 @@ def _unwrap(response: Any, *, tool_name: str) -> Any:
 
     if not isinstance(response, Mapping):
         raise TypeError(
-            f"Tsenta MCP {tool_name} returned an unsupported response shape."
+            f"MUNSHI Relay MCP {tool_name} returned an unsupported response shape."
         )
     if response.get("isError") is True or response.get("is_error") is True:
-        raise RuntimeError(f"Tsenta MCP {tool_name} reported a tool error.")
+        raise RuntimeError(f"MUNSHI Relay MCP {tool_name} reported a tool error.")
     if str(response.get("status") or "").casefold() in {"failed", "error"} and (
         response.get("error") is not None or "tool" in response
     ):
-        raise RuntimeError(f"Tsenta MCP {tool_name} reported a tool error.")
+        raise RuntimeError(f"MUNSHI Relay MCP {tool_name} reported a tool error.")
 
     structured = response.get("structuredContent") or response.get(
         "structured_content"
@@ -158,10 +158,10 @@ def _unwrap(response: Any, *, tool_name: str) -> Any:
                     return json.loads(text)
                 except ValueError as error:
                     raise RuntimeError(
-                        f"Tsenta MCP {tool_name} returned non-JSON tool content."
+                        f"MUNSHI Relay MCP {tool_name} returned non-JSON tool content."
                     ) from error
         raise RuntimeError(
-            f"Tsenta MCP {tool_name} did not provide structured tool data."
+            f"MUNSHI Relay MCP {tool_name} did not provide structured tool data."
         )
     return dict(response)
 
@@ -173,13 +173,13 @@ def _unwrap_result(result: Any, *, tool_name: str) -> Any:
     if isinstance(result, list):
         return result
     raise RuntimeError(
-        f"Tsenta MCP {tool_name} returned an unsupported tool result."
+        f"MUNSHI Relay MCP {tool_name} returned an unsupported tool result."
     )
 
 
 def _mapping(value: Any, *, label: str) -> dict[str, Any]:
     if not isinstance(value, Mapping):
-        raise TypeError(f"Tsenta MCP {label} did not return an object.")
+        raise TypeError(f"MUNSHI Relay MCP {label} did not return an object.")
     return dict(value)
 
 
@@ -193,7 +193,7 @@ class TsentaMcpAdapter:
         available_tools: Sequence[str] | None = None,
     ) -> None:
         if not callable(transport):
-            raise TypeError("Tsenta MCP transport must be callable.")
+            raise TypeError("MUNSHI Relay MCP transport must be callable.")
         self._transport = transport
         self._available_tools = (
             frozenset(str(item) for item in available_tools)
@@ -224,9 +224,9 @@ class TsentaMcpAdapter:
 
     def _call(self, tool_name: str, arguments: Mapping[str, Any] | None = None) -> Any:
         if tool_name not in SUPPORTED_TOOLS:
-            raise ValueError("Unsupported Tsenta connector tool.")
+            raise ValueError("Unsupported MUNSHI Relay connector tool.")
         if tool_name not in self._available_tools:
-            raise RuntimeError(f"Tsenta MCP capability unavailable: {tool_name}")
+            raise RuntimeError(f"MUNSHI Relay MCP capability unavailable: {tool_name}")
         response = self._transport(tool_name, dict(arguments or {}))
         return _unwrap(response, tool_name=tool_name)
 
@@ -238,12 +238,12 @@ class TsentaMcpAdapter:
         if not isinstance(profiles_raw, Sequence) or isinstance(
             profiles_raw, (str, bytes, bytearray)
         ):
-            raise TypeError("Tsenta MCP list_resume_profiles did not return a list.")
+            raise TypeError("MUNSHI Relay MCP list_resume_profiles did not return a list.")
         profiles = tuple(
             _mapping(item, label="resume profile") for item in profiles_raw
         )
         if not profiles:
-            raise RuntimeError("Tsenta account has no resume profile.")
+            raise RuntimeError("MUNSHI Relay account has no resume profile.")
         selected = None
         if resume_profile_id:
             selected = next(
@@ -255,7 +255,7 @@ class TsentaMcpAdapter:
                 None,
             )
             if selected is None:
-                raise LookupError("Requested Tsenta resume profile was not found.")
+                raise LookupError("Requested MUNSHI Relay resume profile was not found.")
         else:
             selected = next(
                 (item for item in profiles if item.get("isDefault") is True),
@@ -263,7 +263,7 @@ class TsentaMcpAdapter:
             )
         selected_id = str(selected.get("id") or "").strip()
         if not selected_id:
-            raise RuntimeError("Tsenta resume profile has no stable id.")
+            raise RuntimeError("MUNSHI Relay resume profile has no stable id.")
         full_profile = _mapping(
             self._call("get_resume_profile", {"resumeProfileId": selected_id}),
             label="get_resume_profile",
@@ -304,7 +304,7 @@ class TsentaMcpAdapter:
         verified = external_url(url)
         if not verified:
             raise ValueError(
-                "Tsenta job intake requires an external HTTPS employer URL."
+                "MUNSHI Relay job intake requires an external HTTPS employer URL."
             )
         return _mapping(
             self._call("fetch_job_description", {"url": verified}),
@@ -326,7 +326,7 @@ class TsentaMcpAdapter:
             "failed",
             "skipped",
         }:
-            raise ValueError("Unsupported Tsenta application filter.")
+            raise ValueError("Unsupported MUNSHI Relay application filter.")
         return _mapping(
             self._call(
                 "list_applications",
@@ -343,7 +343,7 @@ class TsentaMcpAdapter:
     def application_status(self, application_id: str) -> dict[str, Any]:
         value = str(application_id or "").strip()
         if not value:
-            raise ValueError("Tsenta application id is required.")
+            raise ValueError("MUNSHI Relay application id is required.")
         return _mapping(
             self._call("get_application_status", {"applicationId": value}),
             label="get_application_status",
@@ -352,7 +352,7 @@ class TsentaMcpAdapter:
     def application_review(self, application_id: str) -> dict[str, Any]:
         value = str(application_id or "").strip()
         if not value:
-            raise ValueError("Tsenta application id is required.")
+            raise ValueError("MUNSHI Relay application id is required.")
         return _mapping(
             self._call("get_application_review", {"applicationId": value}),
             label="get_application_review",
@@ -384,13 +384,13 @@ class TsentaMcpAdapter:
         if not str(result.get("uploadId") or "").strip() or not str(
             result.get("uploadUrl") or ""
         ).startswith("https://"):
-            raise RuntimeError("Tsenta did not return a valid staged resume upload.")
+            raise RuntimeError("MUNSHI Relay did not return a valid staged resume upload.")
         return result
 
     def check_custom_resume(self, upload_id: str) -> dict[str, Any]:
         value = str(upload_id or "").strip()
         if not value:
-            raise ValueError("Tsenta custom-resume upload id is required.")
+            raise ValueError("MUNSHI Relay custom-resume upload id is required.")
         return _mapping(
             self._call("check_custom_resume", {"uploadId": value}),
             label="check_custom_resume",
@@ -404,11 +404,11 @@ class TsentaMcpAdapter:
         job_description: str | None = None,
         execution_authorized: bool = False,
     ) -> dict[str, Any]:
-        """Create a Tsenta application only after both independent gates pass."""
+        """Create a MUNSHI Relay application only after both independent gates pass."""
         if not execution_authorized:
-            raise PermissionError("Tsenta application execution was not authorized.")
+            raise PermissionError("MUNSHI Relay application execution was not authorized.")
         if not _truthy(os.getenv(EXECUTION_ENV)):
-            raise RuntimeError("Tsenta external execution is disabled.")
+            raise RuntimeError("MUNSHI Relay external execution is disabled.")
         verified = external_url(url)
         if not verified:
             raise ValueError("A verified external employer URL is required.")
@@ -425,6 +425,42 @@ class TsentaMcpAdapter:
             "employer_receipt_confirmed": False,
         }
 
+    @staticmethod
+    def _verified_custom_resume(
+        checked: Mapping[str, Any],
+        *,
+        upload_id: str,
+        expected_byte_size: int | None = None,
+    ) -> bool:
+        """Accept either the documented boolean or live metadata response.
+
+        Live MUNSHI Relay check-custom-resume currently echoes uploadId, byteSize,
+        viewUrl instead of a valid boolean. The identity and nonzero size
+        must agree; never accept mismatched IDs, explicit invalid results,
+        or failed/incomplete staging records.
+        """
+        if checked.get("valid") is False:
+            return False
+        returned_id = checked.get("uploadId")
+        if returned_id is not None and str(returned_id) != upload_id:
+            return False
+        size = checked.get("byteSize")
+        if expected_byte_size is not None and (
+            type(size) is not int or size != expected_byte_size
+        ):
+            return False
+        if checked.get("valid") is True:
+            return True
+        view = checked.get("viewUrl")
+        return bool(
+            isinstance(returned_id, str)
+            and returned_id == upload_id
+            and type(size) is int
+            and size >= 100
+            and isinstance(view, str)
+            and view.startswith("https://")
+        )
+
     def apply_with_custom_resume(
         self,
         *,
@@ -432,23 +468,27 @@ class TsentaMcpAdapter:
         upload_id: str,
         complete_profile: Mapping[str, Any],
         execution_authorized: bool = False,
+        expected_byte_size: int | None = None,
     ) -> dict[str, Any]:
         if not execution_authorized:
-            raise PermissionError("Tsenta custom-resume execution was not authorized.")
+            raise PermissionError("MUNSHI Relay custom-resume execution was not authorized.")
         if not _truthy(os.getenv(EXECUTION_ENV)):
-            raise RuntimeError("Tsenta external execution is disabled.")
+            raise RuntimeError("MUNSHI Relay external execution is disabled.")
         verified = external_url(url)
         if not verified:
             raise ValueError("A verified external employer URL is required.")
         if not str(upload_id or "").strip():
-            raise ValueError("Validated Tsenta custom-resume upload id is required.")
+            raise ValueError("Validated MUNSHI Relay custom-resume upload id is required.")
         if not isinstance(complete_profile, Mapping) or not complete_profile:
             raise ValueError("A complete custom-resume profile is required.")
         # Upload IDs are temporary.  A prior successful check can go stale while
         # a request is queued; revalidate immediately before any execution call.
         checked = self.check_custom_resume(str(upload_id))
-        if checked.get("valid") is not True:
-            raise RuntimeError("Tsenta custom resume was not verified for dispatch.")
+        if not self._verified_custom_resume(
+            checked, upload_id=str(upload_id),
+            expected_byte_size=expected_byte_size,
+        ):
+            raise RuntimeError("MUNSHI Relay custom resume was not verified for dispatch.")
         result = _mapping(
             self._call(
                 "apply_with_custom_resume",

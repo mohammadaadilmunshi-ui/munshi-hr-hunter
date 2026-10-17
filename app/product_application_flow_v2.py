@@ -468,7 +468,7 @@ def _production_receipt(application_id: str | None) -> dict[str, Any] | None:
 
 
 def _provider_route(job_id: int) -> dict[str, Any] | None:
-    """Read the shared Native/Tsenta ownership projection without exposing IDs."""
+    """Read the shared Native/MUNSHI Relay ownership projection without exposing IDs."""
     connection = get_connection()
     try:
         if not _table_exists(connection, 'application_provider_routes_v1'):
@@ -856,14 +856,23 @@ def approve_and_submit_for_job(
     from app import application_execution_mandate_v1 as mandate_v1
 
     selected_engine = str(execution_provider or '').strip().upper()
-    if selected_engine != 'NATIVE':
-        # Do not mint a Native mandate for Tsenta, or represent a provider
-        # reservation as an executable Tsenta application. A separate
-        # validated dispatcher and one-use authorization are required.
-        raise PermissionError(
-            'Tsenta submission dispatcher is not yet validated; '
-            'no application or approval was created.'
+    if selected_engine == 'TSENTA':
+        if str(approval_source or '').strip().upper() != 'CUSTOMER_CLICK':
+            raise PermissionError(
+                'MUNSHI Relay requires explicit package approval.'
+            )
+        from app.relay_application_dispatch_v1 import submit_from_dashboard
+
+        current = flow_for_job(int(job_id))
+        review = dict(current.get('package_review') or {})
+        preflight = dict((current.get('artifacts') or {}).get('preflight') or {})
+        return submit_from_dashboard(
+            job_id=int(job_id),
+            review_digest=str(review.get('review_digest') or ''),
+            preflight_package_id=str(preflight.get('preflight_package_id') or ''),
         )
+    if selected_engine != 'NATIVE':
+        raise ValueError('Unknown submission engine.')
 
     flow = flow_for_job(int(job_id))
     if str(flow.get('state') or '') != 'READY_FOR_APPROVAL':

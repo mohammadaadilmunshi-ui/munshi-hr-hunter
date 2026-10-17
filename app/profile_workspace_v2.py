@@ -1,6 +1,6 @@
 """Profile Workspace V2: immediate extracted-profile preview and explicit promotion.
 
-V1 owns the approved MUNSHI/Tsenta-inspired visual renderer and public-logo resolver.
+V1 owns the approved MUNSHI/MUNSHI Relay-inspired visual renderer and public-logo resolver.
 V2 changes only the handoff state machine so an extracted profile is visible before
 confirmation. Confirmation promotes the reviewed snapshot to permanent authority;
 it is no longer a prerequisite for seeing the extracted output.
