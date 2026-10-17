@@ -143,13 +143,31 @@ def engine_selector_state(
         selected = "NATIVE"
     reserved = bool(route)
     tsenta_ready = tsenta_backend.get("execution_ready") is True
+    existing_relay_unclaimed = bool(
+        reserved
+        and selected == "TSENTA"
+        and str((route or {}).get("state") or "") == "PREPARATION"
+        and int((route or {}).get("attempt_count") or 0) == 0
+        and not any((route or {}).get(field) for field in (
+            "dispatch_claim_exists","provider_status",
+            "provider_application_id_sha256","provider_submitted_at",
+            "employer_confirmed_at","receipt_method",
+            "receipt_evidence_digest",
+        ))
+    )
+    can_submit_relay = tsenta_ready and (
+        not reserved or existing_relay_unclaimed
+    )
     return {
         "labels": tuple(PROVIDER_LABELS.values()),
         "selected": PROVIDER_LABELS[selected],
         "locked": reserved,
         "tsenta_dispatch_ready": tsenta_ready,
-        "can_submit_tsenta": tsenta_ready and not reserved,
+        "can_submit_tsenta": can_submit_relay,
         "reason": (
+            "MUNSHI Relay is reserved for this opening. Approve & Submit "
+            "will use the existing reservation once."
+            if existing_relay_unclaimed and tsenta_ready else
             "This opening already belongs to an engine. Changing it requires "
             "a checked handoff. Any existing approval cannot be reused."
             if reserved else
@@ -616,30 +634,33 @@ def render_workspace(job_id: int) -> None:
                             "Engine handoff did not complete. Check the "
                             "application status before trying anything else."
                         )
-            if route.get("provider") == "TSENTA" and route.get("state") in {
-                "PREPARATION","FILLING","PAUSED","PROVIDER_SUBMITTED",
-            }:
-                if st.button(
+            if (
+                route.get("provider") == "TSENTA"
+                and route.get("state") in {
+                    "PREPARATION","FILLING","PAUSED","PROVIDER_SUBMITTED",
+                }
+                and st.button(
                     "Refresh MUNSHI Relay submission status",
                     key=f"relay_refresh_status_{job_id}",
-                ):
-                    from app.relay_application_dispatch_v1 import (
-                        reconcile_from_dashboard,
+                )
+            ):
+                from app.relay_application_dispatch_v1 import (
+                    reconcile_from_dashboard,
+                )
+                try:
+                    with st.spinner("Checking the existing application…"):
+                        result = reconcile_from_dashboard(int(job_id))
+                    st.info(
+                        "Submission state: "
+                        + str(result["status"]).replace("_", " ").title()
                     )
-                    try:
-                        with st.spinner("Checking the existing application…"):
-                            result=reconcile_from_dashboard(int(job_id))
-                        st.info(
-                            "Submission state: "
-                            + str(result["status"]).replace("_"," ").title()
-                        )
-                        st.rerun()
-                    except (RuntimeError,ValueError,PermissionError,
-                            LookupError,OSError):
-                        st.error(
-                            "The current application status could not be "
-                            "reconciled. No additional submission was sent."
-                        )
+                    st.rerun()
+                except (RuntimeError,ValueError,PermissionError,
+                        LookupError,OSError):
+                    st.error(
+                        "The current application status could not be "
+                        "reconciled. No additional submission was sent."
+                    )
             st.link_button(
                 "Continue application workflow",
                 product_href("prepare-application", job_id=int(job_id)),

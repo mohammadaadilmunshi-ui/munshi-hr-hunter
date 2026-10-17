@@ -479,6 +479,7 @@ def _provider_route(job_id: int) -> dict[str, Any] | None:
                       destination_evidence,provider,state,preflight_package_id,
                       package_digest,candidate_profile_digest,resume_sha256,
                       attempt_count,max_attempts,next_attempt_at,last_error_code,
+                      provider_status,provider_application_id_sha256,
                       receipt_method,receipt_evidence_digest,
                       provider_submitted_at,employer_confirmed_at,
                       updated_at
@@ -487,7 +488,21 @@ def _provider_route(job_id: int) -> dict[str, Any] | None:
                 ORDER BY datetime(updated_at) DESC,rowid DESC LIMIT 1''',
             (owner.tenant_id, owner.user_id, int(job_id)),
         ).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        result = dict(row)
+        result['dispatch_claim_exists'] = False
+        if (
+            str(result.get('provider') or '') == 'TSENTA'
+            and _table_exists(connection,'tsenta_external_dispatch_claims_v1')
+        ):
+            claimed = connection.execute(
+                """SELECT 1 FROM tsenta_external_dispatch_claims_v1
+                   WHERE tenant_id=? AND user_id=? AND route_id=? LIMIT 1""",
+                (owner.tenant_id,owner.user_id,result['route_id']),
+            ).fetchone()
+            result['dispatch_claim_exists'] = claimed is not None
+        return result
     finally:
         connection.close()
 
