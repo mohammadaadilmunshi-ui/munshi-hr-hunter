@@ -275,3 +275,35 @@ def test_committed_prepare_identity_survives_secondary_projection_failure(monkey
     assert result["application_id"].startswith("application-")
     assert result["display_status"] == "Preparing"
     assert result["replayed"] is False
+
+def test_mandate_with_pending_ats_task_is_not_incorrectly_submitting(monkeypatch):
+    monkeypatch.setattr(
+        flow, "_latest_prepare",
+        lambda job_id: {
+            "status": "RUNNING",
+            "application_id": "application-42",
+            "tasks": [
+                {
+                    "task_kind": "APPLICATION_PREFLIGHT",
+                    "status": "SUCCEEDED",
+                    "required": True,
+                    "output": {"preflight_package_id": "preflight-42"},
+                },
+                {
+                    "task_kind": "ATS_FORM_PREPARATION",
+                    "status": "PENDING",
+                    "required": True,
+                    "output": {},
+                },
+            ],
+        },
+    )
+    monkeypatch.setattr(flow, "_latest_lifecycle", lambda _: None)
+    monkeypatch.setattr(flow, "_provider_route", lambda _: None)
+    monkeypatch.setattr(flow, "_execution_mandate", lambda preflight, **kw: {"mandate_id":"mandate-42"})
+    monkeypatch.setattr(flow, "_production_receipt", lambda _: None)
+    result = flow.flow_for_job(42, summary=True)
+    assert result["state"] == "PREPARING_ATS"
+    assert result["authority"] == "mandate_waiting_for_ats"
+    assert result["display_status"] == "Preparing application"
+    assert result["submission_authority"] is False

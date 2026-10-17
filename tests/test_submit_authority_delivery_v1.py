@@ -214,6 +214,14 @@ def test_approval_and_submit_records_pre_browser_execution_mandate(
             "artifacts": {"preflight": dict(preflight)},
         },
     )
+    reservations = []
+    monkeypatch.setattr(
+        flow,
+        "_reserve_native_route_for_approval",
+        lambda **kwargs: (
+            reservations.append(dict(kwargs)) or {"provider": "NATIVE", "replayed": False}
+        ),
+    )
     monkeypatch.setattr(
         mandate_v1,
         "approve_package",
@@ -226,6 +234,8 @@ def test_approval_and_submit_records_pre_browser_execution_mandate(
 
     result = flow.approve_and_submit_for_job(42)
     assert result["status"] == "APPLYING_NOW"
+    assert reservations[0]["job_id"] == 42
+    assert reservations[0]["preflight_package_id"] == "preflight-package-1"
     assert result["customer_approval_complete"] is True
     assert result["additional_customer_approval_required"] is False
     assert result["submit_authorization"] is None

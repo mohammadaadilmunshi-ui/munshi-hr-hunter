@@ -573,7 +573,13 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
         elif execution_mandate is not None and state in {
             'RUNNING', 'READY_FOR_REVIEW', 'READY_TO_SUBMIT'
         }:
-            state, authority = 'SUBMITTING', 'single_customer_approval_recorded'
+            # A customer mandate permits preparation; it does NOT prove the
+            # employer form has been opened or that submission has started.
+            # Keep the waiting-for-ATS handoff distinct from actual execution.
+            if ats_task is not None and str(ats_task.get('status') or '') == 'PENDING':
+                state, authority = 'PREPARING_ATS', 'mandate_waiting_for_ats'
+            else:
+                state, authority = 'SUBMITTING', 'single_customer_approval_recorded'
     progress = _required_progress(tasks)
 
     if state in {
@@ -797,6 +803,46 @@ def start_prepare_for_job(
     return result
 
 
+def _reserve_native_route_for_approval(
+    *, job_id: int, preflight_package_id: str, click_key: str
+) -> dict[str, Any]:
+    """Lock the exact employer opening before minting a Native mandate.
+
+    Dashboard engine reservations and Complete Loop mandates must share the
+    same one-provider identity. An existing TSENTA lock fails closed here; a
+    matching NATIVE lock is replayed. This is not submission authority.
+    """
+    from app import application_provider_router_v1 as provider_router
+    from app.application_provider_ui_v1 import verified_apply_destination
+
+    connection = get_connection()
+    try:
+        connection.execute('PRAGMA query_only=ON')
+        row = connection.execute(
+            'SELECT * FROM jobs WHERE id=?', (int(job_id),)
+        ).fetchone()
+        if row is None:
+            raise LookupError('The selected application job no longer exists.')
+        destination = verified_apply_destination(dict(row), connection)
+    finally:
+        connection.close()
+    if not destination:
+        raise PermissionError(
+            'An independently verified employer application link is required '
+            'before authorizing Native execution.'
+        )
+
+    return provider_router.select_provider(
+        job_id=int(job_id),
+        provider='NATIVE',
+        verified_employer_url=str(destination),
+        preflight_package_id=str(preflight_package_id),
+        idempotency_key='native-approved-' + hashlib.sha256(
+            str(click_key).encode('utf-8')
+        ).hexdigest()[:40],
+    )
+
+
 def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
     """Record the sole customer package approval before browser execution.
 
@@ -832,6 +878,17 @@ def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
             ),
             'page_count': int(preflight.get('cover_letter_page_count') or 0),
         }
+
+    # The provider lock must precede the one-use customer mandate. Reserving
+    # does not execute or submit anything; it prevents simultaneous TSENTA
+    # ownership of an opening already approved for the Native Complete Loop.
+    route = _reserve_native_route_for_approval(
+        job_id=int(job_id),
+        preflight_package_id=str(preflight['preflight_package_id']),
+        click_key=click_key,
+    )
+    if str(route.get('provider') or '') != 'NATIVE':
+        raise PermissionError('Native execution provider could not be locked.')
 
     mandate = mandate_v1.approve_package(
         preflight_package_id=str(preflight['preflight_package_id']),

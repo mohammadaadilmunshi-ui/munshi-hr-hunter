@@ -372,3 +372,35 @@ def test_tsenta_connection_states_are_distinct():
     assert "not connected" in disconnected
     assert "dispatcher are ready" in ready
     assert "available for eligible" in ready_notice
+
+
+def test_provider_progress_uses_independent_verified_hunter_receipt():
+    locked = {"provider": "NATIVE", "state": "PREPARATION"}
+    receipt = {
+        "receipt_id": "employer-receipt-1",
+        "provider": "NATIVE",
+        "receipt_digest": "a" * 64,
+        "verification_method": "ATS_CONFIRMATION",
+        "verified_at": "2026-10-17T03:00:00Z",
+    }
+    confirmed = ui.provider_progress(locked, receipt)
+    assert confirmed["is_employer_confirmed"] is True
+    assert confirmed["receipt"] == "Independently verified"
+
+
+def test_receipt_fails_closed_on_missing_proof_or_provider_mismatch():
+    route = {"provider": "NATIVE", "state": "PREPARATION"}
+    receipt = {
+        "receipt_id": "employer-receipt-1",
+        "provider": "TSENTA",
+        "receipt_digest": "a" * 64,
+        "verification_method": "ATS_CONFIRMATION",
+        "verified_at": "2026-10-17T03:00:00Z",
+    }
+    assert ui.provider_progress(route, receipt)["is_employer_confirmed"] is False
+    receipt["provider"] = "NATIVE"
+    receipt["receipt_digest"] = ""
+    assert ui.provider_progress(route, receipt)["is_employer_confirmed"] is False
+    receipt["receipt_digest"] = "a" * 64
+    receipt["verified_at"] = ""
+    assert ui.provider_progress(route, receipt)["is_employer_confirmed"] is False

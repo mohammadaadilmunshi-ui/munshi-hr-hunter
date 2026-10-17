@@ -140,8 +140,8 @@ def _autoapply_status(preferences: dict[str, Any]) -> None:
     with columns[0]:
         _card(
             "AutoApply",
-            "Enabled" if preferences["enabled"] else "Disabled",
-            "Saved website preference; execution gates remain authoritative.",
+            "Requested" if preferences["enabled"] else "Not requested",
+            "Saved dashboard preference only. It is not standing submission consent.",
         )
     with columns[1]:
         _card(
@@ -154,8 +154,8 @@ def _autoapply_status(preferences: dict[str, Any]) -> None:
     with columns[3]:
         _card(
             "Final submit",
-            "Requested" if preferences["allow_final_submit"] else "Off",
-            "Application Plan and Apply runtime must separately authorize it.",
+            "Preference saved" if preferences["allow_final_submit"] else "Not requested",
+            "No final submit without an exact frozen review and one-use authorization.",
         )
 
 
