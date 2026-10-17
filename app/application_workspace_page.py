@@ -775,7 +775,7 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                     key=f'complete_loop_approve_submit_{job_id}',
                 ):
                     try:
-                        with st.spinner('Applying now…'):
+                        with st.spinner('Recording package approval…'):
                             complete_loop.approve_and_submit_for_job(
                                 int(job_id)
                             )
@@ -785,7 +785,7 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                         )
                     else:
                         st.toast(
-                            'Approval recorded. Applying now.',
+                            'Approval recorded. Browser preparation is pending.',
                             icon='✅',
                         )
                         st.rerun()

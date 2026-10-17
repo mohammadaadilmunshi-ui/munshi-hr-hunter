@@ -374,3 +374,72 @@ def test_coordinator_preserves_legacy_n8n_auto_path_by_default(monkeypatch):
     assert result["queue_result"]["queued"][0]["dispatch_mode"] == "auto_top_match"
     assert result["autonomous_admission_result"]["skipped"] is True
     assert result["autonomous_admission_result"]["admitted"] == []
+
+
+def test_native_worker_admits_scoped_consent_only_before_ats(monkeypatch):
+    from app import native_standing_consent_v1 as standing
+    from app import prepare_worker_adapters_v1a as v1a
+    from app import prepare_worker_adapters_v1b as v1b
+    from app import prepare_worker_adapters_v1c as v1c
+
+    events = []
+    operation = {
+        "operation_id": "fresh-operation",
+        "engine": "NATIVE",
+        "status": "RUNNING",
+        "tasks": [],
+    }
+    monkeypatch.setattr(
+        autonomous.orchestrator,
+        "prepare_operation", lambda oid:dict(operation),
+    )
+    for module, name in (
+        (v1a, "run_native_resume_once"),
+        (v1a, "run_recruiter_evidence_once"),
+        (v1b, "run_answer_resolution_once"),
+        (v1b, "run_cover_letter_decision_once"),
+        (v1c, "run_application_preflight_once"),
+        (v1c, "run_ats_form_preparation_once"),
+    ):
+        monkeypatch.setattr(module, name, lambda *, operation_id, worker_id, n=name: (
+            events.append(n) or {"claimed":True}
+        ))
+    monkeypatch.setattr(standing, "status", lambda:{"enabled":True})
+    monkeypatch.setattr(
+        standing, "maybe_authorize_fresh_operation",
+        lambda oid: events.append("bounded-consent") or {
+            "authorized":True,"submission_authority":False
+        },
+    )
+    result = autonomous.drive_operation_once("fresh-operation")
+    assert result["engine"] == "NATIVE"
+    assert result["submission_authority"] is False
+    assert events.index("run_application_preflight_once") < events.index("bounded-consent")
+    assert events.index("bounded-consent") < events.index("run_ats_form_preparation_once")
+
+
+def test_native_worker_never_calls_standing_mandate_without_explicit_consent(monkeypatch):
+    from app import native_standing_consent_v1 as standing
+    from app import prepare_worker_adapters_v1a as v1a
+    from app import prepare_worker_adapters_v1b as v1b
+    from app import prepare_worker_adapters_v1c as v1c
+
+    monkeypatch.setattr(
+        autonomous.orchestrator, "prepare_operation",
+        lambda oid:{"engine":"NATIVE","status":"RUNNING","tasks":[]},
+    )
+    monkeypatch.setattr(standing,"status",lambda:{"enabled":False})
+    monkeypatch.setattr(
+        standing,"maybe_authorize_fresh_operation",
+        lambda oid:pytest.fail("No automatic authority when default off"),
+    )
+    for module, name in (
+        (v1a, "run_native_resume_once"),
+        (v1a, "run_recruiter_evidence_once"),
+        (v1b, "run_answer_resolution_once"),
+        (v1b, "run_cover_letter_decision_once"),
+        (v1c, "run_application_preflight_once"),
+        (v1c, "run_ats_form_preparation_once"),
+    ):
+        monkeypatch.setattr(module,name,lambda **kwargs:{"claimed":False})
+    assert autonomous.drive_operation_once("old-operation")["submission_authority"] is False

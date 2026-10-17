@@ -233,7 +233,9 @@ def test_approval_and_submit_records_pre_browser_execution_mandate(
     )
 
     result = flow.approve_and_submit_for_job(42)
-    assert result["status"] == "APPLYING_NOW"
+    assert result["status"] == "PREPARING_ATS"
+    assert result["browser_execution_started"] is False
+    assert result["employer_receipt_verified"] is False
     assert reservations[0]["job_id"] == 42
     assert reservations[0]["preflight_package_id"] == "preflight-package-1"
     assert result["customer_approval_complete"] is True

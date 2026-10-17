@@ -240,6 +240,66 @@ def _autoapply_form() -> None:
             st.rerun()
 
 
+def _native_standing_consent_form() -> None:
+    """Explicit, bounded consent; the general AutoApply toggle is not authority."""
+    from app import native_standing_consent_v1 as standing
+
+    st.markdown("### Bounded Native standing consent")
+    state = standing.status()
+    st.caption(
+        "Optional automatic approval only for freshly prepared Native jobs "
+        "from exact named employers. It does not bypass Candidate Truth, "
+        "protected checkpoints, the frozen review, or verified receipts."
+    )
+    if state.get("enabled"):
+        st.info(
+            f"Active until {state['expires_at']}. "
+            f"Employers: {', '.join(state['companies'])}. "
+            f"Match score ≥ {state['min_score']}%. "
+            f"Limit {state['daily_cap']} applications per UTC day."
+        )
+        if st.button("Revoke future automatic approvals",
+                     key="native_standing_consent_revoke"):
+            standing.revoke()
+            st.success("Future approvals disabled. Existing mandates require separate cancellation.")
+            st.rerun()
+        return
+
+    with st.form("native_standing_consent_v1_form"):
+        names = st.text_area(
+            "Exact employer names, one per line (up to eight)",
+            value="", height=80,
+        )
+        score = st.number_input("Minimum verified match score",
+                                min_value=95,max_value=100,value=95,step=1)
+        daily_cap = st.number_input("Maximum applications per day",
+                                    min_value=1,max_value=3,value=1,step=1)
+        hours = st.number_input("Consent duration in hours",
+                                min_value=1,max_value=168,value=24,step=1)
+        phrase = st.text_input(
+            "Type ENABLE BOUNDED NATIVE AUTO APPLY to authorize",
+            value="",autocomplete="off",
+        )
+        st.warning(
+            "Enabling this grants approval for future matching applications "
+            "without another package click. CAPTCHA, MFA, unresolved identity "
+            "and unverified employer receipt remain blocked."
+        )
+        if st.form_submit_button("Enable bounded automatic approvals",
+                                 type="primary",use_container_width=True):
+            try:
+                standing.grant(
+                    company_names=[v.strip() for v in names.splitlines() if v.strip()],
+                    score=int(score),daily_cap=int(daily_cap),
+                    hours=int(hours),confirmation=phrase,
+                )
+            except (PermissionError, ValueError, RuntimeError) as error:
+                st.error(str(error))
+            else:
+                st.success("Bounded consent saved for the current owner.")
+                st.rerun()
+
+
 def _anthropic_credential() -> None:
     preferences = _preferences()
     available = vault_available()
@@ -339,6 +399,7 @@ def _credentials() -> None:
         unsafe_allow_html=True,
     )
     _autoapply_form()
+    _native_standing_consent_form()
     _anthropic_credential()
     _security_checkpoint_card()
 

@@ -162,6 +162,9 @@ allowed_files=(
   app/application_provider_ui_v1.py
   app/product_application_flow_v2.py
   app/autoapply_settings_ui.py
+  app/autonomous_prepare_v1.py
+  app/native_standing_consent_v1.py
+  app/application_workspace_page.py
   tests/test_native_cover_letter_writer_v1.py
   tests/test_product_experience_vnext.py
   tests/test_application_provider_ui_v1.py
@@ -169,6 +172,8 @@ allowed_files=(
   tests/test_product_application_flow_v2.py
   tests/test_submit_authority_delivery_v1.py
   tests/test_native_approval_provider_lock_v1.py
+  tests/test_native_standing_consent_v1.py
+  tests/test_autonomous_prepare_v1.py
   deploy/netcup/deploy_code_only_release.sh
   .github/workflows/netcup-code-only-deploy.yml
   tests/test_code_only_release_contract_v1.py
