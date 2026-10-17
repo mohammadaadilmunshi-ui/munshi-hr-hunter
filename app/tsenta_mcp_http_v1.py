@@ -139,3 +139,64 @@ class TsentaMcpReadClient:
         if result.get("isError") is True or result.get("is_error") is True:
             raise TsentaOAuthError("Tsenta MCP tool reported an error.")
         return result
+
+
+APPLICATION_TOOLS = frozenset({
+    "upload_custom_resume",
+    "check_custom_resume",
+    "apply_with_custom_resume",
+})
+
+
+class TsentaMcpApplicationClient(TsentaMcpReadClient):
+    """Explicit opt-in MCP client with only custom-resume application tools.
+
+    This transport does not grant execution authority. Its caller must first
+    make a durable single-use reservation against the exact MUNSHI route.
+    The default read client remains incapable of submission.
+    """
+
+    def initialize(self) -> None:
+        super().initialize()
+        # Do not infer write capabilities from a dashboard flag. Re-read
+        # the authenticated provider inventory, filtering to this tight list.
+        tools = self._send("tools/list", {})
+        if not isinstance(tools, Mapping) or not isinstance(tools.get("tools"), list):
+            raise TsentaOAuthError("Tsenta application tool catalog unavailable.")
+        for item in tools["tools"]:
+            if not isinstance(item, Mapping):
+                continue
+            name = str(item.get("name") or "")
+            normalized = name.replace("-", "_")
+            if normalized in APPLICATION_TOOLS:
+                self._tools[normalized] = name
+
+    def call_application(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        *,
+        claimed_for_single_use: bool = False,
+    ) -> Any:
+        if not claimed_for_single_use:
+            raise PermissionError("Durable one-time Tsenta dispatch claim required.")
+        if tool_name not in APPLICATION_TOOLS or tool_name not in self._tools:
+            raise TsentaOAuthError("Tsenta application tool unavailable or unsupported.")
+        if not isinstance(arguments, Mapping):
+            raise TypeError("Validated Tsenta tool arguments required.")
+        allowed_fields = {
+            "upload_custom_resume": {"fileBase64"},
+            "check_custom_resume": {"uploadId"},
+            "apply_with_custom_resume": {"uploadId", "profile", "url"},
+        }
+        if set(arguments) != allowed_fields[tool_name]:
+            raise ValueError("Unexpected or missing Tsenta application arguments.")
+        result = self._send("tools/call", {
+            "name": self._tools[tool_name],
+            "arguments": dict(arguments),
+        })
+        if not isinstance(result, Mapping):
+            raise TsentaOAuthError("Tsenta application tool result invalid.")
+        if result.get("isError") is True or result.get("is_error") is True:
+            raise TsentaOAuthError("Tsenta application tool returned an error.")
+        return result
