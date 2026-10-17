@@ -468,6 +468,13 @@ def handoff_failed_native_route(
     prepare = flow.get("prepare") or {}
     if prepare.get("status") not in {"FAILED_SAFELY","BLOCKED","FAILED"}:
         raise PermissionError("Native preparation is not confirmed stopped.")
+    # The original Candidate Truth and resume bindings must still be fresh,
+    # even when recovering a failed Native route rather than creating a route.
+    preflight=(flow.get("artifacts") or {}).get("preflight") or {}
+    if not preflight.get("preflight_package_id"):
+        raise PermissionError("The original package is unavailable.")
+    router._preflight_binding(str(preflight["preflight_package_id"]))
+
     db=get_connection()
     try:
         db.execute("BEGIN IMMEDIATE")

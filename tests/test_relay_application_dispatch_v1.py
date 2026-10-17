@@ -281,9 +281,14 @@ def test_atomic_one_use_claim_blocks_second_submission(tmp_path,monkeypatch):
 
 def test_atomic_native_handoff_revokes_old_approval(tmp_path,monkeypatch):
     connect=_ledger_db(tmp_path,monkeypatch,native=True)
+    monkeypatch.setattr(
+        relay.router,"_preflight_binding",
+        lambda package_id:{"package_digest":"p"*64},
+    )
     response=relay.handoff_failed_native_route(6198,flow={
         "state":"FAILED_SAFELY","prepare":{"status":"FAILED_SAFELY"},
         "production_receipt":None,
+        "artifacts":{"preflight":{"preflight_package_id":"package-test"}},
     })
     assert response["provider"]=="TSENTA"
     c=connect()
@@ -297,10 +302,14 @@ def test_employer_receipt_prevents_handoff_and_leaves_native_unchanged(
     tmp_path,monkeypatch,
 ):
     connect=_ledger_db(tmp_path,monkeypatch,native=True,received=True)
+    monkeypatch.setattr(
+        relay.router,"_preflight_binding",lambda package_id:{},
+    )
     with pytest.raises(PermissionError,match="Possible prior submission"):
         relay.handoff_failed_native_route(6198,flow={
             "state":"FAILED_SAFELY","prepare":{"status":"FAILED_SAFELY"},
             "production_receipt":None,
+            "artifacts":{"preflight":{"preflight_package_id":"package-test"}},
         })
     c=connect()
     assert c.execute("select provider from application_provider_routes_v1").fetchone()[0]=="NATIVE"
