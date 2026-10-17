@@ -10,6 +10,7 @@ from app.job_card_interaction_hotfix_v2 import inject_job_card_interaction_css
 from app.product_state import valid_view, volume_policy
 from app.product_ui import esc, inject_css
 from app.product_v22 import brand_logo_data_uri, inject_v22_css, install_product_v22
+from app.product_experience_vnext import inject_presentation_css, render_mobile_dock
 from app.staging_feature_policy import activate_isolated_staging_preparation_features
 
 
@@ -129,6 +130,7 @@ def render() -> None:
     inject_css()
     inject_v22_css()
     inject_job_card_interaction_css()
+    inject_presentation_css()
 
     view = _query_view()
     st.session_state["product_view"] = view
@@ -136,10 +138,10 @@ def render() -> None:
 
     policy = volume_policy()
     status = {
-        "unlimited": "Automation: Unlimited",
-        "custom_limit": f"Custom target: {policy.get('daily_limit')}",
-        "paused": "Automation: Paused",
-        "pause_after_batch": "Pausing after batch",
+        "unlimited": "Discovery: Unlimited",
+        "custom_limit": f"Discovery limit: {policy.get('daily_limit')}",
+        "paused": "Discovery: Paused",
+        "pause_after_batch": "Discovery: Pausing",
     }[policy["mode"]]
 
     desktop_links = "".join(
@@ -155,7 +157,8 @@ def render() -> None:
 
     with st.container(key="product_top_bar"):
         st.markdown(
-            f'''<header class="product-header">
+            f'''<a class="munshi-skip-link" href="#munshi-main">Skip to content</a>
+            <header class="product-header">
                 <a class="brand" href="?view=dashboard" target="_self" aria-label="MUNSHI dashboard">
                     <span class="brand-mark" aria-hidden="true"><img src="{logo}" alt=""></span>
                     <span>MUNSHI</span>
@@ -165,7 +168,7 @@ def render() -> None:
                 </nav>
                 <div class="product-header-actions">
                     {settings_link}
-                    <span class="status-pill-product">{esc(status)}</span>
+                    <span class="status-pill-product" title="Job discovery and preparation volume. Not a final-submission confirmation.">{esc(status)}</span>
                 </div>
                 <details class="mobile-nav">
                     <summary aria-label="Open navigation">Menu</summary>
@@ -174,6 +177,9 @@ def render() -> None:
             </header>''',
             unsafe_allow_html=True,
         )
+
+    render_mobile_dock(view)
+    st.markdown('<div id="munshi-main" tabindex="-1"></div>', unsafe_allow_html=True)
 
     # Preserve this established import line verbatim: profile route contract tests
     # and downstream integrations use it as a compatibility marker.

@@ -15,6 +15,7 @@ from typing import Any
 import streamlit as st
 
 from app.product_ui import esc, page_intro
+from app.product_experience_vnext import render_application_breadcrumb, render_lifecycle_steps
 from app import product_application_flow_v2 as complete_loop
 from app.phase67_common import safe_owned_job_snapshot
 
@@ -210,38 +211,16 @@ def _render_job_header(snapshot: dict[str, Any]) -> None:
 
 def _render_application_lifecycle_guide() -> None:
     st.markdown("### What happens to every application")
-    steps = st.columns(5, gap="small")
-    step_copy = (
-        (
-            "1 · Prepare",
-            "MUNSHI builds the application package in the background.",
-        ),
-        (
-            "2 · Resolve gaps",
-            "You are asked only for information Candidate Truth cannot safely supply.",
-        ),
-        (
-            "3 · Review once",
-            "You review the complete package once, not the application step-by-step.",
-        ),
-        (
-            "4 · Apply",
-            "Approve & Submit grants one-use authority for the exact reviewed package.",
-        ),
-        (
-            "5 · Verify",
-            "MUNSHI records independent submission evidence and a durable receipt.",
-        ),
-    )
-    for column, (title, body) in zip(steps, step_copy):
-        with column:
-            with st.container(border=True):
-                st.markdown(f"**{title}**")
-                st.caption(body)
+    render_lifecycle_steps()
     st.info(
         "You only need to intervene when MUNSHI shows **Needs input**, "
-        "**Ready for review**, or a security checkpoint. Everything else is background work."
+        "**Ready for review**, or a protected security checkpoint."
     )
+    st.caption(
+        "These are process stages, not proof of completed submission. "
+        "Only independently confirmed employer evidence counts as a verified receipt."
+    )
+
 
 
 def _render_current_action(state: str) -> None:
@@ -1197,6 +1176,7 @@ def render() -> None:
         pass
 
     snapshot = safe_owned_job_snapshot(job_id)
+    render_application_breadcrumb(job_id)
     _render_job_header(snapshot)
     _render_complete_loop_live(job_id)
     st.divider()
