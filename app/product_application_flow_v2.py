@@ -843,7 +843,10 @@ def _reserve_native_route_for_approval(
     )
 
 
-def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
+def approve_and_submit_for_job(
+    job_id: int, *, approval_source: str = "CUSTOMER_CLICK",
+    consent_policy_id: str = "", consent_slot: str = "",
+) -> dict[str, Any]:
     """Record the sole customer package approval before browser execution.
 
     No submit authority is minted here because the live browser form does not
@@ -861,8 +864,21 @@ def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
     if not review or not str(preflight.get('preflight_package_id') or ''):
         raise ValueError('The exact pre-browser package review is unavailable.')
 
+    source = str(approval_source or '').strip().upper()
+    if source not in {'CUSTOMER_CLICK', 'STANDING_POLICY'}:
+        raise PermissionError('Unsupported approval source.')
+    if source == 'STANDING_POLICY':
+        from app import native_standing_consent_v1 as standing
+        if not standing.validate_reserved_slot(
+            slot=consent_slot,
+            policy_id=consent_policy_id,
+            job_id=int(job_id),
+            review_digest=str(review['review_digest']),
+        ):
+            raise PermissionError('Bounded standing consent slot is not current.')
     click_identity = (
         f"{review['preflight_package_id']}:{review['review_digest']}:"
+        f"{source}:{consent_policy_id if source == 'STANDING_POLICY' else ''}:"
         "approve-and-submit-pre-browser-v2"
     )
     click_key = (
@@ -901,11 +917,14 @@ def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
     )
     return {
         'mandate_id': str(mandate['mandate_id']),
-        'status': 'APPLYING_NOW',
+        'approval_source': source,
+        'status': 'PREPARING_ATS',
         'customer_approval_complete': True,
         'additional_customer_approval_required': False,
         'submit_authorization': None,
         'submission_authority': False,
+        'browser_execution_started': False,
+        'employer_receipt_verified': False,
     }
 
 

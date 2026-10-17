@@ -367,6 +367,26 @@ def drive_operation_once(operation_id: str) -> dict[str, Any]:
             "CANCELLED",
         }:
             break
+        if name == "ats":
+            from app import native_standing_consent_v1 as consent
+
+            if consent.status().get("enabled") is True:
+                try:
+                    policy_result = consent.maybe_authorize_fresh_operation(
+                        str(operation_id)
+                    )
+                except (PermissionError, RuntimeError, ValueError) as error:
+                    # Keep unexpected account/form issues reviewable; never
+                    # promote them into authority or retry a consumed slot.
+                    policy_result = {
+                        "authorized": False,
+                        "reason": "standing_consent_fail_closed",
+                        "error_type": type(error).__name__,
+                    }
+                step_results.append({
+                    "step": "bounded_standing_consent",
+                    "result": policy_result,
+                })
         try:
             result = runner(
                 operation_id=str(operation_id),
