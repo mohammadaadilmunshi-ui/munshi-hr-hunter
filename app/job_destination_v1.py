@@ -22,6 +22,13 @@ _KNOWN_PROVIDERS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
     ("iCIMS", ("icims.com",), ()),
     ("Workable", ("workable.com",), ()),
     ("Jobvite", ("jobvite.com",), ()),
+    ("BambooHR", ("bamboohr.com",), ()),
+    ("Paylocity", ("paylocity.com",), ()),
+    ("ADP", ("adp.com",), ()),
+    ("UKG", ("ultipro.com", "ukg.com", "ukg.net"), ()),
+    ("Rippling", ("rippling.com",), ()),
+    ("Teamtailor", ("teamtailor.com",), ()),
+    ("Recruitee", ("recruitee.com",), ()),
     ("SuccessFactors", ("successfactors.com", "successfactors.eu", "jobs.sap.com"), ()),
     ("Oracle / Taleo", ("taleo.net", "oraclecloud.com"), ("/hcmui/", "/careersection/")),
     ("LinkedIn", ("linkedin.com",), ()),
@@ -169,6 +176,19 @@ def describe_job_destination(job: Any) -> JobDestination:
     """Project generic ATS/source/link facts for one normalized job."""
     exact_url = original_job_url(job)
     explicit = _explicit_provider(job)
+    # A discovery source URL is not the employer's application platform.
+    stored_apply = _safe_http_url(_value(job, "apply_url", "employer_apply_url"))
+    if source_platform(job) == "LinkedIn" and (
+        not stored_apply
+        or any(_host_matches(_host(stored_apply), a) for a in _AGGREGATORS)
+    ):
+        return JobDestination(
+            provider=None, apply_via="Employer link pending", source="LinkedIn",
+            original_url=exact_url, destination_domain=None, confidence="unknown",
+            evidence="employer_url_missing",
+        )
+    if source_platform(job) == "LinkedIn" and explicit in {"LinkedIn", "Indeed"}:
+        explicit = ""
     detected, domain, evidence = _provider_from_url(exact_url)
     provider = explicit or detected
     if provider:
@@ -176,7 +196,7 @@ def describe_job_destination(job: Any) -> JobDestination:
         confidence = "stored" if explicit else "high"
         evidence = "stored_provider" if explicit else evidence
     elif domain:
-        apply_via = f"Employer careers site · {domain}"
+        apply_via = f"Employer’s website · {domain}"
         confidence = "domain_only"
     else:
         apply_via = "Destination not recorded"

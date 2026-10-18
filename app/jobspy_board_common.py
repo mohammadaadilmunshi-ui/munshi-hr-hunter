@@ -511,7 +511,14 @@ def normalize_jobspy_row(record: dict[str, Any], site_name: str) -> dict[str, An
     company = _clean_text(_value(record, "company", "company_name"), "Unknown Company")
     title = _clean_text(_value(record, "title", "job_title"), "Unknown Position")
     job_url = _clean_url(_value(record, "job_url", "url"))
-    direct_url = _clean_url(_value(record, "job_url_direct", "direct_url", "apply_url"))
+    # LinkedIn offsite destinations may require query parameters (job IDs,
+    # tenant, locale). canonical_url strips them and is only for fingerprints.
+    direct_value = _value(record, "job_url_direct", "direct_url", "apply_url")
+    direct_url = (
+        _clean_text(direct_value)
+        if str(site_name).casefold() == "linkedin"
+        else _clean_url(direct_value)
+    )
     minimum = _value(record, "min_amount", "salary_min")
     maximum = _value(record, "max_amount", "salary_max")
     interval = _clean_text(_value(record, "interval", "salary_interval"))
@@ -644,6 +651,9 @@ def _records_from_frame(frame: Any) -> list[dict[str, Any]]:
 
 
 def _scrape_jobs(**kwargs: Any) -> Any:
+    if "linkedin" in (kwargs.get("site_name") or []):
+        from app.linkedin_apply_button_v7 import install_jobspy_apply_parser
+        install_jobspy_apply_parser()
     from jobspy import scrape_jobs as _aadil_original_scrape_jobs
     from app.free_adapter_policy_v1_1 import make_site_preserving_wrapper as _aadil_make_site_preserving_wrapper
     scrape_jobs = _aadil_make_site_preserving_wrapper(_aadil_original_scrape_jobs)

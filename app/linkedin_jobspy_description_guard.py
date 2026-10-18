@@ -98,6 +98,10 @@ def install() -> dict[str, Any]:
     an unresolved LinkedIn listing URL is never restored as ``apply_url``.
     """
     module = _jobspy_module()
+    # Test doubles intentionally expose scrape_jobs only.
+    if getattr(module, "__path__", None) is not None:
+        from app.linkedin_apply_button_v7 import install_jobspy_apply_parser
+        install_jobspy_apply_parser()
     original = getattr(module, "scrape_jobs", None)
     if not callable(original):
         raise RuntimeError("jobspy.scrape_jobs is unavailable")

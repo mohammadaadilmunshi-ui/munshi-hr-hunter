@@ -68,6 +68,16 @@ def _linkedin_link_actions(job: dict[str, Any]) -> dict[str, Any]:
     return linkedin_destination_buttons(job, verified)
 
 
+def _job_destination(job: dict[str, Any]):
+    if "linkedin" in str(job.get("source") or "").casefold():
+        links = _linkedin_link_actions(job)
+        # Project the same verified link used by buttons and provider routing.
+        # A stale raw apply_url must not label a different platform on the card.
+        job = {**job, "apply_url": links.get("employer_apply_url"),
+               "ats_platform": links.get("ats_platform")}
+    return describe_job_destination(job)
+
+
 def _render_linkedin_source_and_employer(job: dict[str, Any], *, key_prefix: str) -> None:
     links = _linkedin_link_actions(job)
     if not links.get("is_linkedin"):
@@ -294,7 +304,7 @@ def _open_job_detail(job_id: int) -> None:
 def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
     job_id = int(row["id"])
     flow = _application_flow(job_id)
-    destination = describe_job_destination(row)
+    destination = _job_destination(row)
     tone = pastel_for(job_id)
     tags = [row.get("remote_type"), row.get("employment_type"), row.get("salary_raw")]
     if flow.get("state"):
@@ -410,7 +420,7 @@ def _job_detail_dialog(job_id: int) -> None:
     row = dict(record)
     row["saved"] = int(state_record["saved"]) if state_record else 0
     row["skipped"] = int(state_record["skipped"]) if state_record else 0
-    destination = describe_job_destination(row)
+    destination = _job_destination(row)
     st.markdown(f"## {esc(row.get('title'), 'Untitled role')}", unsafe_allow_html=True)
     st.caption(f"{row.get('company_name') or 'Company not recorded'} · {row.get('location_raw') or 'Location unknown'}")
     st.caption(f"Apply via: {destination.apply_via} · Source: {destination.source}")
@@ -744,7 +754,7 @@ def _manual_add() -> None:
         result = st.session_state.get("manual_analysis")
         if isinstance(result, dict) and isinstance(result.get("job"), dict):
             job = dict(result["job"])
-            destination = describe_job_destination(job)
+            destination = _job_destination(job)
             missing = list(result.get("missing") or [])
             st.markdown("### Review job")
             identity = st.columns(3, gap="small")
