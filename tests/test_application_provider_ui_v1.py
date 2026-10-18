@@ -118,7 +118,11 @@ def test_dashboard_wiring_is_original_product_workspace():
 
 def test_learning_summary_fails_closed_when_table_does_not_exist(hunter_db):
     del hunter_db
-    assert ui.learning_summary() == {"form_fields": 0, "provider_events": 0}
+    assert ui.learning_summary() == {
+        "form_fields": 0, "provider_events": 0, "review_events": 0,
+        "observations": 0, "distinct_applications": 0,
+        "ats_platforms": 0, "field_review_applications": 0,
+    }
 
 
 
@@ -139,7 +143,11 @@ def test_learning_summary_counts_only_sanitized_owner_records(hunter_db):
         status={"status": "PAUSED"},
     )
     observations.persist_observations([*fields, status])
-    assert ui.learning_summary() == {"form_fields": 1, "provider_events": 1}
+    assert ui.learning_summary() == {
+        "form_fields": 1, "provider_events": 1, "review_events": 0,
+        "observations": 2, "distinct_applications": 1,
+        "ats_platforms": 1, "field_review_applications": 1,
+    }
 
 def test_streamlit_workspace_shows_disabled_tsenta_when_backend_absent(monkeypatch):
     """Exercise the actual initial-dashboard control tree without touching DB."""
@@ -245,7 +253,7 @@ def test_streamlit_dashboard_summary_is_readonly(monkeypatch):
         "render_dashboard_summary()\n"
     ).run(timeout=15)
     assert not list(app.exception)
-    assert any(m.label == "Learning signals" and str(m.value) == "17"
+    assert any(m.label == "Observed evidence rows" and str(m.value) == "17"
                for m in app.metric)
     assert not list(app.button)
 
@@ -332,10 +340,8 @@ def test_connected_original_dashboard_renders_multi_ats_learning_controls(monkey
         "render_dashboard_summary()\n"
     ).run(timeout=15)
     assert not list(app.exception)
-    assert any(m.label == "Processed applications" and str(m.value) == "12"
-               for m in app.metric)
-    assert any(m.label == "ATS platforms observed" and str(m.value) == "4"
-               for m in app.metric)
+    assert any(m.label == "Observed evidence rows" for m in app.metric)
+    assert any(m.label == "Form-field observations" for m in app.metric)
     sync_button = next(b for b in app.button
                        if b.label == "Import read-only MUNSHI Relay learning evidence")
     assert not sync_button.disabled

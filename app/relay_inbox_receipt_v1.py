@@ -22,6 +22,7 @@ from app.tsenta_mcp_adapter_v1 import _unwrap
 ALLOWED_GENERIC_ATS_DOMAINS = frozenset({
     "smartrecruiters.com", "greenhouse.io", "lever.co",
     "myworkday.com", "workday.com", "ashbyhq.com",
+    "mail.paylocity.com",
 })
 ACKNOWLEDGEMENTS = (
     "thank you for your application",
@@ -90,6 +91,10 @@ def _message_proof(
     # An unlinked confirmation may be correlated only if a single employer
     # application is present. Otherwise require a provider application ID.
     if linked is None and same_company_routes!=1:
+        return None
+    # Paylocity uses a shared ATS sender rather than an employer domain.
+    # Require the exact provider application ID for this sender.
+    if host == "mail.paylocity.com" and linked is None:
         return None
     # Validate provider list/detail agreement and explicit employer intent.
     if str(listing.get("from") or "").casefold()!=str(detail.get("from") or "").casefold():

@@ -165,3 +165,32 @@ def test_inbox_sync_requires_provider_submission_and_matches_only_exact_owner(
     assert result["status"]=="NOT_PROVIDER_SUBMITTED"
     assert provider.reads==[]
     assert actions==[]
+
+
+
+def test_paylocity_employer_ack_requires_exact_provider_app_link():
+    import hashlib
+
+    app_id="paylocity-application-123"
+    listing=LISTING | {
+        "from":"do-not-reply@mail.paylocity.com",
+        "applicationId":app_id,
+    }
+    detail=DETAIL | {
+        "from":"do-not-reply@mail.paylocity.com",
+        "subject":"Thank you for applying!",
+        "body":(
+            "Vets Pets thank you for your application to the "
+            "Veterinary Recruiting Sourcing Specialist - Contract role."
+        ),
+    }
+    options={
+        "company":"Vets Pets",
+        "role":"Veterinary Recruiting Sourcing Specialist - Contract",
+        "expected_application_ref_sha256":hashlib.sha256(app_id.encode()).hexdigest(),
+    }
+    assert proof(listing=listing,detail=detail,**options)
+    assert proof(listing=listing | {"applicationId":None},detail=detail,**options) is None
+    assert proof(listing=listing | {"applicationId":"wrong"},detail=detail,**options) is None
+    assert proof(listing=listing | {"from":"attacker@mail.paylocity.com.evil.net"},
+                 detail=detail | {"from":"attacker@mail.paylocity.com.evil.net"},**options) is None

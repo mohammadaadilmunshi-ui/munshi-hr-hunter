@@ -13,8 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app import product_application_flow_v2 as application_flow
 from app import application_archive_v1 as application_archive
+from app import product_application_flow_v2 as application_flow
 from app.database import get_connection
 from app.job_destination_v1 import describe_job_destination
 
@@ -205,7 +205,7 @@ def _next_action(state: str, *, protected: bool) -> str:
     if protected:
         return "Complete protected checkpoint"
     if state == "SUBMISSION_UNVERIFIED":
-        return "Verify before any further action"
+        return "Awaiting independent employer acknowledgment · do not resubmit"
     if state in {"FAILED_SAFELY", "BLOCKED", "CANCELLED", "NEEDS_INPUT"}:
         return "Review the issue"
     if state in APPLYING_STATES:
@@ -227,7 +227,7 @@ def _human_state(state: str, *, protected: bool) -> str:
     if state in SUBMITTED_STATES:
         return "Submitted"
     if state == "SUBMISSION_UNVERIFIED":
-        return "Needs attention"
+        return "Provider sent · receipt pending"
     return application_flow.STATE_LABELS.get(
         state,
         state.replace("_", " ").title() if state else "Not started",
@@ -241,6 +241,8 @@ def _safe_stage(state: str, tasks: list[Mapping[str, Any]]) -> tuple[str, int]:
         return "Applying now", 5
     if state in SUBMITTED_STATES:
         return "Submitted", 6
+    if state == "SUBMISSION_UNVERIFIED":
+        return "Verify receipt", 6
     for task in tasks:
         status = str(task.get("status") or "")
         if status in {"RUNNING", "NEEDS_INPUT", "FAILED"}:
@@ -259,6 +261,22 @@ def _receipt(flow: Mapping[str, Any]) -> dict[str, Any] | None:
     if not receipt:
         receipt = dict(lifecycle.get("receipt") or {})
     if not receipt:
+        relay=dict(flow.get("provider_route") or {})
+        if (
+            relay.get("provider")=="TSENTA"
+            and relay.get("state")=="EMPLOYER_CONFIRMED"
+            and relay.get("receipt_evidence_digest")
+            and relay.get("employer_confirmed_at")
+        ):
+            return {
+                "receipt_id": "Privacy-protected employer receipt",
+                "provider": "MUNSHI Relay",
+                "provider_application_id": "Stored securely (SHA-256)",
+                "verification_status": "Employer email verified",
+                "submitted_at": relay.get("provider_submitted_at"),
+                "verified_at": relay.get("employer_confirmed_at"),
+                "resume_version_id": "Approved resume binding",
+            }
         return None
     return {
         "receipt_id": receipt.get("receipt_id"),

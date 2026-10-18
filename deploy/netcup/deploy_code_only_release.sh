@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=9d0d12d426e132be6216488e39d777fb73d2a3da
+LIVE_BASE=c153f52e0c9f711a9a0489535a2c77704e81afc3
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -174,6 +174,9 @@ allowed_files=(
   app/profile_workspace_v2.py
   app/relay_application_dispatch_v1.py
   app/relay_inbox_receipt_v1.py
+  app/dashboard_operational_metrics_v1.py
+  app/application_view_model_v1.py
+  app/unified_job_workspaces_v1.py
   app/tsenta_backend_readiness_v1.py
   app/tsenta_learning_cohort_v1.py
   app/tsenta_learning_monitor_v1.py
@@ -192,6 +195,8 @@ allowed_files=(
   tests/test_relay_application_dispatch_v1.py
   tests/test_relay_claim_projection_v1.py
   tests/test_relay_inbox_receipt_v1.py
+  tests/test_dashboard_operational_metrics_v1.py
+  tests/test_application_view_model_v1.py
   tests/test_relay_platform_routing_v1.py
   tests/test_tsenta_learning_sync_v1.py
   tests/test_tsenta_live_diagnostics_v1.py
@@ -277,6 +282,8 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_engine_selector_recovery_v1.py \
     /app/hunter/tests/test_relay_application_dispatch_v1.py \
     /app/hunter/tests/test_relay_inbox_receipt_v1.py \
+    /app/hunter/tests/test_dashboard_operational_metrics_v1.py \
+    /app/hunter/tests/test_application_view_model_v1.py \
     /app/hunter/tests/test_relay_platform_routing_v1.py \
     /app/hunter/tests/test_relay_claim_projection_v1.py \
     /app/hunter/tests/test_tsenta_mcp_adapter_v1.py \
