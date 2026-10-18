@@ -1879,3 +1879,60 @@ def test_ats_prepare_poll_timeout_policy_is_generic_and_runtime_configurable(
     monkeypatch.setenv(workers.ATS_PREPARE_POLL_TIMEOUT_ENV, "not-a-number")
     with pytest.raises(ValueError, match="numeric value"):
         workers._ats_prepare_poll_timeout_seconds()
+
+
+@pytest.mark.parametrize("policy", ["UNDETERMINED", "NOT_REQUIRED"])
+def test_no_speculative_cover_letter_when_jd_does_not_request_one(
+    worker_db, monkeypatch, policy,
+):
+    # Shared across all ATS destinations: only explicit REQUIRED/OPTIONAL
+    # policies can trigger a reviewed letter before opening the actual form.
+    operation = _start("v1c-cover-policy-" + policy.casefold())
+    _ready_dependencies(operation["operation_id"], cover=policy)
+    monkeypatch.setattr(
+        workers.native_cover_letter_writer_v1,
+        "generate",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("speculative cover letter generation forbidden")
+        ),
+    )
+    result = _run_preflight_ready(operation, monkeypatch)
+    assert result["task_status"] == "SUCCEEDED"
+    assert result["submission_authority"] is False
+    assert result["output"]["cover_letter_id"] is None
+    assert result["output"]["cover_letter_requirement_pending_live_form"] is (
+        policy == "UNDETERMINED"
+    )
+    assert result["output"]["live_form_discovery_pending"] is True
+
+
+def test_undetermined_cover_letter_still_requires_live_form_discovery(
+    worker_db, monkeypatch,
+):
+    operation = _start("v1c-cover-form-unconfirmed")
+    _ready_dependencies(operation["operation_id"], cover="UNDETERMINED")
+    monkeypatch.setattr(
+        workers.native_cover_letter_writer_v1,
+        "generate",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("cannot speculate about unseen employer form")
+        ),
+    )
+    _run_preflight_ready(operation, monkeypatch)
+    seen={}
+    def fake_plan(**kwargs):
+        seen["cover_letter_id"]=kwargs.get("cover_letter_id")
+        seen["permissions"]=dict(kwargs["permissions"])
+        return _fake_plan()
+    monkeypatch.setattr(workers.application_plan_v2,"prepare_application_plan",fake_plan)
+    result=workers.run_ats_form_preparation_once(
+        operation_id=operation["operation_id"],worker_id="ats-worker",
+        poll_interval_seconds=0,
+        plan_delivery=lambda **kwargs:_delivery(),
+        session_starter=lambda plan:_session("WAITING_INPUT"),
+        status_reader=lambda **kwargs:{},
+        resolution_task_reader=lambda **kwargs:_runtime_resolution_payload(),
+    )
+    assert seen["cover_letter_id"] is None
+    assert result["operation_status"]=="NEEDS_INPUT"
+    assert result["submission_authority"] is False
