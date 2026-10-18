@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "dd599e5b95ec98015d24d9c4185b17ecc7c4e8e2" in content
+    assert "f74fc8d5c7e5a462a0abc9912fec70d0a362dd65" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "dd599e5b95ec98015d24d9c4185b17ecc7c4e8e2",
+            "--expected-base", "f74fc8d5c7e5a462a0abc9912fec70d0a362dd65",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "dd599e5b95ec98015d24d9c4185b17ecc7c4e8e2", "HEAD",
+            "f74fc8d5c7e5a462a0abc9912fec70d0a362dd65", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )
@@ -188,3 +188,16 @@ def test_lossless_certificates_stage_b_relevance_and_receipt_poll_are_in_release
     ):
         assert "  "+item+"\n" in content
     assert "/app/hunter/tests/test_certificate_rendered_pdf_v1.py" in content
+
+
+def test_v11_jd_and_ats_performance_protection_are_released():
+    contents=SCRIPT.read_text()
+    for src in (
+        "app/jd_intelligence_v1.py",
+        "app/prepare_worker_adapters_v1c.py",
+        "tests/test_jd_intelligence_quality_v11.py",
+        "tests/test_aggressive_non_submitting_e2e_v11.py",
+        "tests/test_prepare_worker_adapters_v1c.py",
+    ):
+        assert "  "+src+"\n" in contents
+    assert "/app/hunter/tests/test_aggressive_non_submitting_e2e_v11.py" in contents

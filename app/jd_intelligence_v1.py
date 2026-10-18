@@ -22,7 +22,7 @@ from app.database import get_connection
 from app.phase67_common import canonical_text, safe_owned_job_snapshot, sha256_json
 from app.tenant_foundation import current_owner, ensure_schema as ensure_tenant_schema
 
-JD_INTELLIGENCE_VERSION = "stage-b-jd-intelligence-v1"
+JD_INTELLIGENCE_VERSION = "stage-b-jd-intelligence-v1.1"
 JD_INTELLIGENCE_AUTHORITY = "munshi-hr-hunter"
 SUBMISSION_AUTHORITY = False
 
@@ -76,7 +76,7 @@ _FIELD_DEFAULT_PRIORITY = {
     "qualifications": "MUST_HAVE",
     "preferred_qualifications": "PREFERRED",
     "preferred_skills": "PREFERRED",
-    "skills_keywords": "MUST_HAVE",
+    "skills_keywords": "UNKNOWN",
     "work_authorization": "MUST_HAVE",
     "location_raw": "CONTEXT",
     "remote_type": "CONTEXT",
@@ -89,6 +89,27 @@ _FIELD_DEFAULT_PRIORITY = {
 _SPLIT_RE = re.compile(r"(?:\r?\n+|(?<=[.!?])\s+(?=[A-Z0-9•*\-]))")
 _BULLET_PREFIX_RE = re.compile(r"^\s*(?:[-*•▪◦‣]|\d+[.)])\s*")
 _SPACE_RE = re.compile(r"\s+")
+
+_JSON_STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"')
+_SECTION_NAMES = {
+    "job summary", "job description", "duties and responsibilities",
+    "responsibilities", "education and experience", "education level",
+    "qualifications", "minimum qualifications", "preferred qualifications",
+    "experience", "skills", "benefits", "about us", "about the role",
+    "additional information", "physical requirements",
+}
+_INVALID_EMPTY_METADATA = frozenset({"not specified", "not listed", "n/a", "unknown"})
+_SECTION_CONTEXT = {
+    "duties and responsibilities": "RESPONSIBILITY",
+    "responsibilities": "RESPONSIBILITY",
+    "qualifications": "QUALIFICATION",
+    "minimum qualifications": "QUALIFICATION",
+    "preferred qualifications": "PREFERRED",
+    "education and experience": "QUALIFICATION",
+    "education level": "QUALIFICATION",
+    "experience": "QUALIFICATION",
+    "skills": "SKILL",
+}
 _YEARS_RE = re.compile(r"\b(?P<minimum>\d{1,2})(?:\s*[-–]\s*(?P<maximum>\d{1,2}))?\s*\+?\s+years?\b", re.I)
 _MONEY_RE = re.compile(
     r"(?P<currency>[$€£])\s*(?P<minimum>\d[\d,]*(?:\.\d+)?)"
@@ -197,6 +218,28 @@ def _fragments(field: str, value: Any) -> list[dict[str, Any]]:
     raw = str(value or "")
     if not raw.strip():
         return []
+    # Hunter sometimes stores its extracted skills as JSON. Match the original
+    # quoted source spans, preserving literal offsets and backslash escapes,
+    # rather than treating quotes/array brackets as JD keywords.
+    if field == "skills_keywords" and raw.lstrip().startswith("["):
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, list) and all(isinstance(v, str) for v in parsed):
+            items = []
+            for found in _JSON_STRING_RE.finditer(raw):
+                exact = found.group()[1:-1]
+                if not exact.strip():
+                    continue
+                items.append({
+                    "source_field": field,
+                    "source_start": found.start() + 1,
+                    "source_end": found.end() - 1,
+                    "exact_text": exact,
+                })
+            if len(items) == len(parsed):
+                return items
     if field == "skills_keywords":
         candidates = re.split(r"[,;|\n]+", raw)
     else:
@@ -206,6 +249,11 @@ def _fragments(field: str, value: Any) -> list[dict[str, Any]]:
     for candidate in candidates:
         text = _normalize_fragment(candidate)
         if len(text) < 3:
+            continue
+        if (field in {"work_authorization", "salary_raw", "location_raw"}
+            and text.casefold() in _INVALID_EMPTY_METADATA):
+            continue
+        if text.rstrip(":").strip().casefold() in _SECTION_NAMES:
             continue
         start = raw.find(candidate, cursor)
         if start < 0:
@@ -235,9 +283,7 @@ def _priority(field: str, text: str) -> str:
 def _looks_like_tool(text: str) -> bool:
     folded = text.casefold()
     return any(
-        hint == folded
-        or hint in folded
-        or re.search(rf"(?<![a-z0-9]){re.escape(hint)}(?![a-z0-9])", folded)
+        re.search(rf"(?<![a-z0-9]){re.escape(hint)}(?![a-z0-9])", folded)
         for hint in _TOOL_HINTS
     )
 
@@ -327,17 +373,36 @@ def _source_text_payload(job: Mapping[str, Any]) -> list[dict[str, str]]:
 
 
 def _dedupe_requirements(requirements: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[tuple[str, str, str]] = set()
+    # Duplicate employer text in description_raw and Hunter's derived
+    # skills_keywords is one employer requirement, not two ATS criteria.
+    # The retained row keeps the exact text and offsets of its first source.
+    seen: dict[str, int] = {}
     result: list[dict[str, Any]] = []
+    priority_rank = {
+        "MUST_HAVE": 5, "CORE_RESPONSIBILITY": 4, "PREFERRED": 3,
+        "BONUS": 2, "UNKNOWN": 1, "CONTEXT": 0,
+    }
+    protected_types = {"WORK_AUTHORIZATION", "SPONSORSHIP", "CITIZENSHIP", "CLEARANCE", "OTHER_ELIGIBILITY"}
     for item in requirements:
-        key = (
-            str(item["source_field"]),
-            canonical_text(item["exact_text"]).casefold(),
-            str(item["priority"]),
-        )
-        if key in seen:
+        normalized = canonical_text(item["exact_text"]).casefold()
+        normalized = normalized.replace(r"\-", "-").replace(r"\&", "&")
+        normalized = normalized.strip(' "[]')
+        key = re.sub(r"[^a-z0-9]+", " ", normalized).strip()
+        if not key:
             continue
-        seen.add(key)
+        if key in seen:
+            index = seen[key]
+            old = result[index]
+            def quality(row: dict[str, Any]) -> tuple[int, int, int]:
+                return (
+                    int(str(row["type"]) in protected_types),
+                    priority_rank.get(str(row["priority"]), 0),
+                    int(str(row["source_field"]) not in {"description_raw", "skills_keywords"}),
+                )
+            if quality(item) > quality(old):
+                result[index] = item
+            continue
+        seen[key] = len(result)
         result.append(item)
     return result
 
@@ -345,9 +410,15 @@ def _dedupe_requirements(requirements: Iterable[dict[str, Any]]) -> list[dict[st
 def _keywords(requirements: list[dict[str, Any]], job: Mapping[str, Any]) -> list[str]:
     values: list[str] = []
     raw_skills = str(job.get("skills_keywords") or "")
-    for item in re.split(r"[,;|\n]+", raw_skills):
-        text = canonical_text(item)
-        if text and text.casefold() not in {value.casefold() for value in values}:
+    for fragment in _fragments("skills_keywords", raw_skills):
+        # Long extracted skill sentences remain requirements, not literal
+        # ATS keywords. Neither JSON syntax nor escaped punctuation is a skill.
+        text = canonical_text(fragment["exact_text"])
+        text = text.replace(r"\-", "-").replace(r"\&", "&")
+        text = text.strip(' "[]')
+        if not (1 <= len(text.split()) <= 4):
+            continue
+        if text.casefold() not in {value.casefold() for value in values}:
             values.append(text)
     for requirement in requirements:
         if requirement["type"] not in {"SKILL", "TOOL", "DOMAIN_KNOWLEDGE"}:
@@ -372,6 +443,46 @@ def build_snapshot(job_snapshot: Mapping[str, Any]) -> dict[str, Any]:
     sequence = 0
     for field in _SOURCE_FIELDS:
         value = job.get(field)
+        section: str | None = None
+        if field == "description_raw":
+            cursor = 0
+            # Section headings are metadata; they decide how the following
+            # grounded fragments should be classified, not ATS requirements.
+            for line in _SPLIT_RE.split(str(value or "")):
+                base = str(value).find(line, cursor)
+                if base < 0:
+                    raise ValueError("JD source fragment offsets are not traceable.")
+                cursor = base + len(line)
+                heading = _normalize_fragment(line).rstrip(":").strip().casefold()
+                if heading in _SECTION_NAMES:
+                    section = _SECTION_CONTEXT.get(heading)
+                    continue
+                for fragment in _fragments(field, line):
+                    # Preserve original field offsets across repeated lines.
+                    exact = fragment["exact_text"]
+                    fragment["source_start"] += base
+                    fragment["source_end"] += base
+                    sequence += 1
+                    req_type, confidence = _requirement_type(field, exact)
+                    priority = _priority(field, exact)
+                    if req_type == "OTHER" and section in {"RESPONSIBILITY", "SKILL"}:
+                        req_type = section
+                        confidence = 0.78 if section == "RESPONSIBILITY" else 0.72
+                    if section == "RESPONSIBILITY" and priority == "UNKNOWN":
+                        priority = "CORE_RESPONSIBILITY"
+                    requirements.append({
+                        "requirement_id": f"JDREQ-{sequence:03d}",
+                        "type": req_type,
+                        "priority": priority,
+                        "exact_text": exact,
+                        "normalized_text": canonical_text(exact).casefold(),
+                        "source_field": field,
+                        "source_start": int(fragment["source_start"]),
+                        "source_end": int(fragment["source_end"]),
+                        "classification_confidence": round(float(confidence), 4),
+                        "structured_constraints": _structured_constraints(req_type, exact),
+                    })
+            continue
         for fragment in _fragments(field, value):
             sequence += 1
             req_type, confidence = _requirement_type(field, fragment["exact_text"])
@@ -457,7 +568,7 @@ def _snapshot_digest_payload(snapshot: Mapping[str, Any]) -> dict[str, Any]:
 
 def validate_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     value = dict(snapshot)
-    if value.get("contract_version") != JD_INTELLIGENCE_VERSION:
+    if value.get("contract_version") not in {JD_INTELLIGENCE_VERSION, "stage-b-jd-intelligence-v1"}:
         raise ValueError("Unsupported JD Intelligence version.")
     if value.get("submission_authority") is not False:
         raise ValueError("JD Intelligence cannot have submission authority.")

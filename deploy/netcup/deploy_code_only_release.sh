@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=dd599e5b95ec98015d24d9c4185b17ecc7c4e8e2
+LIVE_BASE=f74fc8d5c7e5a462a0abc9912fec70d0a362dd65
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -198,6 +198,12 @@ allowed_files=(
   app/master_certifications_v1.py
   app/deterministic_profile_extractor_v1.py
   app/jd_requirement_match_v1.py
+  app/jd_intelligence_v1.py
+  app/prepare_worker_adapters_v1c.py
+  tests/test_jd_intelligence_quality_v11.py
+  tests/test_aggressive_non_submitting_e2e_v11.py
+  tests/test_prepare_worker_adapters_v1c.py
+  tests/test_stage_b_jd_intelligence.py
   app/relay_receipt_worker_v1.py
   docker/hunter-supervisor.py
   tests/test_master_certifications_v1.py
@@ -330,6 +336,10 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_native_resume_cert_retention_v1.py \
     /app/hunter/tests/test_master_certifications_v1.py \
     /app/hunter/tests/test_jd_match_evidence_v11.py \
+    /app/hunter/tests/test_jd_intelligence_quality_v11.py \
+    /app/hunter/tests/test_aggressive_non_submitting_e2e_v11.py \
+    /app/hunter/tests/test_prepare_worker_adapters_v1c.py \
+    /app/hunter/tests/test_stage_b_jd_intelligence.py \
     /app/hunter/tests/test_relay_receipt_worker_v1.py \
     /app/hunter/tests/test_certificate_rendered_pdf_v1.py \
     /app/hunter/tests/test_profile_runtime_repair_v2.py \
