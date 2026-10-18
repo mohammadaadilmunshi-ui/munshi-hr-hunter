@@ -66,8 +66,23 @@ def patch_caddy(contents: str) -> str:
     }
     @munshi_prod_device_login path /_munshi-auth/login
     @munshi_prod_device_logout path /_munshi-auth/logout
+    @munshi_prod_stream path /_stcore/stream
 
     route {
+        # For Streamlit upgrades, validate the cookie using ordinary HTTP first.
+        handle @munshi_prod_stream {
+            route {
+                request_header -Upgrade
+                request_header -Connection
+                forward_auth 127.0.0.1:8000 {
+                    uri /_munshi-auth/verify
+                    header_up X-Munshi-Original-URI {uri}
+                }
+                request_header Upgrade websocket
+                request_header Connection Upgrade
+                reverse_proxy 127.0.0.1:8501
+            }
+        }
         handle @munshi_prod_mail {
             reverse_proxy 127.0.0.1:8000
         }
