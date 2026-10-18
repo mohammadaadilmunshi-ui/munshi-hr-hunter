@@ -795,6 +795,8 @@ def test_required_cover_letter_writer_failure_requeues_preflight_safely(
     )
     assert task["status"] == "PENDING"
     assert task["attempts"] == 1
+    assert task["error_code"] == "APPLICATION_PREFLIGHT_COVER_LETTER_FAILED"
+    assert "writer unavailable" not in str(task["error_message"])
 
 
 def test_ats_ready_for_review_completes_orchestrator(worker_db, monkeypatch):

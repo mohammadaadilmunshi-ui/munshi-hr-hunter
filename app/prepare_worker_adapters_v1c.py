@@ -511,9 +511,11 @@ def run_application_preflight_once(
             "submission_authority": False,
         }
 
+    preflight_step = "VALIDATION"
     try:
         resume, answers = _validate_resume_and_answers(operation)
         cover = _cover_decision(operation)
+        preflight_step = "REUSE_CHECK"
         reused_output = _reusable_preflight_output(
             operation=operation,
             resume=resume,
@@ -532,6 +534,7 @@ def run_application_preflight_once(
                 "reused_preflight_package": True,
                 "submission_authority": False,
             }
+        preflight_step = "OPPORTUNITY"
         opportunity = opportunity_intelligence_v3.evaluate_job(
             int(operation["job_id"]),
             persist=True,
@@ -541,6 +544,7 @@ def run_application_preflight_once(
             opportunity=opportunity,
         )
 
+        preflight_step = "PACKAGE"
         package = preflight_v1.prepare_preflight_package(
             job_id=int(operation["job_id"]),
             application_id=str(operation["application_id"]),
@@ -590,6 +594,7 @@ def run_application_preflight_once(
 
         reviewed_cover_letter: dict[str, Any] | None = None
         if str(cover.get("decision") or "") != "NOT_REQUIRED":
+            preflight_step = "COVER_LETTER"
             reviewed_cover_letter = native_cover_letter_writer_v1.generate(
                 preflight_package_id=str(package["package_id"]),
             )
@@ -606,6 +611,7 @@ def run_application_preflight_once(
                     "Reviewable cover-letter artifact is not exactly bound to the current application."
                 )
 
+        preflight_step = "FINALIZE"
         output = {
             "version": WORKER_VERSION,
             "preflight_package_id": str(package["package_id"]),
@@ -661,8 +667,8 @@ def run_application_preflight_once(
         orchestrator.fail_task(
             task_id=str(task["task_id"]),
             worker_id=str(worker_id),
-            error_code="APPLICATION_PREFLIGHT_PREPARE_FAILED",
-            error_message="Application preflight preparation failed closed.",
+            error_code=f"APPLICATION_PREFLIGHT_{preflight_step}_FAILED",
+            error_message="Application preflight failed a safe, identified preparation stage.",
             retryable=True,
         )
         raise

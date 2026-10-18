@@ -226,7 +226,12 @@ def presentation_css() -> str:
       .munshi-dock-symbol svg{display:block;width:23px;height:23px}
       .munshi-dock-label{overflow:hidden;white-space:nowrap;
         text-overflow:ellipsis;max-width:100%}
-      .block-container{padding-bottom:calc(6rem + env(safe-area-inset-bottom,0px))!important}
+      /* Fixed dock needs a real last-scroll viewport gap on iOS Safari.
+         Preserve the original palette and keep the last recovery button
+         accessible above the dock and browser toolbar. */
+      .stApp [data-testid="stMain"]{scroll-padding-bottom:calc(9rem + env(safe-area-inset-bottom,0px))}
+      .stApp [data-testid="stMain"] .block-container{
+        padding-bottom:calc(11rem + env(safe-area-inset-bottom,0px))!important}
       .product-header{gap:.55rem!important}
       .status-pill-product{max-width:145px;overflow:hidden;
         text-overflow:ellipsis}
@@ -249,6 +254,22 @@ def presentation_css() -> str:
         max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
       .stApp [data-testid="stDataFrame"]{max-width:100%;overflow-x:auto}
       .stApp [data-testid="stForm"]{max-width:100%}
+      /* On mobile, Close/Archive are navigation actions, not dark-on-dark
+         disabled-looking controls. Keep the dark MUNSHI theme and readable
+         text and use two compact touch targets. */
+      .stApp [class*="st-key-application_visibility_controls_"]
+        [data-testid="stHorizontalBlock"]{flex-wrap:nowrap!important;gap:.5rem!important}
+      .stApp [class*="st-key-application_visibility_controls_"]
+        [data-testid="stHorizontalBlock"]>[data-testid="stColumn"]{
+          flex:1 1 0!important;width:50%!important;min-width:0!important}
+      .stApp [class*="st-key-application_visibility_controls_"]
+        [data-testid="stButton"]>button{
+          min-height:48px!important;border-radius:12px!important;
+          background:#121820!important;color:#f4f8f5!important;
+          border:1px solid #354a47!important;font-weight:700!important}
+      .stApp [class*="st-key-application_visibility_controls_"]
+        [data-testid="stButton"]>button:is(:hover,:focus-visible){
+          border-color:#9b6e2d!important;color:#fff!important}
       .stApp [data-testid="stTextInput"] input,
       .stApp [data-testid="stTextArea"] textarea{font-size:16px!important}
       .stApp [data-testid="stButton"]>button,
@@ -260,12 +281,16 @@ def presentation_css() -> str:
       .stApp [data-testid="stSelectbox"]{min-width:0}
       .stApp .product-callout{flex-direction:column;align-items:stretch}
       .stApp .surface,.stApp .split-panel{padding:.9rem}
-      .stApp ol.munshi-stage-track{grid-template-columns:none!important;
-        display:grid!important;grid-auto-flow:column;
-        grid-auto-columns:minmax(165px,60%);
-        overflow-x:auto;scroll-snap-type:x proximity;
-        -webkit-overflow-scrolling:touch;padding:.15rem 0 .5rem!important}
-      .munshi-stage{scroll-snap-align:start}
+      /* Show all six milestones rather than hiding four behind a
+         horizontal rail with no visible scroll affordance. */
+      .stApp ol.munshi-stage-track{
+        display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;
+        grid-auto-flow:row;grid-auto-columns:auto;
+        overflow-x:visible;scroll-snap-type:none;
+        gap:.5rem;padding:.15rem 0 .5rem!important}
+      .stApp ol.munshi-stage-track .munshi-stage{
+        min-width:0;min-height:54px;overflow-wrap:anywhere;
+        scroll-snap-align:none;line-height:1.3}
       .munshi-journey{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(210px,78%);
         grid-template-columns:none;overflow-x:auto;overscroll-behavior-x:contain;
         scroll-snap-type:x proximity;scroll-padding-inline:1rem;
