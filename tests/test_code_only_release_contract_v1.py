@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "ed8524545dbcc212dea8748fa6235253600a2682" in content
+    assert "2f7b20894b53232380dc159147a5d9d70a76385e" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "ed8524545dbcc212dea8748fa6235253600a2682",
+            "--expected-base", "2f7b20894b53232380dc159147a5d9d70a76385e",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "ed8524545dbcc212dea8748fa6235253600a2682", "HEAD",
+            "2f7b20894b53232380dc159147a5d9d70a76385e", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )
@@ -145,3 +145,13 @@ def test_linkedin_release_cli_is_read_only_and_image_tests_are_required():
     for name in ("test_linkedin_apply_button_v7.py", "test_linkedin_link_recovery_v7.py",
                  "test_linkedin_verified_url_evidence_v5.py", "test_job_destination_v1.py"):
         assert f"/app/hunter/tests/{name}" in script
+
+
+def test_24h_auth_protected_image_tests_and_allowlist():
+    content = SCRIPT.read_text()
+    for path in (
+        "app/device_auth.py", "deploy/netcup/dashboard_device_cookie_caddy_v1.py",
+        "tests/test_device_auth.py", "tests/test_dashboard_device_cookie_caddy_v1.py",
+    ):
+        assert "  " + path + "\n" in content
+    assert "/app/hunter/tests/test_device_auth.py" in content

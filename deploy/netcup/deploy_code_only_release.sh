@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=ed8524545dbcc212dea8748fa6235253600a2682
+LIVE_BASE=2f7b20894b53232380dc159147a5d9d70a76385e
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -221,6 +221,10 @@ allowed_files=(
   tests/test_tsenta_provider_status_sync_v1.py
   tests/test_tsenta_submission_preflight_v1.py
   app/product_experience_vnext.py
+  app/device_auth.py
+  deploy/netcup/dashboard_device_cookie_caddy_v1.py
+  tests/test_device_auth.py
+  tests/test_dashboard_device_cookie_caddy_v1.py
   app/application_provider_ui_v1.py
   app/product_application_flow_v2.py
   app/autoapply_settings_ui.py
@@ -293,6 +297,7 @@ timeout 900 docker run --rm --network none --read-only \
   -e HUNTER_API_SECRET=isolated-codeonly-ci-tests-not-production-12345 \
   "$new_image" -m pytest -q -p no:cacheprovider \
     /app/hunter/tests/test_native_cover_letter_writer_v1.py \
+    /app/hunter/tests/test_device_auth.py \
     /app/hunter/tests/test_native_approval_provider_lock_v1.py \
     /app/hunter/tests/test_product_application_flow_v2.py \
     /app/hunter/tests/test_application_provider_ui_v1.py \
