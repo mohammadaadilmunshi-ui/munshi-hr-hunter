@@ -67,6 +67,23 @@ def test_unknown_edge_contract_refuses_change(broken):
         patch_caddy(broken)
 
 
+def test_streamlit_websocket_requires_cookie_and_preserves_handshake():
+    config = patch_caddy(FIXTURE)
+    stream = config.split("handle @munshi_prod_stream {", 1)[1].split(
+        "handle @munshi_prod_mail {", 1
+    )[0]
+    assert "@munshi_prod_stream path /_stcore/stream" in config
+    assert "route {" in stream
+    assert stream.index("request_header -Upgrade") < stream.index(
+        "forward_auth 127.0.0.1:8000"
+    ) < stream.index("request_header Upgrade websocket") < stream.index(
+        "reverse_proxy 127.0.0.1:8501"
+    )
+    assert "uri /_munshi-auth/verify" in stream
+    assert "request_header -Connection" in stream
+    assert "request_header Connection Upgrade" in stream
+
+
 def test_second_application_refuses_mutation():
     with pytest.raises(ValueError):
         patch_caddy(patch_caddy(FIXTURE))
