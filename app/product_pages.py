@@ -14,19 +14,34 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from app.product_state import (
-    activity_summary, candidate_facts, clear_master_resume, create_lane, delete_lane, fetch_jobs,
-    job_filters, lanes, master_resume, research_snapshot, save_candidate_fact, save_master_resume,
-    save_review_preference, save_volume_policy, set_job_state, set_lane_enabled, tracker_rows,
-    update_lane, volume_policy,
-)
-from app.product_ui import esc, page_intro, pastel_for, safe_link, score_ring
 from app.job_destination_v1 import describe_job_destination
 from app.linkedin_verified_url_evidence_v5 import (
     destination_buttons as linkedin_destination_buttons,
+)
+from app.linkedin_verified_url_evidence_v5 import (
     latest_verified_for_job,
 )
-
+from app.product_state import (
+    candidate_facts,
+    clear_master_resume,
+    create_lane,
+    delete_lane,
+    fetch_jobs,
+    job_filters,
+    lanes,
+    master_resume,
+    research_snapshot,
+    save_candidate_fact,
+    save_master_resume,
+    save_review_preference,
+    save_volume_policy,
+    set_job_state,
+    set_lane_enabled,
+    tracker_rows,
+    update_lane,
+    volume_policy,
+)
+from app.product_ui import esc, page_intro, pastel_for, safe_link, score_ring
 
 _LOGGER = logging.getLogger(__name__)
 _PREPARE_ERROR_KEY_PREFIX = "product_prepare_error_"
@@ -131,8 +146,8 @@ def _toggle_job_skipped(job_id: int, currently_skipped: bool) -> None:
 
 def _application_flow(job_id: int) -> dict[str, Any]:
     try:
-        from app import product_application_flow_v2 as complete_loop
         from app import application_archive_v1 as application_archive
+        from app import product_application_flow_v2 as complete_loop
 
         result = complete_loop.flow_for_job(int(job_id))
         prepare = dict(result.get("prepare") or {})
@@ -598,7 +613,9 @@ def dashboard() -> None:
     _show_action_feedback()
     page_intro("MUNSHI APPLY", "The right roles. The evidence to act.", "Search current opportunities, inspect why they match, and prepare application packages through the guarded workflow.")
     policy = volume_policy()
-    activity = activity_summary()
+    from app.dashboard_operational_metrics_v1 import operational_activity_summary
+
+    activity = operational_activity_summary()
     label = {"unlimited": "Unlimited", "custom_limit": f"Custom target: {policy.get('daily_limit')}", "paused": "Paused", "pause_after_batch": "Pausing after current batch"}[policy["mode"]]
     filters = _search_filters("dashboard")
     from app.application_provider_ui_v1 import render_dashboard_summary
@@ -606,11 +623,24 @@ def dashboard() -> None:
     render_dashboard_summary()
     with st.container(key="product_dashboard_metrics"):
         summary = st.columns(5, gap="small")
-        summary[0].metric("Prepared today", activity["prepared_today"])
-        summary[1].metric("Submitted today", activity["submitted_today"], help="Only external submission evidence is counted.")
-        summary[2].metric("Needs review", activity["needs_you"])
-        summary[3].metric("In progress", activity["in_progress"])
-        summary[4].metric("Automation", label, help="Canonical safety and provider controls remain authoritative.")
+        summary[0].metric("Sent · 24 hours", activity["sent_24h"],
+                          help="Unique applications with provider-submitted timestamp or verified native receipt in the last rolling 24 hours.")
+        summary[1].metric("Employer confirmed", activity["employer_confirmed"],
+                          help="Current applications with independently verified employer receipt evidence.")
+        summary[2].metric("Needs your approval", activity["needs_approval"],
+                          help="Authoritative Application Center review queue; excludes historical n8n results.")
+        summary[3].metric("Receipt pending", activity["awaiting_receipt"],
+                          help="Provider reports submitted; independent employer receipt has not been matched.")
+        summary[4].metric("Outcome unknown", activity["outcome_unknown"],
+                          help="One-use dispatch claimed with no confirmed provider result. Never resubmit blindly.")
+    st.caption(
+        f"Application Center: {activity['tracked']} tracked · "
+        f"{activity['actively_processing']} active · "
+        f"{activity['recovery_needed']} need recovery · "
+        f"Discovery mode: {label}. "
+        "Metrics reflect application lifecycle evidence, not historical n8n results. "
+        "Refresh this page to load the latest state."
+    )
     jobs, count = fetch_jobs(**filters, page_size=4)
     st.markdown(f'<div class="section-row"><div><h2>Top matches</h2><span class="quiet">{count:,} opportunities · ranked by canonical Hunter score</span></div><a class="product-nav-link" href="?view=jobs" target="_self">Browse all jobs →</a></div>', unsafe_allow_html=True)
     if jobs:
@@ -873,17 +903,15 @@ def _render_auto_prepare_live_activity() -> None:
 
     @st.fragment(run_every="5s")
     def _fragment() -> None:
-        activity = activity_summary()
+        from app.dashboard_operational_metrics_v1 import operational_activity_summary
+
+        activity = operational_activity_summary()
         with st.container(key="product_auto_metrics"):
             counters = st.columns(4, gap="small")
-            counters[0].metric("Prepared today", activity["prepared_today"])
-            counters[1].metric(
-                "Submitted today",
-                activity["submitted_today"],
-                help="Requires recorded external submission evidence.",
-            )
-            counters[2].metric("Needs review", activity["needs_you"])
-            counters[3].metric("In progress", activity["in_progress"])
+            counters[0].metric("Needs approval", activity["needs_approval"])
+            counters[1].metric("Sent · 24 hours", activity["sent_24h"])
+            counters[2].metric("Receipt pending", activity["awaiting_receipt"])
+            counters[3].metric("Outcome unknown", activity["outcome_unknown"])
 
         try:
             from app import product_application_flow_v2 as complete_loop
@@ -1320,7 +1348,14 @@ def tracker() -> None:
             st.caption("No external artifact or application link is recorded.")
 
 def _inbox() -> None:
-    from app.gmail_integration import begin_authorization, connection_status, disconnect, gmail_configuration_status, stored_messages, sync_messages
+    from app.gmail_integration import (
+        begin_authorization,
+        connection_status,
+        disconnect,
+        gmail_configuration_status,
+        stored_messages,
+        sync_messages,
+    )
     status = gmail_configuration_status()
     st.caption(f"Gmail read-only · OAuth client: {status['oauth_client']} · Secure vault: {status['vault']}")
     if not status["ready"]:

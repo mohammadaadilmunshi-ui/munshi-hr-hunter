@@ -242,7 +242,10 @@ def learning_summary() -> dict[str, int]:
             "AND name='tsenta_observations_v1'"
         ).fetchone()
         if exists is None:
-            return {"form_fields": 0, "provider_events": 0}
+            return {"form_fields": 0, "provider_events": 0,
+                    "review_events": 0, "observations": 0,
+                    "distinct_applications": 0, "ats_platforms": 0,
+                    "field_review_applications": 0}
         owner = current_owner_readonly(connection)
         rows = connection.execute(
             """SELECT observation_kind,COUNT(*) AS count
@@ -252,9 +255,24 @@ def learning_summary() -> dict[str, int]:
             (owner.tenant_id, owner.user_id),
         ).fetchall()
         counts = {str(row["observation_kind"]): int(row["count"]) for row in rows}
+        coverage = connection.execute(
+            """SELECT COUNT(*) AS observations,
+                      COUNT(DISTINCT provider_application_ref_sha256) AS distinct_applications,
+                      COUNT(DISTINCT NULLIF(ats_type,'')) AS ats_platforms,
+                      COUNT(DISTINCT CASE WHEN observation_kind='FORM_FIELD'
+                           THEN provider_application_ref_sha256 END) AS field_review_applications
+               FROM tsenta_observations_v1
+               WHERE tenant_id=? AND user_id=?""",
+            (owner.tenant_id, owner.user_id),
+        ).fetchone()
         return {
             "form_fields": counts.get("FORM_FIELD", 0),
             "provider_events": counts.get("APPLICATION_STATUS", 0),
+            "review_events": counts.get("APPLICATION_REVIEW", 0),
+            "observations": int(coverage["observations"]),
+            "distinct_applications": int(coverage["distinct_applications"]),
+            "ats_platforms": int(coverage["ats_platforms"]),
+            "field_review_applications": int(coverage["field_review_applications"]),
         }
     finally:
         connection.close()
@@ -397,7 +415,7 @@ def render_dashboard_summary() -> None:
         st.markdown("#### Application engines")
         native, tsenta, signals = st.columns(3, gap="small")
         native.markdown("**MUNSHI Native**")
-        native.caption("Existing preparation engine")
+        native.caption("Built-in browser submission engine")
         tsenta.markdown("**MUNSHI Relay**")
         from app import tsenta_backend_readiness_v1
 
@@ -413,8 +431,19 @@ def render_dashboard_summary() -> None:
         try:
             totals = learning_summary()
         except (sqlite3.OperationalError, LookupError, PermissionError, RuntimeError):
-            totals = {"form_fields": 0, "provider_events": 0}
-        signals.metric("Learning signals", sum(totals.values()))
+            totals = {
+                "form_fields": 0, "provider_events": 0,
+                "review_events": 0, "observations": 0,
+                "distinct_applications": 0, "ats_platforms": 0,
+                "field_review_applications": 0,
+            }
+        signals.metric("Observed evidence rows", totals.get("observations", totals.get("form_fields",0)+totals.get("provider_events",0)),
+                       help="Read-only provider status, review and form observations. Not training examples or verified autofill coverage.")
+        signals.caption(
+            f"{totals.get('distinct_applications',0)} provider applications · "
+            f"{totals.get('ats_platforms',0)} ATS types · "
+            f"{totals.get('field_review_applications',0)} applications with actual form fields"
+        )
         st.caption(
             "Engine selection is in Applications. "
             "No engine is authorized to submit from this panel."
@@ -440,9 +469,15 @@ def render_dashboard_summary() -> None:
                     "distinct processed applications in this learning cycle"
                 ),
             )
-            p1, p2 = st.columns(2)
-            p1.metric("Processed applications", cohort["processed_applications_total"])
-            p2.metric("ATS platforms observed", cohort["unique_ats_in_cohort"])
+            p1, p2, p3 = st.columns(3)
+            p1.metric("Status observations", totals.get("provider_events",0))
+            p2.metric("Review observations", totals.get("review_events",0))
+            p3.metric("Form-field observations", totals.get("form_fields",0))
+            st.caption(
+                f"Only {totals.get('field_review_applications',0)} distinct applications "
+                "contain observed form fields. Recorded statuses and reviews "
+                "do not prove that Native autofill learned or mastered those ATS."
+            )
             st.caption(
                 "10 applications starts evaluation; 15 complete the cohort. "
                 "A provider status is not an independently verified employer receipt."

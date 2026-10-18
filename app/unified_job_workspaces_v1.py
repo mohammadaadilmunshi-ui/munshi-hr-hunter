@@ -16,7 +16,6 @@ import streamlit as st
 from app.product_state import research_snapshot, tracker_rows
 from app.product_ui import esc, page_intro
 
-
 _RESEARCH_SECTIONS = (
     "Opportunities",
     "Companies",
@@ -544,7 +543,10 @@ def _filter_application_views(
     ]
 
 
-from app.product_experience_vnext import application_action_copy, application_stage_markup
+from app.product_experience_vnext import (
+    application_action_copy,
+    application_stage_markup,
+)
 
 
 def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
@@ -791,6 +793,13 @@ def _render_application_state(app_workspace: Any, model: Any) -> None:
     elif model.protected_checkpoint:
         st.warning("Action required: the employer requires a protected human checkpoint such as CAPTCHA, MFA, passkey, biometrics, or identity verification.")
         st.caption("Complete the checkpoint in this same application session. Normal employer questions remain automated from truthful stored data.")
+    elif state == "SUBMISSION_UNVERIFIED":
+        st.info(
+            "The submission provider reports the application was sent. "
+            "MUNSHI is checking for a matching employer acknowledgment; "
+            "do not approve or submit it again."
+        )
+        st.caption("Use Check provider & refresh statuses to read the managed inbox now.")
     elif model.state_group == "needs_attention":
         st.warning(model.issue_summary or "MUNSHI stopped safely before claiming success.")
         st.write(f"Stopped at: **{model.stopped_at or model.safe_progress_stage}**")
@@ -802,7 +811,11 @@ def _render_application_state(app_workspace: Any, model: Any) -> None:
         details[0].metric("Provider", str(receipt.get("provider") or "Recorded"))
         details[1].metric("Provider application ID", str(receipt.get("provider_application_id") or "Recorded"))
         details[2].metric("Verification", str(receipt.get("verification_status") or "Verified"))
-        st.caption(f"Submitted {receipt.get('submitted_at') or model.last_update or 'time recorded'} · Resume {receipt.get('resume_version_id') or 'binding recorded'}")
+        st.caption(
+            f"Submitted {receipt.get('submitted_at') or 'time recorded'} · "
+            f"Employer receipt checked {receipt.get('verified_at') or 'time recorded'} · "
+            f"Resume {receipt.get('resume_version_id') or 'binding recorded'}"
+        )
     else:
         st.info("This application is recorded. Open Tracker for later hiring-stage updates.")
     _render_recovery_center(model)
@@ -820,11 +833,30 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
     if hasattr(product_pages, "_show_action_feedback"):
         product_pages._show_action_feedback()
     _render_application_visibility_feedback()
-    st.button(
-        "↻ Refresh live application statuses",
+    if st.button(
+        "↻ Check provider & refresh statuses",
         key="application_center_refresh",
-        help="Reread stored application states. This does not retry or submit.",
-    )
+        help="Read existing external-provider statuses and managed inbox; never retries an application.",
+    ):
+        from app.relay_application_dispatch_v1 import reconcile_owner_pending
+
+        try:
+            with st.spinner("Checking existing submissions and employer inbox…"):
+                result=reconcile_owner_pending(limit=10)
+            st.session_state["_relay_refresh_feedback"]=(
+                f"Checked {result['checked']} existing applications · "
+                f"{result['employer_confirmed']} employer confirmations found · "
+                f"{result['errors']} read errors · no applications sent."
+            )
+        except (RuntimeError,LookupError,ValueError,PermissionError,
+                TypeError,OSError):
+            st.session_state["_relay_refresh_feedback"]=(
+                "Provider lookup is temporarily unavailable. No application "
+                "was retried. Local records are displayed below."
+            )
+        st.rerun()
+    if st.session_state.get("_relay_refresh_feedback"):
+        st.info(st.session_state.pop("_relay_refresh_feedback"))
     st.caption(
         "Application statuses update from durable records when you open or refresh this page. "
         "Submission requires a separately verified employer receipt."
