@@ -62,11 +62,21 @@ def _document():
     })
 
 
-def test_real_pdf_contains_every_complete_certificate_and_is_one_page():
+def test_real_pdf_contains_every_complete_certificate_and_is_one_page(monkeypatch, tmp_path):
     if sys.platform == "darwin":
         pytest.skip("Remote Mac Chrome sandbox unavailable; verified with production Linux Chromium")
     if shutil.which("chromium") is None:
         pytest.skip("Actual Chromium renderer unavailable; CI checks structure separately")
+    # Production uses a writable browser home. The release acceptance container
+    # deliberately has a read-only root; give Chromium a private writable HOME
+    # and XDG cache/config only inside pytest's isolated /tmp mount. No network
+    # or filesystem permission relaxation is required.
+    for directory in ("config", "cache", "runtime"):
+        (tmp_path / directory).mkdir(mode=0o700)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "runtime"))
     document=_document()
     data,pages=render_pdf_bytes(document)
     assert pages==1
