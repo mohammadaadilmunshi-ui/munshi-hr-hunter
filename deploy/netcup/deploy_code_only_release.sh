@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=c153f52e0c9f711a9a0489535a2c77704e81afc3
+LIVE_BASE=2bc3b2dcaceb2a6e3cb1b53e4891fad1cb70a229
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -174,6 +174,9 @@ allowed_files=(
   app/profile_workspace_v2.py
   app/relay_application_dispatch_v1.py
   app/relay_inbox_receipt_v1.py
+  .github/verify_public_release_safety_v1.py
+  .github/workflows/predeploy-acceptance.yml
+  tests/test_public_release_safety_v1.py
   app/dashboard_operational_metrics_v1.py
   app/application_view_model_v1.py
   app/unified_job_workspaces_v1.py

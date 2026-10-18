@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "c153f52e0c9f711a9a0489535a2c77704e81afc3" in content
+    assert "2bc3b2dcaceb2a6e3cb1b53e4891fad1cb70a229" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "c153f52e0c9f711a9a0489535a2c77704e81afc3",
+            "--expected-base", "2bc3b2dcaceb2a6e3cb1b53e4891fad1cb70a229",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "c153f52e0c9f711a9a0489535a2c77704e81afc3", "HEAD",
+            "2bc3b2dcaceb2a6e3cb1b53e4891fad1cb70a229", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )

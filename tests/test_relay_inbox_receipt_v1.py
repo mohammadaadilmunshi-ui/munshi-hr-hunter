@@ -102,14 +102,14 @@ def test_inbox_sync_requires_provider_submission_and_matches_only_exact_owner(
         CREATE TABLE application_provider_routes_v1(
            route_id TEXT,tenant_id TEXT,user_id TEXT,job_id INTEGER,
            provider TEXT,state TEXT,provider_application_id_sha256 TEXT);
-        CREATE TABLE jobs(id INTEGER PRIMARY KEY,company_name TEXT,title TEXT);
+        CREATE TABLE jobs(id INTEGER PRIMARY KEY,company_name TEXT,title TEXT,apply_url TEXT);
         CREATE TABLE tsenta_external_dispatch_claims_v1(
            tenant_id TEXT,user_id TEXT,job_id INTEGER,
            state TEXT,created_at TEXT,tsenta_application_id_sha256 TEXT);
         """)
         db.execute(
-            "INSERT INTO jobs VALUES(6605,?,?)",
-            ("Galileo Learning","Regional Talent Acquisition Partner"),
+            "INSERT INTO jobs VALUES(6605,?,?,?)",
+            ("Galileo Learning","Regional Talent Acquisition Partner","https://jobs.smartrecruiters.com/galileo/role"),
         )
         db.execute(
             "INSERT INTO application_provider_routes_v1 VALUES(?,?,?,?,?,?,?)",
@@ -194,3 +194,116 @@ def test_paylocity_employer_ack_requires_exact_provider_app_link():
     assert proof(listing=listing | {"applicationId":"wrong"},detail=detail,**options) is None
     assert proof(listing=listing | {"from":"attacker@mail.paylocity.com.evil.net"},
                  detail=detail | {"from":"attacker@mail.paylocity.com.evil.net"},**options) is None
+
+
+
+@pytest.mark.parametrize("host",[
+    "apply.workable.com",
+    "jobs.bamboohr.com",
+    "jobs.example-ats.net",
+    "submissions.hr-platform.co.uk",
+])
+def test_unlisted_ats_receipt_uses_verified_employer_apply_domain(host):
+    import hashlib
+
+    app_id="independent-provider-reference-789"
+    from_host="notify." + receipt._registrable_host(host)
+    listed=LISTING | {
+        "applicationId":app_id,
+        "from":"ack@" + from_host,
+    }
+    details=DETAIL | {
+        "from":"ack@" + from_host,
+        "subject":"Your application has been received",
+        "body":"Galileo Learning: we have your application for Regional Talent Acquisition Partner.",
+    }
+    assert receipt._message_proof(
+        listing=listed, detail=details,
+        company="Galileo Learning",role="Regional Talent Acquisition Partner",
+        claim_at=CLAIM,
+        expected_application_ref_sha256=hashlib.sha256(app_id.encode()).hexdigest(),
+        same_company_routes=1,
+        employer_application_url="https://" + host + "/apply/selected-opening",
+    )
+
+
+def test_unlisted_ats_does_not_trust_unrelated_sender_or_unbound_email():
+    import hashlib
+
+    ref_id="provider-application-456"
+    listed=LISTING | {
+        "from":"applications@notifications.hiring-platform.example",
+        "applicationId":ref_id,
+    }
+    details=DETAIL | {
+        "from":listed["from"],
+        "subject":"Thank you for your application",
+        "body":"Galileo Learning Regional Talent Acquisition Partner",
+    }
+    args={
+        "listing":listed,"detail":details,
+        "company":"Galileo Learning","role":"Regional Talent Acquisition Partner",
+        "claim_at":CLAIM,
+        "same_company_routes":1,
+        "expected_application_ref_sha256":hashlib.sha256(ref_id.encode()).hexdigest(),
+        "employer_application_url":"https://jobs.some-other-ats.com/role",
+    }
+    assert receipt._message_proof(**args) is None
+    correct={**args,"employer_application_url":"https://jobs.hiring-platform.example/role"}
+    assert receipt._message_proof(**correct)
+    assert receipt._message_proof(**(correct | {
+        "listing":listed | {"applicationId":None}
+    })) is None
+    assert receipt._message_proof(**(correct | {
+        "listing":listed | {"applicationId":"different-application"}
+    })) is None
+    assert receipt._message_proof(**(correct | {
+        "employer_application_url":"http://jobs.hiring-platform.example/role"
+    })) is None
+    assert receipt._message_proof(**(correct | {
+        "listing":listed | {"from":"applications@hiring-platform.example.attacker.com"},
+        "detail":details | {"from":"applications@hiring-platform.example.attacker.com"}
+    })) is None
+
+
+@pytest.mark.parametrize("body",[
+    "Galileo Learning Regional Talent Acquisition Partner: your application is incomplete. Thank you for applying.",
+    "Galileo Learning Regional Talent Acquisition Partner: unable to submit your application. Thank you for applying.",
+])
+def test_negative_email_does_not_count_as_confirmation(body):
+    assert proof(detail=DETAIL | {"body":body}) is None
+
+
+@pytest.mark.parametrize("host,expected",[
+    ("secure.jobs.employer.co.uk","employer.co.uk"),
+    ("hiring.jobs.site.com","site.com"),
+    ("co.uk",None),
+    ("127.0.0.1",None),
+    ("jobs.evil.com.attacker.com","attacker.com"),
+    ("jobs..broken.com",None),
+])
+def test_registrable_hostname_parser_rejects_invalid_shared_suffix(host,expected):
+    assert receipt._registrable_host(host)==expected
+
+
+
+def test_unlinked_lookalike_employer_subdomain_does_not_count():
+    bad=LISTING | {"from":"notice@galileolearning.com.attacker.org"}
+    detail=DETAIL | {"from":bad["from"]}
+    assert proof(listing=bad,detail=detail) is None
+
+
+@pytest.mark.parametrize("shared",["github.io","pages.dev","vercel.app"])
+def test_unrelated_shared_hosting_tenants_cannot_cross_confirm(shared):
+    import hashlib
+    appid="signed-app-reference"
+    listing=LISTING | {"applicationId":appid,"from":"no-reply@a." + shared}
+    detail=DETAIL | {"from":listing["from"],"body":DETAIL["body"]+" Regional Talent Acquisition Partner"}
+    assert receipt._message_proof(
+        listing=listing,detail=detail,
+        company="Galileo Learning",role="Regional Talent Acquisition Partner",
+        claim_at=CLAIM,
+        expected_application_ref_sha256=hashlib.sha256(appid.encode()).hexdigest(),
+        same_company_routes=1,
+        employer_application_url="https://b."+shared+"/apply/role",
+    ) is None
