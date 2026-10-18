@@ -131,10 +131,13 @@ def test_engine_panel_links_back_to_application_review_and_employer_source() -> 
     assert "router.select_provider(" in source
 
 
-def test_stage_track_css_preserves_desktop_grid_and_mobile_scroll():
+def test_stage_track_css_preserves_desktop_grid_and_shows_all_steps_on_mobile():
     from app.product_experience_vnext import presentation_css
     css = presentation_css()
     assert "ol.munshi-stage-track" in css
     assert "grid-template-columns:repeat(6,minmax(0,1fr))!important" in css
-    assert "grid-auto-flow:column" in css
-    assert "grid-template-columns:none!important" in css
+    assert "grid-template-columns:repeat(2,minmax(0,1fr))!important" in css
+    assert "scroll-snap-type:none" in css
+    assert "st-key-application_visibility_controls_" in css
+    assert "color:#f4f8f5!important" in css
+    assert "padding-bottom:calc(11rem + env(safe-area-inset-bottom,0px))" in css

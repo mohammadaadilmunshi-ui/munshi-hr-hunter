@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=f74fc8d5c7e5a462a0abc9912fec70d0a362dd65
+LIVE_BASE=97b12d80e1e467a45ae547ac47b1525bf874e299
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -220,6 +220,11 @@ allowed_files=(
   tests/test_public_release_safety_v1.py
   app/dashboard_operational_metrics_v1.py
   app/application_view_model_v1.py
+  app/application_issue_intelligence_v1.py
+  app/application_recovery_v1.py
+  tests/test_application_issue_intelligence_v1.py
+  tests/test_application_recovery_v1.py
+  tests/test_unified_job_workspaces_v1.py
   app/unified_job_workspaces_v1.py
   app/tsenta_backend_readiness_v1.py
   app/tsenta_learning_cohort_v1.py
@@ -346,6 +351,10 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_aggressive_default_across_surfaces_v1.py \
     /app/hunter/tests/test_dashboard_operational_metrics_v1.py \
     /app/hunter/tests/test_application_view_model_v1.py \
+    /app/hunter/tests/test_application_issue_intelligence_v1.py \
+    /app/hunter/tests/test_application_recovery_v1.py \
+    /app/hunter/tests/test_product_experience_vnext.py \
+    /app/hunter/tests/test_unified_job_workspaces_v1.py \
     /app/hunter/tests/test_relay_platform_routing_v1.py \
     /app/hunter/tests/test_relay_claim_projection_v1.py \
     /app/hunter/tests/test_tsenta_mcp_adapter_v1.py \

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from app import application_archive_v1 as application_archive
+from app.application_issue_intelligence_v1 import safe_failure, submission_claim_exists
 from app import product_application_flow_v2 as application_flow
 from app.database import get_connection
 from app.job_destination_v1 import describe_job_destination
@@ -171,6 +172,7 @@ class ApplicationViewModel:
     allowed_recovery_actions: tuple[str, ...] = field(default_factory=tuple)
     degraded: bool = False
     projection_error: str | None = None
+    failure_code: str | None = None
     provider: str | None = None
     apply_via: str | None = None
     source_platform: str | None = None
@@ -310,8 +312,15 @@ def _issue(state: str, flow: Mapping[str, Any], *, protected: bool) -> tuple[str
         None,
     )
     if state in {"FAILED_SAFELY", "BLOCKED"}:
+        _code, detail = safe_failure(tasks)
+        if submission_claim_exists(flow):
+            return (
+                "An earlier provider dispatch or approval may already exist. "
+                "Do not resubmit; verify the existing employer outcome first.",
+                stopped,
+            )
         return (
-            f"MUNSHI stopped safely during {stopped or 'application preparation'}. No submission success was assumed.",
+            detail or f"MUNSHI stopped safely during {stopped or 'application preparation'}. No submission success was assumed.",
             stopped,
         )
     if state == "CANCELLED":
@@ -335,7 +344,7 @@ def _recovery_actions(
     review = dict(flow.get("internal_integrity_review") or {})
     if (
         state in IMMUTABLE_SUBMISSION_STATES
-        or flow.get("production_receipt")
+        or submission_claim_exists(flow)
         or review.get("approval_consumed")
     ):
         return tuple(actions)
@@ -387,6 +396,7 @@ def view_for_job(
     )
     stage, stage_index = _safe_stage(state, tasks)
     issue, stopped_at = _issue(state, flow, protected=protected)
+    failure_code, _safe_failure_message = safe_failure(tasks)
     receipt = _receipt(flow)
     application_id = str(
         lifecycle.get("application_id") or prepare.get("application_id") or ""
@@ -415,8 +425,12 @@ def view_for_job(
         protected_checkpoint=protected,
         issue_summary=issue,
         stopped_at=stopped_at,
-        submission_attempted=state in IMMUTABLE_SUBMISSION_STATES | SUBMITTED_STATES,
+        submission_attempted=(
+            state in IMMUTABLE_SUBMISSION_STATES | SUBMITTED_STATES
+            or submission_claim_exists(flow)
+        ),
         receipt_summary=receipt,
+        failure_code=failure_code,
         worker_heartbeat=dict(heartbeat or worker_health_snapshot()),
         stale=stale,
         allowed_recovery_actions=_recovery_actions(

@@ -647,36 +647,40 @@ def _render_application_visibility_feedback() -> None:
 
 
 def _render_application_visibility_actions(model: Any) -> None:
-    actions = st.columns((1, 1, 2.4), gap="small")
-    actions[0].button(
-        "Close",
-        key=f"application_close_{model.job_id}",
-        use_container_width=True,
-        on_click=_clear_application_selection,
-        help="Close this workspace selection. The application stays in your list.",
-    )
-    if model.application_id:
-        if model.archived:
-            actions[1].button(
-                "Restore",
-                key=f"application_restore_{model.job_id}",
-                type="primary",
-                use_container_width=True,
-                on_click=_restore_application,
-                args=(model.application_id, model.job_id),
-            )
-        else:
-            actions[1].button(
-                "Archive",
-                key=f"application_archive_{model.job_id}",
-                use_container_width=True,
-                on_click=_archive_application,
-                args=(model.application_id, model.job_id),
-                help="Remove from active views without deleting any application evidence.",
-            )
-    actions[2].caption(
-        "Archive changes visibility only. Job, resume, review, submission, and receipt history remain intact."
-    )
+    # These are workspace navigation/visibility actions, not submit actions.
+    # Keep them together on narrow screens instead of producing three tall
+    # stacked columns that obscure the issue and diagnostic details.
+    with st.container(key=f"application_visibility_controls_{model.job_id}"):
+        actions = st.columns(2, gap="small")
+        actions[0].button(
+            "Close",
+            key=f"application_close_{model.job_id}",
+            use_container_width=True,
+            on_click=_clear_application_selection,
+            help="Close this workspace selection. The application stays in your list.",
+        )
+        if model.application_id:
+            if model.archived:
+                actions[1].button(
+                    "Restore",
+                    key=f"application_restore_{model.job_id}",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=_restore_application,
+                    args=(model.application_id, model.job_id),
+                )
+            else:
+                actions[1].button(
+                    "Archive",
+                    key=f"application_archive_{model.job_id}",
+                    use_container_width=True,
+                    on_click=_archive_application,
+                    args=(model.application_id, model.job_id),
+                    help="Remove from active views without deleting any application evidence.",
+                )
+        st.caption(
+            "Archive changes visibility only. Job, resume, review, submission, and receipt history remain intact."
+        )
 
 
 def _run_recovery(action: str, job_id: int) -> None:
@@ -757,6 +761,8 @@ def _render_advanced_diagnostics(model: Any) -> None:
         )
         if model.projection_error:
             st.write(f"Projection error type: `{model.projection_error}`")
+        if model.failure_code:
+            st.write(f"Failure code: `{model.failure_code}`")
 
 
 def _render_application_state(app_workspace: Any, model: Any) -> None:
@@ -803,7 +809,11 @@ def _render_application_state(app_workspace: Any, model: Any) -> None:
     elif model.state_group == "needs_attention":
         st.warning(model.issue_summary or "MUNSHI stopped safely before claiming success.")
         st.write(f"Stopped at: **{model.stopped_at or model.safe_progress_stage}**")
+        if model.failure_code:
+            st.caption(f"Diagnostic code: {model.failure_code}")
         st.write(f"Employer submission attempted: **{'Possibly — verify first' if model.submission_attempted else 'No evidence of an attempt'}**")
+        if model.submission_attempted:
+            st.info("Submission-related evidence exists. Refresh provider status; do not start another attempt.")
     elif model.state_group == "submitted":
         receipt = model.receipt_summary or {}
         st.success("Submitted · independently verified evidence is recorded.")
@@ -859,6 +869,7 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
         st.info(st.session_state.pop("_relay_refresh_feedback"))
     st.caption(
         "Application statuses update from durable records when you open or refresh this page. "
+        "This does not retry or submit any application. "
         "Submission requires a separately verified employer receipt."
     )
 

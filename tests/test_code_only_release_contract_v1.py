@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "f74fc8d5c7e5a462a0abc9912fec70d0a362dd65" in content
+    assert "97b12d80e1e467a45ae547ac47b1525bf874e299" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "f74fc8d5c7e5a462a0abc9912fec70d0a362dd65",
+            "--expected-base", "97b12d80e1e467a45ae547ac47b1525bf874e299",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "f74fc8d5c7e5a462a0abc9912fec70d0a362dd65", "HEAD",
+            "97b12d80e1e467a45ae547ac47b1525bf874e299", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )
@@ -201,3 +201,26 @@ def test_v11_jd_and_ats_performance_protection_are_released():
     ):
         assert "  "+src+"\n" in contents
     assert "/app/hunter/tests/test_aggressive_non_submitting_e2e_v11.py" in contents
+
+def test_cross_platform_application_reliability_release_is_exactly_allowlisted():
+    content=SCRIPT.read_text()
+    for item in (
+        "app/application_issue_intelligence_v1.py",
+        "app/application_recovery_v1.py",
+        "app/application_view_model_v1.py",
+        "app/unified_job_workspaces_v1.py",
+        "app/product_experience_vnext.py",
+        "app/prepare_worker_adapters_v1c.py",
+        "tests/test_application_issue_intelligence_v1.py",
+        "tests/test_application_recovery_v1.py",
+        "tests/test_product_experience_vnext.py",
+        "tests/test_unified_job_workspaces_v1.py",
+    ):
+        assert "  "+item+"\n" in content
+    for item in (
+        "tests/test_application_issue_intelligence_v1.py",
+        "tests/test_application_recovery_v1.py",
+        "tests/test_product_experience_vnext.py",
+        "tests/test_unified_job_workspaces_v1.py",
+    ):
+        assert "/app/hunter/"+item in content
