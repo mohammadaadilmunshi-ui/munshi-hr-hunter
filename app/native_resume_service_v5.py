@@ -12,6 +12,7 @@ application-submission authority.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Mapping
 
 from app import jd_claim_trace_v1 as claim_trace
@@ -95,6 +96,39 @@ def _assert_plan_matches_inputs(
     for key in ("source_extraction_id", "profile_revision", "profile_digest"):
         if str(binding.get(key) or "") != str(snapshot.get(key) or ""):
             raise RuntimeError("Stage B plan is bound to a different Candidate Truth state.")
+
+
+_CERT_NAME_KEY = re.compile(r"^certifications\.(\d+)\.name$")
+
+
+def _retain_confirmed_certifications(document: Any, snapshot: Mapping[str, Any]) -> Any:
+    """Preserve the exact confirmed Master Resume certification lines.
+
+    Source extraction may combine entries on one line. Never invent splitting
+    boundaries, discard entries for a job, or let an LLM silently shorten them.
+    Each copied entry remains individually bound to its actual truth fact.
+    """
+    items: list[tuple[int, dict[str, Any]]] = []
+    for fact in snapshot.get("facts") or []:
+        if not isinstance(fact, Mapping):
+            continue
+        match = _CERT_NAME_KEY.fullmatch(str(fact.get("key") or ""))
+        raw = " ".join(str(fact.get("value") or "").split())
+        ident = str(fact.get("fact_id") or "")
+        if match and raw and ident:
+            items.append((int(match.group(1)), {
+                "name": raw,
+                "issuer": "",
+                "evidence_ids": ["truth:" + ident],
+            }))
+    if not items:
+        return document  # Other users may have source-only certification facts.
+    items.sort(key=lambda item: item[0])
+    if len({index for index, _ in items}) != len(items):
+        raise ValueError("Duplicate certification fact indexes in Candidate Truth.")
+    payload = document.model_dump()
+    payload["certifications"] = [item for _, item in items]
+    return v4.v1.ResumeDocument.model_validate(payload)
 
 
 def _stage_b_claim_guard(
@@ -578,6 +612,7 @@ def generate_resume(
             + _coverage_direction(mode=mode, coverage_target=coverage_target)
         ),
         "locked_sections": locks,
+        "certification_preservation": "Retain all confirmed Master Resume certification entries verbatim, in order.",
         "current_resume": parent_document.model_dump() if parent_document else None,
     }
 
@@ -595,6 +630,7 @@ def generate_resume(
     proposed = v4.v1._apply_locks(
         v4.v1.ResumeDocument.model_validate(candidate_payload), parent_document, locks
     )
+    proposed = _retain_confirmed_certifications(proposed, snapshot)
     proposed, diagnostics, stage_b_guard = _truth_check_with_safe_repair(
         document=proposed,
         context=context,
@@ -628,6 +664,7 @@ def generate_resume(
         proposed = v4.v1._apply_locks(
             v4.v1.ResumeDocument.model_validate(candidate_payload), parent_document, locks
         )
+        proposed = _retain_confirmed_certifications(proposed, snapshot)
         proposed, diagnostics, stage_b_guard = _truth_check_with_safe_repair(
             document=proposed,
             context=context,
@@ -673,6 +710,7 @@ def generate_resume(
             repaired_document = v4.v1._apply_locks(
                 v4.v1.ResumeDocument.model_validate(repaired_payload), parent_document, locks
             )
+            repaired_document = _retain_confirmed_certifications(repaired_document, snapshot)
             repaired_diagnostics = v4.v1.analyze_document(repaired_document, context, bundle)
             repaired_guard = _stage_b_claim_guard(
                 document=repaired_document,
@@ -746,6 +784,15 @@ def generate_resume(
         snapshot=v4.truth_binding.current_candidate_profile_snapshot(),
         job_snapshot_sha256=str(v4.safe_owned_job_snapshot(resolved_job_id)["job_snapshot_sha256"]),
     )
+
+    # An optional claim/content repair must never silently remove a confirmed
+    # certification. Fail closed rather than persist a document with a missing
+    # immutable Master Resume certification entry.
+    expected_certs = _retain_confirmed_certifications(proposed, snapshot)
+    if expected_certs.certifications != proposed.certifications:
+        raise ValueError(
+            "Final resume did not preserve all confirmed Master Resume certifications."
+        )
 
     html = v4.v1.render_ats_html(proposed)
     html_sha256 = v4.v1._sha256_text(html)

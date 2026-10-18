@@ -601,6 +601,12 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                     f"{int(card['represented_requirement_count'])} of "
                     f"{int(card['supportable_requirement_count'])}",
                 )
+            if card.get("evidence_limited"):
+                st.warning(
+                    f"Evidence match is limited: {card['supportable_requirement_count']} "
+                    f"of {card['jd_requirement_count']} JD requirements were marked "
+                    "supportable. Do not interpret this as an overall ATS match."
+                )
             st.caption(
                 'The percentage measures truth-supportable requirements '
                 'represented in the resume. The phrase count separately '

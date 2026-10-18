@@ -39,7 +39,8 @@ _DEFAULT_NATIVE_INSTRUCTION = (
     "Create the strongest truthful one-page ATS resume for this job. "
     "Prioritize directly relevant evidence, keep the writing natural and concise, "
     "retain enough supported evidence to create a visually complete page, and "
-    "omit unsupported requirements rather than inventing them."
+    "omit unsupported requirements rather than inventing them. "
+    "Preserve every certification entry from the confirmed Master Resume verbatim."
 )
 
 
@@ -191,6 +192,7 @@ def _reusable_generated_resume(
     *,
     operation: Mapping[str, Any],
     task: Mapping[str, Any],
+    rewrite_mode: str = "medium",
 ) -> dict[str, Any] | None:
     """Reuse the newest validated version bound to these exact durable inputs.
 
@@ -207,6 +209,12 @@ def _reusable_generated_resume(
         except (LookupError, RuntimeError, ValueError):
             continue
         if record.get("stage_b_bound") is not True:
+            continue
+        # Never reuse a weaker prior rewrite for a newly requested aggressive
+        # preparation. Frozen, already-approved in-flight continuations are
+        # checked separately below and retain their immutable document.
+        diagnostics = dict(record.get("diagnostics") or {})
+        if str(diagnostics.get("rewrite_mode") or "medium") != str(rewrite_mode):
             continue
         truth = dict(record.get("candidate_truth_binding") or {})
         job = dict(record.get("job_snapshot_binding") or {})
@@ -244,7 +252,7 @@ def run_native_resume_once(
     operation_id: str,
     worker_id: str,
     instruction: str = _DEFAULT_NATIVE_INSTRUCTION,
-    rewrite_mode: str = "medium",
+    rewrite_mode: str = "aggressive",
 ) -> dict[str, Any]:
     """Claim and execute one Native RESUME_PREPARE task.
 
@@ -286,7 +294,7 @@ def run_native_resume_once(
         }
 
     try:
-        record = _reusable_generated_resume(operation=operation, task=task)
+        record = _reusable_generated_resume(operation=operation, task=task, rewrite_mode=rewrite_mode)
         reused_generated_version = record is not None
         if record is None:
             record = native_resume_service_v5.generate_resume(

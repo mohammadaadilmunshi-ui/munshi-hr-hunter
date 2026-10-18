@@ -307,3 +307,24 @@ def test_unrelated_shared_hosting_tenants_cannot_cross_confirm(shared):
         same_company_routes=1,
         employer_application_url="https://b."+shared+"/apply/role",
     ) is None
+
+def test_unlinked_authenticated_managed_icims_receipt_verified_by_exact_role_company():
+    listing=LISTING | {
+        "source":"SES", "from":"postholdings+autoreply@talent.icims.com",
+        "applicationId":None, "receivedAt":"2026-10-18T19:08:25Z",
+    }
+    detail=DETAIL | {
+        "from":listing["from"],
+        "subject":"Thank You for Applying to the role HR Coordinator at Bob Evans Farms",
+        "body":("Dear candidate, thank you very much for your recent application "
+                "to Bob Evans Farms. Your submission will be reviewed."),
+    }
+    args={"listing":listing,"detail":detail,"company":"Bob Evans Farms",
+          "role":"HR Coordinator","claim_at":"2026-10-18T19:05:14Z",
+          "expected_application_ref_sha256":REF,"same_company_routes":1,
+          "employer_application_url":"https://bobevanshrjobs-postholdings.icims.com/jobs/6693/"}
+    assert receipt._message_proof(**args) is not None
+    assert receipt._message_proof(**(args|{"same_company_routes":2})) is None
+    assert receipt._message_proof(**(args|{"employer_application_url":"https://not-icims.example/jobs/6693"})) is None
+    assert receipt._message_proof(**(args|{"listing":listing|{"source":"INBOX"}})) is None
+    assert receipt._message_proof(**(args|{"detail":detail|{"subject":"Thank you for your application"}})) is None

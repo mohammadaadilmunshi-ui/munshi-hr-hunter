@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=2f7b20894b53232380dc159147a5d9d70a76385e
+LIVE_BASE=b3ff4eaa5833f4e1fe5e186d7492bd568aeace25
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -188,6 +188,13 @@ allowed_files=(
   app/profile_workspace_v2.py
   app/relay_application_dispatch_v1.py
   app/relay_inbox_receipt_v1.py
+  app/application_review_card_v1.py
+  app/native_resume_service_v5.py
+  app/prepare_worker_adapters_v1a.py
+  app/resume_one_page_guard_v1.py
+  tests/test_application_review_card_v1.py
+  tests/test_prepare_worker_adapters_v1a.py
+  tests/test_native_resume_cert_retention_v1.py
   .github/verify_public_release_safety_v1.py
   .github/workflows/predeploy-acceptance.yml
   tests/test_public_release_safety_v1.py
@@ -304,6 +311,9 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_engine_selector_recovery_v1.py \
     /app/hunter/tests/test_relay_application_dispatch_v1.py \
     /app/hunter/tests/test_relay_inbox_receipt_v1.py \
+    /app/hunter/tests/test_application_review_card_v1.py \
+    /app/hunter/tests/test_prepare_worker_adapters_v1a.py \
+    /app/hunter/tests/test_native_resume_cert_retention_v1.py \
     /app/hunter/tests/test_dashboard_operational_metrics_v1.py \
     /app/hunter/tests/test_application_view_model_v1.py \
     /app/hunter/tests/test_relay_platform_routing_v1.py \

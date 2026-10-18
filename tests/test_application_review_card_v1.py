@@ -134,3 +134,27 @@ def test_revision_diff_counts_only_new_content():
     assert result["changed_bullets"] == ["Created job postings for open roles."]
     assert result["added_skill_count"] == 1
     assert result["added_skills"] == ["Job Posting"]
+
+def test_long_quoted_jd_sentence_is_not_misrepresented_as_keyword_zero():
+    sample = _resume()
+    sample["diagnostics"]["stage_b"]["supported_requirement_coverage"] = {
+        "percent": 100.0,
+        "supportable_requirement_count": 2,
+        "represented_requirement_count": 2,
+        "represented_requirement_ids": ["r1", "r2"],
+    }
+    plan = _plan()
+    plan["supported_jd_terms"] = [
+        '"Excellent organizational and documentation skills"'
+    ]
+    plan["requirement_refs"] = [
+        {"requirement_id": f"r{i}", "type": "OTHER", "priority": "UNKNOWN",
+         "match_status": "UNSUPPORTED", "exact_text": "some other JD requirement"}
+        for i in range(47)
+    ]
+    result=card.build_review_card(resume_record=sample,plan=plan)
+    assert result["keyword_count"] == 0
+    assert result["covered_keyword_count"] == 0
+    assert result["coverage_label"] == "Limited evidence"
+    assert result["evidence_limited"] is True
+    assert result["jd_requirement_count"] == 47
