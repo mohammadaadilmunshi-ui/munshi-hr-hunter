@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=2bc3b2dcaceb2a6e3cb1b53e4891fad1cb70a229
+LIVE_BASE=08c632001ffc1e5b0fd380d8ae7523666335ec2b
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -164,6 +164,20 @@ git merge-base --is-ancestor "$old_head" "$target" || block 'Target is not a des
 # Anything else, including database modules, SQL scripts or Docker manifests,
 # needs the original DB-backed guarded full release.
 allowed_files=(
+  .github/workflows/product-ui-validation.yml
+  app/job_destination_v1.py
+  app/jobspy_board_common.py
+  app/linkedin_employer_link_resolver_v1.py
+  app/linkedin_jobspy_description_guard.py
+  app/linkedin_verified_url_evidence_v5.py
+  app/linkedin_apply_button_v7.py
+  app/linkedin_link_recovery_v7.py
+  scripts/linkedin_link_recovery_v7.py
+  docs/LINKEDIN_APPLY_LINK_RECOVERY_V7.md
+  tests/test_job_destination_v1.py
+  tests/test_linkedin_verified_url_evidence_v5.py
+  tests/test_linkedin_apply_button_v7.py
+  tests/test_linkedin_link_recovery_v7.py
   app/native_cover_letter_writer_v1.py
   app/api.py
   app/application_provider_router_v1.py
@@ -294,7 +308,14 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_tsenta_live_diagnostics_v1.py \
     /app/hunter/tests/test_tsenta_learning_sync_v1.py \
     /app/hunter/tests/test_tsenta_backend_readiness_v1.py \
-    /app/hunter/tests/test_tsenta_learning_monitor_v1.py
+    /app/hunter/tests/test_tsenta_learning_monitor_v1.py \
+    /app/hunter/tests/test_linkedin_apply_button_v7.py \
+    /app/hunter/tests/test_linkedin_link_recovery_v7.py \
+    /app/hunter/tests/test_linkedin_verified_url_evidence_v5.py \
+    /app/hunter/tests/test_linkedin_dashboard_links_v5.py \
+    /app/hunter/tests/test_linkedin_direct_apply_url_v1.py \
+    /app/hunter/tests/test_linkedin_link_contract_v2.py \
+    /app/hunter/tests/test_job_destination_v1.py
 echo 'EXACT_IMAGE_TESTS=PASS'
 
 new_container=1

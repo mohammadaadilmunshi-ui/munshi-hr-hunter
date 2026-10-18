@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "2bc3b2dcaceb2a6e3cb1b53e4891fad1cb70a229" in content
+    assert "08c632001ffc1e5b0fd380d8ae7523666335ec2b" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "2bc3b2dcaceb2a6e3cb1b53e4891fad1cb70a229",
+            "--expected-base", "08c632001ffc1e5b0fd380d8ae7523666335ec2b",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "2bc3b2dcaceb2a6e3cb1b53e4891fad1cb70a229", "HEAD",
+            "08c632001ffc1e5b0fd380d8ae7523666335ec2b", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )
@@ -98,7 +98,8 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     assert files
     assert files <= allowlist, f"Unreviewed changes: {files - allowlist}"
     assert not any(
-        path.startswith(("scripts/", "migrations/"))
+        path.startswith("migrations/")
+        or (path.startswith("scripts/") and path != "scripts/linkedin_link_recovery_v7.py")
         or path in {"Dockerfile", "compose.yaml", "compose.netcup-shadow.yaml"}
         for path in files
     )
@@ -133,3 +134,14 @@ def test_relay_release_acceptance_cannot_skip_atomic_dispatch_tests():
     assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE" in script
     assert "CODE_ONLY_SCHEMA_MIGRATIONS=NONE" in script
     assert "stop submit-worker" not in script
+
+
+def test_linkedin_release_cli_is_read_only_and_image_tests_are_required():
+    cli = (ROOT / "scripts/linkedin_link_recovery_v7.py").read_text()
+    assert "?mode=ro" in cli
+    assert "PRAGMA query_only=ON" in cli
+    assert "persist_verified_evidence" not in cli
+    script = SCRIPT.read_text()
+    for name in ("test_linkedin_apply_button_v7.py", "test_linkedin_link_recovery_v7.py",
+                 "test_linkedin_verified_url_evidence_v5.py", "test_job_destination_v1.py"):
+        assert f"/app/hunter/tests/{name}" in script
