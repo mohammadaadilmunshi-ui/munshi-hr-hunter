@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "2f7b20894b53232380dc159147a5d9d70a76385e" in content
+    assert "b3ff4eaa5833f4e1fe5e186d7492bd568aeace25" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "2f7b20894b53232380dc159147a5d9d70a76385e",
+            "--expected-base", "b3ff4eaa5833f4e1fe5e186d7492bd568aeace25",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "2f7b20894b53232380dc159147a5d9d70a76385e", "HEAD",
+            "b3ff4eaa5833f4e1fe5e186d7492bd568aeace25", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )
@@ -155,3 +155,16 @@ def test_24h_auth_protected_image_tests_and_allowlist():
     ):
         assert "  " + path + "\n" in content
     assert "/app/hunter/tests/test_device_auth.py" in content
+
+
+def test_aggressive_resume_certification_and_receipt_release_scope():
+    content = SCRIPT.read_text()
+    for name in (
+        "app/native_resume_service_v5.py", "app/prepare_worker_adapters_v1a.py",
+        "app/resume_one_page_guard_v1.py", "app/application_review_card_v1.py",
+        "tests/test_native_resume_cert_retention_v1.py",
+        "tests/test_application_review_card_v1.py",
+        "tests/test_prepare_worker_adapters_v1a.py",
+    ):
+        assert "  "+name+"\n" in content
+    assert "/app/hunter/tests/test_native_resume_cert_retention_v1.py" in content

@@ -28,6 +28,7 @@ ALLOWED_GENERIC_ATS_DOMAINS = frozenset({
 })
 ACKNOWLEDGEMENTS = (
     "thank you for your application",
+    "thank you very much for your recent application",
     "thank you for applying",
     "we have received your application",
     "we received your application",
@@ -166,11 +167,21 @@ def _message_proof(
     # application is present. Otherwise require a provider application ID.
     if linked is None and same_company_routes!=1:
         return None
-    # Any sender accepted through application-destination inference must have
-    # a matching provider application ID. Never infer a receipt from matching
-    # company text alone, even when a provider assigns COMPANY_UNIQUE metadata.
-    if (is_destination_ats or host=="mail.paylocity.com") and linked is None:
-        return None
+    # An unlinked managed-inbox receipt can still be independently verified
+    # when the sender's registrable domain exactly matches the saved employer
+    # application destination. Require a *single* employer route and the exact
+    # company AND role in the subject; never rely on a generic 'thank you' or
+    # on a company-only message. This handles ATS subdomains generically.
+    if linked is None and (is_destination_ats or host=="mail.paylocity.com"):
+        subject_key = _ascii_words(detail.get("subject") or "")
+        if not (
+            is_destination_ats
+            and str(listing.get("source") or "").upper() == "SES"
+            and same_company_routes == 1
+            and company_slug in subject_key
+            and _ascii_words(role) in subject_key
+        ):
+            return None
     # Validate provider list/detail agreement and explicit employer intent.
     if str(listing.get("from") or "").casefold()!=str(detail.get("from") or "").casefold():
         return None
