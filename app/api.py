@@ -72,6 +72,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Dashboard edge-only trusted-device session. No ATS or API submit authority.
+from app.device_auth import router as dashboard_device_auth_router  # noqa: E402
+app.include_router(dashboard_device_auth_router)
+
 
 class JobActionRequest(BaseModel):
     action: str
