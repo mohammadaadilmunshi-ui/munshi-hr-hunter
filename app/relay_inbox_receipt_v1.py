@@ -40,6 +40,10 @@ ACKNOWLEDGEMENTS = (
     "your application has been received",
     "your application was successfully submitted",
     "your application has been successfully submitted",
+    "we've received your resume",
+    "we have received your resume",
+    "your resume has been received",
+    "we received your resume",
 )
 FAILED_ACKNOWLEDGEMENTS = (
     "application was not submitted",
@@ -172,14 +176,41 @@ def _message_proof(
     # application destination. Require a *single* employer route and the exact
     # company AND role in the subject; never rely on a generic 'thank you' or
     # on a company-only message. This handles ATS subdomains generically.
+    unlinked_ats_receipt=False
     if linked is None and (is_destination_ats or host=="mail.paylocity.com"):
         subject_key = _ascii_words(detail.get("subject") or "")
+        body_key = _ascii_words(detail.get("body") or "")
+        source_is_ses = str(listing.get("source") or "").upper() == "SES"
+        subject_has_company_role = (
+            company_slug in subject_key
+            and _ascii_words(role) in subject_key
+        )
+        # Some verified ATS senders use a generic candidate-oriented subject,
+        # such as "we've received your resume", without the job title.
+        # It qualifies ONLY when exactly one claimed company route exists,
+        # the sender matches the proven employer apply domain, the inbox
+        # authenticates as SES, and the original body names the employer.
+        resume_received_subject = any(
+            text in " ".join(str(detail.get("subject") or "").lower().split())
+            for text in (
+                "we've received your resume",
+                "we have received your resume",
+                "we received your resume",
+                "your resume has been received",
+            )
+        )
+        unlinked_ats_receipt = bool(
+            is_destination_ats
+            and source_is_ses
+            and same_company_routes == 1
+            and resume_received_subject
+            and company_slug in body_key
+        )
         if not (
             is_destination_ats
-            and str(listing.get("source") or "").upper() == "SES"
+            and source_is_ses
             and same_company_routes == 1
-            and company_slug in subject_key
-            and _ascii_words(role) in subject_key
+            and (subject_has_company_role or unlinked_ats_receipt)
         ):
             return None
     # Validate provider list/detail agreement and explicit employer intent.
@@ -198,7 +229,8 @@ def _message_proof(
     # Shared ATS senders must name the role, including newly inferred ATS
     # domains. Employer-owned sender with no title needs unique company route.
     if (is_known_ats or is_destination_ats) and _ascii_words(role) not in normalized:
-        return None
+        if not unlinked_ats_receipt:
+            return None
     if not (is_known_ats or is_destination_ats) and linked is None and same_company_routes!=1:
         return None
     envelope={

@@ -10,9 +10,12 @@ def test_receipt_readback_does_not_dispatch(monkeypatch):
                         lambda *,limit: called.append(limit) or {
                             "checked":3,"employer_confirmed":1,
                             "errors":0,"applications_sent":0})
+    from app import application_notifications_runtime_v3 as notifications
+    monkeypatch.setattr(notifications, "sync_notification_outbox", lambda: 2)
     assert worker.run_once(limit=3)=={
         "status":"completed","checked":3,
-        "confirmed":1,"errors":0,"applications_sent":0}
+        "confirmed":1,"errors":0,"applications_sent":0,
+        "notifications_queued":2}
     assert called==[3]
 
 def test_receipt_readback_rejects_unexpected_submit_and_large_batch(monkeypatch):
