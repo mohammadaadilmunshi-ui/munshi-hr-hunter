@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
-          [[ "$EXPECTED_LIVE" == "1ee4b04abf73be9d5cae39d70a189778232effe6" ]] || exit 3
+          [[ "$EXPECTED_LIVE" == "ea204a4c82d61ca21b4a7eb8611b955630b60fa2" ]] || exit 3
           echo "sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
           echo "base=$EXPECTED_LIVE" >> "$GITHUB_OUTPUT"
 
