@@ -285,6 +285,61 @@ def presentation_css() -> str:
       .munshi-breadcrumb a{font-size:.75rem;padding:.4rem .65rem}
       .stApp [data-testid="stMetricLabel"] p{font-size:.77rem}
     }
+    /* iPhone Safari: keep the existing palette, improve touch, safe areas and
+       internal scrolling instead of shrinking the desktop canvas. */
+    @media(max-width:920px){
+      .st-key-product_top_bar{
+        padding-top:max(.55rem,env(safe-area-inset-top,0px))!important;
+        padding-left:max(.7rem,env(safe-area-inset-left,0px))!important;
+        padding-right:max(.7rem,env(safe-area-inset-right,0px))!important}
+      .mobile-nav{z-index:4}
+      .mobile-nav[open] nav{
+        z-index:5;max-height:min(68dvh,560px);overflow-y:auto;
+        overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+      .mobile-nav-link{min-height:48px;white-space:normal}
+      .munshi-mobile-dock{padding-right:max(8px,env(safe-area-inset-right,0px))}
+    }
+    @media(max-width:760px){
+      .stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"]{
+        min-width:0!important;max-width:100%!important}
+      .stApp [data-testid="stMain"] [data-testid="stVerticalBlock"],
+      .stApp [data-testid="stMain"] [data-testid="stElementContainer"]{
+        min-width:0;max-width:100%}
+      .stApp [data-testid="stTabs"] [role="tablist"]{
+        display:flex;max-width:calc(100dvw - 1.4rem);overflow-x:auto;
+        overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;
+        scrollbar-width:thin;flex-wrap:nowrap}
+      .stApp [data-testid="stTabs"] [role="tab"]{
+        flex:0 0 auto;min-height:44px;white-space:nowrap}
+      .stApp [data-testid="stMarkdownContainer"] pre,
+      .stApp [data-testid="stMarkdownContainer"] table{
+        max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+      .stApp [data-testid="stDataFrame"],.stApp [data-testid="stTable"],
+      .stApp [data-testid="stFileUploader"]{max-width:100%;min-width:0}
+      .stApp [data-testid="stTextInput"] input,
+      .stApp [data-testid="stNumberInput"] input,
+      .stApp [data-testid="stDateInput"] input,
+      .stApp [data-baseweb="select"] input,
+      .stApp [data-baseweb="textarea"] textarea{
+        font-size:16px!important}
+      .stApp [data-testid="stDownloadButton"]>button,
+      .stApp [data-testid="stNumberInput"] button{
+        min-height:44px!important}
+      .stApp [data-testid="stDialog"] [role="dialog"]{
+        width:calc(100dvw - 1rem)!important;
+        max-width:calc(100dvw - 1rem)!important;
+        max-height:calc(100dvh - 1rem)!important;
+        border-radius:16px!important;overflow-y:auto;
+        -webkit-overflow-scrolling:touch}
+      [data-baseweb="popover"],[role="listbox"]{
+        max-width:calc(100dvw - 1rem);overflow-wrap:anywhere}
+    }
+    @media(max-width:420px){
+      .product-header-actions{min-width:0;flex:0 1 auto}
+      .status-pill-product{max-width:105px!important}
+      .product-header .brand{flex:0 0 auto}
+      .mobile-nav summary{min-width:58px}
+    }
     @media(prefers-reduced-motion:reduce){
       .product-nav-link,.munshi-mobile-dock *{transition:none!important;
         animation:none!important}
