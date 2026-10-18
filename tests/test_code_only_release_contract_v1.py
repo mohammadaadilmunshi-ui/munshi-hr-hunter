@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "b3ff4eaa5833f4e1fe5e186d7492bd568aeace25" in content
+    assert "dd599e5b95ec98015d24d9c4185b17ecc7c4e8e2" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "b3ff4eaa5833f4e1fe5e186d7492bd568aeace25",
+            "--expected-base", "dd599e5b95ec98015d24d9c4185b17ecc7c4e8e2",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "b3ff4eaa5833f4e1fe5e186d7492bd568aeace25", "HEAD",
+            "dd599e5b95ec98015d24d9c4185b17ecc7c4e8e2", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )
@@ -168,3 +168,23 @@ def test_aggressive_resume_certification_and_receipt_release_scope():
     ):
         assert "  "+name+"\n" in content
     assert "/app/hunter/tests/test_native_resume_cert_retention_v1.py" in content
+
+def test_lossless_certificates_stage_b_relevance_and_receipt_poll_are_in_release():
+    content=SCRIPT.read_text()
+    for item in (
+        "app/master_certifications_v1.py",
+        "app/deterministic_profile_extractor_v1.py",
+        "app/jd_requirement_match_v1.py",
+        "app/relay_receipt_worker_v1.py",
+        "docker/hunter-supervisor.py",
+        "tests/test_master_certifications_v1.py",
+        "tests/test_jd_match_evidence_v11.py",
+        "tests/test_relay_receipt_worker_v1.py",
+        "tests/test_certificate_rendered_pdf_v1.py",
+        "app/resume_studio_page_v2.py",
+        "app/resume_studio_page_v4.py",
+        "app/resume_engine_selector.py",
+        "tests/test_aggressive_default_across_surfaces_v1.py",
+    ):
+        assert "  "+item+"\n" in content
+    assert "/app/hunter/tests/test_certificate_rendered_pdf_v1.py" in content

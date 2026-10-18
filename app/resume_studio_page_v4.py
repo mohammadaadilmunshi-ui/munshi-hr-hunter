@@ -524,7 +524,7 @@ def _job_workspace() -> tuple[int | None, dict[str, Any]]:
     return selected_id, context
 
 
-def _style_selector(key: str, default: str = "medium") -> str:
+def _style_selector(key: str, default: str = "aggressive") -> str:
     options = ["slight", "medium", "aggressive"]
     mode = st.radio(
         "Tailoring strength",
@@ -1084,7 +1084,7 @@ def _version_workspace(job_id: int, context: dict[str, Any], writer_ready: bool)
 
     with st.expander("Refine this resume", expanded=False):
         prior = diagnostics.get("rewrite_mode")
-        default = prior if prior in STYLE_LABELS else "medium"
+        default = prior if prior in STYLE_LABELS else "aggressive"
         mode = _style_selector(
             f"resume_studio_v4_revision_mode_{selected_id}",
             default=default,
