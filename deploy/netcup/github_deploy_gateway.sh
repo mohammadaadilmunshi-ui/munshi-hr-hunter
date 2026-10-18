@@ -5,7 +5,7 @@ umask 077
 PRODUCTION_DEPLOY="/opt/munshi/bin/deploy-production-release"
 STAGING_DEPLOY="/opt/munshi/bin/deploy-staging-release"
 CODE_ONLY_DEPLOY="/opt/munshi/bin/deploy-code-only-release"
-CODE_ONLY_BASE="2bc3b2dcaceb2a6e3cb1b53e4891fad1cb70a229"
+CODE_ONLY_BASE="08c632001ffc1e5b0fd380d8ae7523666335ec2b"
 ORIGINAL="${SSH_ORIGINAL_COMMAND:-}"
 
 if [[ "$ORIGINAL" =~ ^/opt/munshi/bin/deploy-production-release\ --commit\ ([0-9a-f]{40})\ --branch\ ([A-Za-z0-9._/-]+)$ ]]; then
