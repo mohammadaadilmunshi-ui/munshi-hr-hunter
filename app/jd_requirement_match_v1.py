@@ -10,6 +10,7 @@ No resume generation, browser, ATS, Gmail, n8n, outreach, or submission authorit
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -20,7 +21,7 @@ from app.database import get_connection
 from app.phase67_common import canonical_text, safe_owned_job_snapshot, sha256_json, tokens
 from app.tenant_foundation import current_owner, ensure_schema as ensure_tenant_schema
 
-MATCH_VERSION = "stage-b-candidate-jd-match-v1"
+MATCH_VERSION = "stage-b-candidate-jd-match-v1.1"
 SUBMISSION_AUTHORITY = False
 
 MATCH_STATUSES = frozenset(
@@ -103,6 +104,53 @@ def _fact_text(value: Any) -> str:
     return canonical_text(value)
 
 
+# Narrow lexical equivalents, not inferred transferable experience.
+# Never make an authorization, tenure, degree, or certification claim from
+# a related word. The same terms must be present in confirmed Candidate Truth.
+_EQUIVALENTS = {
+    "confidentiality": "confidential", "confidential": "confidential",
+    "maintaining": "maintain", "maintained": "maintain",
+    "documentations": "document", "documentation": "document",
+    "documents": "document", "documented": "document",
+    "onboarding": "onboard", "onboarded": "onboard", "onboard": "onboard",
+    "recruiting": "recruit", "recruitment": "recruit", "recruit": "recruit",
+    "scheduling": "schedule", "scheduled": "schedule", "schedule": "schedule",
+    "tracking": "track", "tracked": "track", "track": "track",
+    "employees": "employee", "employee": "employee",
+    "files": "file", "file": "file", "records": "record", "record": "record",
+    "audits": "audit", "auditing": "audit", "audit": "audit",
+    "verifications": "verification", "verifying": "verification",
+    "coordinating": "coordinate", "coordination": "coordinate",
+    "coordinator": "coordinate", "coordinate": "coordinate",
+    "administrative": "administration", "administering": "administration",
+    "reconciliation": "reconcile", "reconciled": "reconcile",
+    "analytics": "analytic", "analytical": "analytic", "analysis": "analytic",
+}
+_GENERIC_JD_WORDS = frozenset({
+    "excellent", "proficient", "possess", "must", "external", "internal", "such",
+    "always", "well", "necessary", "different", "various", "good",
+    "employee's", "company", "organization", "general",
+})
+
+
+def _evidence_terms(value: Any) -> set[str]:
+    normalized = canonical_text(value).casefold()
+    # Strip literal JSON list quotes/backslash escapes without dropping words.
+    normalized = normalized.replace(r"\-", "-").replace(r"\&", "&")
+    terms = {
+        _EQUIVALENTS.get(token, token)
+        for token in tokens(normalized)
+        if token not in _GENERIC_JD_WORDS
+    }
+    if re.search(r"(?<![a-z])hr(?![a-z])|human resources?", normalized):
+        terms.add("humanresources")
+    if re.search(r"(?<![a-z])ats(?![a-z])|applicant tracking system", normalized):
+        terms.add("ats")
+    if re.search(r"(?<![a-z])hris(?![a-z])|human resources? information system", normalized):
+        terms.add("hris")
+    return terms
+
+
 def _safe_evidence(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
     context = truth.safe_resume_profile_context(dict(snapshot))
     result: list[dict[str, Any]] = []
@@ -116,7 +164,7 @@ def _safe_evidence(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "fact_key": str(fact["key"]),
                 "category": str(fact.get("category") or ""),
                 "trust_level": str(fact.get("trust_level") or ""),
-                "tokens": tokens(text),
+                "tokens": _evidence_terms(text),
                 "normalized_text": canonical_text(text).casefold(),
             }
         )
@@ -143,7 +191,7 @@ def _requirement_evidence_match(
         }
 
     req_text = canonical_text(requirement.get("exact_text")).casefold()
-    req_tokens = tokens(req_text)
+    req_tokens = _evidence_terms(req_text)
     if not req_tokens:
         return {
             "requirement_id": requirement_id,
@@ -163,7 +211,7 @@ def _requirement_evidence_match(
             continue
         overlap = len(req_tokens & evidence_tokens)
         coverage = overlap / len(req_tokens)
-        exact = req_text in item["normalized_text"] or item["normalized_text"] in req_text
+        exact = req_text == item["normalized_text"] or (len(req_text) >= 12 and req_text in item["normalized_text"])
         ranked.append((coverage, exact, item))
 
     ranked.sort(key=lambda value: (-value[0], not value[1], value[2]["evidence_id"]))
@@ -187,7 +235,7 @@ def _requirement_evidence_match(
             combined_tokens |= item["tokens"]
     combined_coverage = len(req_tokens & combined_tokens) / len(req_tokens)
 
-    if best_exact or (len(req_tokens) >= 2 and req_tokens <= combined_tokens):
+    if best_exact or (len(req_tokens) >= 2 and req_tokens <= combined_tokens) or (len(req_tokens) == 1 and combined_coverage == 1.0):
         status = "DIRECT"
         score = 1.0
     elif combined_coverage >= 0.72:

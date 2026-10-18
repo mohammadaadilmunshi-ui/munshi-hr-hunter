@@ -164,6 +164,18 @@ def main() -> int:
                 ),
             )
         )
+    # Separate low-frequency, readback-only lane so external provider latency
+    # cannot stall interactive resume generation or the Prepare worker.
+    if (enabled("MUNSHI_PREPARE_RUNTIME_WORKER_ENABLED")
+            and os.getenv("MUNSHI_RELAY_RECEIPT_POLL_ENABLED", "true").strip().lower()
+            not in {"0", "false", "no", "off"}):
+        children.append(
+            Lane("employer-receipt-readback",
+                 [python, "-m", "app.relay_receipt_worker_v1", "--limit", "5"],
+                 required=False, repeat=True,
+                 interval=max(300, int(os.getenv(
+                     "MUNSHI_RELAY_RECEIPT_POLL_INTERVAL_SECONDS", "600"))))
+        )
     if enabled("MUNSHI_APPLICATION_NOTIFICATION_WORKER_ENABLED"):
         children.append(
             Lane(

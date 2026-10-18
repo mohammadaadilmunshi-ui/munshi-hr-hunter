@@ -18,6 +18,7 @@ from typing import Any, Mapping
 from app import jd_claim_trace_v1 as claim_trace
 from app import jd_resume_plan_v1 as planner
 from app import native_resume_service_v4 as v4
+from app.master_certifications_v1 import complete_certifications
 from app import stage_b_resume_binding_v1 as stage_b_binding
 from app.phase67_common import sha256_json, tokens
 
@@ -98,36 +99,13 @@ def _assert_plan_matches_inputs(
             raise RuntimeError("Stage B plan is bound to a different Candidate Truth state.")
 
 
-_CERT_NAME_KEY = re.compile(r"^certifications\.(\d+)\.name$")
-
-
 def _retain_confirmed_certifications(document: Any, snapshot: Mapping[str, Any]) -> Any:
-    """Preserve the exact confirmed Master Resume certification lines.
-
-    Source extraction may combine entries on one line. Never invent splitting
-    boundaries, discard entries for a job, or let an LLM silently shorten them.
-    Each copied entry remains individually bound to its actual truth fact.
-    """
-    items: list[tuple[int, dict[str, Any]]] = []
-    for fact in snapshot.get("facts") or []:
-        if not isinstance(fact, Mapping):
-            continue
-        match = _CERT_NAME_KEY.fullmatch(str(fact.get("key") or ""))
-        raw = " ".join(str(fact.get("value") or "").split())
-        ident = str(fact.get("fact_id") or "")
-        if match and raw and ident:
-            items.append((int(match.group(1)), {
-                "name": raw,
-                "issuer": "",
-                "evidence_ids": ["truth:" + ident],
-            }))
+    """Copy all verified certificate spans without collapsing wrapped entries."""
+    items = complete_certifications(snapshot)
     if not items:
-        return document  # Other users may have source-only certification facts.
-    items.sort(key=lambda item: item[0])
-    if len({index for index, _ in items}) != len(items):
-        raise ValueError("Duplicate certification fact indexes in Candidate Truth.")
+        return document
     payload = document.model_dump()
-    payload["certifications"] = [item for _, item in items]
+    payload["certifications"] = items
     return v4.v1.ResumeDocument.model_validate(payload)
 
 
@@ -527,7 +505,7 @@ def generate_resume(
     *,
     job_id: int,
     instruction: str = "",
-    rewrite_mode: str = "medium",
+    rewrite_mode: str = "aggressive",
     parent_version_id: str | None = None,
     locked_sections: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -549,7 +527,7 @@ def generate_resume(
     if not planner.plan_freshness(str(plan["plan_id"]))["fresh"]:
         raise RuntimeError("Stage B plan is stale before resume generation.")
 
-    mode = str(rewrite_mode or "medium").strip().casefold()
+    mode = str(rewrite_mode or "aggressive").strip().casefold()
     policy = v4.v2.rewrite_policy(mode)
     bundle = v4._truth_bound_evidence_bundle(snapshot)
     instruction_text = str(instruction or "").strip()
@@ -610,6 +588,18 @@ def generate_resume(
             user_or_default_instruction
             + "\n\n"
             + _coverage_direction(mode=mode, coverage_target=coverage_target)
+            + (
+                "\n\nAggressive tailoring: prioritize the most important employer "
+                "responsibilities and competencies that are independently supported "
+                "by Candidate Truth. Reword the summary, skills, experience bullets "
+                "and projects in the job's own terminology only where the supplied "
+                "evidence directly supports that terminology. Use the strongest "
+                "verified Toyota/HR/analytics achievements, quantify only verified "
+                "metrics, and preserve all named certifications. Do not invent "
+                "seniority, employment history, a degree, or tool experience, "
+                "and never treat unsupported JD requirements as ATS matches."
+                if mode == "aggressive" else ""
+            )
         ),
         "locked_sections": locks,
         "certification_preservation": "Retain all confirmed Master Resume certification entries verbatim, in order.",
