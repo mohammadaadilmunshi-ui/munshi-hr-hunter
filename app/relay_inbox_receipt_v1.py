@@ -7,12 +7,14 @@ unassigned; inbox tool calls never send, delete or mark messages.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import re
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from email.utils import parseaddr
 from typing import Any
+from urllib.parse import urlsplit
 
 from app import application_provider_router_v1 as router
 from app.database import get_connection
@@ -32,6 +34,21 @@ ACKNOWLEDGEMENTS = (
     "application has been received",
     "thank you for submitting your application",
     "application is queued for review",
+    "we have your application",
+    "we've received your application",
+    "your application has been received",
+    "your application was successfully submitted",
+    "your application has been successfully submitted",
+)
+FAILED_ACKNOWLEDGEMENTS = (
+    "application was not submitted",
+    "application has not been submitted",
+    "application not received",
+    "we did not receive your application",
+    "unable to submit your application",
+    "could not submit your application",
+    "your application is incomplete",
+    "please complete your application",
 )
 MAX_HOURS_AFTER_CLAIM=96
 MAX_PROVIDER_INBOX_PAGE=20
@@ -49,11 +66,61 @@ def _time(text: object) -> datetime | None:
         return None
 
 
+def _registrable_host(hostname: str | None) -> str | None:
+    """Conservative offline shared-site identity, not arbitrary substring matching.
+
+    Multi-level country-code suffixes (e.g. co.uk) require an extra label.
+    Refuse IP addresses, invalid hostnames, and bare shared public suffixes.
+    """
+    host=str(hostname or "").strip().casefold().rstrip(".")
+    if not host or len(host)>253:
+        return None
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return None
+    labels=host.split(".")
+    if len(labels)<2 or any(
+        len(part)>63 or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?",part)
+        for part in labels
+    ):
+        return None
+    if len(labels[-1])==2 and labels[-2] in {
+        "ac","co","com","edu","gov","mil","net","org"
+    }:
+        if len(labels)<3:
+            return None
+        return ".".join(labels[-3:])
+    common=".".join(labels[-2:])
+    # Shared hosting suffixes let unrelated tenants create lookalike senders.
+    # This list contains unsafe PUBLIC HOSTING boundaries, not ATS vendors.
+    if common in {
+        "github.io","pages.dev","vercel.app","netlify.app","workers.dev",
+        "appspot.com","herokuapp.com","cloudfront.net","firebaseapp.com",
+        "azurewebsites.net","blogspot.com",
+    }:
+        return None
+    return common
+
+
+def _verified_destination_host(value: str | None) -> str | None:
+    try:
+        parsed=urlsplit(str(value or ""))
+        if parsed.scheme.casefold()!="https" or parsed.username or parsed.password:
+            return None
+        return _registrable_host(parsed.hostname)
+    except ValueError:
+        return None
+
+
 def _message_proof(
     *, listing: Mapping[str,Any], detail: Mapping[str,Any],
     company: str, role: str, claim_at: str,
     expected_application_ref_sha256: str,
     same_company_routes: int,
+    employer_application_url: str | None = None,
 ) -> str | None:
     """Fail closed for unlinked or contradictory employer evidence."""
     ident=str(listing.get("id") or "")
@@ -70,9 +137,16 @@ def _message_proof(
         return None
     host=sender.rsplit("@",1)[1]
     company_slug=_ascii_words(company)
-    is_employer=_ascii_words(host.split(".")[0])==company_slug
-    is_ats=host in ALLOWED_GENERIC_ATS_DOMAINS
-    if not (is_employer or is_ats):
+    is_employer=_ascii_words((_registrable_host(host) or "").split(".")[0])==company_slug
+    is_known_ats=host in ALLOWED_GENERIC_ATS_DOMAINS
+    # A verified employer apply URL identifies the ATS web domain.
+    # New ATS domains qualify without changing a hardcoded sender allowlist,
+    # but only when the message also names the exact bound application.
+    is_destination_ats=(
+        _registrable_host(host) is not None
+        and _registrable_host(host)==_verified_destination_host(employer_application_url)
+    )
+    if not (is_employer or is_known_ats or is_destination_ats):
         return None
     received=_time(listing.get("receivedAt"))
     issued=_time(claim_at)
@@ -92,9 +166,10 @@ def _message_proof(
     # application is present. Otherwise require a provider application ID.
     if linked is None and same_company_routes!=1:
         return None
-    # Paylocity uses a shared ATS sender rather than an employer domain.
-    # Require the exact provider application ID for this sender.
-    if host == "mail.paylocity.com" and linked is None:
+    # Any sender accepted through application-destination inference must have
+    # a matching provider application ID. Never infer a receipt from matching
+    # company text alone, even when a provider assigns COMPANY_UNIQUE metadata.
+    if (is_destination_ats or host=="mail.paylocity.com") and linked is None:
         return None
     # Validate provider list/detail agreement and explicit employer intent.
     if str(listing.get("from") or "").casefold()!=str(detail.get("from") or "").casefold():
@@ -107,9 +182,13 @@ def _message_proof(
         return None
     if not any(term in combined for term in ACKNOWLEDGEMENTS):
         return None
-    # ATS-hosted sender must identify the exact role. For employer-origin
-    # email without role, uniqueness of company route is mandatory.
-    if is_ats and _ascii_words(role) not in normalized:
+    if any(term in combined for term in FAILED_ACKNOWLEDGEMENTS):
+        return None
+    # Shared ATS senders must name the role, including newly inferred ATS
+    # domains. Employer-owned sender with no title needs unique company route.
+    if (is_known_ats or is_destination_ats) and _ascii_words(role) not in normalized:
+        return None
+    if not (is_known_ats or is_destination_ats) and linked is None and same_company_routes!=1:
         return None
     envelope={
         "provider":"AUTHENTICATED_MANAGED_INBOX","message_id":ident,
@@ -184,6 +263,7 @@ def reconcile_employer_inbox(*, job_id:int, mcp:Any) -> dict[str,Any]:
             listing=item,detail=detail,company=company,role=role,
             claim_at=created,expected_application_ref_sha256=ref,
             same_company_routes=int(routes),
+            employer_application_url=str(job["apply_url"] or ""),
         )
         if digest:
             updated=router.confirm_employer_receipt(
