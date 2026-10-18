@@ -1565,7 +1565,7 @@ def run_ats_form_preparation_once(
     operation_id: str,
     worker_id: str,
     poll_timeout_seconds: float | None = None,
-    poll_interval_seconds: float = 1.0,
+    poll_interval_seconds: float = 0.75,
     lease_seconds: int = 300,
     plan_delivery: Callable[..., Any] | None = None,
     session_starter: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
@@ -1785,6 +1785,7 @@ def run_ats_form_preparation_once(
 
         deadline = time.monotonic() + float(poll_timeout_seconds)
         latest = prepare_job
+        last_heartbeat_at: float | None = None
 
         while str(latest.get("state") or "") in _RUNNING_APPLY_STATES:
             if time.monotonic() >= deadline:
@@ -1806,11 +1807,18 @@ def run_ats_form_preparation_once(
                     "submission_authority": False,
                 }
 
-            orchestrator.heartbeat_task(
-                task_id=str(task["task_id"]),
-                worker_id=str(worker_id),
-                lease_seconds=int(lease_seconds),
-            )
+            # Polling a live provider can take 30–90 seconds. Do not write
+            # SQLite lease updates on every response poll; 10-second renewal
+            # is safely within the lease and reduces contention for Prepare.
+            now = time.monotonic()
+            heartbeat_period = min(10.0, max(0.2, int(lease_seconds) / 3.0))
+            if last_heartbeat_at is None or now - last_heartbeat_at >= heartbeat_period:
+                orchestrator.heartbeat_task(
+                    task_id=str(task["task_id"]),
+                    worker_id=str(worker_id),
+                    lease_seconds=int(lease_seconds),
+                )
+                last_heartbeat_at = now
             if poll_interval_seconds:
                 time.sleep(float(poll_interval_seconds))
             latest = dict(
