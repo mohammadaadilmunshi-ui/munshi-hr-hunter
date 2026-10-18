@@ -320,6 +320,50 @@ def _sync_communication_outbox(
     return queued
 
 
+def _sync_relay_verified_employer_outbox(
+    connection: sqlite3.Connection, *,
+    owner: OwnerContext, destination_email: str,
+) -> int:
+    """Queue only independently verified managed-inbox receipts.
+
+    A provider's own sent status cannot enter this projection. Deduplication
+    uses the owned route and immutable evidence digest, never email body text.
+    """
+    if not (
+        storage._table_exists(connection, "application_provider_routes_v1")
+        and storage._table_exists(connection, "tsenta_external_dispatch_claims_v1")
+    ):
+        return 0
+    verified = connection.execute(
+        """SELECT r.route_id,r.application_id,r.job_id,
+                  r.receipt_evidence_digest,j.company_name,j.title
+           FROM application_provider_routes_v1 r
+           JOIN tsenta_external_dispatch_claims_v1 d
+             ON d.route_id=r.route_id AND d.tenant_id=r.tenant_id
+            AND d.user_id=r.user_id AND d.job_id=r.job_id
+           JOIN jobs j ON j.id=r.job_id
+           WHERE r.tenant_id=? AND r.user_id=?
+             AND r.provider='TSENTA'
+             AND r.state='EMPLOYER_CONFIRMED'
+             AND r.receipt_method='CORRELATED_EMPLOYER_EMAIL'
+             AND length(r.receipt_evidence_digest)=64
+             AND d.state='ACCEPTED'
+             AND r.provider_application_id_sha256=d.tsenta_application_id_sha256
+           ORDER BY r.employer_confirmed_at,r.route_id""",
+        (owner.tenant_id,owner.user_id),
+    ).fetchall()
+    queued=0
+    for row in verified:
+        queued+=int(storage._queue(
+            connection, owner=owner, event_kind="EMPLOYER_EMAIL_CONFIRMED",
+            source_id="relay:"+str(row["route_id"])+":"+str(row["receipt_evidence_digest"]),
+            application_id=str(row["application_id"]),job_id=int(row["job_id"]),
+            destination_email=destination_email,
+            company=row["company_name"],title=row["title"],
+        ))
+    return queued
+
+
 def _sync_outbox_transaction(
     connection: sqlite3.Connection,
     *,
@@ -329,17 +373,21 @@ def _sync_outbox_transaction(
     queued = v2._sync_outbox_transaction(connection, owner=owner)
     preference = connection.execute(
         """
-        SELECT destination_email,communication_email_enabled
+        SELECT destination_email,employer_confirmation_email_enabled,
+               communication_email_enabled
         FROM application_notification_preferences_v1
         WHERE tenant_id=? AND user_id=?
         """,
         (owner.tenant_id, owner.user_id),
     ).fetchone()
-    if (
-        preference is None
-        or not preference["destination_email"]
-        or not bool(preference["communication_email_enabled"])
-    ):
+    if preference is None or not preference["destination_email"]:
+        return queued
+    if bool(preference["employer_confirmation_email_enabled"]):
+        queued+=_sync_relay_verified_employer_outbox(
+            connection,owner=owner,
+            destination_email=str(preference["destination_email"]),
+        )
+    if not bool(preference["communication_email_enabled"]):
         return queued
     return queued + _sync_communication_outbox(
         connection,

@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "97b12d80e1e467a45ae547ac47b1525bf874e299" in content
+    assert "efd27f033b63aacf77594e9b82fb29dc2ba3f64f" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "97b12d80e1e467a45ae547ac47b1525bf874e299",
+            "--expected-base", "efd27f033b63aacf77594e9b82fb29dc2ba3f64f",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "97b12d80e1e467a45ae547ac47b1525bf874e299", "HEAD",
+            "efd27f033b63aacf77594e9b82fb29dc2ba3f64f", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )
@@ -224,3 +224,15 @@ def test_cross_platform_application_reliability_release_is_exactly_allowlisted()
         "tests/test_unified_job_workspaces_v1.py",
     ):
         assert "/app/hunter/"+item in content
+
+
+def test_relay_verified_mail_outbox_is_in_signed_code_only_bundle():
+    content=SCRIPT.read_text()
+    for item in (
+        "app/application_notifications_runtime_v3.py",
+        "app/relay_inbox_receipt_v1.py",
+        "app/relay_receipt_worker_v1.py",
+        "tests/test_relay_provider_notifications_v1.py",
+    ):
+        assert "  "+item+"\n" in content
+    assert "/app/hunter/tests/test_relay_provider_notifications_v1.py" in content

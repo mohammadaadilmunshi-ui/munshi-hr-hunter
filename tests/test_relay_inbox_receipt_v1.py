@@ -328,3 +328,48 @@ def test_unlinked_authenticated_managed_icims_receipt_verified_by_exact_role_com
     assert receipt._message_proof(**(args|{"employer_application_url":"https://not-icims.example/jobs/6693"})) is None
     assert receipt._message_proof(**(args|{"listing":listing|{"source":"INBOX"}})) is None
     assert receipt._message_proof(**(args|{"detail":detail|{"subject":"Thank you for your application"}})) is None
+
+
+def test_unlisted_ats_resume_ack_without_role_requires_strict_independent_evidence():
+    # Real ATS templates frequently omit the position; acceptance is based on
+    # the authenticated managed-inbox envelope and exactly one claimed route.
+    from_host="notices.employer-ats.example"
+    message=LISTING | {
+        "id":"receipt-unique",
+        "from":"noreply@"+from_host,
+        "receivedAt":"2026-10-18T01:23:21+00:00",
+        "applicationId":None,
+    }
+    body=DETAIL | {
+        "id":"receipt-unique",
+        "from":"noreply@"+from_host,
+        "subject":"Candidate, we've received your resume",
+        "body":"Thank you for your interest in employment at Arcadia Labs. We will contact you if your experience matches our needs.",
+    }
+    params={
+        "listing":message,"detail":body,"company":"Arcadia Labs",
+        "role":"People Operations Coordinator",
+        "claim_at":CLAIM,
+        "expected_application_ref_sha256":REF,
+        "same_company_routes":1,
+        "employer_application_url":"https://careers.employer-ats.example/apply/opening",
+    }
+    assert receipt._message_proof(**params)
+    assert receipt._message_proof(**(params | {"same_company_routes":2})) is None
+    assert receipt._message_proof(**(params | {"company":"Other Company"})) is None
+    assert receipt._message_proof(**(params | {"employer_application_url":"https://other.example/job"})) is None
+    assert receipt._message_proof(**(params | {"listing":message | {"source":"FORWARDED"}})) is None
+    assert receipt._message_proof(**(params | {"listing":message | {"receivedAt":"2026-01-01T01:23:21+00:00"}})) is None
+    assert receipt._message_proof(**(params | {"detail":body | {"subject":"Candidate, we're hiring", "body":"Open roles at Arcadia Labs."}})) is None
+    assert receipt._message_proof(**(params | {"detail":body | {"body":"Thank you for your interest in employment at Other Company."}})) is None
+    assert receipt._message_proof(**(params | {"detail":body | {"from":"spoofer@other.example"}})) is None
+    assert receipt._message_proof(**(params | {"listing":message | {"applicationId":"wrong-reference"}})) is None
+
+
+def test_roleless_resume_ack_cannot_bypass_missing_verified_destination():
+    message=LISTING | {"from":"noreply@recruiting-example.net","applicationId":None}
+    detail=DETAIL | {"from":"noreply@recruiting-example.net",
+        "subject":"We've received your resume",
+        "body":"Thanks for your interest in Galileo Learning."}
+    assert proof(listing=message,detail=detail,
+                 employer_application_url="https://other-host.org/opportunity") is None

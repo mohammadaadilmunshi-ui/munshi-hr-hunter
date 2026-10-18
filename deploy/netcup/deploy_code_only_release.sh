@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=97b12d80e1e467a45ae547ac47b1525bf874e299
+LIVE_BASE=efd27f033b63aacf77594e9b82fb29dc2ba3f64f
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -188,6 +188,9 @@ allowed_files=(
   app/profile_workspace_v2.py
   app/relay_application_dispatch_v1.py
   app/relay_inbox_receipt_v1.py
+  app/application_notifications_runtime_v3.py
+  tests/test_relay_provider_notifications_v1.py
+  tests/test_application_notifications_runtime_v2.py
   app/application_review_card_v1.py
   app/native_resume_service_v5.py
   app/prepare_worker_adapters_v1a.py
@@ -336,6 +339,8 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_engine_selector_recovery_v1.py \
     /app/hunter/tests/test_relay_application_dispatch_v1.py \
     /app/hunter/tests/test_relay_inbox_receipt_v1.py \
+    /app/hunter/tests/test_relay_provider_notifications_v1.py \
+    /app/hunter/tests/test_application_notifications_runtime_v2.py \
     /app/hunter/tests/test_application_review_card_v1.py \
     /app/hunter/tests/test_prepare_worker_adapters_v1a.py \
     /app/hunter/tests/test_native_resume_cert_retention_v1.py \
