@@ -593,7 +593,11 @@ def run_application_preflight_once(
             }
 
         reviewed_cover_letter: dict[str, Any] | None = None
-        if str(cover.get("decision") or "") != "NOT_REQUIRED":
+        # No speculative document for an unknown JD requirement. The actual
+        # ATS form remains the authority on whether a cover-letter upload
+        # exists or is mandatory. A mandatory unseen field must still block
+        # submission when no matching reviewed artifact exists.
+        if str(cover.get("decision") or "") in {"REQUIRED", "OPTIONAL"}:
             preflight_step = "COVER_LETTER"
             reviewed_cover_letter = native_cover_letter_writer_v1.generate(
                 preflight_package_id=str(package["package_id"]),
@@ -623,6 +627,9 @@ def run_application_preflight_once(
             "resume_version_id": str(resume["resume_version_id"]),
             "resume_pdf_sha256": str(dict(resume["pdf"])["artifact_sha256"]),
             "cover_letter_decision": str(cover.get("decision") or ""),
+            "cover_letter_requirement_pending_live_form": (
+                str(cover.get("decision") or "") == "UNDETERMINED"
+            ),
             "cover_letter_id": (
                 str(reviewed_cover_letter.get("cover_letter_id") or "")
                 if reviewed_cover_letter is not None
@@ -1644,7 +1651,7 @@ def run_ats_form_preparation_once(
 
     cover_letter: dict[str, Any] | None = None
     cover_decision = str(cover.get("decision") or "")
-    if cover_decision != "NOT_REQUIRED":
+    if cover_decision in {"REQUIRED", "OPTIONAL"}:
         cover_letter_id_value = str(preflight.get("cover_letter_id") or "").strip()
         cover_letter_sha = str(
             preflight.get("cover_letter_artifact_sha256") or ""
