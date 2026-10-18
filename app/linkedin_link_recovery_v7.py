@@ -9,12 +9,16 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.linkedin_apply_button_v7 import fetch_apply_button
 from app.linkedin_batch_enrichment_v6 import ATSReadCache
+from app.linkedin_public_ats_feed_v1 import (
+    resolve_from_verified_board,
+    verified_board_from_existing_job,
+)
 from app.linkedin_employer_careers_v2 import (
     board_binding_from_ats_company_registry,
     resolve_from_known_company_boards,
@@ -23,6 +27,8 @@ from app.linkedin_employer_link_resolver_v1 import (
     LinkResolution,
     ats_from_url,
     normalize,
+    external_url,
+    resolve_stored,
 )
 
 
@@ -33,6 +39,7 @@ def recover_links(
     limit: int = 1000,
     checkpoint: dict[str, Any] | None = None,
     public_get: bool = False,
+    linkedin_get: bool = True,
     fetcher: Any = fetch_apply_button,
     cache: Any = None,
     now: datetime | None = None,
@@ -72,7 +79,8 @@ def recover_links(
         cohort_sha256=identity,
         total_jobs=len(cohort),
     )
-    mode = "PUBLIC_GET" if public_get else "OFFLINE"
+    mode = ("PUBLIC_GET_NO_LINKEDIN" if public_get and not linkedin_get
+            else "PUBLIC_GET" if public_get else "OFFLINE")
     records = dict(state.get("records") or {}) if state.get("mode") == mode else {}
     state["mode"] = mode
     boards: dict[str, list[dict[str, Any]]] = {}
@@ -80,6 +88,32 @@ def recover_links(
         board = dict(row)
         if board_binding_from_ats_company_registry(board):
             boards.setdefault(normalize(board["company_name"]), []).append(board)
+    # LinkedIn's guest Apply control is frequently behind an auth wall.
+    # Cross-source candidate discovery is independent of LinkedIn access and
+    # does not confer verified evidence or submission authorization.
+    other_index: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    source_verified_boards: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    other_cutoff = (current - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")
+    for other in connection.execute(
+        "SELECT source,company_name,title,location_raw,description_raw,job_url,"
+        "apply_url,ats_job_id FROM jobs "
+        "WHERE lower(coalesce(source,'')) NOT LIKE '%linkedin%' "
+        "AND apply_url IS NOT NULL AND first_seen_at>=?",
+        (other_cutoff,),
+    ):
+        candidate = dict(other)
+        if external_url(candidate["apply_url"]):
+            key = (normalize(candidate["company_name"]), normalize(candidate["title"]))
+            if all(key):
+                other_index[key].append(candidate)
+            # Official ATS source adapters expose already-enrolled board URLs.
+            # The extractor validates BOTH the source prefix and provider host;
+            # never guess a board token from a company display name.
+            binding = verified_board_from_existing_job(
+                candidate["company_name"], candidate
+            )
+            if binding:
+                source_verified_boards[normalize(candidate["company_name"])].add(binding)
     ats_cache = cache or ATSReadCache()
     scanned = 0
     consecutive_auth = 0
@@ -92,26 +126,44 @@ def recover_links(
             break
         scanned += 1
         record: dict[str, Any] = {"job_id": job["id"], "status": "OFFLINE_ONLY"}
+        candidate = resolve_stored(
+            job,
+            other_index.get((normalize(job["company_name"]), normalize(job["title"])), []),
+        )
+        if candidate.resolution_status == "CANDIDATE":
+            record["candidate_resolution"] = candidate.to_dict()
+            record["candidate_status"] = "UNVERIFIED_CROSS_SOURCE"
+        elif candidate.resolution_status == "AMBIGUOUS":
+            record["candidate_status"] = "AMBIGUOUS_CROSS_SOURCE"
         if public_get:
             resolution = None
             choices = boards.get(normalize(job["company_name"]), [])
-            if choices:
+            inferred_boards = source_verified_boards.get(normalize(job["company_name"]), set())
+            if choices or len(inferred_boards) == 1:
                 try:
-                    resolution = resolve_from_known_company_boards(
-                        job,
-                        choices,
-                        allow_network=True,
-                        provider_opener=ats_cache,
-                    )
+                    if choices:
+                        resolution = resolve_from_known_company_boards(
+                            job, choices, allow_network=True, provider_opener=ats_cache,
+                        )
+                    else:
+                        provider, board_name = next(iter(inferred_boards))
+                        resolution = resolve_from_verified_board(
+                            job, provider=provider, board_name=board_name,
+                            verified_employer_name=job["company_name"],
+                            opener=ats_cache,
+                        )
+                        record["board_origin"] = "existing_official_ats_source"
                     record["official_ats_status"] = resolution.resolution_status
                 except (OSError, ValueError, KeyError, TypeError) as error:
                     record["official_ats_status"] = "FETCH_FAILED"
                     record["official_error_type"] = type(error).__name__
+            elif len(inferred_boards) > 1:
+                record["official_ats_status"] = "AMBIGUOUS_COMPANY_BOARDS"
             if resolution is not None and resolution.resolution_status == "VERIFIED":
                 record.update(
                     status="VERIFIED_PROPOSAL", resolution=resolution.to_dict()
                 )
-            elif not linkedin_stopped and consecutive_auth < 5:
+            elif linkedin_get and not linkedin_stopped and consecutive_auth < 5:
                 capture = fetcher(job["job_url"])
                 record["status"] = capture.status
                 if capture.employer_apply_url:
@@ -141,13 +193,16 @@ def recover_links(
             else:
                 # Continue official-board recovery without hammering sign-in walls.
                 record["status"] = (
-                    "RATE_LIMITED_NOT_CHECKED"
+                    "OFFICIAL_ONLY_NO_LINKEDIN_REQUEST"
+                    if not linkedin_get
+                    else "RATE_LIMITED_NOT_CHECKED"
                     if linkedin_stopped
                     else "AUTH_REQUIRED_NOT_CHECKED"
                 )
             record["verified_at"] = current.isoformat(timespec="seconds")
         records[key] = record
-        if on_progress:
+        # Bound checkpoint I/O while retaining crash-resumable progress.
+        if on_progress and scanned % 25 == 0:
             on_progress({**state, "records": records})
     state["records"] = records
     state["processed_jobs"] = len(records)
@@ -156,6 +211,12 @@ def recover_links(
         sorted(Counter(r["status"] for r in records.values()).items())
     )
     state["unsigned_proposals"] = [r for r in records.values() if r.get("resolution")]
+    state["unverified_candidate_proposals"] = [
+        r for r in records.values() if r.get("candidate_resolution")
+    ]
+    state["unverified_candidate_count"] = len(state["unverified_candidate_proposals"])
+    state["official_api_requests"] = ats_cache.network_requests
+    state["official_api_cache_hits"] = ats_cache.cache_hits
     state["database_writes"] = 0
     state["applications_submitted"] = 0
     state["requires_signed_import"] = True
