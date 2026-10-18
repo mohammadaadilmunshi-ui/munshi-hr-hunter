@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=08c632001ffc1e5b0fd380d8ae7523666335ec2b
+LIVE_BASE=ed8524545dbcc212dea8748fa6235253600a2682
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
