@@ -121,3 +121,108 @@ def test_captured_url_remains_unsigned_proposal():
 def test_unbounded_scan_rejected(args):
     with pytest.raises(ValueError):
         recover_links(fixture(0), now=NOW, **args)
+
+
+def cross_source_fixture(*, conflicting=False):
+    c = sqlite3.connect(":memory:")
+    c.row_factory = sqlite3.Row
+    c.execute(
+        "CREATE TABLE jobs(id INTEGER,source TEXT,company_name TEXT,title TEXT,"
+        "location_raw TEXT,description_raw TEXT,job_url TEXT,apply_url TEXT,"
+        "ats_job_id TEXT,first_seen_at TEXT)"
+    )
+    c.execute(
+        "CREATE TABLE ats_company_registry(company_name TEXT,enabled INTEGER,"
+        "health_status TEXT)"
+    )
+    c.executemany(
+        "INSERT INTO jobs VALUES (?,?,?,?,?,?,?,?,?,?)",
+        [
+            (1, "JobSpy/linkedin", "Example Employer", "HR Analyst", "New York, NY",
+             "Analyze workforce data", "https://www.linkedin.com/jobs/view/123456789",
+             None, "123456789", "2026-10-10 00:00:00"),
+            (2, "JobSpy/indeed", "Example Employer", "HR Analyst", "New York, NY",
+             "Analyze workforce data", "https://www.indeed.com/viewjob?jk=abc",
+             "https://jobs.example.com/apply?tenant=2&job=123", "123", "2026-10-11 00:00:00"),
+            *(([(3, "JobSpy/indeed", "Example Employer", "HR Analyst", "New York, NY",
+                   "Analyze workforce data", "https://www.indeed.com/viewjob?jk=def",
+                   "https://jobs.example.com/apply?tenant=2&job=456", "456",
+                   "2026-10-11 00:00:00")]) if conflicting else []),
+        ],
+    )
+    c.commit()
+    c.execute("PRAGMA query_only=ON")
+    return c
+
+
+def test_cross_source_recovers_candidate_without_approval_or_db_write():
+    c = cross_source_fixture()
+    r = recover_links(c, now=NOW, public_get=False)
+    assert r["total_jobs"] == 1
+    assert r["status_counts"] == {"OFFLINE_ONLY": 1}
+    assert r["unverified_candidate_count"] == 1
+    lead = r["unverified_candidate_proposals"][0]
+    assert lead["candidate_status"] == "UNVERIFIED_CROSS_SOURCE"
+    assert lead["candidate_resolution"]["employer_apply_url"].endswith("&job=123")
+    assert not r["unsigned_proposals"]
+    assert r["requires_signed_import"] is True
+    assert r["database_writes"] == 0
+    assert c.execute("SELECT apply_url FROM jobs WHERE id=1").fetchone()[0] is None
+
+
+def test_official_only_never_calls_linkedin_and_keeps_candidates():
+    def forbidden(_url):
+        raise AssertionError("No LinkedIn requests permitted in official-only mode")
+
+    r = recover_links(
+        cross_source_fixture(), now=NOW, public_get=True,
+        linkedin_get=False, fetcher=forbidden,
+    )
+    assert r["unverified_candidate_count"] == 1
+    assert r["status_counts"] == {"OFFICIAL_ONLY_NO_LINKEDIN_REQUEST": 1}
+    assert r["applications_submitted"] == 0
+
+
+def test_ambiguous_cross_source_urls_do_not_become_auto_apply_targets():
+    r = recover_links(cross_source_fixture(conflicting=True), now=NOW)
+    assert r["unverified_candidate_count"] == 0
+    assert r["records"]["1"]["candidate_status"] == "AMBIGUOUS_CROSS_SOURCE"
+    assert not r["unsigned_proposals"]
+
+
+def test_existing_official_source_discovers_board_without_guessing(monkeypatch):
+    from app import linkedin_link_recovery_v7 as recovery
+    from app.linkedin_employer_link_resolver_v1 import LinkResolution
+
+    c = cross_source_fixture()
+    c.execute("PRAGMA query_only=OFF")
+    c.execute(
+        "INSERT INTO jobs VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (4, "Greenhouse/example", "Example Employer", "Other Role", "New York, NY",
+         "Different job", "https://job-boards.greenhouse.io/example/jobs/678",
+         "https://job-boards.greenhouse.io/example/jobs/678", "678",
+         "2026-10-11 00:00:00"),
+    )
+    c.commit()
+    c.execute("PRAGMA query_only=ON")
+    calls = []
+
+    def fake_official(job, *, provider, board_name, verified_employer_name, opener):
+        calls.append((provider, board_name, verified_employer_name))
+        return LinkResolution(
+            linkedin_job_url=job["job_url"],
+            employer_job_url="https://job-boards.greenhouse.io/example/jobs/123",
+            employer_apply_url="https://job-boards.greenhouse.io/example/jobs/123",
+            ats_platform="Greenhouse", resolution_status="VERIFIED",
+            resolution_source="official_public_ats",
+            evidence={"identity_evidence": "strong", "needs_employer_confirmation": False,
+                      "matching_fields": ["company_name", "title", "location"]},
+        )
+
+    monkeypatch.setattr(recovery, "resolve_from_verified_board", fake_official)
+    r = recovery.recover_links(c, now=NOW, public_get=True, linkedin_get=False)
+    assert calls == [("Greenhouse", "example", "Example Employer")]
+    assert r["status_counts"] == {"VERIFIED_PROPOSAL": 1}
+    assert len(r["unsigned_proposals"]) == 1
+    assert r["database_writes"] == 0
+    assert r["requires_signed_import"] is True
