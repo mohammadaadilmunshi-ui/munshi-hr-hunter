@@ -590,8 +590,9 @@ def reconcile_from_dashboard(job_id: int) -> dict[str, Any]:
         if row is None or row["provider"]!="TSENTA":
             raise PermissionError("Opening is not owned by MUNSHI Relay.")
         route=dict(row)
-        if route["state"]=="EMPLOYER_CONFIRMED":
-            return {"status":"EMPLOYER_CONFIRMED","retry_allowed":False}
+        if route["state"]=="EMPLOYER_CONFIRMED" and route["receipt_evidence_digest"]:
+            return {"status":"EMPLOYER_CONFIRMED",
+                    "employer_receipt_verified":True,"retry_allowed":False}
         claim_exists=db.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
             (CLAIM_TABLE,),
@@ -626,8 +627,68 @@ def reconcile_from_dashboard(job_id: int) -> dict[str, Any]:
         db.commit()
     finally:
         db.close()
+    # A provider-managed employer acknowledgment is independent of the
+    # provider's own sent status. It is read-only with no email reply.
+    try:
+        from app.relay_inbox_receipt_v1 import reconcile_employer_inbox
+
+        with TsentaMcpApplicationClient(_token_for_current_owner()) as mcp:
+            mcp.initialize()
+            receipt=reconcile_employer_inbox(job_id=int(job_id),mcp=mcp)
+        if receipt.get("status")=="EMPLOYER_CONFIRMED":
+            return {
+                "status":"EMPLOYER_CONFIRMED",
+                "employer_receipt_verified":True,
+                "retry_allowed":False,
+            }
+    except (RuntimeError,LookupError,ValueError,TypeError,PermissionError,OSError):
+        pass
     return {
         "status":"PROVIDER_SUBMITTED",
         "employer_receipt_verified":False,
         "retry_allowed":False,
     }
+
+
+
+def reconcile_owner_pending(*,limit:int=10) -> dict[str,int]:
+    """Scheduled local status/email synchronization, never an application send.
+
+    Iterates only route IDs already claimed and eligible for readback. A single
+    failing provider read cannot trigger an external apply or block other jobs.
+    """
+    if not 1 <= int(limit) <= 20:
+        raise ValueError("Reconciliation batch limit is outside its safe bounds.")
+    db=get_connection()
+    try:
+        owner=current_owner(db)
+        jobs=[int(row["job_id"]) for row in db.execute(
+            """SELECT DISTINCT r.job_id
+               FROM application_provider_routes_v1 r
+               JOIN tsenta_external_dispatch_claims_v1 d
+                 ON d.route_id=r.route_id
+                AND d.tenant_id=r.tenant_id AND d.user_id=r.user_id
+               WHERE r.tenant_id=? AND r.user_id=? AND r.provider='TSENTA'
+                 AND r.state IN ('PREPARATION','FILLING','PAUSED',
+                                 'PROVIDER_SUBMITTED')
+               ORDER BY r.updated_at DESC LIMIT ?""",
+            (owner.tenant_id,owner.user_id,int(limit)),
+        )]
+    finally:
+        db.close()
+    counts={"checked":0,"provider_submitted":0,"employer_confirmed":0,
+            "pending":0,"errors":0,"applications_sent":0}
+    for job in jobs:
+        try:
+            result=reconcile_from_dashboard(job)
+            counts["checked"]+=1
+            status=result.get("status")
+            if status=="EMPLOYER_CONFIRMED":
+                counts["employer_confirmed"]+=1
+            elif status=="PROVIDER_SUBMITTED":
+                counts["provider_submitted"]+=1
+            else:counts["pending"]+=1
+        except (RuntimeError,LookupError,ValueError,TypeError,
+                PermissionError,OSError):
+            counts["errors"]+=1
+    return counts

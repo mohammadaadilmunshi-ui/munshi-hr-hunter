@@ -137,3 +137,18 @@ def test_relay_reserved_route_not_submittable_when_backend_disconnects():
         tsenta_backend={"execution_ready":False},
     )
     assert state["can_submit_tsenta"] is False
+
+
+@pytest.mark.parametrize(("route","expected"),[
+    ({"provider":"TSENTA","state":"PREPARATION",
+      "dispatch_claim_exists":True},False),
+    ({"provider":"TSENTA","state":"PROVIDER_SUBMITTED",
+      "dispatch_claim_exists":True},False),
+    ({"provider":"TSENTA","state":"EMPLOYER_CONFIRMED",
+      "dispatch_claim_exists":True},False),
+])
+def test_relay_used_routes_never_enable_application_submit(route,expected):
+    state=ui.engine_selector_state(
+        route=route,tsenta_backend={"execution_ready":True},
+    )
+    assert state["can_submit_tsenta"] is expected

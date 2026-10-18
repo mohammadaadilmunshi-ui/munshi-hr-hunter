@@ -316,16 +316,18 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
             'submit anything.'
         )
         engine = st.radio(
-            'Resume engine',
+            'Resume preparation method',
             ['NATIVE', 'N8N'],
             horizontal=True,
             format_func=lambda value: (
-                'MUNSHI Native' if value == 'NATIVE' else 'n8n'
+                'MUNSHI Resume Studio' if value == 'NATIVE' else 'n8n (legacy)'
             ),
             key=f'complete_loop_engine_{job_id}',
             help=(
                 'MUNSHI Native uses the truth-bound Native Resume engine. '
-                'n8n remains an optional resume-generation path.'
+                'n8n remains an optional legacy resume-generation path. '
+                'This is separate from the application submission engine '
+                'selected after resume review.'
             ),
         )
         if st.button(
@@ -584,12 +586,12 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
         if card:
             score_col, keywords_col = st.columns(2, gap='small')
             score_col.metric(
-                'JD match',
+                'Supported requirements represented',
                 f"{card['coverage_percent']:.0f}% {card['coverage_label']}",
             )
             if int(card.get('keyword_count') or 0):
                 keywords_col.metric(
-                    'JD terms covered',
+                    'Exact JD phrases in resume',
                     f"{int(card['covered_keyword_count'])} of "
                     f"{int(card['keyword_count'])}",
                 )
@@ -600,9 +602,18 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                     f"{int(card['supportable_requirement_count'])}",
                 )
             st.caption(
-                'Match uses truth-supportable Stage B requirements. '
-                'Unsupported claims never inflate this score.'
+                'The percentage measures truth-supportable requirements '
+                'represented in the resume. The phrase count separately '
+                'checks literal JD wording; these are not interchangeable.'
             )
+            if int(card.get('keyword_count') or 0) > 0 and not int(
+                card.get('covered_keyword_count') or 0
+            ):
+                st.warning(
+                    'No exact JD phrases matched, despite the supported-'
+                    'requirements score. Review the tailored resume wording; '
+                    'do not interpret the percentage as an ATS match guarantee.'
+                )
 
             st.markdown('**Required skills**')
             required_rows = list(card.get('required_skills') or [])

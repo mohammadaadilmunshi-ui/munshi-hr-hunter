@@ -555,6 +555,28 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
     production_receipt = _production_receipt(application_id)
     if production_receipt is not None:
         state, authority = 'SUBMITTED', 'verified_production_receipt'
+    elif (
+        provider_route is not None
+        and provider_route.get('provider') == 'TSENTA'
+        and provider_route.get('state') == 'EMPLOYER_CONFIRMED'
+        and provider_route.get('receipt_evidence_digest')
+        and provider_route.get('employer_confirmed_at')
+    ):
+        state, authority = 'SUBMITTED', 'relay_employer_receipt_verified'
+    elif (
+        provider_route is not None
+        and provider_route.get('provider') == 'TSENTA'
+        and provider_route.get('state') == 'PROVIDER_SUBMITTED'
+    ):
+        state, authority = 'SUBMISSION_UNVERIFIED', 'relay_provider_submitted'
+    elif (
+        provider_route is not None
+        and provider_route.get('provider') == 'TSENTA'
+        and provider_route.get('dispatch_claim_exists')
+    ):
+        # After a one-use claim, even a lost provider response cannot enable
+        # the old Review action. Reconcile; never try the application again.
+        state, authority = 'SUBMITTING', 'relay_outcome_pending'
     elif internal_review is not None and internal_review.get('approval_consumed'):
         state, authority = 'SUBMITTING', 'one_use_submit_authorization'
     else:
@@ -650,7 +672,12 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
         'state': state,
         'authority': authority,
         'display_status': (
-            'Applying now'
+            'Submission outcome pending' if authority == 'relay_outcome_pending'
+            else 'Provider reports submitted · receipt pending'
+            if authority == 'relay_provider_submitted'
+            else 'Employer confirmation verified'
+            if authority == 'relay_employer_receipt_verified'
+            else 'Applying now'
             if authority == 'runtime_resolution_in_progress'
             else STATE_LABELS.get(
                 state,

@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "1ee4b04abf73be9d5cae39d70a189778232effe6" in content
+    assert "ea204a4c82d61ca21b4a7eb8611b955630b60fa2" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "1ee4b04abf73be9d5cae39d70a189778232effe6",
+            "--expected-base", "ea204a4c82d61ca21b4a7eb8611b955630b60fa2",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "1ee4b04abf73be9d5cae39d70a189778232effe6", "HEAD",
+            "ea204a4c82d61ca21b4a7eb8611b955630b60fa2", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )
@@ -124,6 +124,8 @@ def test_relay_release_acceptance_cannot_skip_atomic_dispatch_tests():
     assert "app/relay_application_dispatch_v1.py" in script
     assert "tests/test_relay_application_dispatch_v1.py" in script
     assert "/app/hunter/tests/test_relay_application_dispatch_v1.py" in script
+    assert "/app/hunter/tests/test_relay_inbox_receipt_v1.py" in script
+    assert "/app/hunter/tests/test_relay_platform_routing_v1.py" in script
     assert "/app/hunter/tests/test_relay_claim_projection_v1.py" in script
     assert "/app/hunter/tests/test_tsenta_learning_monitor_v1.py" in script
     assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE" in script
