@@ -141,6 +141,7 @@ def test_inbox_sync_requires_provider_submission_and_matches_only_exact_owner(
             self.reads.append(method)
             if method=="list_inbox_messages":
                 assert options["query"]=="Galileo Learning"
+                assert options["limit"] == receipt.MAX_PROVIDER_INBOX_PAGE == 20
                 return {"structuredContent":{"result":{"messages":[LISTING]}}}
             if method=="get_inbox_message":
                 assert options["messageId"]==LISTING["id"]

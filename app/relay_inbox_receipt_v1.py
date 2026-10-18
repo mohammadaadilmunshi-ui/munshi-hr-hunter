@@ -33,6 +33,7 @@ ACKNOWLEDGEMENTS = (
     "application is queued for review",
 )
 MAX_HOURS_AFTER_CLAIM=96
+MAX_PROVIDER_INBOX_PAGE=20
 
 
 def _ascii_words(value: str) -> str:
@@ -159,10 +160,10 @@ def reconcile_employer_inbox(*, job_id:int, mcp:Any) -> dict[str,Any]:
     finally:
         db.close()
     listing=_unwrap(mcp.call_read("list_inbox_messages",{
-        "query":company,"page":1,"limit":30,
+        "query":company,"page":1,"limit":MAX_PROVIDER_INBOX_PAGE,
     }),tool_name="list_inbox_messages")
     entries=listing.get("messages") if isinstance(listing,Mapping) else None
-    if not isinstance(entries,list) or len(entries)>30:
+    if not isinstance(entries,list) or len(entries)>MAX_PROVIDER_INBOX_PAGE:
         return {"status":"INBOX_UNAVAILABLE","matched":False}
     for item in entries:
         if not isinstance(item,Mapping) or not item.get("id"):
