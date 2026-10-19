@@ -1,14 +1,11 @@
-"""Session-preserving navigation using Streamlit's own page-link router.
+"""Session-preserving navigation using native Streamlit callbacks.
 
 Query URLs remain shareable. No JavaScript event delegation or app reload is
 needed. The current entrypoint is resolved for both production and isolated QA.
 """
-from pathlib import Path
-
 import streamlit as st
-from streamlit.runtime.scriptrunner import get_script_run_ctx
 
-from app.product_experience_vnext import PRIMARY_DESTINATIONS
+from app.product_experience_vnext import ALLOWED_VIEWS, PRIMARY_DESTINATIONS
 
 
 ICONS = {
@@ -18,16 +15,21 @@ ICONS = {
 }
 
 
+def navigate(view: str) -> None:
+    if view not in ALLOWED_VIEWS:
+        raise ValueError("Unknown MUNSHI route")
+    st.session_state["product_view"] = view
+    st.query_params.from_dict({"view": view})
+
+
 def _link(view: str, label: str, current: str, *, mobile: bool = False) -> None:
-    context = get_script_run_ctx()
-    if context is None:
-        return
     state = "selected" if view == current else "idle"
     with st.container(key=f"product_route_{'mobile' if mobile else 'desktop'}_{view}_{state}"):
-        st.page_link(
-            Path(context.main_script_path).name, label=label,
+        st.button(
+            label=label, key=f"route_{'mobile' if mobile else 'desktop'}_{view}",
             icon=ICONS.get(view) if mobile else None,
-            query_params={"view": view}, use_container_width=True,
+            on_click=navigate, args=(view,), use_container_width=True,
+            type="primary" if current == view else "tertiary",
         )
 
 
