@@ -15,8 +15,8 @@ START = "<!-- munshi-packaged-theme -->"
 END = "<!-- /munshi-packaged-theme -->"
 BOOT = """<style>
 #munshi-boot-status{display:none}
-body:not(:has(.munshi-boot-ready)):not(:has([data-testid=stException])) [data-testid=stMain]{visibility:hidden}
-body:not(:has(.munshi-boot-ready)):not(:has([data-testid=stException])) #munshi-boot-status{
+body:is(:not(:has(.munshi-boot-ready)),:has([data-testid=stSkeleton])):not(:has([data-testid=stException])) [data-testid=stMain]{content-visibility:hidden;contain-intrinsic-size:auto 100vh}
+body:is(:not(:has(.munshi-boot-ready)),:has([data-testid=stSkeleton])):not(:has([data-testid=stException])) #munshi-boot-status{
  display:flex;position:fixed;inset:0;align-items:center;justify-content:center;
  flex-direction:column;gap:1rem;background:#F6F7F4;color:#123D31;
  font-family:Manrope,system-ui,sans-serif;z-index:9999}
