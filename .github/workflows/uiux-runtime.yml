@@ -18,11 +18,20 @@ jobs:
       - run: pip install -r requirements.lock.txt
       - run: python -m playwright install --with-deps chromium webkit
       - run: python -m pytest -q tests/test_uiux_staging_contract.py tests/test_product_studio.py tests/test_profile_intake_ui.py
+      - name: Check out the verified production source for comparison
+        uses: actions/checkout@v4
+        with:
+          ref: 53b9907f1f48ceb9a73acec8d6f9d54085fa95a7
+          path: .uiux-baseline
+          persist-credentials: false
       - name: Build exact source and isolated test image
         run: |
           docker build --tag munshi-uiux-20261019:candidate .
           docker build -f deploy/uiux/Dockerfile --tag munshi-uiux-20261019:stage .
           docker compose -p munshi-uiux-20261019 -f deploy/uiux/compose.yaml up -d --no-build
+          docker build --tag munshi-uiux-20261019:baseline-source .uiux-baseline
+          docker build -f deploy/uiux/Dockerfile --build-arg UIUX_BASE_IMAGE=munshi-uiux-20261019:baseline-source --tag munshi-uiux-20261019:baseline .
+          UIUX_STAGE_IMAGE=munshi-uiux-20261019:baseline UIUX_STAGE_PORT=18512 docker compose -p munshi-uiux-baseline-20261019 -f deploy/uiux/compose.yaml up -d --no-build
       - name: Exercise the complete synthetic app
         shell: bash
         run: |
@@ -32,7 +41,13 @@ jobs:
             if curl -fsS "http://$STAGE_IP:8501/_stcore/health" >/dev/null; then break; fi
             sleep 1
           done
-          python scripts/verify_uiux_runtime.py --url "http://$STAGE_IP:8501" --output uiux-evidence
+          BASELINE_IP=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' munshi-uiux-baseline-20261019-dashboard-1)
+          for attempt in $(seq 1 45); do
+            if curl -fsS "http://$BASELINE_IP:8501/_stcore/health" >/dev/null; then break; fi
+            sleep 1
+          done
+          python scripts/verify_uiux_runtime.py --url "http://$BASELINE_IP:8501" --output uiux-evidence/baseline --baseline
+          python scripts/verify_uiux_runtime.py --url "http://$STAGE_IP:8501" --output uiux-evidence/candidate
       - name: Staging logs
         if: always()
         run: docker compose -p munshi-uiux-20261019 -f deploy/uiux/compose.yaml logs --no-color > uiux-runtime.log
