@@ -13,6 +13,7 @@ from app.product_v22 import brand_logo_data_uri, inject_v22_css, install_product
 from app.product_experience_vnext import inject_presentation_css, render_mobile_dock
 from app.staging_feature_policy import activate_isolated_staging_preparation_features
 from app.product_studio import inject_studio_css, workspace_location
+from app.product_navigation import render_navigation
 
 
 RESUME_STUDIO_VIEW = "resume-studio"
@@ -128,7 +129,7 @@ def render() -> None:
     # continues to require its existing explicit environment contract.
     activate_isolated_staging_preparation_features()
 
-    inject_css()
+    inject_css(include_studio=False)
     inject_v22_css()
     inject_job_card_interaction_css()
     inject_presentation_css()
@@ -181,6 +182,7 @@ def render() -> None:
         )
 
     render_mobile_dock(view)
+    render_navigation(view, NAVIGATION)
     st.markdown('<div id="munshi-main" tabindex="-1"></div>', unsafe_allow_html=True)
     location_label = dict((*NAVIGATION, ("settings", "Settings"))).get(view, "Dashboard")
     st.markdown(workspace_location(location_label), unsafe_allow_html=True)

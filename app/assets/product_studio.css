@@ -4,6 +4,16 @@
   --studio-line:#dfe5e0;--studio-muted:#52636a;
   --studio-ease:cubic-bezier(.2,.7,.2,1);
 }
+/* Remove layout slots belonging solely to invisible CSS injection. */
+.stApp [data-testid="stElementContainer"]:has([data-testid="stMarkdownContainer"]>style):not(:has([data-testid="stMarkdownContainer"]>:not(style))) {display:none!important}
+.stApp [data-testid="stElementContainer"]:has(#munshi-main) {position:absolute;height:0}
+.stApp [data-testid="stElementContainer"]:has(.munshi-mobile-dock) {display:none!important}
+.product-nav {display:none!important}
+.st-key-product_primary_routes {gap:.3rem!important;padding:.3rem 0 .8rem;border-bottom:1px solid var(--studio-line)}
+.st-key-product_primary_routes>[data-testid="stLayoutWrapper"] {flex:0 1 auto!important;width:auto!important;min-width:0}
+[class*="st-key-product_route_"] [data-testid="stPageLink"] a {min-height:44px;border-radius:9px;padding:.55rem .75rem;color:var(--m-secondary);text-decoration:none;font-size:.84rem}
+[class*="st-key-product_route_"][class*="_selected"] [data-testid="stPageLink"] a {background:var(--m-active);color:var(--m-forest)!important;font-weight:750}
+.st-key-product_mobile_routes {display:none!important}
 .stApp .block-container {max-width:1560px!important;padding:0 var(--studio-space) 5rem!important}
 .st-key-product_top_bar {margin-bottom:0!important;padding:.7rem var(--studio-space)!important;
   min-height:76px;background:#fff!important;box-shadow:none!important;backdrop-filter:none!important}
@@ -22,7 +32,7 @@
 .product-page {padding:1.1rem 0 .6rem;border-bottom:1px solid var(--studio-line);margin-bottom:.8rem}
 .page-kicker-product {text-transform:none;letter-spacing:0;font-size:.8rem;font-weight:650;color:var(--m-brass)}
 .stApp h1 {font-size:clamp(1.9rem,3.3vw,3rem)!important;line-height:1.15!important;
-  letter-spacing:-.045em!important;font-weight:750!important;text-wrap:balance}
+  letter-spacing:-.045em!important;font-weight:750!important;text-wrap:balance;font-family:var(--m-font)!important}
 .stApp h2 {letter-spacing:-.025em!important;text-wrap:balance}
 .page-copy-product {max-width:70ch;font-size:.96rem;line-height:1.65;margin:.6rem 0 .85rem}
 .studio-command {display:grid;grid-template-columns:1.3fr 1fr;gap:2rem;align-items:center;
@@ -115,6 +125,12 @@
   .product-header-actions {margin-left:auto}
 }
 @media(max-width:920px) {
+  .st-key-product_primary_routes {display:none!important}
+  .st-key-product_mobile_routes {display:flex!important;position:fixed;bottom:0;left:0;right:0;z-index:1000;
+    padding:.25rem .4rem calc(.25rem + env(safe-area-inset-bottom,0px));gap:.2rem!important;background:#fff;border-top:1px solid var(--studio-line)}
+  .st-key-product_mobile_routes>[data-testid="stLayoutWrapper"] {flex:1 1 0!important;width:0!important;min-width:0!important}
+  .st-key-product_mobile_routes [data-testid="stPageLink"] a {display:flex;flex-direction:column;gap:.15rem;justify-content:center;min-height:56px;font-size:.64rem;padding:.3rem .1rem;text-align:center}
+  .st-key-product_mobile_routes [data-testid="stPageLink"] p {font-size:.64rem;margin:0}
   .studio-command {grid-template-columns:1fr 1fr;gap:1rem;padding:1.5rem}
   .studio-command h1 {font-size:2.35rem!important}
   .studio-shortcuts a {padding:.8rem;gap:.65rem}
