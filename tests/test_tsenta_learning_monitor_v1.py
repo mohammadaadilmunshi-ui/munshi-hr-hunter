@@ -123,5 +123,81 @@ def test_full_history_cap_never_claims_all_records_learned(monkeypatch):
     result = monitor.learning_cycle(pages=20)
     assert pages == list(range(1, 21))
     assert result["history_window_complete"] is False
-    assert result["history_page_cap_reached"] is True
+    assert result["history_page_cap_reached"] is False
+    assert result["history_next_page"] == 21
     assert result["provider_submissions_started"] == 0
+
+    pages.clear()
+    at_limit = monitor.learning_cycle(pages=20, start_page=181)
+    assert pages == list(range(181, 201))
+    assert at_limit["history_window_complete"] is False
+    assert at_limit["history_page_cap_reached"] is True
+    assert at_limit["history_next_page"] == 200
+
+
+
+def test_invalid_historical_window_never_contacts_backend(monkeypatch):
+    monkeypatch.setenv(monitor.ENABLED_ENV, "true")
+    monkeypatch.setattr(
+        monitor.oauth, "status",
+        lambda: pytest.fail("Must validate cursor bounds before provider access"),
+    )
+    for start, pages in ((0, 1), (201, 1), (190, 20), (1, 21)):
+        with pytest.raises(ValueError):
+            monitor.learning_cycle(start_page=start, pages=pages)
+
+
+def test_database_busy_failure_is_sanitized_in_runner(monkeypatch, capsys):
+    import sqlite3
+    monkeypatch.setenv(monitor.ENABLED_ENV, "true")
+    monkeypatch.setattr(monitor.oauth, "status", _connected)
+    monkeypatch.setattr(
+        monitor.sync, "sync_authorized_learning",
+        lambda **kwargs: (_ for _ in ()).throw(
+            sqlite3.OperationalError("database is locked: private@example.com")
+        ),
+    )
+    monkeypatch.setattr("sys.argv", ["learning_monitor", "--once"])
+    assert monitor.main() == 1
+    output = capsys.readouterr().out
+    assert "SAFE_ABORT" in output
+    assert "private@example.com" not in output
+    assert "provider_submissions_started" in output
+
+
+def test_history_resume_uses_explicit_page_window_and_short_page_resets_cursor(
+    monkeypatch,
+):
+    monkeypatch.setenv(monitor.ENABLED_ENV, "true")
+    monkeypatch.setattr(monitor.oauth, "status", _connected)
+    pages = []
+
+    def page_report(*, page, limit):
+        pages.append(page)
+        count = 1 if page == 23 else limit
+        return {
+            "listed_applications": count, "distinct_applications_checked": count,
+            "new_observation_rows": count, "replayed_observation_rows": 0,
+        }
+
+    monkeypatch.setattr(monitor.sync, "sync_authorized_learning", page_report)
+    monkeypatch.setattr(
+        monitor.cohort, "learning_cohort_snapshot",
+        lambda: {"phase": "COLLECTING", "processed_applications_total": 1,
+                 "cohort_processed": 1, "unique_ats_in_cohort": 1,
+                 "shadow_improvement_candidates": []},
+    )
+    outcome = monitor.learning_cycle(start_page=21, pages=10)
+    assert pages == [21, 22, 23]
+    assert outcome["history_start_page"] == 21
+    assert outcome["history_window_complete"] is True
+    assert outcome["history_next_page"] == 1
+    assert outcome["provider_submissions_started"] == 0
+
+
+@pytest.mark.parametrize(
+    "start_page,pages", [(0, 1), (201, 1), (198, 5), (200, 2)]
+)
+def test_history_cursor_rejects_invalid_windows(start_page, pages):
+    with pytest.raises(ValueError):
+        monitor.learning_cycle(start_page=start_page, pages=pages)

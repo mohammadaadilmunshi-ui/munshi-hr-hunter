@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from typing import Any
 
@@ -18,12 +19,19 @@ from app import tsenta_oauth_v1 as oauth
 
 ENABLED_ENV = "MUNSHI_TSENTA_LEARNING_AUTO_READONLY_ENABLED"
 DEFAULT_PAGES = 5
-MAX_PAGES = sync.MAX_PAGE
+MAX_PAGES = 20
 
 
-def learning_cycle(*, pages: int = DEFAULT_PAGES, limit: int = 15) -> dict[str, Any]:
-    """Read MUNSHI Relay application history only; never authorize an application."""
-    if not 1 <= pages <= MAX_PAGES or not 1 <= limit <= sync.MAX_BATCH:
+def learning_cycle(
+    *, pages: int = DEFAULT_PAGES, limit: int = 15, start_page: int = 1,
+) -> dict[str, Any]:
+    """Read a bounded window, tracking its next historical page explicitly."""
+    if (
+        not 1 <= pages <= MAX_PAGES
+        or not 1 <= limit <= sync.MAX_BATCH
+        or not 1 <= start_page <= sync.MAX_PAGE
+        or start_page + pages - 1 > sync.MAX_PAGE
+    ):
         raise ValueError("Read-only learning pages/limits are out of bounds.")
 
     report: dict[str, Any] = {
@@ -39,6 +47,8 @@ def learning_cycle(*, pages: int = DEFAULT_PAGES, limit: int = 15) -> dict[str, 
         "native_auto_upgrades_applied": 0,
         "history_window_complete": False,
         "history_page_cap_reached": False,
+        "history_start_page": start_page,
+        "history_next_page": start_page,
     }
     if str(os.getenv(ENABLED_ENV) or "").strip().lower() not in {"true", "1", "yes"}:
         return report
@@ -49,7 +59,7 @@ def learning_cycle(*, pages: int = DEFAULT_PAGES, limit: int = 15) -> dict[str, 
 
     report["enabled"] = True
     report["status"] = "RUNNING"
-    for page in range(1, pages + 1):
+    for page in range(start_page, start_page + pages):
         # Uses authenticated read-only MCP inventory/status/review tools and
         # persists only sanitized, owner-scoped observation records.
         result = sync.sync_authorized_learning(page=page, limit=limit)
@@ -59,8 +69,13 @@ def learning_cycle(*, pages: int = DEFAULT_PAGES, limit: int = 15) -> dict[str, 
         report["replayed_observations"] += int(result["replayed_observation_rows"])
         if int(result["listed_applications"]) < limit:
             report["history_window_complete"] = True
+            report["history_next_page"] = 1
             break
-    if not report["history_window_complete"] and pages == sync.MAX_PAGE:
+        report["history_next_page"] = min(page + 1, sync.MAX_PAGE)
+    if (
+        not report["history_window_complete"]
+        and start_page + pages - 1 == sync.MAX_PAGE
+    ):
         report["history_page_cap_reached"] = True
     # A partial bounded synchronization never claims all historical records
     # were reached. The next scheduled full-window cycle can look further.
@@ -78,10 +93,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Opt-in MUNSHI Relay read-only learning iteration")
     parser.add_argument("--once", action="store_true", required=True)
     parser.add_argument("--pages", type=int, default=DEFAULT_PAGES)
+    parser.add_argument("--start-page", type=int, default=1)
     args = parser.parse_args()
     try:
-        result = learning_cycle(pages=args.pages)
-    except (OSError, RuntimeError, TypeError, ValueError, KeyError):
+        result = learning_cycle(pages=args.pages, start_page=args.start_page)
+    except (OSError, RuntimeError, sqlite3.Error, TypeError, ValueError, KeyError):
         # No provider errors, secret-bearing messages, or raw application IDs.
         print(json.dumps({
             "status": "SAFE_ABORT",

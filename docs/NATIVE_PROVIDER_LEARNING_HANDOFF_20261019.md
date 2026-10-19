@@ -4,17 +4,18 @@ This note is a development contract, not a claim of full ATS support.
 
 ## Sources and authority
 
-- Public vendor claim inventory: https://tsenta.com/ai-disclosure, snapshot on 2026-10-19. Its 30 named ATS/job systems are **marketing claims by a separate provider**, not Native implementations.
+- Public vendor claim inventory: https://tsenta.com/ai-disclosure, snapshot on 2026-10-19. Its 44 named ATS/job systems are **marketing claims by a separate provider**, not Native implementations.
 - Authorized connected-account evidence: `tsenta_observations_v1`, owner-scoped, privacy-minimized, read-only MCP list/status/review tools. Never pull browser internals, credentials, raw resumes, question answer values, or data belonging to other users.
 - Native validation evidence: separate synthetic and held-out real-browser tests. No provider row becomes executable by appearing in the vendor list or by exceeding a status count.
 
 ## Historical inventory and continuous synchronization
 
-1. The sync client pages over existing authorized account applications, 15 per page, 20 pages maximum per invocation. It retrieves status and an available review; only the sanitized projections persist.
-2. Run with the dedicated read-only flag scoped to one process and a single server-side flock. The daily timer repeats so recent provider history is refreshed while keeping production submission authority unchanged.
-3. `history_window_complete=true` only if an actually short provider page is observed; if page 20 is full, surface `history_page_cap_reached=true` and do **not** claim all history was imported. Extend the authorized pagination contract after independently validating vendor API behavior for histories exceeding 300 records.
-4. Incremental application/status observations are deduplicated by owner, opaque application digest, event kind, ATS, status/field fingerprint. Do not promote inferred or unavailable entries.
-5. Dashboard/API `native_provider_learning_digest_v1` categorizes each public claimed platform, aliases, and any other observed ATS. No employer-specific hardcoded submission logic.
+1. The sync client pages over existing authorized account applications, 15 per page, 20 pages maximum **per bounded cycle**, with an independently verified 200-page defensive history ceiling. It retrieves status and an available review; only sanitized projections persist.
+2. Run with the dedicated read-only flag scoped to one process and a single server-side flock. The daily timer refreshes page 1 before continuing older pages from a durable, non-secret cursor; the newest applications are not starved by historical backfill.
+3. `history_window_complete=true` only if a short provider page is observed. A full 20-page window persists its next page atomically; the next daily run continues where it stopped. The global cap is page 200 and must surface an explicit error if reached without an end-of-history marker. Provider page 21 was independently probed as supported on 2026-10-19; higher pages remain provider-behavior-dependent.
+4. Transient SQLite BUSY/LOCKED writes retry at most three times after the initial attempt with fresh connections and bounded waits, reusing stable observation IDs. Other SQL failures abort without retry, and no provider submission is ever retried.
+5. Incremental application/status observations are deduplicated by owner, opaque application digest, event kind, ATS, status/field fingerprint. Do not promote inferred or unavailable entries.
+6. Dashboard/API `native_provider_learning_digest_v1` categorizes each public claimed platform, aliases, and any other observed ATS. No employer-specific hardcoded submission logic.
 
 ## Invariants
 
@@ -41,7 +42,7 @@ This note is a development contract, not a claim of full ATS support.
 
 ## Release/testing gate
 
-- Unit tests: all 30 claims included, novel ATS preserved, vendor claims never executable, no private values emitted, tenant-scoped DB read-only, existing-schema ingestion avoids unnecessary DDL.
+- Unit tests: all 44 claims included, novel ATS preserved, vendor claims never executable, no private values emitted, tenant-scoped DB read-only, existing-schema ingestion avoids unnecessary DDL.
 - Operator checks: learning sync authorized and read-only; status reports 0 provider submissions and 0 Native auto-upgrades; database/schema/worker identity unchanged except sanitized learning insertions.
 - Runtime: daily bounded scheduled synchronization with lock, timeout, journal receipt; do not overlap migrations or one another.
 - A **real** Native account/signup -> verification email -> same-session multi-page continuation -> one-shot submit -> independent employer receipt canary remains outstanding. Current stored status observations do not constitute this proof.
