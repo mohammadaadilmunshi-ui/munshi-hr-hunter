@@ -203,3 +203,11 @@
 @media(prefers-reduced-motion:reduce) {
   .stApp *, .stApp *::before,.stApp *::after {animation:none!important;transition:none!important;scroll-behavior:auto!important}
 }
+
+/* Compact MUNSHI Native readiness signal, separate from candidate match. */
+.munshi-apply-pulse {display:flex;flex-wrap:wrap;align-items:center;gap:.35rem;
+  margin-top:.65rem;padding:.52rem .65rem;border-radius:11px;
+  background:#f3faf5;border:1px solid #d7e9e0;color:#245849}
+.munshi-apply-pulse .pulse-name {font-size:.7rem;font-weight:650}
+.munshi-apply-pulse .pulse-value {font-size:.91rem;font-weight:800;font-variant-numeric:tabular-nums}
+.munshi-apply-pulse .pulse-stage {margin-left:auto;font-size:.68rem;color:#487565}

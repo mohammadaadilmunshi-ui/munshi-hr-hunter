@@ -15,6 +15,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from app.job_destination_v1 import describe_job_destination
+from app.native_apply_pulse_v1 import apply_pulse, evidence_snapshot
 from app.linkedin_verified_url_evidence_v5 import (
     destination_buttons as linkedin_destination_buttons,
 )
@@ -301,10 +302,35 @@ def _open_job_detail(job_id: int) -> None:
     st.session_state[_PRODUCT_JOB_DIALOG_STATE_KEY] = int(job_id)
 
 
-def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
+def _pulse_evidence() -> dict[str, Any]:
+    try:
+        return evidence_snapshot()
+    except Exception as error:  # noqa: BLE001 - job browsing cannot depend on learning
+        _LOGGER.warning("APPLY_PULSE_EVIDENCE_UNAVAILABLE error_type=%s", type(error).__name__)
+        return {"providers": {}, "aliases": {}, "native_receipts": {}}
+
+
+def _pulse_html(pulse: dict[str, Any]) -> str:
+    number = pulse.get("percent")
+    visible = f"{int(number)}%" if isinstance(number, int) else "Growing"
+    return (
+        f'<div class="munshi-apply-pulse" '
+        f'title="{esc(pulse.get("description"), "Native application readiness")}">'
+        f'<span class="pulse-name">✦ MUNSHI Apply Pulse</span>'
+        f'<strong class="pulse-value">{visible}</strong>'
+        f'<span class="pulse-stage">{esc(pulse.get("stage"), "Learning")}</span>'
+        f'</div>'
+    )
+
+
+def _job_card(
+    row: dict[str, Any], *, key_prefix: str,
+    pulse_evidence: dict[str, Any] | None = None,
+) -> None:
     job_id = int(row["id"])
     flow = _application_flow(job_id)
     destination = _job_destination(row)
+    pulse = apply_pulse(destination, pulse_evidence or _pulse_evidence())
     tone = pastel_for(job_id)
     tags = [row.get("remote_type"), row.get("employment_type"), row.get("salary_raw")]
     if flow.get("state"):
@@ -322,7 +348,8 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
                 <div class="job-top"><span>{esc(row.get("location_raw"), "Location unknown")}<br><span class="quiet">{esc(_relative_time(row.get("first_seen_at")))}</span></span>{score_ring(row.get("hunter_score"), tone)}</div>
                 <div class="job-title">{esc(row.get("title"), "Untitled role")}</div>
                 <div>{tags_html}</div><div class="job-company">{esc(row.get("company_name"), "Company not recorded")}</div>
-                <div class="job-destination"><span><b>Apply via:</b> {esc(destination.apply_via)}</span><span><b>Source:</b> {esc(destination.source)}</span></div></div></div></div>""",
+                <div class="job-destination"><span><b>Apply via:</b> {esc(destination.apply_via)}</span><span><b>Source:</b> {esc(destination.source)}</span></div>
+                {_pulse_html(pulse)}</div></div></div>""",
             unsafe_allow_html=True,
         )
         st.button(
@@ -423,6 +450,7 @@ def _job_detail_dialog(job_id: int) -> None:
     st.markdown(f"## {esc(row.get('title'), 'Untitled role')}", unsafe_allow_html=True)
     st.caption(f"{row.get('company_name') or 'Company not recorded'} · {row.get('location_raw') or 'Location unknown'}")
     st.caption(f"Apply via: {destination.apply_via} · Source: {destination.source}")
+    st.markdown(_pulse_html(apply_pulse(destination, _pulse_evidence())), unsafe_allow_html=True)
     flow = _application_flow(job_id)
     from app.application_provider_ui_v1 import provider_progress
 
@@ -648,10 +676,12 @@ def dashboard() -> None:
     jobs, count = fetch_jobs(**filters, page_size=4)
     st.markdown(f'<div class="section-row"><div><h2>Top matches</h2><span class="quiet">{count:,} opportunities · ranked by canonical Hunter score</span></div><a class="product-nav-link" href="?view=jobs" target="_self">Browse all jobs →</a></div>', unsafe_allow_html=True)
     if jobs:
+        pulse_evidence = _pulse_evidence()
         with st.container(key="product_dashboard_grid"):
             columns = st.columns(min(4, len(jobs)), gap="medium")
             for index, row in enumerate(jobs):
-                with columns[index % len(columns)]: _job_card(row, key_prefix="dashboard")
+                with columns[index % len(columns)]:
+                    _job_card(row, key_prefix="dashboard", pulse_evidence=pulse_evidence)
     else:
         st.markdown('<div class="empty-product">No jobs match the current filters. Change a filter or add a job with its complete description.</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-row"><div><h2>Application activity</h2><span class="quiet">Current application status and next steps</span></div><a class="product-nav-link" href="?view=tracker" target="_self">Open tracker →</a></div>', unsafe_allow_html=True)
@@ -682,12 +712,14 @@ def browse_jobs() -> None:
     if st.session_state.get("show_manual_job"):
         _manual_add()
     if jobs:
+        pulse_evidence = _pulse_evidence()
         with st.container(key="product_job_grid"):
             for start in range(0, len(jobs), 4):
                 with st.container(key=f"product_job_grid_row_{start}"):
                     cols = st.columns(4, gap="medium")
                     for index, row in enumerate(jobs[start:start + 4]):
-                        with cols[index]: _job_card(row, key_prefix="jobs")
+                        with cols[index]:
+                            _job_card(row, key_prefix="jobs", pulse_evidence=pulse_evidence)
         prev, _, next_ = st.columns((1, 3, 1))
         with prev:
             if st.button("← Previous", disabled=page <= 1, key="jobs_previous"):
