@@ -1,7 +1,8 @@
 """Package first-party presentation into Streamlit's initial HTML at image build.
 
-No runtime monkey patches, JavaScript, network access, data reads or execution
-authority. The regular st.html stylesheet remains the non-container fallback.
+No runtime monkey patches, network access, data reads or execution authority.
+A one-shot DOM observer reveals the initial frame, then disconnects permanently.
+The regular st.html stylesheet remains the non-container fallback.
 The initial loading shell prevents unthemed placeholders flashing before the
 first complete render; later reruns retain the already mounted application.
 """
@@ -15,15 +16,30 @@ START = "<!-- munshi-packaged-theme -->"
 END = "<!-- /munshi-packaged-theme -->"
 BOOT = """<style>
 #munshi-boot-status{display:none}
-body:is(:not(:has(.munshi-boot-ready)),:has([data-testid=stSkeleton])):not(:has([data-testid=stException])) [data-testid=stMain]{content-visibility:hidden;contain-intrinsic-size:auto 100vh}
-body:is(:not(:has(.munshi-boot-ready)),:has([data-testid=stSkeleton])):not(:has([data-testid=stException])) #munshi-boot-status{
+html:not([data-munshi-ready]) body:not(:has([data-testid=stException])) [data-testid=stMain]{visibility:hidden}
+html:not([data-munshi-ready]) body:not(:has([data-testid=stException])) #munshi-boot-status{
  display:flex;position:fixed;inset:0;align-items:center;justify-content:center;
  flex-direction:column;gap:1rem;background:#F6F7F4;color:#123D31;
  font-family:Manrope,system-ui,sans-serif;z-index:9999}
 #munshi-boot-status strong{font-size:1.25rem;font-weight:750;letter-spacing:-.04em}
 #munshi-boot-status span{font-size:.9rem;color:#44545B}
 .stApp [data-testid=stElementContainer]:has(.munshi-boot-ready){display:none!important}
-</style>"""
+</style><script>
+(()=>{
+ let revealing=false;
+ const hydrated=()=>document.querySelector('.munshi-boot-ready')&&!document.querySelector('[data-testid=stSkeleton]');
+ const observer=new MutationObserver(()=>{
+  if(document.querySelector('[data-testid=stException]')){observer.disconnect();return;}
+  if(revealing||!hydrated())return;
+  revealing=true;
+  document.fonts.ready.then(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
+   if(hydrated()){document.documentElement.dataset.munshiReady='true';observer.disconnect();}
+   else revealing=false;
+  })));
+ });
+ observer.observe(document.documentElement,{childList:true,subtree:true});
+})();
+</script>"""
 STATUS = '<div id="munshi-boot-status" role="status" aria-live="polite"><strong>MUNSHI</strong><span>Opening your workspace…</span></div>'
 
 

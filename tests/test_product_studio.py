@@ -21,7 +21,9 @@ def test_packaged_theme_is_idempotent_and_does_not_hide_errors():
     assert ':not(:has([data-testid=stException]))' in once
     assert 'aria-live="polite"' in once
     assert 'setTimeout' not in once
-    assert '<script' not in once
+    assert 'observer.disconnect()' in once
+    assert 'addEventListener' not in once  # no repeated click/touch delegation
+    assert 'document.fonts.ready' in once
     assert once.index('body{color:green}') < once.index('</head>')
 
 

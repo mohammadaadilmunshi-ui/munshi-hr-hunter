@@ -34,8 +34,10 @@ def ready(page):
     errors = page.locator('[data-testid="stException"]').all_text_contents()
     assert not errors, errors
     page.locator("#uiux-runtime").wait_for(timeout=45000)
-    assert "Synthetic staging" in page.locator("#uiux-runtime").inner_text()
+    assert "Synthetic staging" in page.locator("#uiux-runtime").text_content()
     page.wait_for_function("!document.querySelector('[data-testid=stSkeleton]')", timeout=30000)
+    if page.locator('#munshi-boot-status').count():
+        page.locator('#munshi-boot-status').wait_for(state='hidden', timeout=30000)
     errors = page.locator('[data-testid="stException"]').all_text_contents()
     assert not errors, errors
 
@@ -43,6 +45,64 @@ def ready(page):
 def changed(page, previous):
     page.wait_for_function("old=>document.querySelector('#uiux-runtime')?.dataset.runs!==old", arg=previous, timeout=30000)
     ready(page)
+
+
+def mobile_dock(page):
+    dock = page.locator('.st-key-product_mobile_routes')
+    assert dock.bounding_box()['height'] <= 90, 'Bottom navigation must not cover the page'
+    buttons = dock.get_by_role('button')
+    assert buttons.count() == 5
+    bounds = [button.bounding_box() for button in buttons.all()]
+    assert max(b['y'] for b in bounds) - min(b['y'] for b in bounds) <= 1
+    assert all(b['height'] >= 44 and b['width'] >= 44 for b in bounds)
+
+
+def profile_acceptance(page, url, output):
+    page.goto(url + '/?view=profile'); ready(page)
+    intake = page.get_by_role('textbox', name='Review your source text', exact=True)
+    if intake.count():
+        source = ('Alex Fixture\nalex.fixture@example.invalid | New York, NY\n'
+                  'PROFESSIONAL SUMMARY\nHR analyst with experience in people analytics and recruiting operations.\n'
+                  'EXPERIENCE\nHR Analyst | Fictional Research Foundation | 2022 - 2025\n'
+                  '- Built Excel and Power BI reporting for recruiting operations.\n'
+                  'EDUCATION\nBachelor of Science in Human Resources | Fictional University | 2021\n'
+                  'SKILLS\nExcel, Power BI, SQL, recruiting operations\n')
+        page.get_by_role('textbox', name='Source name', exact=True).fill('Synthetic QA Master Resume')
+        intake.fill(source)
+        page.get_by_text('I confirm this source is truthful and may be used to build my profile and job-specific resumes.', exact=True).click()
+        assert page.get_by_role('checkbox', name='I confirm this source is truthful', exact=False).is_checked()
+        page.get_by_role('button', name='Save Master Resume source', exact=True).click()
+        page.get_by_role('button', name='Build profile from Master Resume', exact=True).wait_for()
+    build = page.get_by_role('button', name='Build profile from Master Resume', exact=True)
+    if build.count():
+        build.click()
+        page.get_by_role('button', name='Confirm as permanent profile', exact=True).wait_for()
+    confirm = page.get_by_role('button', name='Confirm as permanent profile', exact=True)
+    if confirm.count():
+        previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+        confirm.click()
+        changed(page, previous)
+        page.get_by_text('Permanent MUNSHI profile confirmed. This reviewed snapshot is now the reusable profile authority.', exact=True).wait_for()
+    page.get_by_text('confirmed Candidate Truth facts', exact=False).wait_for()
+    page.get_by_role('button', name='Preview resume', exact=True).click()
+    frame = page.frame_locator('iframe[title="st.iframe"]').first
+    frame.locator('.paper').wait_for()
+    assert 'Alex Fixture' in frame.locator('.paper').inner_text()
+    assert frame.locator('.source-name').is_visible()
+    assert frame.locator('.paper').bounding_box()['height'] > 200
+    page.get_by_text('Master Resume preview', exact=True).scroll_into_view_if_needed()
+    page.screenshot(path=str(output / 'chromium-profile-paper-visible.png'))
+    previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+    page.get_by_role('button', name='Preview resume', exact=True).click()
+    changed(page, previous)
+    assert page.locator('iframe[title="st.iframe"]').count() == 0
+    page.locator('.st-key-product_primary_routes').get_by_role('button', name='Resume Studio', exact=True).click()
+    page.get_by_text('Resume appearance · preview only', exact=True).click()
+    page.get_by_role('button', name='Jake', exact=True).click()
+    page.get_by_role('combobox', name='Selected Computer Modern. Font', exact=True).wait_for()
+    ready(page)
+    page.screenshot(path=str(output / 'chromium-resume-appearance.png'))
+    assert not page.locator('[data-testid="stException"]').count()
 
 
 def run(url: str, output: Path, *, baseline: bool = False):
@@ -79,6 +139,7 @@ def run(url: str, output: Path, *, baseline: bool = False):
                     (output / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
                 if width < 900 and not baseline:
                     page.goto(url + "/?view=jobs");ready(page)
+                    mobile_dock(page)
                     page.get_by_role("button", name="Open job details", exact=True).first.wait_for()
                     page.locator('.job-title').first.tap()
                     assert page.get_by_role("dialog").count() == 0
@@ -95,6 +156,18 @@ def run(url: str, output: Path, *, baseline: bool = False):
                     assert not page.locator('.mobile-nav').evaluate('e=>e.open')
                     results["interactions"].append({"engine":engine,"width":width,"action":"mobile drawer, ordinary touch, dock and menu", "passed":True})
                 assert not console_errors, console_errors
+                page.close()
+            if not baseline:
+                page = browser.new_page(viewport={"width":1440,"height":1000}, has_touch=True, reduced_motion="reduce")
+                for view in ('dashboard', 'jobs', 'profile'):
+                    page.goto(url + '/?view=' + view);ready(page)
+                    for width in (375,430,768,1280,1920):
+                        page.set_viewport_size({'width':width,'height':844 if width<900 else 1000})
+                        assert page.locator('[data-testid="stMain"]').evaluate('e=>e.scrollWidth-e.clientWidth') <= 1
+                        if width < 900:
+                            mobile_dock(page)
+                        page.screenshot(path=str(output / f'{engine}-{width}-{view}.png'))
+                        results['interactions'].append({'engine':engine,'width':width,'action':view+' responsive layout','passed':True})
                 page.close()
             if engine == "chromium" and not baseline:
                 page = browser.new_page(viewport={"width":1440,"height":1000})
@@ -147,6 +220,13 @@ def run(url: str, output: Path, *, baseline: bool = False):
                 assert page.locator("#uiux-runtime").get_attribute("data-runs") == before
                 results["interactions"].append({"action":"engine status fragment", "full_page_reruns":0})
                 page.close()
+            browser.close()
+        if not baseline:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(viewport={'width':1440,'height':1000})
+            page.route('https://**/*', lambda route:route.abort())
+            profile_acceptance(page,url,output)
+            results['interactions'].append({'action':'source intake, local profile build, explicit confirmation, visible paper preview, appearance controls','passed':True})
             browser.close()
     (output / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
     return results
