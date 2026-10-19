@@ -87,7 +87,7 @@ def evidence_snapshot() -> dict[str, Any]:
 
 
 def _provider_evidence(destination: JobDestination, snapshot: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
-    key = slug(destination.provider)
+    key = slug(getattr(destination, "provider", None))
     key = dict(snapshot.get("aliases") or {}).get(key, key)
     item = dict(snapshot.get("providers") or {}).get(key) or {}
     receipts = dict(snapshot.get("native_receipts") or {})
@@ -107,12 +107,12 @@ def apply_pulse(
     These are additive evidence milestones, NOT empirical submission odds.
     Missing training does not create a fabricated success history.
     """
-    host = str(destination.destination_domain or "").casefold().rstrip(".")
+    host = str(getattr(destination, "destination_domain", "") or "").casefold().rstrip(".")
     direct = (
-        bool(destination.original_url)
+        bool(getattr(destination, "original_url", None))
         and bool(host)
         and not any(host == agg or host.endswith("." + agg) for agg in AGGREGATORS)
-        and destination.confidence in {"high", "stored", "domain_only"}
+        and getattr(destination, "confidence", None) in {"high", "stored", "domain_only"}
     )
     if not direct:
         return {
@@ -126,7 +126,7 @@ def apply_pulse(
     raw_ref_count = max(0, int(stats.get("distinct_application_refs") or 0))
     form_refs = max(0, int(stats.get("distinct_form_application_refs") or 0))
     kinds = list(stats.get("observed_control_kinds") or [])
-    recognized = bool(destination.provider)
+    recognized = bool(getattr(destination, "provider", None))
     # 34pts generic built-in preparation + 18pts exact employer route.
     # Platform type, history, actual fields and independently verified Native
     # receipts add capped evidence. Vendor marketing has *zero* weight.
