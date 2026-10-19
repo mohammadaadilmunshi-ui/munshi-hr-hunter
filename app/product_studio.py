@@ -9,11 +9,12 @@ from functools import lru_cache
 import base64
 from pathlib import Path
 from textwrap import dedent
+from urllib.parse import quote
 
 import streamlit as st
 
 from app.product_ui import esc
-from app.product_experience_vnext import product_href
+from app.product_experience_vnext import product_href, _MOBILE_ICONS
 
 
 @lru_cache(maxsize=1)
@@ -30,7 +31,11 @@ def studio_css() -> str:
             'font-display:swap;src:url(data:font/woff2;base64,' + encoded + ') format("woff2");'
             'unicode-range:' + unicode_range + ';}'
         )
-    return "<style>" + "".join(faces) + (assets / "product_studio.css").read_text() + "</style>"
+    icons = []
+    for route, paths in _MOBILE_ICONS.items():
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 26" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + paths + '</svg>'
+        icons.append('[class*="st-key-product_route_mobile_' + route + '_"]{--route-icon:url("data:image/svg+xml,' + quote(svg, safe="") + '")}')
+    return "<style>" + "".join(faces) + "".join(icons) + (assets / "product_studio.css").read_text() + "</style>"
 
 
 def inject_studio_css() -> None:

@@ -27,7 +27,6 @@ def _link(view: str, label: str, current: str, *, mobile: bool = False) -> None:
     with st.container(key=f"product_route_{'mobile' if mobile else 'desktop'}_{view}_{state}"):
         st.button(
             label=label, key=f"route_{'mobile' if mobile else 'desktop'}_{view}",
-            icon=ICONS.get(view) if mobile else None,
             on_click=navigate, args=(view,), use_container_width=True,
             type="primary" if current == view else "tertiary",
         )
