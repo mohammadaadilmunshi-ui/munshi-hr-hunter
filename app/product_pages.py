@@ -563,7 +563,7 @@ def _search_filters(namespace: str) -> dict[str, Any]:
         active = sum(st.session_state[f"{namespace}_filter_{key}"] != default
                      for key, default in defaults.items() if key != "query")
         filter_label = f"Filters · {active} active" if active else "Filters · location, match & sort"
-        with st.expander(filter_label, expanded=False):
+        with st.expander(filter_label, expanded=False, key=f"{namespace}_filter_disclosure"):
             scope = st.selectbox(
                 "Search in",
                 ["all_fields", "title_description", "title_company"],

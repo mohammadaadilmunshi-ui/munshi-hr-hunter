@@ -269,6 +269,17 @@ def run(url: str, output: Path, *, baseline: bool = False):
                 assert page.evaluate("window.uiuxDocumentSentinel") == "retained"
                 results["interactions"].append({"action":"live search", "passed":True})
 
+                filters = page.locator('.st-key-jobs_filter_disclosure')
+                filters.locator('summary').click()
+                page.get_by_role('combobox',name=re.compile(r'\. Location$')).click()
+                page.get_by_role('option',name='Remote, US',exact=True).click()
+                page.wait_for_function("[...document.querySelectorAll('.job-top')].length>0&&[...document.querySelectorAll('.job-top')].every(e=>e.textContent.includes('Remote, US'))")
+                assert filters.locator('details').evaluate('e=>e.open')
+                page.get_by_role('button',name='Reset filters',exact=True).click()
+                page.wait_for_function("document.querySelector('input[aria-label=\"Search jobs, companies, or locations\"]')?.value===''")
+                assert page.locator('#uiux-runtime').get_attribute('data-runs') == previous
+                results['interactions'].append({'action':'filter disclosure, location selection, persistent expansion and reset','passed':True,'full_page_reruns':0})
+
                 previous = page.locator("#uiux-runtime").get_attribute("data-runs")
                 page.locator('.st-key-product_primary_routes').get_by_role("button", name="Dashboard", exact=True).click()
                 changed(page, previous)
