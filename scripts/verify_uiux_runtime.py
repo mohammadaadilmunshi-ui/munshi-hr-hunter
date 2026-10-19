@@ -14,7 +14,8 @@ import time
 from playwright.sync_api import sync_playwright
 
 VIEWS = ("dashboard", "jobs", "prepare-application", "auto-prepare", "tracker", "profile", "resume-studio", "research", "settings")
-OBSERVE = """window.ux={cls:0,shift_sum:0,lcp:0,events:[],supported:PerformanceObserver.supportedEntryTypes};
+OBSERVE = """const supported=PerformanceObserver.supportedEntryTypes;
+window.ux={cls:supported.includes('layout-shift')?0:null,shift_sum:supported.includes('layout-shift')?0:null,lcp:supported.includes('largest-contentful-paint')?0:null,events:[],supported};
 let firstShift=0,lastShift=0,windowScore=0;
 for(const type of ['layout-shift','largest-contentful-paint','event']){
  if(!PerformanceObserver.supportedEntryTypes.includes(type))continue;
