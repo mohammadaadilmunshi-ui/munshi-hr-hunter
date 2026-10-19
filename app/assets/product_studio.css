@@ -88,7 +88,12 @@
 .stApp :is(a,button,input,textarea,summary,[role="tab"]):focus-visible {
   outline:3px solid var(--m-brass)!important;outline-offset:3px}
 .stApp [data-testid="stRadio"] label {min-height:44px;padding:.45rem .75rem!important;border-radius:8px}
-.stApp [data-testid="stBaseButton-segmented_control"] {min-height:44px!important}
+.stApp [data-testid^="stBaseButton-segmented_control"],
+.stApp [data-testid="stSegmentedControl"] button,
+.stApp [class*="st-key-native_resume_canvas_template"] button,
+.stApp [class*="st-key-native_resume_canvas_alignment"] button {
+  min-height:44px!important;box-sizing:border-box!important;touch-action:manipulation
+}
 .stApp [data-testid="stCheckbox"] label,.stApp [data-testid="stToggle"] label,
 .stApp .profile-tab-link {min-height:44px}
 .stApp [data-testid="stTabs"] [role="tab"] {min-height:48px}

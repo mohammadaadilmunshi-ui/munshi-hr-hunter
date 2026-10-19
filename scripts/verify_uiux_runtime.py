@@ -114,7 +114,10 @@ def profile_acceptance(page, url, output):
     )
     jake.wait_for(state='visible', timeout=15000)
     box = jake.bounding_box()
-    assert box is not None and box['height'] >= 44
+    assert box is not None and box['height'] >= 44, {
+        'box': box,
+        'markup': jake.evaluate('element => element.outerHTML.slice(0, 700)'),
+    }
     ready(page)
     page.screenshot(path=str(output / 'chromium-resume-appearance.png'))
     assert not page.locator('[data-testid="stException"]').count()
