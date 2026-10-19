@@ -120,6 +120,17 @@ def test_navigation_escapes_labels_and_styles_keep_motion_focus_safe():
     assert "fonts.googleapis.com" not in css
 
 
+def test_small_text_tokens_meet_aa_on_the_product_surfaces():
+    def luminance(value):
+        rgb = [int(value[index:index+2],16)/255 for index in (0,2,4)]
+        linear = [v/12.92 if v<=.04045 else ((v+.055)/1.055)**2.4 for v in rgb]
+        return sum(a*b for a,b in zip(linear,(.2126,.7152,.0722)))
+    for foreground, background in [('805b24','f6f7f4'),('52636a','f6f7f4'),('66736b','ffffff')]:
+        low,high=sorted((luminance(foreground),luminance(background)))
+        assert (high+.05)/(low+.05)>=4.5
+        assert '#'+foreground in studio_css()
+
+
 def test_synthetic_preview_does_not_need_database_or_backend():
     # Isolate imports as well as data: modules using `from ... import` retain
     # patched references, so a process boundary prevents contaminating other tests.

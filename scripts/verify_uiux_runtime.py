@@ -174,6 +174,9 @@ def run(url: str, output: Path, *, baseline: bool = False):
                     started = time.perf_counter()
                     page.goto(url + "/?view=" + view, wait_until="domcontentloaded")
                     ready(page)
+                    if not baseline:
+                        assert page.evaluate("[...document.fonts].some(f=>f.family==='Manrope'&&f.status==='loaded')")
+                        assert page.locator('.brand-mark img').evaluate('e=>e.complete&&e.naturalWidth>0')
                     if view in {"dashboard", "jobs"}:
                         page.get_by_role("button", name="Save", exact=True).first.wait_for(timeout=30000)
                     if view == "dashboard":

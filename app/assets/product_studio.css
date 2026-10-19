@@ -2,6 +2,7 @@
 :root {
   --studio-space:clamp(1rem,2.4vw,2.5rem);
   --studio-line:#dfe5e0;--studio-muted:#52636a;
+  --studio-accent-ink:#805b24;
   --studio-ease:cubic-bezier(.2,.7,.2,1);
 }
 /* Remove layout slots belonging solely to invisible CSS injection. */
@@ -35,7 +36,7 @@
 .studio-location strong {color:var(--m-forest);font-weight:650}
 .studio-location>span {color:#84938a}
 .product-page {padding:1.1rem 0 .6rem;border-bottom:1px solid var(--studio-line);margin-bottom:.8rem}
-.page-kicker-product {text-transform:none;letter-spacing:0;font-size:.8rem;font-weight:650;color:var(--m-brass)}
+.page-kicker-product {text-transform:none;letter-spacing:0;font-size:.8rem;font-weight:650;color:var(--studio-accent-ink)}
 .stApp h1 {font-size:clamp(1.9rem,3.3vw,3rem)!important;line-height:1.15!important;
   letter-spacing:-.045em!important;font-weight:750!important;text-wrap:balance;font-family:var(--m-font)!important}
 .stApp h2 {letter-spacing:-.025em!important;text-wrap:balance}
@@ -68,6 +69,10 @@
 .section-row {margin:1.75rem 0 .85rem;align-items:center}
 .section-row .quiet {display:block;font-size:.84rem;line-height:1.5;margin-top:.25rem}
 .stApp [data-testid="stCaptionContainer"] {color:var(--studio-muted);line-height:1.65}
+.stApp [data-testid="stCaptionContainer"] p {color:var(--studio-muted)!important}
+.stApp input::placeholder,.stApp textarea::placeholder {color:#66736b!important;opacity:1!important}
+.stApp .profile-entry-meta,.stApp .profile-cert-issuer,.stApp .profile-brand-note,
+.stApp .profile-default-row {color:var(--studio-muted)!important;line-height:1.5}
 .stApp [data-testid="stExpander"] {border-radius:12px!important;box-shadow:none!important}
 .stApp [data-testid="stExpander"] summary {min-height:48px!important;background:#fff!important;font-size:.9rem}
 .stApp [data-testid="stExpander"] summary:focus-visible {outline:3px solid var(--m-brass);outline-offset:-3px}
