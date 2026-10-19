@@ -1,5 +1,9 @@
 # MUNSHI Studio — review and release-readiness report
 
+Historical foundation report for `afaa097`. Its staging/CI limitations were
+subsequently addressed; see [the complete runtime review](PREMIUM_STREAMLIT_ACCEPTANCE_20261019.md)
+for the later implementation, actual application evidence and current limits.
+
 Status: source review candidate. **Not production validated or deploy-ready.** No push, PR, merge, deployment, service restart, real application, email, or production database operation was performed. No Mac MUNSHI server or worker was started.
 
 ## Source authority and production evidence
