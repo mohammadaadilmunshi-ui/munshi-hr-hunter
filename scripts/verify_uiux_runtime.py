@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 import time
 
@@ -67,6 +68,10 @@ def profile_acceptance(page, url, output):
                   '- Built Excel and Power BI reporting for recruiting operations.\n'
                   'EDUCATION\nBachelor of Science in Human Resources | Fictional University | 2021\n'
                   'SKILLS\nExcel, Power BI, SQL, recruiting operations\n')
+        previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+        page.locator('input[type=file]').set_input_files({'name':'synthetic-qa-resume.txt','mimeType':'text/plain','buffer':source.encode()})
+        changed(page,previous)
+        assert intake.input_value() == source
         page.get_by_role('textbox', name='Source name', exact=True).fill('Synthetic QA Master Resume')
         intake.fill(source)
         page.get_by_text('I confirm this source is truthful and may be used to build my profile and job-specific resumes.', exact=True).click()
@@ -90,6 +95,7 @@ def profile_acceptance(page, url, output):
     assert 'Alex Fixture' in frame.locator('.paper').inner_text()
     assert frame.locator('.source-name').is_visible()
     assert frame.locator('.paper').bounding_box()['height'] > 200
+    frame.locator('.paper').screenshot(path=str(output / 'chromium-profile-paper.png'))
     page.get_by_text('Master Resume preview', exact=True).scroll_into_view_if_needed()
     page.screenshot(path=str(output / 'chromium-profile-paper-visible.png'))
     previous = page.locator('#uiux-runtime').get_attribute('data-runs')
@@ -103,6 +109,53 @@ def profile_acceptance(page, url, output):
     ready(page)
     page.screenshot(path=str(output / 'chromium-resume-appearance.png'))
     assert not page.locator('[data-testid="stException"]').count()
+
+
+def workspace_acceptance(page, url, output):
+    page.goto(url + '/?view=prepare-application'); ready(page)
+    search = page.get_by_role('textbox', name='Search applications', exact=True)
+    search.fill('no-such-synthetic-application');search.press('Enter')
+    page.get_by_text('No applications match this view.',exact=True).wait_for()
+    search.fill('');search.press('Enter')
+    page.get_by_role('button',name='Open application',exact=True).first.wait_for()
+    page.get_by_role('button',name='Open application',exact=True).first.click()
+    page.get_by_role('button',name='Selected',exact=True).wait_for()
+    assert 'application=' in page.url
+    assert not page.locator('[data-testid=stException]').count()
+    page.get_by_role('button',name='Close',exact=True).first.click()
+    page.get_by_text('Select an application',exact=True).wait_for()
+    page.screenshot(path=str(output / 'chromium-application-center-interacted.png'))
+    page.goto(url + '/?view=tracker');ready(page)
+    previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+    page.get_by_text('Inbox',exact=True).click()
+    changed(page,previous)
+    page.get_by_role('button',name='Connect Gmail',exact=True).wait_for()
+    assert page.get_by_role('button',name='Connect Gmail',exact=True).is_disabled()
+    assert 'tab=inbox' in page.url
+    previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+    page.get_by_text('Pipeline',exact=True).click();changed(page,previous)
+    page.get_by_role('combobox',name=re.compile(r'\. Status$')).wait_for()
+    page.goto(url + '/?view=research');ready(page)
+    for section in ('Companies','Role signals','Risks','Opportunities'):
+        previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+        page.get_by_text(section,exact=True).click()
+        changed(page,previous)
+        assert not page.locator('[data-testid=stException]').count()
+    page.goto(url + '/?view=settings');ready(page)
+    page.get_by_role('button',name='Save review preference',exact=True).click()
+    page.get_by_text('Review preference saved.',exact=True).wait_for()
+    for section in ('Automation','Integrations','Profile & defaults','Credentials','Apply'):
+        previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+        page.get_by_text(section,exact=True).click()
+        changed(page,previous)
+        assert not page.locator('[data-testid=stException]').count()
+    page.goto(url + '/?view=jobs');ready(page)
+    details = page.get_by_role('button',name='Open job details',exact=True).first
+    details.focus()
+    assert details.evaluate('e=>getComputedStyle(e).outlineStyle') != 'none'
+    details.press('Enter');page.get_by_role('dialog').wait_for()
+    page.keyboard.press('Escape');page.get_by_role('dialog').wait_for(state='hidden')
+    assert not page.locator('[data-testid=stException]').count()
 
 
 def run(url: str, output: Path, *, baseline: bool = False):
@@ -225,6 +278,8 @@ def run(url: str, output: Path, *, baseline: bool = False):
             browser = p.chromium.launch(headless=True)
             page = browser.new_page(viewport={'width':1440,'height':1000})
             page.route('https://**/*', lambda route:route.abort())
+            workspace_acceptance(page,url,output)
+            results['interactions'].append({'action':'application selection/search/close, tracker inbox/pipeline, research tabs, settings save/sections, keyboard drawer','passed':True})
             profile_acceptance(page,url,output)
             results['interactions'].append({'action':'source intake, local profile build, explicit confirmation, visible paper preview, appearance controls','passed':True})
             browser.close()

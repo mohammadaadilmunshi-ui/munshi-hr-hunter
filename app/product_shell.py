@@ -104,6 +104,10 @@ def _resolved_subroute_state(
     if view == "settings" and section in SETTINGS_SECTIONS:
         return ("product_settings_section", SETTINGS_SECTIONS[section])
 
+    research_sections = {"opportunities": "Opportunities", "companies": "Companies", "roles": "Role signals", "risks": "Risks"}
+    if view == "research" and section in research_sections:
+        return ("unified_research_section", research_sections[section])
+
     return None
 
 

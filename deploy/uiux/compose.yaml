@@ -30,6 +30,7 @@ services:
       AADIL_HR_HUNTER_PROJECT: /app/hunter
       AADIL_HR_HUNTER_RUNTIME: /app/hunter/.runtime
       DATABASE_PATH: /app/hunter/data/uiux-synthetic.db
+      MUNSHI_VAULT_KEY_FILE: /app/hunter/.runtime/uiux-vault.key
       CLOUD_SHADOW_MODE: "true"
       PRODUCTION_STATE_IMPORTED: "false"
       PRODUCTION_CALLBACKS_ENABLED: "false"

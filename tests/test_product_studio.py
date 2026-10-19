@@ -12,6 +12,24 @@ from app.product_studio import studio_css, workspace_location
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_tracker_selection_updates_shareable_route_without_external_work():
+    app = AppTest.from_string('''
+import streamlit as st
+from types import SimpleNamespace
+from unittest.mock import patch
+from app import product_pages, unified_job_workspaces_v1 as workspaces
+pages=SimpleNamespace(_sync_subroute=product_pages._sync_subroute,_inbox=lambda:st.caption("Synthetic inbox"))
+with patch.object(workspaces,"_pipeline_records",return_value=[]):
+ workspaces.render_tracker(pages)
+''').run()
+    assert not app.exception
+    app.radio[0].set_value('Inbox').run()
+    assert not app.exception
+    assert app.query_params['tab'] == ['inbox']
+    from app.product_shell import _resolved_subroute_state
+    assert _resolved_subroute_state('research',section='companies') == ('unified_research_section','Companies')
+
+
 def test_packaged_theme_is_idempotent_and_does_not_hide_errors():
     from scripts.package_streamlit_theme import package, STATUS
     original = '<html><head></head><body><div id="root"></div></body></html>'

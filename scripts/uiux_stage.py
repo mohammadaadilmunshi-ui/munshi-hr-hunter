@@ -25,6 +25,16 @@ def seed() -> None:
     assert_stage()
     if DATABASE.exists():
         raise RuntimeError("Refusing to replace an existing staging database; recreate only this disposable container")
+    # This key exists only in this container's tmpfs, beside its disposable DB.
+    # Exercise the normal AES-GCM profile authority; never borrow a live key.
+    import base64
+    import secrets
+    key_path = Path('/app/hunter/.runtime/uiux-vault.key')
+    if os.environ.get('MUNSHI_VAULT_KEY_FILE') != str(key_path) or os.environ.get('MUNSHI_VAULT_KEY'):
+        raise RuntimeError('Synthetic staging requires its own ephemeral vault file')
+    descriptor = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, 'wb') as handle:
+        handle.write(base64.urlsafe_b64encode(secrets.token_bytes(32)))
     from app import database
     from app import staging_fixtures
     from scripts.phase17_staging_migrate import apply as phase17

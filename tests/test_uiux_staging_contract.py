@@ -16,6 +16,11 @@ def test_compose_has_no_production_mounts_workers_or_public_ports():
     assert "env_file:" not in source
     assert "hunter-supervisor" not in source
     assert "docker.sock" not in source
+    assert "MUNSHI_VAULT_KEY_FILE: /app/hunter/.runtime/uiux-vault.key" in source
+    assert "MUNSHI_VAULT_KEY:" not in source
+    seed = (ROOT / 'scripts/uiux_stage.py').read_text()
+    assert 'secrets.token_bytes(32)' in seed
+    assert 'os.O_EXCL, 0o600' in seed
 
 
 def test_stage_entrypoint_refuses_normal_environment(monkeypatch):
