@@ -354,6 +354,9 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
 def persist_observations(observations: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     """Persist only the allowlisted, value-free observation projection."""
     connection = get_connection()
+    # Scope a shorter busy wait to this background-learning connection only.
+    # Normal Hunter/API/Resume Studio transactions retain their own timeout.
+    connection.execute("PRAGMA busy_timeout = 8000;")
     inserted = replayed = 0
     try:
         # Normal learning cycles write sanitized rows, not schema. Avoid
