@@ -224,6 +224,7 @@ def run(url: str, output: Path, *, baseline: bool = False):
                 page.close()
             if engine == "chromium" and not baseline:
                 page = browser.new_page(viewport={"width":1440,"height":1000})
+                page.add_init_script(OBSERVE)
                 page.route("https://**/*", lambda route: route.abort())
                 page.goto(url + "/?view=dashboard");ready(page)
                 page.evaluate("window.uiuxDocumentSentinel='retained'")
@@ -235,12 +236,18 @@ def run(url: str, output: Path, *, baseline: bool = False):
                 assert "view=jobs" in page.url
                 results["interactions"].append({"action":"native navigation", "seconds":round(time.perf_counter()-started,3),"document_preserved":True})
 
-                button = page.get_by_role("button", name="Save", exact=True).first
+                button = page.get_by_role("button", name="Save", exact=True).nth(12)
+                button.scroll_into_view_if_needed()
+                scroll_before = page.locator('[data-testid="stMain"]').evaluate('e=>e.scrollTop')
+                saved_before = page.get_by_role('button',name='Saved',exact=True).count()
                 previous = page.locator("#uiux-runtime").get_attribute("data-runs")
+                started = time.perf_counter()
                 button.click()
-                page.get_by_role("button", name="Saved", exact=True).first.wait_for()
+                page.wait_for_function("count=>[...document.querySelectorAll('[data-testid=stButton] button')].filter(e=>e.textContent.trim()==='Saved').length>count",arg=saved_before)
+                scroll_after = page.locator('[data-testid="stMain"]').evaluate('e=>e.scrollTop')
+                assert abs(scroll_after-scroll_before) <= 48, (scroll_before,scroll_after)
                 assert page.locator("#uiux-runtime").get_attribute("data-runs") == previous
-                results["interactions"].append({"action":"save job", "passed":True,"full_page_reruns":0})
+                results["interactions"].append({"action":"save job", "passed":True,"full_page_reruns":0,"seconds":round(time.perf_counter()-started,3),"scroll_delta_px":round(scroll_after-scroll_before,2)})
 
                 page.get_by_role("button", name="Open job details", exact=True).first.click()
                 dialog = page.get_by_role("dialog")
@@ -272,6 +279,7 @@ def run(url: str, output: Path, *, baseline: bool = False):
                 page.get_by_text("Application engines", exact=True).wait_for()
                 assert page.locator("#uiux-runtime").get_attribute("data-runs") == before
                 results["interactions"].append({"action":"engine status fragment", "full_page_reruns":0})
+                results['interactions'].append({'action':'browser Event Timing samples (not field INP)','durations_ms':page.evaluate('window.ux.events')})
                 page.close()
             browser.close()
         if not baseline:
