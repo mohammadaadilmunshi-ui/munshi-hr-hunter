@@ -63,6 +63,7 @@ jobs:
           tests/test_native_provider_learning_digest_v1.py
           tests/test_tsenta_learning_monitor_v1.py
           tests/test_tsenta_learning_sync_v1.py
+          tests/test_learning_per_page_runner_v1.py
           tests/test_prepare_runtime_worker.py
           tests/test_product_application_flow_v2.py
           tests/test_prepare_worker_adapters_v1a.py
