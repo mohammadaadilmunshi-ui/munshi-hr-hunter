@@ -12,6 +12,19 @@ from app.product_studio import studio_css, workspace_location
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_packaged_theme_is_idempotent_and_does_not_hide_errors():
+    from scripts.package_streamlit_theme import package, STATUS
+    original = '<html><head></head><body><div id="root"></div></body></html>'
+    once = package(original, '<style>body{color:green}</style>')
+    assert package(once, '<style>body{color:green}</style>') == once
+    assert once.count(STATUS) == 1
+    assert ':not(:has([data-testid=stException]))' in once
+    assert 'aria-live="polite"' in once
+    assert 'setTimeout' not in once
+    assert '<script' not in once
+    assert once.index('body{color:green}') < once.index('</head>')
+
+
 def test_engine_panel_defers_reads_and_refreshes_truth_when_opened():
     app = AppTest.from_string('''
 import streamlit as st

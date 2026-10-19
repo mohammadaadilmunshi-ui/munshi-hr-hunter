@@ -76,3 +76,4 @@ def _ensure_dashboard_runtime_ready() -> None:
 _ensure_dashboard_runtime_ready()
 install_runtime_hotfix()
 render()
+st.html('<span class="munshi-boot-ready" aria-hidden="true"></span>')

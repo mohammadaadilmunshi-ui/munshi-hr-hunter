@@ -13,11 +13,16 @@ import time
 from playwright.sync_api import sync_playwright
 
 VIEWS = ("dashboard", "jobs", "prepare-application", "auto-prepare", "tracker", "profile", "resume-studio", "research", "settings")
-OBSERVE = """window.ux={cls:0,lcp:0,events:[]};
+OBSERVE = """window.ux={cls:0,shift_sum:0,lcp:0,events:[],supported:PerformanceObserver.supportedEntryTypes};
+let firstShift=0,lastShift=0,windowScore=0;
 for(const type of ['layout-shift','largest-contentful-paint','event']){
  if(!PerformanceObserver.supportedEntryTypes.includes(type))continue;
  try{new PerformanceObserver(l=>l.getEntries().forEach(e=>{
-  if(type==='layout-shift'&&!e.hadRecentInput)window.ux.cls+=e.value;
+  if(type==='layout-shift'&&!e.hadRecentInput){
+   if(e.startTime-lastShift>1000||e.startTime-firstShift>5000){firstShift=e.startTime;windowScore=0;}
+   lastShift=e.startTime;windowScore+=e.value;
+   window.ux.cls=Math.max(window.ux.cls,windowScore);window.ux.shift_sum+=e.value;
+  }
   if(type==='largest-contentful-paint')window.ux.lcp=e.startTime;
   if(type==='event'&&e.interactionId)window.ux.events.push(e.duration);
  })).observe({type,buffered:true,durationThreshold:16});}catch(e){}
@@ -25,6 +30,9 @@ for(const type of ['layout-shift','largest-contentful-paint','event']){
 
 
 def ready(page):
+    page.wait_for_function("document.querySelector('#uiux-runtime') || document.querySelector('[data-testid=stException]')", timeout=45000)
+    errors = page.locator('[data-testid="stException"]').all_text_contents()
+    assert not errors, errors
     page.locator("#uiux-runtime").wait_for(timeout=45000)
     assert "Synthetic staging" in page.locator("#uiux-runtime").inner_text()
     page.wait_for_function("!document.querySelector('[data-testid=stSkeleton]')", timeout=30000)
