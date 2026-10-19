@@ -225,7 +225,9 @@ def inject_css() -> None:
     # shared system attached there too, rather than reverting the page mid-run.
     from app.product_studio import shell_css
 
-    st.markdown(shell_css(), unsafe_allow_html=True)
+    # Streamlit sends style-only HTML to its event container, so CSS does not
+    # create document slots or wait for Markdown parsing/lazy renderer modules.
+    st.html(shell_css())
 
 
 def page_intro(kicker: str, title: str, copy: str) -> None:

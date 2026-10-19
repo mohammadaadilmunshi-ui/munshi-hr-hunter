@@ -8,6 +8,7 @@ from __future__ import annotations
 from functools import lru_cache
 import base64
 from pathlib import Path
+from textwrap import dedent
 
 import streamlit as st
 
@@ -44,7 +45,9 @@ def shell_css() -> str:
     from app.job_card_interaction_hotfix_v2 import interaction_css
     from app.product_experience_vnext import presentation_css
 
-    return product_css() + v22_css() + interaction_css() + presentation_css() + studio_css()
+    return "\n".join(dedent(layer).strip() for layer in (
+        product_css(), v22_css(), interaction_css(), presentation_css(), studio_css(),
+    ))
 
 
 def dashboard_intro() -> None:
@@ -52,7 +55,7 @@ def dashboard_intro() -> None:
     def icon(paths: str) -> str:
         return ('<span class="studio-shortcut-icon" aria-hidden="true">'
                 '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
-                'stroke-linecap="round" stroke-linejoin="round">' + paths + '</svg></span>')
+                'stroke-linecap="round" stroke-linejoin="round" width="20" height="20">' + paths + '</svg></span>')
 
     st.markdown(
         '<section class="studio-command" aria-labelledby="command-title">'

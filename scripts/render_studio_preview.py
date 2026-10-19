@@ -72,6 +72,8 @@ def _escape(value) -> str:
 def _render(node) -> str:
     kind = node.type
     proto = node.proto
+    if kind == "html":
+        return proto.body
     if kind == "markdown":
         if node.allow_html:
             return '<div data-testid="stMarkdownContainer">' + node.value + '</div>'

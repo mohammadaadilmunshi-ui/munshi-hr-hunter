@@ -34,7 +34,8 @@ def test_product_shell_installs_job_drawer_hardening() -> None:
     shell = _source("app/product_shell.py")
     from app.product_studio import shell_css
     from app.job_card_interaction_hotfix_v2 import interaction_css
-    assert interaction_css() in shell_css()
+    from textwrap import dedent
+    assert dedent(interaction_css()).strip() in shell_css()
     assert "    inject_css()" in shell
     assert "install_job_card_runtime_hotfix()" in shell
     assert shell.index("install_product_v22(product_pages)") < shell.index(

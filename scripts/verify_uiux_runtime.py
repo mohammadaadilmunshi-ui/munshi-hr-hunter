@@ -58,14 +58,17 @@ def run(url: str, output: Path, *, baseline: bool = False):
                     if view == "dashboard":
                         page.locator('[data-testid="stMetricValue"]').first.wait_for(timeout=30000)
                     overflow = page.locator('[data-testid="stMain"]').evaluate("e=>e.scrollWidth-e.clientWidth")
-                    assert overflow <= 1, (engine, width, view, "horizontal overflow", overflow)
+                    if not baseline:
+                        assert overflow <= 1, (engine, width, view, "horizontal overflow", overflow)
+                    elapsed = time.perf_counter() - started
                     snapshot = f"{engine}-{width}-{view}.png"
                     page.screenshot(path=str(output / snapshot))
                     results["routes"].append({"engine": engine, "width": width, "view": view,
-                        "ready_seconds": round(time.perf_counter() - started, 3),
+                        "ready_seconds": round(elapsed, 3),
                         "server_seconds": float(page.locator("#uiux-runtime").get_attribute("data-server-seconds")),
                         "vitals": page.evaluate("window.ux"), "overflow_px": overflow, "screenshot": snapshot})
                     print(json.dumps(results["routes"][-1]), flush=True)
+                    (output / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
                 if width < 900 and not baseline:
                     page.goto(url + "/?view=jobs");ready(page)
                     page.get_by_role("button", name="Open job details", exact=True).first.wait_for()

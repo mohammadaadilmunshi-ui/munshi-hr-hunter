@@ -78,7 +78,8 @@ def test_shell_injects_theme_after_original_layers_and_renders_dock() -> None:
     from app.product_v22 import v22_css
     from app.job_card_interaction_hotfix_v2 import interaction_css
     from app.product_ui import product_css
-    assert shell_css() == product_css() + v22_css() + interaction_css() + presentation_css() + studio_css()
+    from textwrap import dedent
+    assert shell_css() == "\n".join(dedent(layer).strip() for layer in (product_css(), v22_css(), interaction_css(), presentation_css(), studio_css()))
     assert "    inject_css()" in source
     assert "render_mobile_dock(view)" in source
     assert "Discovery: Unlimited" in source
