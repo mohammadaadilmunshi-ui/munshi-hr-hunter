@@ -1,0 +1,16 @@
+[Unit]
+Description=MUNSHI Relay authorized read-only provider learning
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+User=munshi
+Group=munshi
+ExecStart=/opt/munshi/bin/munshi-relay-learning-readonly
+TimeoutStartSec=25min
+TimeoutStopSec=30s
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=munshi-relay-learning

@@ -1587,3 +1587,21 @@ def tsenta_learning_cohort_status() -> dict[str, Any]:
             status_code=status.HTTP_409_CONFLICT,
             detail="MUNSHI Relay learning evidence is unavailable.",
         ) from error
+
+
+@app.get(
+    "/api/integrations/tsenta/learning/provider-digest",
+    dependencies=[Depends(require_api_secret)],
+)
+def native_provider_learning_digest_status() -> dict[str, Any]:
+    """Safe, owner-scoped evidence inventory; never activates Native adapters."""
+    import sqlite3
+    from app.native_provider_learning_digest_v1 import provider_learning_digest
+
+    try:
+        return provider_learning_digest()
+    except (ValueError, RuntimeError, sqlite3.Error, LookupError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Provider learning coverage is unavailable.",
+        ) from error

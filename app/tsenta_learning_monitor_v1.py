@@ -18,7 +18,7 @@ from app import tsenta_oauth_v1 as oauth
 
 ENABLED_ENV = "MUNSHI_TSENTA_LEARNING_AUTO_READONLY_ENABLED"
 DEFAULT_PAGES = 5
-MAX_PAGES = 10
+MAX_PAGES = sync.MAX_PAGE
 
 
 def learning_cycle(*, pages: int = DEFAULT_PAGES, limit: int = 15) -> dict[str, Any]:
@@ -37,6 +37,8 @@ def learning_cycle(*, pages: int = DEFAULT_PAGES, limit: int = 15) -> dict[str, 
         "replayed_observations": 0,
         "provider_submissions_started": 0,
         "native_auto_upgrades_applied": 0,
+        "history_window_complete": False,
+        "history_page_cap_reached": False,
     }
     if str(os.getenv(ENABLED_ENV) or "").strip().lower() not in {"true", "1", "yes"}:
         return report
@@ -56,7 +58,12 @@ def learning_cycle(*, pages: int = DEFAULT_PAGES, limit: int = 15) -> dict[str, 
         report["new_observations"] += int(result["new_observation_rows"])
         report["replayed_observations"] += int(result["replayed_observation_rows"])
         if int(result["listed_applications"]) < limit:
+            report["history_window_complete"] = True
             break
+    if not report["history_window_complete"] and pages == sync.MAX_PAGE:
+        report["history_page_cap_reached"] = True
+    # A partial bounded synchronization never claims all historical records
+    # were reached. The next scheduled full-window cycle can look further.
     snapshot = cohort.learning_cohort_snapshot()
     report["status"] = "COMPLETED_READ_ONLY"
     report["learning_phase"] = str(snapshot.get("phase") or "UNAVAILABLE")[:64]

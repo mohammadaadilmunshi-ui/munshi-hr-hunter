@@ -61,7 +61,7 @@ def test_authorized_monitor_paginates_only_existing_mcp_evidence(monkeypatch):
     assert outcome["native_auto_upgrades_applied"] == 0
 
 
-@pytest.mark.parametrize("pages,limit", [(0,15),(11,15),(1,0),(1,16)])
+@pytest.mark.parametrize("pages,limit", [(0,15),(21,15),(1,0),(1,16)])
 def test_monitor_enforces_bounded_pages(pages, limit):
     with pytest.raises(ValueError):
         monitor.learning_cycle(pages=pages,limit=limit)
@@ -79,3 +79,49 @@ def test_monitor_error_does_not_expose_provider_error_text(monkeypatch,capsys):
     assert "SAFE_ABORT" in out
     assert "sensitive@example.com" not in out
     assert "SECRET_ACCOUNT_VALUE" not in out
+
+
+
+def test_complete_history_window_marks_last_short_page(monkeypatch):
+    monkeypatch.setenv(monitor.ENABLED_ENV, "true")
+    monkeypatch.setattr(monitor.oauth, "status", _connected)
+    monkeypatch.setattr(
+        monitor.sync, "sync_authorized_learning",
+        lambda page, limit: {
+            "listed_applications": 15 if page == 1 else 2,
+            "distinct_applications_checked": 15 if page == 1 else 2,
+            "new_observation_rows": 0, "replayed_observation_rows": 0,
+        },
+    )
+    monkeypatch.setattr(
+        monitor.cohort, "learning_cohort_snapshot",
+        lambda: {"phase": "COLLECTING", "processed_applications_total": 1,
+                 "cohort_processed": 1, "unique_ats_in_cohort": 1,
+                 "shadow_improvement_candidates": []},
+    )
+    result = monitor.learning_cycle(pages=20)
+    assert result["pages_checked"] == 2
+    assert result["history_window_complete"] is True
+    assert result["history_page_cap_reached"] is False
+
+
+def test_full_history_cap_never_claims_all_records_learned(monkeypatch):
+    monkeypatch.setenv(monitor.ENABLED_ENV, "true")
+    monkeypatch.setattr(monitor.oauth, "status", _connected)
+    pages = []
+    def page_of_evidence(*, page, limit):
+        pages.append(page)
+        return {"listed_applications": limit, "distinct_applications_checked": limit,
+                "new_observation_rows": 0, "replayed_observation_rows": limit}
+    monkeypatch.setattr(monitor.sync, "sync_authorized_learning", page_of_evidence)
+    monkeypatch.setattr(
+        monitor.cohort, "learning_cohort_snapshot",
+        lambda: {"phase": "COLLECTING", "processed_applications_total": 1,
+                 "cohort_processed": 1, "unique_ats_in_cohort": 1,
+                 "shadow_improvement_candidates": []},
+    )
+    result = monitor.learning_cycle(pages=20)
+    assert pages == list(range(1, 21))
+    assert result["history_window_complete"] is False
+    assert result["history_page_cap_reached"] is True
+    assert result["provider_submissions_started"] == 0
