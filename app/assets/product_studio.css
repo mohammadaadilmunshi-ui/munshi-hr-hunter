@@ -9,7 +9,7 @@
 .stApp [data-testid="stElementContainer"]:has(#munshi-main) {position:absolute;height:0}
 .stApp [data-testid="stElementContainer"]:has(.munshi-mobile-dock) {display:none!important}
 .product-nav {display:none!important}
-.stApp .st-key-product_primary_routes {display:grid!important;grid-template-columns:repeat(9,minmax(0,1fr));min-height:62px;gap:.3rem!important;padding:.3rem 0 .8rem;border-bottom:1px solid var(--studio-line)}
+.stApp .st-key-product_primary_routes {min-height:62px;gap:.3rem!important;padding:.3rem 0 .8rem;border-bottom:1px solid var(--studio-line)}
 .st-key-product_primary_routes>[data-testid="stLayoutWrapper"] {flex:0 1 auto!important;width:auto!important;min-width:0}
 [class*="st-key-product_route_"] button {min-height:44px!important;border-radius:9px!important;padding:.55rem .75rem!important;text-decoration:none;font-size:.84rem!important;border:0!important;white-space:nowrap!important}
 .stApp [class*="st-key-product_route_"][class*="_selected"] button {background:var(--m-active)!important;color:var(--m-forest)!important;font-weight:750!important}
@@ -135,6 +135,8 @@
   .st-key-product_mobile_routes {display:flex!important;position:fixed;bottom:0;left:0;right:0;z-index:1000;
     padding:.25rem .4rem calc(.25rem + env(safe-area-inset-bottom,0px));gap:.2rem!important;background:#fff;border-top:1px solid var(--studio-line)}
   .st-key-product_mobile_routes>[data-testid="stLayoutWrapper"] {flex:1 1 0!important;width:0!important;min-width:0!important}
+  .st-key-product_mobile_routes [data-testid="stHorizontalBlock"] {display:flex!important;flex-wrap:nowrap!important;width:100%!important;gap:.2rem!important}
+  .st-key-product_mobile_routes [data-testid="stColumn"] {flex:1 1 0!important;width:0!important;min-width:0!important}
   .st-key-product_mobile_routes button {display:flex;flex-direction:column;gap:.15rem;justify-content:center;min-height:56px!important;font-size:.64rem!important;padding:.3rem .1rem!important;text-align:center}
   .st-key-product_mobile_routes button p {font-size:.64rem!important;margin:0}
   .studio-command {grid-template-columns:1fr 1fr;gap:1rem;padding:1.5rem}

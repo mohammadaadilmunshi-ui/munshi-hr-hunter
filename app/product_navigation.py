@@ -34,9 +34,14 @@ def _link(view: str, label: str, current: str, *, mobile: bool = False) -> None:
 
 
 def render_navigation(current: str, destinations) -> None:
-    with st.container(key="product_primary_routes", horizontal=True, gap="small"):
-        for route, label in (*destinations, ("settings", "Settings")):
-            _link(route, label, current)
-    with st.container(key="product_mobile_routes", horizontal=True, gap="small"):
-        for route, label in PRIMARY_DESTINATIONS:
-            _link(route, label, current, mobile=True)
+    routes = (*destinations, ("settings", "Settings"))
+    with st.container(key="product_primary_routes"):
+        columns = st.columns(len(routes), gap="small")
+        for column, (route, label) in zip(columns, routes):
+            with column:
+                _link(route, label, current)
+    with st.container(key="product_mobile_routes"):
+        columns = st.columns(len(PRIMARY_DESTINATIONS), gap="small")
+        for column, (route, label) in zip(columns, PRIMARY_DESTINATIONS):
+            with column:
+                _link(route, label, current, mobile=True)
