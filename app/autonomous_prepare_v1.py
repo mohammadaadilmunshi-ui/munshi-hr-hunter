@@ -368,7 +368,32 @@ def drive_operation_once(operation_id: str) -> dict[str, Any]:
         }:
             break
         if name == "ats":
+            from app import relay_single_prepare_v1 as relay_one_click
             from app import native_standing_consent_v1 as consent
+
+            # Explicit per-job Relay intent takes precedence over the separate
+            # Native standing consent. Never let two engines claim one opening.
+            relay_state = relay_one_click.status(int(current["job_id"]))
+            if relay_state["operation_id"] == str(operation_id) and relay_state["status"] in {
+                "REQUESTED", "CLAIMED",
+            }:
+                if relay_state["status"] == "CLAIMED":
+                    relay_result = {"authorized": False, "reason": "one_use_claim_consumed"}
+                else:
+                    relay_result = relay_one_click.maybe_dispatch(str(operation_id))
+                step_results.append({"step": "relay_one_click", "result": relay_result})
+                # This operation belongs exclusively to Relay. An ambiguous
+                # provider outcome must never fall through to Native ATS.
+                final = orchestrator.prepare_operation(str(operation_id))
+                return {
+                    "operation_id": str(operation_id),
+                    "status": final["status"],
+                    "product_stage": product_stage_for_state(final["status"]),
+                    "engine": "NATIVE",
+                    "steps": step_results,
+                    "submission_authority": False,
+                    "relay_submission_state": relay_result.get("status") or relay_result.get("reason"),
+                }
 
             if consent.status().get("enabled") is True:
                 try:

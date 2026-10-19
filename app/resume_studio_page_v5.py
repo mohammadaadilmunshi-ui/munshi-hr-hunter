@@ -31,11 +31,15 @@ def _generate_checked(
     )
 
 
-def render(*, appearance_controls: Callable[[], None] | None = None) -> None:
+def render(
+    *, appearance_controls: Callable[[], None] | None = None,
+    version_html: Callable[[str], str] | None = None,
+) -> None:
     quality_hotfix.install()
-    original = v4._generate_checked
-    v4._generate_checked = _generate_checked
-    try:
-        v4.render(appearance_controls=appearance_controls)
-    finally:
-        v4._generate_checked = original
+    # Pass handlers for this single browser render. Never monkeypatch the
+    # shared V4 module: simultaneous browser sessions must remain isolated.
+    v4.render(
+        appearance_controls=appearance_controls,
+        generate_checked=_generate_checked,
+        version_html=version_html,
+    )
