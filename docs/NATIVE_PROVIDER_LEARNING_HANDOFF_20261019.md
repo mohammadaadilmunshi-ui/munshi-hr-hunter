@@ -4,7 +4,7 @@ This note is a development contract, not a claim of full ATS support.
 
 ## Sources and authority
 
-- Public vendor claim inventory: https://tsenta.com/ai-disclosure, snapshot on 2026-10-19. Its 30 named ATS/job systems are **marketing claims by a separate provider**, not Native implementations.
+- Public vendor claim inventory: https://tsenta.com/ai-disclosure, snapshot on 2026-10-19. Its 44 named ATS/job systems are **marketing claims by a separate provider**, not Native implementations.
 - Authorized connected-account evidence: `tsenta_observations_v1`, owner-scoped, privacy-minimized, read-only MCP list/status/review tools. Never pull browser internals, credentials, raw resumes, question answer values, or data belonging to other users.
 - Native validation evidence: separate synthetic and held-out real-browser tests. No provider row becomes executable by appearing in the vendor list or by exceeding a status count.
 
@@ -42,7 +42,7 @@ This note is a development contract, not a claim of full ATS support.
 
 ## Release/testing gate
 
-- Unit tests: all 30 claims included, novel ATS preserved, vendor claims never executable, no private values emitted, tenant-scoped DB read-only, existing-schema ingestion avoids unnecessary DDL.
+- Unit tests: all 44 claims included, novel ATS preserved, vendor claims never executable, no private values emitted, tenant-scoped DB read-only, existing-schema ingestion avoids unnecessary DDL.
 - Operator checks: learning sync authorized and read-only; status reports 0 provider submissions and 0 Native auto-upgrades; database/schema/worker identity unchanged except sanitized learning insertions.
 - Runtime: daily bounded scheduled synchronization with lock, timeout, journal receipt; do not overlap migrations or one another.
 - A **real** Native account/signup -> verification email -> same-session multi-page continuation -> one-shot submit -> independent employer receipt canary remains outstanding. Current stored status observations do not constitute this proof.

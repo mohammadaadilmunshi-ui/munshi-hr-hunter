@@ -24,14 +24,20 @@ def _row(name: str, ref: str, kind: str, *, evidence: str = "OBSERVED",
     }
 
 
-def test_all_thirty_public_claims_and_dynamic_unknown_providers():
+def test_all_forty_four_public_claims_and_dynamic_unknown_providers():
     reg = public_provider_registry()
-    assert len(reg["providers"]) == 30
+    assert len(reg["providers"]) == 44
     assert "Workday" in reg["providers"]
     assert "SAP SuccessFactors" in reg["providers"]
     assert "Teamtailor" in reg["providers"]
+    assert {
+        "Betterteam", "Cornerstone OnDemand", "Eightfold", "Gusto",
+        "HireClick", "HiringThing", "IdealTraits", "iSolved Hire",
+        "ApplicantPro", "Paycom", "Paycor Recruiting",
+        "Taleo Business Edition", "Trakstar Hire", "Workstream",
+    }.issubset(set(reg["providers"]))
     snap = summarize_evidence([], reg)
-    assert len(snap["providers"]) == 30
+    assert len(snap["providers"]) == 44
     assert snap["native_provider_submitters_validated_by_digest"] == 0
     assert all(row["learning_stage"] == "NO_USABLE_OBSERVATIONS"
                for row in snap["providers"])
@@ -99,5 +105,5 @@ def test_hunter_database_digest_is_read_only(hunter_db):
     with get_connection() as con:
         after = con.execute("PRAGMA schema_version").fetchone()[0]
     assert before == after
-    assert snap["public_provider_claims"] == 30
+    assert snap["public_provider_claims"] == 44
     assert snap["total_observations"] == 0

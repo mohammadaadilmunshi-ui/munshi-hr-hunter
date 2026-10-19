@@ -31,7 +31,7 @@ def public_provider_registry() -> dict[str, Any]:
     if data.get("scope") != "PUBLIC_VENDOR_CLAIM_NOT_NATIVE_SUPPORT":
         raise ValueError("Unexpected provider-claim authority.")
     providers = data.get("providers")
-    if not isinstance(providers, list) or len(providers) != 30:
+    if not isinstance(providers, list) or len(providers) != 44:
         raise ValueError("Public provider-claim snapshot requires independent review.")
     normalized = [_key(name) for name in providers]
     if len(set(normalized)) != len(normalized) or any(not key for key in normalized):
