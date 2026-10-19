@@ -488,6 +488,45 @@ def render_dashboard_summary() -> None:
                     "Observed platforms: "
                     + ", ".join(f"{ats} ({count})" for ats, count in sorted(ats_coverage.items()))
                 )
+            from app.native_provider_learning_digest_v1 import provider_learning_digest
+
+            try:
+                digest = provider_learning_digest()
+            except (sqlite3.OperationalError, LookupError, ValueError, RuntimeError):
+                st.warning("Provider learning coverage is temporarily unavailable.")
+            else:
+                st.markdown("##### Native provider learning coverage")
+                c1, c2, c3 = st.columns(3, gap="small")
+                c1.metric("Publicly claimed platforms", digest["public_provider_claims"])
+                c2.metric("With MUNSHI status evidence", digest["claimed_providers_with_status_evidence"])
+                c3.metric("With observed form fields", digest["claimed_providers_with_form_evidence"])
+                st.caption(
+                    "Public claims are not proof of Native support. "
+                    "Observed statuses are not form training; form observations "
+                    "still need independent Native replay before any rule can be promoted. "
+                    "No answer values or employer credentials appear in this table."
+                )
+                st.dataframe(
+                    [
+                        {
+                            "ATS / platform": item["provider"],
+                            "Public claim": "Yes" if item["public_vendor_claim"] else "Additional",
+                            "Learning evidence": item["learning_stage"].replace("_", " ").title(),
+                            "Processes observed": item["distinct_application_refs"],
+                            "Forms observed": item["distinct_form_application_refs"],
+                            "Fields observed": item["form_observations"],
+                            "Unresolved required fields": item["required_fields_missing_at_review"],
+                        }
+                        for item in digest["providers"]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.caption(
+                    "Learning evidence last observed: "
+                    + str(digest.get("latest_observed_at") or "Not yet available")
+                    + ". Native auto-upgrade remains off."
+                )
             if connection.get("profile_read_verified") is True:
                 from app.tsenta_learning_sync_v1 import sync_authorized_learning
 

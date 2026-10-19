@@ -356,7 +356,15 @@ def persist_observations(observations: Sequence[Mapping[str, Any]]) -> dict[str,
     connection = get_connection()
     inserted = replayed = 0
     try:
-        ensure_schema(connection)
+        # Normal learning cycles write sanitized rows, not schema. Avoid
+        # repeated CREATE TABLE/INDEX and tenant schema DDL on every page:
+        # these transient schema locks can interrupt live Resume Studio.
+        ready = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='tsenta_observations_v1'"
+        ).fetchone()
+        if ready is None:
+            ensure_schema(connection)
         owner = current_owner(connection)
         for raw in observations:
             observation = dict(raw)
