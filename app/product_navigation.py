@@ -8,13 +8,6 @@ import streamlit as st
 from app.product_experience_vnext import ALLOWED_VIEWS, PRIMARY_DESTINATIONS
 
 
-ICONS = {
-    "dashboard": ":material/home:", "jobs": ":material/search:",
-    "prepare-application": ":material/assignment:", "auto-prepare": ":material/tune:",
-    "tracker": ":material/bar_chart:",
-}
-
-
 def navigate(view: str) -> None:
     if view not in ALLOWED_VIEWS:
         raise ValueError("Unknown MUNSHI route")
