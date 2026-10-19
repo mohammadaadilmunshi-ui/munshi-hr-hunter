@@ -17,6 +17,7 @@ from app.tsenta_oauth_v1 import TsentaOAuthError, _token_for_current_owner
 
 MAX_PAGE = 200
 MAX_BATCH = 15
+MAX_PERSIST_CHUNK = 16
 _APPLICATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 
@@ -122,9 +123,15 @@ def sync_observations_from_mcp(*, mcp: Any, page: int = 1,
             # A completed provider application often has no review screen.
             # Never invent fields for it or reinterpret status as a receipt.
             unavailable_reviews += 1
-    result = _persist_with_lock_retry(incoming) if incoming else {
-        "inserted": 0, "replayed": 0,
-    }
+    # One huge page transaction may be blocked behind unrelated Hunter
+    # writes. Persist bounded, independently committed batches. If a later
+    # chunk fails, the page cursor stays put, and stable observation IDs make
+    # the next page replay safely skip chunks already committed.
+    result = {"inserted": 0, "replayed": 0}
+    for offset in range(0, len(incoming), MAX_PERSIST_CHUNK):
+        part = _persist_with_lock_retry(incoming[offset:offset + MAX_PERSIST_CHUNK])
+        result["inserted"] += part["inserted"]
+        result["replayed"] += part["replayed"]
     return {
         "version": "munshi-tsenta-authorized-learning-sync-v1",
         "page": int(page),

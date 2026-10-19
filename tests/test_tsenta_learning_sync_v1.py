@@ -223,3 +223,53 @@ def test_non_lock_sqlite_failure_is_never_retried(monkeypatch):
     with pytest.raises(sqlite3.OperationalError):
         sync._persist_with_lock_retry([{"answer_value_recorded": False}])
     assert len(attempts) == 1
+
+
+def test_large_provider_form_review_is_written_in_bounded_chunks(hunter_db, monkeypatch):
+    del hunter_db
+    writes = []
+    original_write = sync.observations.persist_observations
+
+    def counting_write(rows):
+        writes.append(len(rows))
+        return original_write(rows)
+
+    monkeypatch.setattr(sync.observations, "persist_observations", counting_write)
+    mcp = ExistingApplicationsMcp(count=15)
+    report = sync.sync_observations_from_mcp(mcp=mcp, page=18)
+    assert report["listed_applications"] == 15
+    assert report["new_observation_rows"] == 30
+    assert writes == [16, 14]
+    assert max(writes) <= sync.MAX_PERSIST_CHUNK
+    assert report["candidate_answers_stored"] is False
+    assert report["employer_receipts_verified"] == 0
+    assert sync.sync_observations_from_mcp(
+        mcp=mcp, page=18,
+    )["new_observation_rows"] == 0
+
+
+def test_second_chunk_failure_does_not_replay_provider_submissions(hunter_db, monkeypatch):
+    del hunter_db
+    mcp = ExistingApplicationsMcp(count=15)
+    original_write = sync.observations.persist_observations
+    writes = []
+
+    def fail_one_chunk(rows):
+        writes.append(len(rows))
+        if len(writes) == 2:
+            raise sqlite3.OperationalError("disk I/O error")
+        return original_write(rows)
+
+    monkeypatch.setattr(sync.observations, "persist_observations", fail_one_chunk)
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        sync.sync_observations_from_mcp(mcp=mcp, page=18)
+    assert writes == [16, 14]
+    # Only the first chunk was committed. A second identical read recognizes
+    # its stable observation IDs and inserts the second chunk exactly once.
+    monkeypatch.setattr(sync.observations, "persist_observations", original_write)
+    second = sync.sync_observations_from_mcp(mcp=mcp, page=18)
+    assert second["new_observation_rows"] == 14
+    assert second["replayed_observation_rows"] == 16
+    assert {name for name, _ in mcp.calls} <= {
+        "list_applications", "get_application_status", "get_application_review"
+    }
