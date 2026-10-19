@@ -214,7 +214,7 @@ def run(url: str, output: Path, *, baseline: bool = False):
                 assert not console_errors, console_errors
                 page.close()
             if not baseline:
-                page = browser.new_page(viewport={"width":1440,"height":1000}, has_touch=True, reduced_motion="reduce")
+                page = browser.new_page(viewport={"width":1440,"height":1000}, has_touch=True, reduced_motion="reduce", color_scheme="dark")
                 for view in ('dashboard', 'jobs', 'profile'):
                     page.goto(url + '/?view=' + view);ready(page)
                     for width in (375,430,768,1280,1920):
@@ -224,6 +224,20 @@ def run(url: str, output: Path, *, baseline: bool = False):
                             mobile_dock(page)
                         page.screenshot(path=str(output / f'{engine}-{width}-{view}.png'))
                         results['interactions'].append({'engine':engine,'width':width,'action':view+' responsive layout','passed':True})
+                page.set_viewport_size({'width':844,'height':390})
+                assert page.locator('[data-testid="stMain"]').evaluate('e=>e.scrollWidth-e.clientWidth') <= 1
+                mobile_dock(page)
+                page.screenshot(path=str(output / f'{engine}-landscape-profile.png'))
+                page.set_viewport_size({'width':375,'height':844})
+                page.evaluate("document.documentElement.style.setProperty('font-size','32px','important')")
+                assert page.evaluate('getComputedStyle(document.documentElement).fontSize') == '32px'
+                assert page.locator('[data-testid="stMain"]').evaluate('e=>e.scrollWidth-e.clientWidth') <= 1
+                dock_height = page.locator('.st-key-product_mobile_routes').bounding_box()['height']
+                assert dock_height <= 160
+                assert page.locator('.block-container').evaluate('e=>parseFloat(getComputedStyle(e).paddingBottom)') > dock_height
+                assert 'light' in page.evaluate('getComputedStyle(document.documentElement).colorScheme')
+                page.screenshot(path=str(output / f'{engine}-large-text-profile.png'))
+                results['interactions'].append({'engine':engine,'action':'landscape, 32px root text, reduced motion and dark host preference','passed':True})
                 page.close()
             if engine == "chromium" and not baseline:
                 page = browser.new_page(viewport={"width":1440,"height":1000})
