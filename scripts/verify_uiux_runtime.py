@@ -106,6 +106,7 @@ def profile_acceptance(page, url, output):
     page.locator('.st-key-product_primary_routes').get_by_role('button', name='Resume Studio', exact=True).click()
     page.get_by_text('Resume appearance · preview only', exact=True).click()
     page.get_by_role('button', name='Jake', exact=True).click()
+    assert page.get_by_role('button', name='Jake', exact=True).bounding_box()['height'] >= 44
     page.get_by_role('combobox', name='Selected Computer Modern. Font', exact=True).wait_for()
     ready(page)
     page.screenshot(path=str(output / 'chromium-resume-appearance.png'))
