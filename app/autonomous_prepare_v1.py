@@ -373,7 +373,15 @@ def drive_operation_once(operation_id: str) -> dict[str, Any]:
 
             # Explicit per-job Relay intent takes precedence over the separate
             # Native standing consent. Never let two engines claim one opening.
-            relay_state = relay_one_click.status(int(current["job_id"]))
+            current_job_id = int(current.get("job_id") or 0)
+            relay_state = (
+                relay_one_click.status(current_job_id) if current_job_id
+                else {"status": "NONE", "operation_id": ""}
+            )
+            if relay_state["status"] == "UNAVAILABLE":
+                raise RuntimeError(
+                    "Relay intent ledger unavailable; cannot safely choose a submission engine."
+                )
             if relay_state["operation_id"] == str(operation_id) and relay_state["status"] in {
                 "REQUESTED", "CLAIMED",
             }:
