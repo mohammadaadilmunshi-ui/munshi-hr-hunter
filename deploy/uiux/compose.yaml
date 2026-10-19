@@ -1,0 +1,56 @@
+name: munshi-uiux-20261019
+services:
+  dashboard:
+    image: ${UIUX_STAGE_IMAGE:-munshi-uiux-20261019:stage}
+    init: true
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        python scripts/uiux_stage.py --seed &&
+        exec python -m streamlit run scripts/uiux_stage.py
+        --server.address=0.0.0.0 --server.port=8501 --server.headless=true
+        --browser.gatherUsageStats=false --server.fileWatcherType=none
+    ports: ["127.0.0.1:${UIUX_STAGE_PORT:-18511}:8501"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 1.0
+    mem_limit: 1536m
+    pids_limit: 128
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=256m,uid=10001,gid=10001
+      - /app/hunter/data:rw,nosuid,nodev,size=64m,uid=10001,gid=10001
+      - /app/hunter/.runtime:rw,nosuid,nodev,size=32m,uid=10001,gid=10001
+      - /app/hunter/logs:rw,nosuid,nodev,size=16m,uid=10001,gid=10001
+    environment:
+      MUNSHI_UIUX_STAGE: synthetic-only
+      MUNSHI_ENVIRONMENT: staging
+      MUNSHI_STAGING_IDENTITY: staging
+      AADIL_HR_HUNTER_PROJECT: /app/hunter
+      AADIL_HR_HUNTER_RUNTIME: /app/hunter/.runtime
+      DATABASE_PATH: /app/hunter/data/uiux-synthetic.db
+      MUNSHI_VAULT_KEY_FILE: /app/hunter/.runtime/uiux-vault.key
+      CLOUD_SHADOW_MODE: "true"
+      PRODUCTION_STATE_IMPORTED: "false"
+      PRODUCTION_CALLBACKS_ENABLED: "false"
+      HUNTER_ENABLE_TELEGRAM: "false"
+      HUNTER_ENABLE_DISCOVERY_SCHEDULER: "false"
+      HUNTER_ENABLE_COORDINATOR: "false"
+      TELEGRAM_ENABLED: "false"
+      DISCOVERY_ENABLED: "false"
+      SCHEDULER_ENABLED: "false"
+      COORDINATOR_ENABLED: "false"
+      OLLAMA_ENABLED: "false"
+      OLLAMA_REQUIRED: "false"
+      MUNSHI_LIVE_SUBMISSION_ENABLED: "false"
+      PYTHONDONTWRITEBYTECODE: "1"
+    networks: [isolated]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health',timeout=3).status == 200"]
+      interval: 10s
+      timeout: 4s
+      retries: 5
+networks:
+  isolated:
+    internal: true

@@ -12,9 +12,8 @@ VERSION = "job-card-interaction-hotfix-v2"
 MARKER = "AADIL_JOB_CARD_VISIBLE_CLOSE_V2"
 
 
-def inject_job_card_interaction_css() -> None:
-    st.markdown(
-        """
+def interaction_css() -> str:
+    return """
 <style>
 /* Keep Streamlit's native dialog dismiss control inside the fixed job drawer. */
 [data-testid="stDialog"]:has(.job-detail-drawer-marker) button[aria-label="Close"],
@@ -56,9 +55,11 @@ def inject_job_card_interaction_css() -> None:
     padding-top:3.6rem!important;
 }
 </style>
-        """,
-        unsafe_allow_html=True,
-    )
+        """
+
+
+def inject_job_card_interaction_css() -> None:
+    st.markdown(interaction_css(), unsafe_allow_html=True)
 
 
 def status() -> dict[str, object]:

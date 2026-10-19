@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -1146,7 +1146,7 @@ def _version_workspace(job_id: int, context: dict[str, Any], writer_ready: bool)
         )
 
 
-def render() -> None:
+def render(*, appearance_controls: Callable[[], None] | None = None) -> None:
     resume_v5.ensure_schema()
     artifacts.ensure_schema()
 
@@ -1155,6 +1155,8 @@ def render() -> None:
         "Resume Studio",
         "Create polished, truthful job-specific resumes directly from your MUNSHI Profile.",
     )
+    if appearance_controls is not None:
+        appearance_controls()
 
     snapshot, profile_error = _profile_snapshot()
     _profile_card(snapshot, profile_error)

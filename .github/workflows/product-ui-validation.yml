@@ -38,6 +38,9 @@ jobs:
       - name: Run Product UI and producer-boundary tests
         run: |
           python -m pytest \
+            tests/test_product_studio.py \
+            tests/test_profile_intake_ui.py \
+            tests/test_uiux_staging_contract.py \
             tests/test_dashboard_smoke.py \
             tests/test_device_auth.py \
             tests/test_dashboard_device_cookie_caddy_v1.py \

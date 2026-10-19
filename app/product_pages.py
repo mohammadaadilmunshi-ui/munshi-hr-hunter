@@ -328,7 +328,6 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
         st.button(
             "Open job details",
             key=f"job_open_{key_prefix}_{job_id}",
-            help=f"Open {row.get('title') or 'job'} details",
             use_container_width=True,
             on_click=_open_job_detail,
             args=(job_id,),
@@ -556,14 +555,15 @@ def _search_filters(namespace: str) -> dict[str, Any]:
     for key, default in defaults.items():
         st.session_state.setdefault(f"{namespace}_filter_{key}", stored.get(key, default))
     with st.container(key=f"product_{namespace}_search"):
-        search_left, search_right = st.columns((3.8, 1.2), gap="small")
-        with search_left:
-            query = st.text_input(
-                "Search jobs, companies, or locations",
-                placeholder="Try Techtronic, HR Coordinator, People Operations, or Philadelphia",
-                key=f"{namespace}_filter_query",
-            )
-        with search_right:
+        query = st.text_input(
+            "Search jobs, companies, or locations",
+            placeholder="Search a role, employer, or location…",
+            key=f"{namespace}_filter_query",
+        )
+        active = sum(st.session_state[f"{namespace}_filter_{key}"] != default
+                     for key, default in defaults.items() if key != "query")
+        filter_label = f"Filters · {active} active" if active else "Filters · location, match & sort"
+        with st.expander(filter_label, expanded=False, key=f"{namespace}_filter_disclosure"):
             scope = st.selectbox(
                 "Search in",
                 ["all_fields", "title_description", "title_company"],
@@ -574,17 +574,16 @@ def _search_filters(namespace: str) -> dict[str, Any]:
                 }[value],
                 key=f"{namespace}_filter_search_scope",
             )
-        exclude = st.text_input("Exclude terms", placeholder="Exclude terms — separate multiple terms with commas…", key=f"{namespace}_filter_exclude", label_visibility="collapsed")
-        controls = st.columns((1.15, 1, 1, 1.1), gap="small")
-        with controls[0]:
-            location = st.selectbox("Location", [""] + values["locations"], format_func=lambda x: x or "All locations", key=f"{namespace}_filter_location")
-        with controls[1]:
-            workplace = st.selectbox("Workplace", [""] + values["remote"], format_func=lambda x: x or "Any workplace", key=f"{namespace}_filter_workplace")
-        with controls[2]:
-            source = st.selectbox("Source", [""] + values["sources"], format_func=lambda x: x or "All sources", key=f"{namespace}_filter_source")
-        with controls[3]:
-            employment = st.selectbox("Employment", [""] + values["employment"], format_func=lambda x: x or "Any employment", key=f"{namespace}_filter_employment_type")
-        with st.expander("Advanced filters", expanded=False):
+            exclude = st.text_input("Exclude terms", placeholder="Separate excluded terms with commas…", key=f"{namespace}_filter_exclude")
+            controls = st.columns((1.15, 1, 1, 1.1), gap="small")
+            with controls[0]:
+                location = st.selectbox("Location", [""] + values["locations"], format_func=lambda x: x or "All locations", key=f"{namespace}_filter_location")
+            with controls[1]:
+                workplace = st.selectbox("Workplace", [""] + values["remote"], format_func=lambda x: x or "Any workplace", key=f"{namespace}_filter_workplace")
+            with controls[2]:
+                source = st.selectbox("Source", [""] + values["sources"], format_func=lambda x: x or "All sources", key=f"{namespace}_filter_source")
+            with controls[3]:
+                employment = st.selectbox("Employment", [""] + values["employment"], format_func=lambda x: x or "Any employment", key=f"{namespace}_filter_employment_type")
             advanced_one = st.columns((1.25, 1, 1), gap="small")
             with advanced_one[0]:
                 target_track = st.selectbox("Target track", [""] + values["target_tracks"], format_func=lambda x: x or "Any target track", key=f"{namespace}_filter_target_track")
@@ -600,11 +599,8 @@ def _search_filters(namespace: str) -> dict[str, Any]:
             with advanced_two[2]:
                 result_set = st.selectbox("Result set", ["all", "saved", "passed"], format_func=lambda x: {"all": "All jobs", "saved": "Saved", "passed": "Passed"}[x], key=f"{namespace}_filter_result_set")
             ats_only = st.toggle("Only jobs with an ATS-scored package", key=f"{namespace}_filter_ats_only")
-        reset_area, explanation = st.columns((1, 4), gap="small")
-        with reset_area:
+            st.caption("Filters update live using stored job, ATS, score and eligibility evidence.")
             st.button("Reset filters", key=f"{namespace}_reset_filters", use_container_width=True, on_click=_reset_search_filters, args=(namespace,))
-        with explanation:
-            st.caption("Filters update live. Every filter uses stored job, score, ATS, and eligibility evidence.")
     current = {
         "query": query, "exclude": exclude, "location": location, "source": source,
         "workplace": workplace, "employment_type": employment, "target_track": target_track,
@@ -621,16 +617,12 @@ def _search_filters(namespace: str) -> dict[str, Any]:
 
 def dashboard() -> None:
     _show_action_feedback()
-    page_intro("MUNSHI APPLY", "The right roles. The evidence to act.", "Search current opportunities, inspect why they match, and prepare application packages through the guarded workflow.")
+    from app.product_studio import dashboard_intro, dashboard_snapshot, recent_activity_markup
+
+    dashboard_intro()
     policy = volume_policy()
-    from app.dashboard_operational_metrics_v1 import operational_activity_summary
-
-    activity = operational_activity_summary()
+    activity, recent_applications = dashboard_snapshot()
     label = {"unlimited": "Unlimited", "custom_limit": f"Custom target: {policy.get('daily_limit')}", "paused": "Paused", "pause_after_batch": "Pausing after current batch"}[policy["mode"]]
-    filters = _search_filters("dashboard")
-    from app.application_provider_ui_v1 import render_dashboard_summary
-
-    render_dashboard_summary()
     with st.container(key="product_dashboard_metrics"):
         summary = st.columns(5, gap="small")
         summary[0].metric("Sent · 24 hours", activity["sent_24h"],
@@ -651,6 +643,8 @@ def dashboard() -> None:
         "Metrics reflect application lifecycle evidence, not historical n8n results. "
         "Refresh this page to load the latest state."
     )
+    with st.expander("Refine your top matches", expanded=False):
+        filters = _search_filters("dashboard")
     jobs, count = fetch_jobs(**filters, page_size=4)
     st.markdown(f'<div class="section-row"><div><h2>Top matches</h2><span class="quiet">{count:,} opportunities · ranked by canonical Hunter score</span></div><a class="product-nav-link" href="?view=jobs" target="_self">Browse all jobs →</a></div>', unsafe_allow_html=True)
     if jobs:
@@ -660,12 +654,17 @@ def dashboard() -> None:
                 with columns[index % len(columns)]: _job_card(row, key_prefix="dashboard")
     else:
         st.markdown('<div class="empty-product">No jobs match the current filters. Change a filter or add a job with its complete description.</div>', unsafe_allow_html=True)
-    tracker = tracker_rows()
-    st.markdown('<div class="section-row"><div><h2>Application activity</h2><span class="quiet">Packages and dispatch evidence — never assumed submissions</span></div><a class="product-nav-link" href="?view=tracker" target="_self">Open tracker →</a></div>', unsafe_allow_html=True)
-    if tracker:
-        st.dataframe([{ "Company": x["company_name"], "Role": x["title"], "Status": x["display_status"], "ATS score": x["final_ats_score"], "Updated": x.get("completed_at") or x.get("updated_at") } for x in tracker[:8]], hide_index=True, use_container_width=True)
+    st.markdown('<div class="section-row"><div><h2>Application activity</h2><span class="quiet">Current application status and next steps</span></div><a class="product-nav-link" href="?view=tracker" target="_self">Open tracker →</a></div>', unsafe_allow_html=True)
+    if recent_applications:
+        st.markdown(recent_activity_markup([
+            {**row, "updated_label": _relative_time(row.get("updated_at"))}
+            for row in recent_applications
+        ]), unsafe_allow_html=True)
     else:
-        st.markdown('<div class="empty-product">No application-package or queue evidence yet. Preparing a job creates a traceable package record here.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="empty-product">Your applications will appear here as you prepare a role. Open a job to review its evidence and start a package.</div>', unsafe_allow_html=True)
+    from app.product_studio import engine_status_panel
+
+    engine_status_panel()
     _job_detail()
 
 

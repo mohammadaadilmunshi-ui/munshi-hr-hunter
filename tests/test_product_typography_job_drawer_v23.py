@@ -12,8 +12,13 @@ def _source(path: str) -> str:
 
 def test_product_ui_uses_manrope_with_system_fallbacks() -> None:
     source = _source("app/product_ui.py")
-    assert "fonts.googleapis.com" in source
-    assert "family=Manrope" in source
+    from app.product_studio import studio_css
+    root = Path(__file__).resolve().parents[1]
+    for subset in ("latin", "latin-ext"):
+        assert (root / f"app/assets/fonts/manrope-{subset}-variable.woff2").read_bytes()[:4] == b"wOF2"
+    assert 'font-family:"Manrope"' in studio_css()
+    assert "data:font/woff2;base64," in studio_css()
+    assert "fonts.googleapis.com" not in source
     assert '--m-font:"Manrope"' in source
     assert "font-family:var(--m-font)!important" in source
     assert "-webkit-font-smoothing:antialiased" in source

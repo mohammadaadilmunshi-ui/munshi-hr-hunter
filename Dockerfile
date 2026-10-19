@@ -25,6 +25,7 @@ COPY tools/runners/jobspy_runner.py ./tools/runners/jobspy_runner.py
 # Copy source only. Runtime state, secrets, local launchers, and browser data
 # are excluded by .dockerignore and are supplied by Compose volumes/env.
 COPY app ./app
+COPY .streamlit ./.streamlit
 COPY config ./config
 COPY integrations ./integrations
 COPY migrations ./migrations
@@ -33,6 +34,8 @@ COPY scripts/complete_loop_migrate.py ./scripts/complete_loop_migrate.py
 COPY scripts/application_notification_worker.py ./scripts/application_notification_worker.py
 COPY scripts/render_n8n_deployment_workflow.py ./scripts/render_n8n_deployment_workflow.py
 COPY scripts/validate_container_environment_contract.py ./scripts/validate_container_environment_contract.py
+COPY scripts/package_streamlit_theme.py ./scripts/package_streamlit_theme.py
+RUN python scripts/package_streamlit_theme.py
 
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin hunter \
     && mkdir -p /app/hunter/data /app/hunter/.runtime /app/hunter/logs \

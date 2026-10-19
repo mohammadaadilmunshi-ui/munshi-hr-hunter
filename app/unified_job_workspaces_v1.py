@@ -159,6 +159,8 @@ def render_tracker(product_pages: Any) -> None:
         horizontal=True,
         label_visibility="collapsed",
         key="product_tracker_tab",
+        on_change=product_pages._sync_subroute,
+        args=("tab", "product_tracker_tab", {"Pipeline": "pipeline", "Inbox": "inbox"}),
     )
     if tab == "Inbox":
         product_pages._inbox()
@@ -438,6 +440,11 @@ def render_research(product_pages: Any) -> None:
         horizontal=True,
         label_visibility="collapsed",
         key="unified_research_section",
+        on_change=product_pages._sync_subroute,
+        args=("section", "unified_research_section", {
+            "Opportunities": "opportunities", "Companies": "companies",
+            "Role signals": "roles", "Risks": "risks",
+        }),
     )
     if section == "Opportunities":
         _research_opportunities(product_pages, snapshot)
