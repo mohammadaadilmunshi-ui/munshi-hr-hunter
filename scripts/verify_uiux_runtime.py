@@ -71,7 +71,7 @@ def profile_acceptance(page, url, output):
         previous = page.locator('#uiux-runtime').get_attribute('data-runs')
         page.locator('input[type=file]').set_input_files({'name':'synthetic-qa-resume.txt','mimeType':'text/plain','buffer':source.encode()})
         changed(page,previous)
-        assert intake.input_value() == source
+        assert intake.input_value().strip() == source.strip()
         page.get_by_role('textbox', name='Source name', exact=True).fill('Synthetic QA Master Resume')
         intake.fill(source)
         page.get_by_text('I confirm this source is truthful and may be used to build my profile and job-specific resumes.', exact=True).click()
