@@ -555,14 +555,15 @@ def _search_filters(namespace: str) -> dict[str, Any]:
     for key, default in defaults.items():
         st.session_state.setdefault(f"{namespace}_filter_{key}", stored.get(key, default))
     with st.container(key=f"product_{namespace}_search"):
-        search_left, search_right = st.columns((3.8, 1.2), gap="small")
-        with search_left:
-            query = st.text_input(
-                "Search jobs, companies, or locations",
-                placeholder="Try Techtronic, HR Coordinator, People Operations, or Philadelphia",
-                key=f"{namespace}_filter_query",
-            )
-        with search_right:
+        query = st.text_input(
+            "Search jobs, companies, or locations",
+            placeholder="Search a role, employer, or location…",
+            key=f"{namespace}_filter_query",
+        )
+        active = sum(st.session_state[f"{namespace}_filter_{key}"] != default
+                     for key, default in defaults.items() if key != "query")
+        filter_label = f"Filters · {active} active" if active else "Filters · location, match & sort"
+        with st.expander(filter_label, expanded=False):
             scope = st.selectbox(
                 "Search in",
                 ["all_fields", "title_description", "title_company"],
@@ -573,17 +574,16 @@ def _search_filters(namespace: str) -> dict[str, Any]:
                 }[value],
                 key=f"{namespace}_filter_search_scope",
             )
-        exclude = st.text_input("Exclude terms", placeholder="Exclude terms — separate multiple terms with commas…", key=f"{namespace}_filter_exclude", label_visibility="collapsed")
-        controls = st.columns((1.15, 1, 1, 1.1), gap="small")
-        with controls[0]:
-            location = st.selectbox("Location", [""] + values["locations"], format_func=lambda x: x or "All locations", key=f"{namespace}_filter_location")
-        with controls[1]:
-            workplace = st.selectbox("Workplace", [""] + values["remote"], format_func=lambda x: x or "Any workplace", key=f"{namespace}_filter_workplace")
-        with controls[2]:
-            source = st.selectbox("Source", [""] + values["sources"], format_func=lambda x: x or "All sources", key=f"{namespace}_filter_source")
-        with controls[3]:
-            employment = st.selectbox("Employment", [""] + values["employment"], format_func=lambda x: x or "Any employment", key=f"{namespace}_filter_employment_type")
-        with st.expander("Advanced filters", expanded=False):
+            exclude = st.text_input("Exclude terms", placeholder="Separate excluded terms with commas…", key=f"{namespace}_filter_exclude")
+            controls = st.columns((1.15, 1, 1, 1.1), gap="small")
+            with controls[0]:
+                location = st.selectbox("Location", [""] + values["locations"], format_func=lambda x: x or "All locations", key=f"{namespace}_filter_location")
+            with controls[1]:
+                workplace = st.selectbox("Workplace", [""] + values["remote"], format_func=lambda x: x or "Any workplace", key=f"{namespace}_filter_workplace")
+            with controls[2]:
+                source = st.selectbox("Source", [""] + values["sources"], format_func=lambda x: x or "All sources", key=f"{namespace}_filter_source")
+            with controls[3]:
+                employment = st.selectbox("Employment", [""] + values["employment"], format_func=lambda x: x or "Any employment", key=f"{namespace}_filter_employment_type")
             advanced_one = st.columns((1.25, 1, 1), gap="small")
             with advanced_one[0]:
                 target_track = st.selectbox("Target track", [""] + values["target_tracks"], format_func=lambda x: x or "Any target track", key=f"{namespace}_filter_target_track")
@@ -599,11 +599,8 @@ def _search_filters(namespace: str) -> dict[str, Any]:
             with advanced_two[2]:
                 result_set = st.selectbox("Result set", ["all", "saved", "passed"], format_func=lambda x: {"all": "All jobs", "saved": "Saved", "passed": "Passed"}[x], key=f"{namespace}_filter_result_set")
             ats_only = st.toggle("Only jobs with an ATS-scored package", key=f"{namespace}_filter_ats_only")
-        reset_area, explanation = st.columns((1, 4), gap="small")
-        with reset_area:
+            st.caption("Filters update live using stored job, ATS, score and eligibility evidence.")
             st.button("Reset filters", key=f"{namespace}_reset_filters", use_container_width=True, on_click=_reset_search_filters, args=(namespace,))
-        with explanation:
-            st.caption("Filters update live. Every filter uses stored job, score, ATS, and eligibility evidence.")
     current = {
         "query": query, "exclude": exclude, "location": location, "source": source,
         "workplace": workplace, "employment_type": employment, "target_track": target_track,

@@ -30,6 +30,26 @@ with patch.object(workspaces,"_pipeline_records",return_value=[]):
     assert _resolved_subroute_state('research',section='companies') == ('unified_research_section','Companies')
 
 
+def test_filter_disclosure_retains_all_evidence_controls_and_reset():
+    app = AppTest.from_string('''
+import streamlit as st
+from unittest.mock import patch
+from app import product_pages as pages
+values={"locations":["Remote, US"],"remote":["Remote"],"sources":["staging_fixture"],"employment":["Full time"],"target_tracks":["HR"]}
+with patch.object(pages,"job_filters",return_value=values):
+ st.session_state["test_filters"] = pages._search_filters("jobs")
+''').run()
+    assert not app.exception
+    assert len(app.selectbox) == 10
+    app.selectbox(key='jobs_filter_location').set_value('Remote, US').run()
+    assert not app.exception
+    assert app.session_state['test_filters']['location'] == 'Remote, US'
+    assert app.expander[0].label == 'Filters · 1 active'
+    app.button(key='jobs_reset_filters').click().run()
+    assert not app.exception
+    assert app.session_state['test_filters']['location'] == ''
+
+
 def test_packaged_theme_is_idempotent_and_does_not_hide_errors():
     from scripts.package_streamlit_theme import package, STATUS
     original = '<html><head></head><body><div id="root"></div></body></html>'
