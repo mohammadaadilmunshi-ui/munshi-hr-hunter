@@ -589,6 +589,8 @@ def _reusable_exact_resume(job_id: int) -> dict[str, Any] | None:
     try:
         truth = truth_binding.current_candidate_profile_snapshot()
         job = safe_owned_job_snapshot(int(job_id))
+    except sqlite3.OperationalError:
+        raise
     except Exception:  # noqa: BLE001
         return None
     for summary in resume_v5.list_versions(job_id=int(job_id), limit=12):
@@ -596,6 +598,8 @@ def _reusable_exact_resume(job_id: int) -> dict[str, Any] | None:
             continue
         try:
             record = resume_v5.get_version(str(summary["version_id"]))
+        except sqlite3.OperationalError:
+            raise
         except Exception:  # noqa: BLE001
             continue
         candidate_binding = dict(record.get("candidate_truth_binding") or {})

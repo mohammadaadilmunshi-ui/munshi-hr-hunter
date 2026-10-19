@@ -382,16 +382,23 @@ def drive_operation_once(operation_id: str) -> dict[str, Any]:
                 raise RuntimeError(
                     "Relay intent ledger unavailable; cannot safely choose a submission engine."
                 )
-            if relay_state["operation_id"] == str(operation_id) and relay_state["status"] in {
-                "REQUESTED", "CLAIMED",
-            }:
-                if relay_state["status"] == "CLAIMED":
-                    relay_result = {"authorized": False, "reason": "one_use_claim_consumed"}
-                else:
+            if relay_state["status"] != "NONE":
+                if relay_state["status"] == "REQUESTED" and (
+                    relay_state["operation_id"] == str(operation_id)
+                ):
                     relay_result = relay_one_click.maybe_dispatch(str(operation_id))
+                else:
+                    relay_result = {
+                        "authorized": False,
+                        "reason": (
+                            "awaiting_exact_operation_binding"
+                            if relay_state["status"] == "PENDING_PREPARE"
+                            else "one_click_reserved_for_other_or_expired_operation"
+                        ),
+                    }
                 step_results.append({"step": "relay_one_click", "result": relay_result})
-                # This operation belongs exclusively to Relay. An ambiguous
-                # provider outcome must never fall through to Native ATS.
+                # A pending, expired, claimed, or mismatched Relay intent is
+                # never permission to fall through to Native ATS execution.
                 final = orchestrator.prepare_operation(str(operation_id))
                 return {
                     "operation_id": str(operation_id),

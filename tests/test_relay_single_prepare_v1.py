@@ -10,6 +10,8 @@ import pytest
 
 from app import relay_single_prepare_v1 as one_click
 
+ORIGINAL_PREFLIGHT = one_click.preflight_job
+
 
 @pytest.fixture()
 def safe_ledger(tmp_path: Path, monkeypatch):
@@ -78,6 +80,7 @@ def test_one_click_claim_dispatches_only_once(safe_ledger):
         return {"status": "PROVIDER_SUBMITTED"}
 
     monkeypatch.setattr(flow, "approve_and_submit_for_job", dispatch)
+    assert one_click.reserve_before_prepare(7)["status"] == "PENDING_PREPARE"
     assert one_click.authorize_new_operation(7, "prepare-op-7")["status"] == "REQUESTED"
     first = one_click.maybe_dispatch("prepare-op-7")
     second = one_click.maybe_dispatch("prepare-op-7")
@@ -96,6 +99,7 @@ def test_changed_candidate_truth_blocks_claim(safe_ledger):
         flow, "approve_and_submit_for_job",
         lambda *args, **kwargs: pytest.fail("Must not submit changed candidate truth"),
     )
+    one_click.reserve_before_prepare(7)
     one_click.authorize_new_operation(7, "prepare-op-7")
     monkeypatch.setattr(one_click, "_bindings", lambda _job: ("a" * 64, "d" * 64))
     result = one_click.maybe_dispatch("prepare-op-7")
@@ -112,6 +116,7 @@ def test_uncertain_relay_outcome_never_retries(safe_ledger):
         raise TimeoutError("Provider response lost")
 
     monkeypatch.setattr(flow, "approve_and_submit_for_job", uncertain)
+    one_click.reserve_before_prepare(7)
     one_click.authorize_new_operation(7, "prepare-op-7")
     first = one_click.maybe_dispatch("prepare-op-7")
     second = one_click.maybe_dispatch("prepare-op-7")
@@ -122,13 +127,15 @@ def test_uncertain_relay_outcome_never_retries(safe_ledger):
 
 
 def test_existing_job_cannot_get_second_one_click_intent(safe_ledger):
+    one_click.reserve_before_prepare(7)
     one_click.authorize_new_operation(7, "prepare-op-7")
     with pytest.raises(PermissionError, match="already exists"):
-        one_click.authorize_new_operation(7, "prepare-op-7")
+        one_click.reserve_before_prepare(7)
 
 
 def test_mismatched_package_is_not_claimed(safe_ledger):
     _, _operation, review, _flow = safe_ledger
+    one_click.reserve_before_prepare(7)
     one_click.authorize_new_operation(7, "prepare-op-7")
     review["package_review"]["review_digest"] = "z" * 64
     result = one_click.maybe_dispatch("prepare-op-7")
@@ -153,3 +160,78 @@ def test_resume_studio_no_cross_session_monkeypatch():
     assert "resume_v5.version_html =" not in v6
     assert "generate_checked=_generate_checked" in v5
     assert "version_html=styled_version_html" in v6
+
+
+
+def test_worker_never_falls_through_to_native_during_intent_binding(safe_ledger):
+    monkeypatch, _op, _review, _flow = safe_ledger
+    from app import autonomous_prepare_v1 as worker
+    from app import native_standing_consent_v1 as standing
+    from app import prepare_worker_adapters_v1a as v1a
+    from app import prepare_worker_adapters_v1b as v1b
+    from app import prepare_worker_adapters_v1c as v1c
+
+    for module, name in (
+        (v1a, "run_native_resume_once"),
+        (v1a, "run_recruiter_evidence_once"),
+        (v1b, "run_answer_resolution_once"),
+        (v1b, "run_cover_letter_decision_once"),
+        (v1c, "run_application_preflight_once"),
+    ):
+        monkeypatch.setattr(module, name, lambda **kwargs: {"claimed": False})
+    monkeypatch.setattr(
+        v1c, "run_ats_form_preparation_once",
+        lambda **kwargs: pytest.fail("Native ATS must not run for Relay intent"),
+    )
+    monkeypatch.setattr(
+        standing, "status",
+        lambda: pytest.fail("Native standing consent must never apply to Relay"),
+    )
+    one_click.reserve_before_prepare(7)
+    waiting = worker.drive_operation_once("prepare-op-7")
+    assert waiting["relay_submission_state"] == "awaiting_exact_operation_binding"
+    assert one_click.status(7)["status"] == "PENDING_PREPARE"
+
+    one_click.authorize_new_operation(7, "prepare-op-7")
+    monkeypatch.setattr(
+        _flow, "approve_and_submit_for_job",
+        lambda *args, **kwargs: {"status": "PROVIDER_SUBMITTED"},
+    )
+    applied = worker.drive_operation_once("prepare-op-7")
+    assert applied["relay_submission_state"] == "PROVIDER_SUBMITTED"
+    assert one_click.status(7)["status"] == "CLAIMED"
+    no_retry = worker.drive_operation_once("prepare-op-7")
+    assert no_retry["relay_submission_state"] == (
+        "one_click_reserved_for_other_or_expired_operation"
+    )
+
+
+def test_pending_one_click_binding_may_only_be_consumed_once(safe_ledger):
+    assert one_click.reserve_before_prepare(7)["status"] == "PENDING_PREPARE"
+    with pytest.raises(PermissionError, match="already exists"):
+        one_click.reserve_before_prepare(7)
+    assert one_click.authorize_new_operation(7, "prepare-op-7")["status"] == "REQUESTED"
+    with pytest.raises(PermissionError, match="No fresh"):
+        one_click.authorize_new_operation(7, "prepare-op-7")
+
+
+def test_preflight_refuses_existing_application_record(safe_ledger):
+    monkeypatch, _, _, flow = safe_ledger
+    from app import tsenta_backend_readiness_v1 as readiness
+
+    monkeypatch.setattr(
+        flow, "flow_for_job",
+        lambda _job, summary=True: {
+            "state": "SUBMISSION_UNVERIFIED",
+            "provider_route": {"provider": "TSENTA"},
+        },
+    )
+    monkeypatch.setattr(
+        readiness, "connection_status", lambda: {"execution_ready": True},
+    )
+    # Restore the actual preflight implementation instead of the fixture's
+    # shortcut. The duplicate guard precedes any job table access.
+    with monkeypatch.context() as patch:
+        patch.setattr(one_click, "preflight_job", ORIGINAL_PREFLIGHT)
+        with pytest.raises(PermissionError, match="already has an application"):
+            one_click.preflight_job(7)

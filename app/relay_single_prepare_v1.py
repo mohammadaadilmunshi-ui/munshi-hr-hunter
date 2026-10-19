@@ -83,6 +83,18 @@ def preflight_job(job_id: int) -> None:
     from app.application_provider_ui_v1 import verified_apply_destination
     if connection_status().get("execution_ready") is not True:
         raise PermissionError("MUNSHI Relay execution is not verified.")
+    from app.product_application_flow_v2 import flow_for_job
+
+    existing = flow_for_job(int(job_id), summary=True)
+    if any((
+        existing.get("state"), existing.get("prepare"),
+        existing.get("lifecycle"), existing.get("provider_route"),
+        existing.get("production_receipt"),
+    )):
+        raise PermissionError(
+            "This job already has an application or provider record. "
+            "Open its existing package instead of starting a new one."
+        )
     con = get_connection()
     try:
         con.execute("PRAGMA query_only=ON")
@@ -110,8 +122,42 @@ def preflight_job(job_id: int) -> None:
     _bindings(int(job_id))
 
 
+def reserve_before_prepare(job_id: int) -> dict[str, Any]:
+    """Persist an exclusive exact-job intent BEFORE starting any worker.
+
+    The worker must not take the default Native route during the tiny window
+    between durable Prepare creation and binding the operation identity.
+    """
+    job_id = int(job_id)
+    preflight_job(job_id)
+    job_sha, profile_sha = _bindings(job_id)
+    current = _now()
+    record = {
+        "version": 1, "status": "PENDING_PREPARE",
+        "authorization_id": "relay-prepare-" + uuid4().hex,
+        "job_id": job_id, "operation_id": "",
+        "job_snapshot_sha256": job_sha, "profile_digest": profile_sha,
+        "authorized_at": current.isoformat(),
+        "expires_at": (current + _LIFETIME).isoformat(),
+    }
+    con = get_connection()
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        if _load(con, job_id):
+            raise PermissionError("One-click Relay consent already exists for this job.")
+        _save(con, job_id, record)
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+    return {"status": "PENDING_PREPARE",
+            "authorization_id": record["authorization_id"]}
+
+
 def authorize_new_operation(job_id: int, operation_id: str) -> dict[str, Any]:
-    """Persist the user's one-click intent after a NEW durable Prepare exists."""
+    """Attach a NEW durable Prepare to a pre-reserved exact-job intent."""
     from app.prepare_orchestrator_v1 import prepare_operation
     job_id = int(job_id)
     operation_id = str(operation_id or "").strip()
@@ -129,23 +175,23 @@ def authorize_new_operation(job_id: int, operation_id: str) -> dict[str, Any]:
     age = (_now() - created).total_seconds()
     if age < -30 or age > 180:
         raise PermissionError("Only a newly created exact-job Prepare can be authorized.")
-    preflight_job(job_id)
     job_sha, profile_sha = _bindings(job_id)
-    current = _now()
-    record = {
-        "version": 1, "status": "REQUESTED",
-        "authorization_id": "relay-prepare-" + uuid4().hex,
-        "job_id": job_id, "operation_id": operation_id,
-        "operation_created_at": str(op.get("created_at") or ""),
-        "job_snapshot_sha256": job_sha, "profile_digest": profile_sha,
-        "authorized_at": current.isoformat(),
-        "expires_at": (current + _LIFETIME).isoformat(),
-    }
     con = get_connection()
     try:
         con.execute("BEGIN IMMEDIATE")
-        if _load(con, job_id):
-            raise PermissionError("One-click Relay consent already exists for this job.")
+        record = _load(con, job_id)
+        if (
+            record.get("status") != "PENDING_PREPARE"
+            or record.get("operation_id")
+            or record.get("job_snapshot_sha256") != job_sha
+            or record.get("profile_digest") != profile_sha
+            or datetime.fromisoformat(str(record["expires_at"])) <= _now()
+        ):
+            raise PermissionError("No fresh, matching one-click Relay reservation.")
+        record = {
+            **record, "status": "REQUESTED", "operation_id": operation_id,
+            "operation_created_at": str(op.get("created_at") or ""),
+        }
         _save(con, job_id, record)
         con.commit()
     except Exception:
@@ -164,7 +210,7 @@ def status(job_id: int) -> dict[str, str]:
         con.execute("PRAGMA query_only=ON")
         record = _load(con, int(job_id))
         stage = str(record.get("status") or "NONE")
-        if stage == "REQUESTED":
+        if stage in {"REQUESTED", "PENDING_PREPARE"}:
             try:
                 if datetime.fromisoformat(str(record["expires_at"])) <= _now():
                     stage = "EXPIRED"

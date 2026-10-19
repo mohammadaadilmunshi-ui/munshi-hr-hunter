@@ -381,7 +381,10 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
             try:
                 with st.spinner('Creating an exact-job, durable preparation…'):
                     if relay_mode:
-                        relay_one_click.preflight_job(int(job_id))
+                        # Persist intent before the worker can reach its
+                        # submission engine; otherwise an unusually fast
+                        # Prepare can race the customer authorization record.
+                        relay_one_click.reserve_before_prepare(int(job_id))
                     started = complete_loop.start_prepare_for_job(
                         int(job_id), engine=engine,
                     )
@@ -831,18 +834,29 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
         from app import relay_single_prepare_v1 as relay_one_click
 
         relay_intent = relay_one_click.status(int(job_id))
-        relay_one_click_active = (
-            relay_intent.get('operation_id') == str(prepare.get('operation_id') or '')
-            and relay_intent.get('status') in {'REQUESTED', 'CLAIMED'}
+        relay_stage = str(relay_intent.get('status') or 'NONE')
+        relay_one_click_active = relay_stage in {
+            'PENDING_PREPARE', 'REQUESTED', 'CLAIMED',
+            'EXPIRED', 'INVALID', 'UNAVAILABLE',
+        } and (
+            relay_stage in {'PENDING_PREPARE', 'UNAVAILABLE'}
+            or relay_intent.get('operation_id') == str(prepare.get('operation_id') or '')
         )
         if relay_one_click_active:
-            st.info(
-                'One-click MUNSHI Relay consent is recorded for this exact '
-                'preparation. The package remains visible for inspection, but '
-                'a second Approve & Submit would risk a duplicate. '
-                'Relay will dispatch once when all package checks pass; '
-                'an uncertain outcome requires reconciliation, never another click.'
-            )
+            if relay_stage in {'EXPIRED', 'INVALID', 'UNAVAILABLE'}:
+                st.warning(
+                    'This one-click Relay authorization cannot be verified or '
+                    'has expired. Submission is blocked; resolve the existing '
+                    'application record instead of approving a second attempt.'
+                )
+            else:
+                st.info(
+                    'One-click MUNSHI Relay consent is recorded for this exact '
+                    'preparation. The package remains visible for inspection, but '
+                    'a second Approve & Submit could duplicate the application. '
+                    'Relay will dispatch once when all package checks pass; '
+                    'an uncertain outcome requires reconciliation, never another click.'
+                )
         elif not review_record:
             st.warning(
                 'The immutable pre-browser package review is still synchronizing. '
