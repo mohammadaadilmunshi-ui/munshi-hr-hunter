@@ -118,7 +118,15 @@ def _presentation_settings() -> dict[str, Any]:
 
 
 def render() -> None:
-    settings = _presentation_settings()
+    settings: dict[str, Any] = {}
+
+    def appearance_controls() -> None:
+        # Keep the complete existing controls and keys, after the title and
+        # behind an explicit disclosure. The settings still bind before canvas
+        # rendering; checked artifacts remain immutable.
+        with st.expander("Resume appearance · preview only", expanded=False):
+            settings.update(_presentation_settings())
+
     original_version_html = resume_v5.version_html
 
     def styled_version_html(version_id: str) -> str:
@@ -127,7 +135,7 @@ def render() -> None:
 
     resume_v5.version_html = styled_version_html
     try:
-        v5.render()
+        v5.render(appearance_controls=appearance_controls)
     finally:
         resume_v5.version_html = original_version_html
 
