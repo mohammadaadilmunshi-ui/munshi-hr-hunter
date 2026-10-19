@@ -25,6 +25,7 @@ COPY tools/runners/jobspy_runner.py ./tools/runners/jobspy_runner.py
 # Copy source only. Runtime state, secrets, local launchers, and browser data
 # are excluded by .dockerignore and are supplied by Compose volumes/env.
 COPY app ./app
+COPY .streamlit ./.streamlit
 COPY config ./config
 COPY integrations ./integrations
 COPY migrations ./migrations
