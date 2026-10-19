@@ -136,3 +136,19 @@ def test_dashboard_activity_and_counters_share_current_lifecycle_truth(monkeypat
     assert "International Education and Research Foundation" in markup
     assert '?view=prepare-application&amp;job=81001' in markup
     assert "Submitted" not in markup
+
+
+def test_native_navigation_keeps_session_and_updates_shareable_route():
+    app = AppTest.from_string('''
+import streamlit as st
+from app.product_navigation import render_navigation
+st.session_state.setdefault("retained_filters", {"query":"analytics"})
+st.session_state["runs"] = st.session_state.get("runs",0)+1
+render_navigation(st.query_params.get("view","dashboard"), (("dashboard","Dashboard"),("jobs","Browse jobs")))
+''').run()
+    assert not app.exception
+    app.button(key="route_desktop_jobs").click().run()
+    assert not app.exception
+    assert app.query_params["view"] == ["jobs"]
+    assert app.session_state["retained_filters"] == {"query": "analytics"}
+    assert app.session_state["runs"] == 2

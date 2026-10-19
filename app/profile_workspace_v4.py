@@ -367,6 +367,8 @@ def render() -> None:
 
     # One and only one mount of the interactive Master Resume control surface.
     master_resume_ui.render_compact(authority)
+    if st.session_state.pop("_profile_intake_saved", False):
+        st.success("Master Resume source saved. Build and review your structured profile below; application authority has not changed.")
     _status_cards(authority, answers)
 
     for warning in authority.get("warnings") or []:

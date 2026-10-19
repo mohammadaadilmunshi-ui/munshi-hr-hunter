@@ -1,0 +1,45 @@
+name: Isolated Streamlit Browser Acceptance
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.lock.txt
+      - run: python -m playwright install --with-deps chromium webkit
+      - run: python -m pytest -q tests/test_uiux_staging_contract.py tests/test_product_studio.py
+      - name: Build exact source and isolated test image
+        run: |
+          docker build --tag munshi-uiux-20261019:candidate .
+          docker build -f deploy/uiux/Dockerfile --tag munshi-uiux-20261019:stage .
+          docker compose -p munshi-uiux-20261019 -f deploy/uiux/compose.yaml up -d --no-build
+      - name: Exercise the complete synthetic app
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGE_IP=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' munshi-uiux-20261019-dashboard-1)
+          for attempt in $(seq 1 45); do
+            if curl -fsS "http://$STAGE_IP:8501/_stcore/health" >/dev/null; then break; fi
+            sleep 1
+          done
+          python scripts/verify_uiux_runtime.py --url "http://$STAGE_IP:8501" --output uiux-evidence
+      - name: Staging logs
+        if: always()
+        run: docker compose -p munshi-uiux-20261019 -f deploy/uiux/compose.yaml logs --no-color > uiux-runtime.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-streamlit-browser-evidence
+          path: |
+            uiux-evidence
+            uiux-runtime.log

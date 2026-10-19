@@ -155,7 +155,6 @@ def render() -> None:
         _nav_link(route, label, view, mobile=True)
         for route, label in (*NAVIGATION, ("settings", "Settings"))
     )
-    settings_link = _nav_link("settings", "Settings", view)
     logo = brand_logo_data_uri()
 
     with st.container(key="product_top_bar"):
@@ -170,7 +169,6 @@ def render() -> None:
                     {desktop_links}
                 </nav>
                 <div class="product-header-actions">
-                    {settings_link}
                     <span class="status-pill-product" title="Job discovery and preparation volume. Not a final-submission confirmation.">{esc(status)}</span>
                 </div>
                 <details class="mobile-nav">
