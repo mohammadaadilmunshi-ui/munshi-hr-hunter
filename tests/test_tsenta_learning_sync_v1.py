@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
@@ -80,7 +81,7 @@ def test_authorized_import_reuses_read_only_mcp_across_multiple_ats(hunter_db):
 def test_learning_batch_rejects_out_of_bound_page_and_excess_records(hunter_db):
     del hunter_db
     fake = ExistingApplicationsMcp(count=3)
-    for page, limit in ((0, 15), (21, 15), (1, 16), (1, 0)):
+    for page, limit in ((0, 15), (201, 15), (1, 16), (1, 0)):
         with pytest.raises(ValueError):
             sync.sync_observations_from_mcp(mcp=fake, page=page, limit=limit)
     assert fake.calls == []
@@ -126,3 +127,99 @@ def test_sync_api_is_api_key_protected_and_never_mutates_applications(monkeypatc
     response = api.sync_tsenta_learning_observations(page=2, limit=10)
     assert response["page"] == 2
     assert response["new_observation_rows"] == 0
+
+
+
+def test_sqlite_busy_retry_uses_new_idempotent_writer_call(monkeypatch):
+    attempts = []
+    delays = []
+    def fake_write(records):
+        attempts.append(records)
+        if len(attempts) <= 2:
+            raise sqlite3.OperationalError("database is locked")
+        return {"inserted": 1, "replayed": 0}
+    monkeypatch.setattr(sync.observations, "persist_observations", fake_write)
+    monkeypatch.setattr(sync.time, "sleep", delays.append)
+    batch = [{"evidence_grade": "OBSERVED", "answer_value_recorded": False}]
+    assert sync._persist_with_lock_retry(batch)["inserted"] == 1
+    assert len(attempts) == 3
+    assert all(x is batch for x in attempts)
+    assert delays == [1, 2]
+
+
+def test_non_sqlite_lock_is_never_retried(monkeypatch):
+    calls = []
+    def unsupported(_items):
+        calls.append(True)
+        raise sqlite3.OperationalError("no such table: foo")
+    monkeypatch.setattr(sync.observations, "persist_observations", unsupported)
+    monkeypatch.setattr(
+        sync.time, "sleep", lambda _: pytest.fail("Must not retry unrelated SQL failure")
+    )
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        sync._persist_with_lock_retry([{}])
+    assert len(calls) == 1
+
+
+def test_lock_retry_exhaustion_keeps_batch_unclaimed(monkeypatch):
+    calls = []
+    delays = []
+    def always_locked(_items):
+        calls.append(True)
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(sync.observations, "persist_observations", always_locked)
+    monkeypatch.setattr(sync.time, "sleep", delays.append)
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        sync._persist_with_lock_retry([{}])
+    assert len(calls) == 4
+    assert delays == [1, 2, 4]
+
+
+def test_locked_learning_writer_retries_on_new_connection_without_rereading_provider(
+    monkeypatch,
+):
+    attempts = []
+    waits = []
+
+    def write(incoming):
+        attempts.append(incoming)
+        if len(attempts) <= 2:
+            raise sqlite3.OperationalError("database is locked")
+        return {"inserted": 1, "replayed": 0}
+
+    monkeypatch.setattr(sync.observations, "persist_observations", write)
+    monkeypatch.setattr(sync.time, "sleep", waits.append)
+    batch = [{"observation_kind": "FORM_FIELD", "answer_value_recorded": False}]
+    result = sync._persist_with_lock_retry(batch)
+    assert result["inserted"] == 1
+    assert attempts == [batch, batch, batch]
+    assert waits == [1, 2]
+
+
+def test_locked_learning_writer_exhaustion_does_not_claim_success(monkeypatch):
+    attempts = []
+    def write(_incoming):
+        attempts.append(1)
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(sync.observations, "persist_observations", write)
+    monkeypatch.setattr(sync.time, "sleep", lambda _: None)
+    with pytest.raises(sqlite3.OperationalError):
+        sync._persist_with_lock_retry([{"answer_value_recorded": False}])
+    assert len(attempts) == 4
+
+
+def test_non_lock_sqlite_failure_is_never_retried(monkeypatch):
+    attempts = []
+    def write(_incoming):
+        attempts.append(1)
+        raise sqlite3.OperationalError("no such table: learning_evidence")
+
+    monkeypatch.setattr(sync.observations, "persist_observations", write)
+    monkeypatch.setattr(
+        sync.time, "sleep",
+        lambda _: pytest.fail("must not sleep or retry unrecoverable SQLite error")
+    )
+    with pytest.raises(sqlite3.OperationalError):
+        sync._persist_with_lock_retry([{"answer_value_recorded": False}])
+    assert len(attempts) == 1

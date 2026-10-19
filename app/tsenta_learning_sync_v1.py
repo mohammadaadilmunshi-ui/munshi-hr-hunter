@@ -6,6 +6,8 @@ MCP read tools only; no external submit, retry, or candidate answer storage.
 from __future__ import annotations
 
 import re
+import sqlite3
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -13,7 +15,7 @@ from app import tsenta_observation_v1 as observations
 from app.tsenta_mcp_adapter_v1 import _unwrap
 from app.tsenta_oauth_v1 import TsentaOAuthError, _token_for_current_owner
 
-MAX_PAGE = 20
+MAX_PAGE = 200
 MAX_BATCH = 15
 _APPLICATION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
@@ -32,6 +34,29 @@ def _ats(record: Mapping[str, Any], status: Mapping[str, Any]) -> str:
             if isinstance(value, str) and value.strip():
                 return observations._ats_slug(value)
     return "unknown"
+
+
+def _persist_with_lock_retry(incoming: list[dict[str, Any]]) -> dict[str, int]:
+    """Retry only transient SQLite writer contention, using fresh DB connections.
+
+    One attempt fully rolls back on failure; the observation IDs are stable,
+    so retries are idempotent. Never re-run provider actions as part of a retry.
+    """
+    for attempt in range(4):
+        try:
+            return observations.persist_observations(incoming)
+        except sqlite3.OperationalError as error:
+            code = getattr(error, "sqlite_errorcode", 0)
+            busy = (code & 0xFF) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+            busy = busy or any(
+                marker in str(error).casefold()
+                for marker in ("database is locked", "database is busy",
+                               "database table is locked")
+            )
+            if not busy or attempt == 3:
+                raise
+            time.sleep((1, 2, 4)[attempt])
+    raise RuntimeError("Unreachable learning write retry state.")
 
 
 def sync_observations_from_mcp(*, mcp: Any, page: int = 1,
@@ -97,7 +122,7 @@ def sync_observations_from_mcp(*, mcp: Any, page: int = 1,
             # A completed provider application often has no review screen.
             # Never invent fields for it or reinterpret status as a receipt.
             unavailable_reviews += 1
-    result = observations.persist_observations(incoming) if incoming else {
+    result = _persist_with_lock_retry(incoming) if incoming else {
         "inserted": 0, "replayed": 0,
     }
     return {
