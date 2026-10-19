@@ -642,7 +642,13 @@ def _generation_panel(
     generate_checked: Callable[..., tuple[dict[str, Any], dict[str, Any]]] | None = None,
 ) -> None:
     st.markdown("### Create tailored resume")
-    existing = _reusable_exact_resume(job_id)
+    try:
+        existing = _reusable_exact_resume(job_id)
+    except sqlite3.OperationalError as error:
+        # Never offer Generate while an existing version cannot be checked:
+        # a second click could create a needless duplicate immutable version.
+        st.warning(_studio_failure_message(error))
+        return
     regenerate_key = f"resume_regenerate_requested_{job_id}"
     regenerate_requested = bool(st.session_state.get(regenerate_key))
     if existing and not regenerate_requested:
@@ -1240,21 +1246,24 @@ def render(
         advanced_writer_ui._writer_settings_panel()
 
     st.divider()
-    _resume_library()
+    try:
+        _resume_library()
 
-    st.divider()
-    job_id, context = _job_workspace()
-    if job_id is None:
-        return
+        st.divider()
+        job_id, context = _job_workspace()
+        if job_id is None:
+            return
 
-    st.divider()
-    _generation_panel(
-        job_id=job_id,
-        profile_ready=snapshot is not None,
-        writer_ready=writer_ready,
-        generate_checked=generate_checked,
-    )
-    _version_workspace(
-        job_id, context, writer_ready,
-        generate_checked=generate_checked, version_html=version_html,
-    )
+        st.divider()
+        _generation_panel(
+            job_id=job_id,
+            profile_ready=snapshot is not None,
+            writer_ready=writer_ready,
+            generate_checked=generate_checked,
+        )
+        _version_workspace(
+            job_id, context, writer_ready,
+            generate_checked=generate_checked, version_html=version_html,
+        )
+    except sqlite3.OperationalError as error:
+        st.warning(_studio_failure_message(error))

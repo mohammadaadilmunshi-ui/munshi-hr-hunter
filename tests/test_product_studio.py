@@ -179,9 +179,12 @@ def test_resume_appearance_follows_title_and_preserves_checked_generation(monkey
     original_checked = v4._generate_checked
     monkeypatch.setattr(v6, "_presentation_settings", lambda: calls.append("appearance") or {"font": "Arial"})
     monkeypatch.setattr(v5.quality_hotfix, "install", lambda: None)
-    def render_v4(*, appearance_controls=None):
+    def render_v4(*, appearance_controls=None, generate_checked=None, version_html=None):
         calls.append("title")
-        assert v4._generate_checked is v5._generate_checked
+        assert generate_checked is v5._generate_checked
+        assert callable(version_html)
+        assert v4._generate_checked is original_checked
+        assert v6.resume_v5.version_html is original_html
         appearance_controls()
         calls.append("canvas")
     monkeypatch.setattr(v4, "render", render_v4)

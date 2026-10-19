@@ -76,5 +76,8 @@ def test_v6_preserves_checked_artifact_authority() -> None:
     source = (ROOT / "app" / "resume_studio_page_v6.py").read_text(encoding="utf-8")
     assert "presentation-only" in source
     assert "immutable Standard V5 artifact" in source
-    assert "v5.render(appearance_controls=appearance_controls)" in source
+    assert "v5.render(" in source
+    assert "appearance_controls=appearance_controls" in source
+    assert "version_html=styled_version_html" in source
+    assert "resume_v5.version_html =" not in source
     assert 'st.expander("Resume appearance · preview only", expanded=False)' in source
