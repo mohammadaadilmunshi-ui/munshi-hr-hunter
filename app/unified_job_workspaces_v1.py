@@ -78,11 +78,12 @@ def _card_grid(
     if not visible:
         return
     count = min(max(1, int(columns)), len(visible))
+    pulse_evidence = product_pages._pulse_evidence()
     grid = st.columns(count, gap="medium")
     for index, row in enumerate(visible):
         job_id = int(row["id"])
         with grid[index % count]:
-            product_pages._job_card(row, key_prefix=key_prefix)
+            product_pages._job_card(row, key_prefix=key_prefix, pulse_evidence=pulse_evidence)
             footer = str((footer_by_id or {}).get(job_id) or "").strip()
             if footer:
                 st.caption(footer)

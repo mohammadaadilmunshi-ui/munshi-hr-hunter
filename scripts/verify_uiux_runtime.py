@@ -35,8 +35,10 @@ def ready(page):
     page.wait_for_function("document.querySelector('#uiux-runtime') || document.querySelector('[data-testid=stException]')", timeout=45000)
     errors = page.locator('[data-testid="stException"]').all_text_contents()
     assert not errors, errors
-    page.locator("#uiux-runtime").wait_for(timeout=45000)
-    assert "Synthetic staging" in page.locator("#uiux-runtime").text_content()
+    # During Streamlit rerender the previous and next status asides may
+    # briefly coexist. The first is the active snapshot, not a second page.
+    page.locator("#uiux-runtime").first.wait_for(timeout=45000)
+    assert "Synthetic staging" in page.locator("#uiux-runtime").first.text_content()
     page.wait_for_function("!document.querySelector('[data-testid=stSkeleton]')", timeout=30000)
     if page.locator('#munshi-boot-status').count():
         page.locator('#munshi-boot-status').wait_for(state='hidden', timeout=30000)
@@ -45,7 +47,11 @@ def ready(page):
 
 
 def changed(page, previous):
-    page.wait_for_function("old=>document.querySelector('#uiux-runtime')?.dataset.runs!==old", arg=previous, timeout=30000)
+    page.wait_for_function(
+        "old=>Math.max(0,...Array.from(document.querySelectorAll('#uiux-runtime'))"
+        ".map(node=>Number(node.dataset.runs)||0))>Number(old)",
+        arg=previous, timeout=30000,
+    )
     ready(page)
 
 
@@ -69,7 +75,7 @@ def profile_acceptance(page, url, output):
                   '- Built Excel and Power BI reporting for recruiting operations.\n'
                   'EDUCATION\nBachelor of Science in Human Resources | Fictional University | 2021\n'
                   'SKILLS\nExcel, Power BI, SQL, recruiting operations\n')
-        previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+        previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
         page.locator('input[type=file]').set_input_files({'name':'synthetic-qa-resume.txt','mimeType':'text/plain','buffer':source.encode()})
         changed(page,previous)
         assert intake.input_value().strip() == source.strip()
@@ -85,7 +91,7 @@ def profile_acceptance(page, url, output):
         page.get_by_role('button', name='Confirm as permanent profile', exact=True).wait_for()
     confirm = page.get_by_role('button', name='Confirm as permanent profile', exact=True)
     if confirm.count():
-        previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+        previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
         confirm.click()
         changed(page, previous)
         page.get_by_text('Permanent MUNSHI profile confirmed. This reviewed snapshot is now the reusable profile authority.', exact=True).wait_for()
@@ -99,7 +105,7 @@ def profile_acceptance(page, url, output):
     frame.locator('.paper').screenshot(path=str(output / 'chromium-profile-paper.png'))
     page.get_by_text('Master Resume preview', exact=True).scroll_into_view_if_needed()
     page.screenshot(path=str(output / 'chromium-profile-paper-visible.png'))
-    previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+    previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
     page.get_by_role('button', name='Preview resume', exact=True).click()
     changed(page, previous)
     assert page.locator('iframe[title="st.iframe"]').count() == 0
@@ -138,18 +144,18 @@ def workspace_acceptance(page, url, output):
     page.get_by_text('Select an application',exact=True).wait_for()
     page.screenshot(path=str(output / 'chromium-application-center-interacted.png'))
     page.goto(url + '/?view=tracker');ready(page)
-    previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+    previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
     page.get_by_text('Inbox',exact=True).click()
     changed(page,previous)
     page.get_by_role('button',name='Connect Gmail',exact=True).wait_for()
     assert page.get_by_role('button',name='Connect Gmail',exact=True).is_disabled()
     assert 'tab=inbox' in page.url
-    previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+    previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
     page.get_by_text('Pipeline',exact=True).click();changed(page,previous)
     page.get_by_role('combobox',name=re.compile(r'\. Status$')).wait_for()
     page.goto(url + '/?view=research');ready(page)
     for section in ('Companies','Role signals','Risks','Opportunities'):
-        previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+        previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
         page.get_by_text(section,exact=True).click()
         changed(page,previous)
         assert not page.locator('[data-testid=stException]').count()
@@ -157,7 +163,7 @@ def workspace_acceptance(page, url, output):
     page.get_by_role('button',name='Save review preference',exact=True).click()
     page.get_by_text('Review preference saved.',exact=True).wait_for()
     for section in ('Automation','Integrations','Profile & defaults','Credentials','Apply'):
-        previous = page.locator('#uiux-runtime').get_attribute('data-runs')
+        previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
         page.get_by_text(section,exact=True).click()
         changed(page,previous)
         assert not page.locator('[data-testid=stException]').count()
@@ -201,7 +207,7 @@ def run(url: str, output: Path, *, baseline: bool = False):
                     page.screenshot(path=str(output / snapshot))
                     results["routes"].append({"engine": engine, "width": width, "view": view,
                         "ready_seconds": round(elapsed, 3),
-                        "server_seconds": float(page.locator("#uiux-runtime").get_attribute("data-server-seconds")),
+                        "server_seconds": float(page.locator("#uiux-runtime").first.get_attribute("data-server-seconds")),
                         "vitals": page.evaluate("window.ux"), "overflow_px": overflow, "screenshot": snapshot})
                     print(json.dumps(results["routes"][-1]), flush=True)
                     (output / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
@@ -257,7 +263,7 @@ def run(url: str, output: Path, *, baseline: bool = False):
                 page.route("https://**/*", lambda route: route.abort())
                 page.goto(url + "/?view=dashboard");ready(page)
                 page.evaluate("window.uiuxDocumentSentinel='retained'")
-                previous = page.locator("#uiux-runtime").get_attribute("data-runs")
+                previous = page.locator("#uiux-runtime").first.get_attribute("data-runs")
                 started = time.perf_counter()
                 page.locator('.st-key-product_primary_routes').get_by_role("button", name="Browse jobs", exact=True).click()
                 changed(page, previous)
@@ -269,13 +275,13 @@ def run(url: str, output: Path, *, baseline: bool = False):
                 button.scroll_into_view_if_needed()
                 scroll_before = page.locator('[data-testid="stMain"]').evaluate('e=>e.scrollTop')
                 saved_before = page.get_by_role('button',name='Saved',exact=True).count()
-                previous = page.locator("#uiux-runtime").get_attribute("data-runs")
+                previous = page.locator("#uiux-runtime").first.get_attribute("data-runs")
                 started = time.perf_counter()
                 button.click()
                 page.wait_for_function("count=>[...document.querySelectorAll('[data-testid=stButton] button')].filter(e=>e.textContent.trim()==='Saved').length>count",arg=saved_before)
                 scroll_after = page.locator('[data-testid="stMain"]').evaluate('e=>e.scrollTop')
                 assert abs(scroll_after-scroll_before) <= 48, (scroll_before,scroll_after)
-                assert page.locator("#uiux-runtime").get_attribute("data-runs") == previous
+                assert page.locator("#uiux-runtime").first.get_attribute("data-runs") == previous
                 results["interactions"].append({"action":"save job", "passed":True,"full_page_reruns":0,"seconds":round(time.perf_counter()-started,3),"scroll_delta_px":round(scroll_after-scroll_before,2)})
 
                 page.get_by_role("button", name="Open job details", exact=True).first.click()
@@ -289,10 +295,10 @@ def run(url: str, output: Path, *, baseline: bool = False):
 
                 # A native filter rerun must retain the same browser document.
                 search = page.get_by_role("textbox", name="Search jobs, companies, or locations", exact=True)
-                previous = page.locator("#uiux-runtime").get_attribute("data-runs")
+                previous = page.locator("#uiux-runtime").first.get_attribute("data-runs")
                 search.fill("Compensation");search.press("Enter")
                 page.wait_for_function("[...document.querySelectorAll('.job-title')].length>0 && [...document.querySelectorAll('.job-title')].every(e=>e.textContent.includes('Compensation'))")
-                assert page.locator("#uiux-runtime").get_attribute("data-runs") == previous
+                assert page.locator("#uiux-runtime").first.get_attribute("data-runs") == previous
                 assert page.locator('.job-title').count() > 0
                 assert all("Compensation" in text for text in page.locator('.job-title').all_text_contents())
                 assert page.evaluate("window.uiuxDocumentSentinel") == "retained"
@@ -306,18 +312,18 @@ def run(url: str, output: Path, *, baseline: bool = False):
                 assert filters.locator('details').evaluate('e=>e.open')
                 page.get_by_role('button',name='Reset filters',exact=True).click()
                 page.wait_for_function("document.querySelector('input[aria-label=\"Search jobs, companies, or locations\"]')?.value===''")
-                assert page.locator('#uiux-runtime').get_attribute('data-runs') == previous
+                assert page.locator('#uiux-runtime').first.get_attribute('data-runs') == previous
                 results['interactions'].append({'action':'filter disclosure, location selection, persistent expansion and reset','passed':True,'full_page_reruns':0})
 
-                previous = page.locator("#uiux-runtime").get_attribute("data-runs")
+                previous = page.locator("#uiux-runtime").first.get_attribute("data-runs")
                 page.locator('.st-key-product_primary_routes').get_by_role("button", name="Dashboard", exact=True).click()
                 changed(page, previous)
                 panel = page.get_by_text("Application engines · MUNSHI Native & Relay", exact=True)
                 panel.scroll_into_view_if_needed()
-                before = page.locator("#uiux-runtime").get_attribute("data-runs")
+                before = page.locator("#uiux-runtime").first.get_attribute("data-runs")
                 panel.click()
                 page.get_by_text("Application engines", exact=True).wait_for()
-                assert page.locator("#uiux-runtime").get_attribute("data-runs") == before
+                assert page.locator("#uiux-runtime").first.get_attribute("data-runs") == before
                 results["interactions"].append({"action":"engine status fragment", "full_page_reruns":0})
                 results['interactions'].append({'action':'browser Event Timing samples (not field INP)','durations_ms':page.evaluate('window.ux.events')})
                 page.close()
