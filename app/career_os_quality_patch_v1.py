@@ -21,6 +21,8 @@ from app.deterministic_profile_extractor_v1 import extract_profile_from_source
 
 
 _BATCH_SIZE = 24
+# Retain the prior 48 × 60 browsing capacity while reducing first-render work.
+_MAX_VISIBLE_JOBS = 48 * 60
 _WINDOW_OPTIONS = {
     "Past 1 hour": 1,
     "Past 6 hours": 6,
@@ -116,7 +118,7 @@ def _filter_signature(filters: dict[str, Any]) -> str:
 def _increase_job_batches() -> None:
     st.session_state["product_jobs_visible_batches_v1"] = min(
         int(st.session_state.get("product_jobs_visible_batches_v1", 1)) + 1,
-        60,
+        (_MAX_VISIBLE_JOBS + _BATCH_SIZE - 1) // _BATCH_SIZE,
     )
 
 

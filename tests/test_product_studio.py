@@ -50,6 +50,19 @@ with patch.object(pages,"job_filters",return_value=values):
     assert app.session_state['test_filters']['location'] == ''
 
 
+def test_smaller_first_batch_preserves_existing_browsing_capacity():
+    app = AppTest.from_string('''
+import streamlit as st
+from app import career_os_quality_patch_v1 as pages
+st.session_state["product_jobs_visible_batches_v1"]=119
+pages._increase_job_batches()
+assert st.session_state["product_jobs_visible_batches_v1"]==120
+pages._increase_job_batches()
+assert st.session_state["product_jobs_visible_batches_v1"]*pages._BATCH_SIZE==48*60
+''').run()
+    assert not app.exception
+
+
 def test_packaged_theme_is_idempotent_and_does_not_hide_errors():
     from scripts.package_streamlit_theme import package, STATUS
     original = '<html><head></head><body><div id="root"></div></body></html>'
