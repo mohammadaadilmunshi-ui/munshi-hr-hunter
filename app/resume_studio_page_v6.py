@@ -127,17 +127,16 @@ def render() -> None:
         with st.expander("Resume appearance · preview only", expanded=False):
             settings.update(_presentation_settings())
 
-    original_version_html = resume_v5.version_html
-
     def styled_version_html(version_id: str) -> str:
         record = resume_v5.get_version(str(version_id))
         return presentation.render_document_html(record["document"], settings)
 
-    resume_v5.version_html = styled_version_html
-    try:
-        v5.render(appearance_controls=appearance_controls)
-    finally:
-        resume_v5.version_html = original_version_html
+    # The chosen appearance belongs to this session; never replace a globally
+    # shared engine function while another session may be rendering or saving.
+    v5.render(
+        appearance_controls=appearance_controls,
+        version_html=styled_version_html,
+    )
 
 
 __all__ = ["render"]

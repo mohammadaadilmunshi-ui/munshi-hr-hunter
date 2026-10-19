@@ -33,6 +33,7 @@ from xml.sax.saxutils import escape as xml_escape
 import httpx
 
 from app.database import get_connection
+from app.resume_read_schema_v1 import ensure_existing_read_table
 from app.native_resume_studio import (
     ResumeDocument,
     ats_readiness_issues,
@@ -800,7 +801,7 @@ def _owner_version(connection: sqlite3.Connection, version_id: str) -> dict[str,
 def get_version(version_id: str) -> dict[str, Any]:
     connection = get_connection()
     try:
-        ensure_schema(connection)
+        ensure_existing_read_table(connection, "native_resume_versions", ensure_schema)
         return _owner_version(connection, version_id)
     finally:
         connection.close()
@@ -809,7 +810,7 @@ def get_version(version_id: str) -> dict[str, Any]:
 def list_versions(*, job_id: int | None = None, limit: int = 100) -> list[dict[str, Any]]:
     connection = get_connection()
     try:
-        ensure_schema(connection)
+        ensure_existing_read_table(connection, "native_resume_versions", ensure_schema)
         owner = current_owner(connection)
         where = "tenant_id=? AND user_id=?"
         params: list[Any] = [owner.tenant_id, owner.user_id]

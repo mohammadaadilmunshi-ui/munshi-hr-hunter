@@ -18,6 +18,7 @@ from typing import Any, Iterable, Mapping
 from app import jd_resume_plan_v1 as planner
 from app import native_resume_service_v4 as resume_v4
 from app.database import get_connection
+from app.resume_read_schema_v1 import ensure_existing_read_table
 from app.phase67_common import sha256_json
 from app.tenant_foundation import current_owner, ensure_schema as ensure_tenant_schema
 
@@ -440,7 +441,7 @@ def trace_resume(
 def get_trace(trace_id: str) -> dict[str, Any]:
     connection = get_connection()
     try:
-        ensure_schema(connection)
+        ensure_existing_read_table(connection, "jd_resume_claim_traces", ensure_schema)
         owner = current_owner(connection)
         row = connection.execute(
             """SELECT trace_json FROM jd_resume_claim_traces

@@ -899,15 +899,28 @@ def approve_and_submit_for_job(
 
     selected_engine = str(execution_provider or '').strip().upper()
     if selected_engine == 'TSENTA':
-        if str(approval_source or '').strip().upper() != 'CUSTOMER_CLICK':
+        source = str(approval_source or '').strip().upper()
+        if source not in {'CUSTOMER_CLICK', 'ONE_CLICK_PREPARE_RELAY'}:
             raise PermissionError(
-                'MUNSHI Relay requires explicit package approval.'
+                'MUNSHI Relay requires exact-job customer authorization.'
             )
         from app.relay_application_dispatch_v1 import submit_from_dashboard
 
         current = flow_for_job(int(job_id))
         review = dict(current.get('package_review') or {})
         preflight = dict((current.get('artifacts') or {}).get('preflight') or {})
+        if source == 'ONE_CLICK_PREPARE_RELAY':
+            from app.relay_single_prepare_v1 import validate_claimed_intent
+
+            if not validate_claimed_intent(
+                job_id=int(job_id),
+                operation_id=str(consent_slot or ''),
+                review_digest=str(review.get('review_digest') or ''),
+                preflight_package_id=str(preflight.get('preflight_package_id') or ''),
+            ):
+                raise PermissionError(
+                    'The single-prepare Relay authorization is absent, stale, or already invalid.'
+                )
         return submit_from_dashboard(
             job_id=int(job_id),
             review_digest=str(review.get('review_digest') or ''),

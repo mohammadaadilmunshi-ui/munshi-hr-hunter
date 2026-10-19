@@ -105,9 +105,19 @@ def profile_acceptance(page, url, output):
     assert page.locator('iframe[title="st.iframe"]').count() == 0
     page.locator('.st-key-product_primary_routes').get_by_role('button', name='Resume Studio', exact=True).click()
     page.get_by_text('Resume appearance · preview only', exact=True).click()
-    page.get_by_role('button', name='Jake', exact=True).click()
-    assert page.get_by_role('button', name='Jake', exact=True).bounding_box()['height'] >= 44
-    page.get_by_role('combobox', name='Selected Computer Modern. Font', exact=True).wait_for()
+    jake = page.get_by_role('button', name='Jake', exact=True)
+    jake.click()
+    # Streamlit rerenders the expander after the template click. Wait for the
+    # selected template's settings to settle before measuring its touch target.
+    page.get_by_role('combobox', name='Selected Computer Modern. Font', exact=True).wait_for(
+        state='visible', timeout=15000,
+    )
+    jake.wait_for(state='visible', timeout=15000)
+    box = jake.bounding_box()
+    assert box is not None and box['height'] >= 44, {
+        'box': box,
+        'markup': jake.evaluate('element => element.outerHTML.slice(0, 700)'),
+    }
     ready(page)
     page.screenshot(path=str(output / 'chromium-resume-appearance.png'))
     assert not page.locator('[data-testid="stException"]').count()

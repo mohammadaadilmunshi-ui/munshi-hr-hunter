@@ -225,8 +225,19 @@ def _render_application_lifecycle_guide() -> None:
 
 
 
-def _render_current_action(state: str) -> None:
+def _render_current_action(state: str, *, job_id: int | None = None) -> None:
     normalized = str(state or "").strip().upper()
+    if normalized == "READY_FOR_APPROVAL" and job_id is not None:
+        from app import relay_single_prepare_v1 as relay_one_click
+
+        intent = relay_one_click.status(int(job_id))
+        if intent["status"] in {"REQUESTED", "CLAIMED"}:
+            st.info(
+                "**Your action now:** none. The exact-job one-click Relay "
+                "authorization is recorded. MUNSHI will submit once when the "
+                "package and duplicate checks pass. Do not approve twice."
+            )
+            return
     if not normalized:
         st.info(
             "**Your action now:** none required unless you want to start this job manually. "
@@ -302,7 +313,7 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
     state = str(flow.get('state') or '')
 
     if not compact:
-        _render_current_action(state)
+        _render_current_action(state, job_id=int(job_id))
         st.markdown('### Application progress')
         st.caption(
             'The source of truth across package preparation, the one pre-browser customer '
@@ -315,47 +326,101 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
             'Prepare creates a durable application package and does not '
             'submit anything.'
         )
-        engine = st.radio(
-            'Resume preparation method',
-            ['NATIVE', 'N8N'],
+        submission_mode = st.radio(
+            'After the application package is ready',
+            ('REVIEW', 'RELAY_ONE_CLICK'),
             horizontal=True,
             format_func=lambda value: (
-                'MUNSHI Resume Studio' if value == 'NATIVE' else 'n8n (legacy)'
+                'Review package first' if value == 'REVIEW'
+                else 'One-click prepare & submit with MUNSHI Relay'
             ),
-            key=f'complete_loop_engine_{job_id}',
-            help=(
-                'MUNSHI Native uses the truth-bound Native Resume engine. '
-                'n8n remains an optional legacy resume-generation path. '
-                'This is separate from the application submission engine '
-                'selected after resume review.'
-            ),
+            key=f'complete_loop_submission_mode_{job_id}',
         )
+        relay_mode = submission_mode == 'RELAY_ONE_CLICK'
+        if relay_mode:
+            from app import relay_single_prepare_v1 as relay_one_click
+            from app import tsenta_backend_readiness_v1
+
+            relay_ready = bool(
+                tsenta_backend_readiness_v1.connection_status().get('execution_ready')
+            )
+            st.info(
+                'This one click authorizes MUNSHI Relay for this exact job only. '
+                'MUNSHI will generate and verify the resume, application answers, '
+                'cover-letter decision and immutable package, then submit without '
+                'another review if every eligibility and duplicate check passes. '
+                'Missing information or uncertain submissions stop safely.'
+            )
+            if not relay_ready:
+                st.warning('Relay backend execution is not verified. Choose Review package first.')
+            engine = 'NATIVE'
+        else:
+            relay_ready = False
+            engine = st.radio(
+                'Resume preparation method',
+                ['NATIVE', 'N8N'],
+                horizontal=True,
+                format_func=lambda value: (
+                    'MUNSHI Resume Studio' if value == 'NATIVE' else 'n8n (legacy)'
+                ),
+                key=f'complete_loop_engine_{job_id}',
+                help=(
+                    'MUNSHI Native uses the truth-bound Native Resume engine. '
+                    'n8n remains an optional legacy resume-generation path. '
+                    'Submission engine can be chosen at the final package review.'
+                ),
+            )
         if st.button(
-            'Prepare Application',
+            'Prepare & submit with Relay' if relay_mode else 'Prepare Application',
             type='primary',
             use_container_width=True,
+            disabled=relay_mode and not relay_ready,
             key=f'complete_loop_prepare_{job_id}',
         ):
+            started = None
             try:
-                with st.spinner(
-                    'Starting your evidence-bound application package…'
-                ):
-                    complete_loop.start_prepare_for_job(
-                        int(job_id),
-                        engine=engine,
+                with st.spinner('Creating an exact-job, durable preparation…'):
+                    if relay_mode:
+                        # Persist intent before the worker can reach its
+                        # submission engine; otherwise an unusually fast
+                        # Prepare can race the customer authorization record.
+                        relay_one_click.reserve_before_prepare(int(job_id))
+                    started = complete_loop.start_prepare_for_job(
+                        int(job_id), engine=engine,
                     )
+                    if relay_mode:
+                        if started.get('replayed'):
+                            raise PermissionError(
+                                'A preparation is already in progress. '
+                                'Use its existing review instead of creating new Relay consent.'
+                            )
+                        relay_one_click.authorize_new_operation(
+                            int(job_id), str(started.get('operation_id') or ''),
+                        )
             except Exception as error:
-                st.error(str(error))
+                if started:
+                    st.error(
+                        'Preparation was recorded but automatic Relay authority was '
+                        'not established. Open the existing package and use the '
+                        'ordinary review; do not start another application. '
+                        + str(error)
+                    )
+                else:
+                    st.error('No application was submitted. ' + str(error))
             else:
                 st.toast(
-                    'Application preparation started.',
+                    'Exact-job Relay authorization saved; preparing in background.'
+                    if relay_mode else 'Application preparation started.',
                     icon='✅',
                 )
                 st.rerun()
 
         st.caption(
+            'Relay one-click uses exact-job consent and one-use submission claims; '
+            'Review mode waits for Approve & Submit after preparation.'
+            if relay_mode else
             'Preparation only · no employer submission occurs until you review '
-            'the completed package and press Approve & Submit.'
+            'the package and press Approve & Submit.'
         )
         return flow
 
@@ -766,7 +831,33 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                     'It cannot create another customer review or approval prompt.'
                 )
 
-        if not review_record:
+        from app import relay_single_prepare_v1 as relay_one_click
+
+        relay_intent = relay_one_click.status(int(job_id))
+        relay_stage = str(relay_intent.get('status') or 'NONE')
+        relay_one_click_active = relay_stage in {
+            'PENDING_PREPARE', 'REQUESTED', 'CLAIMED',
+            'EXPIRED', 'INVALID', 'UNAVAILABLE',
+        } and (
+            relay_stage in {'PENDING_PREPARE', 'UNAVAILABLE'}
+            or relay_intent.get('operation_id') == str(prepare.get('operation_id') or '')
+        )
+        if relay_one_click_active:
+            if relay_stage in {'EXPIRED', 'INVALID', 'UNAVAILABLE'}:
+                st.warning(
+                    'This one-click Relay authorization cannot be verified or '
+                    'has expired. Submission is blocked; resolve the existing '
+                    'application record instead of approving a second attempt.'
+                )
+            else:
+                st.info(
+                    'One-click MUNSHI Relay consent is recorded for this exact '
+                    'preparation. The package remains visible for inspection, but '
+                    'a second Approve & Submit could duplicate the application. '
+                    'Relay will dispatch once when all package checks pass; '
+                    'an uncertain outcome requires reconciliation, never another click.'
+                )
+        elif not review_record:
             st.warning(
                 'The immutable pre-browser package review is still synchronizing. '
                 'ATS execution remains blocked.'

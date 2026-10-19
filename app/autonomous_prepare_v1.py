@@ -368,7 +368,47 @@ def drive_operation_once(operation_id: str) -> dict[str, Any]:
         }:
             break
         if name == "ats":
+            from app import relay_single_prepare_v1 as relay_one_click
             from app import native_standing_consent_v1 as consent
+
+            # Explicit per-job Relay intent takes precedence over the separate
+            # Native standing consent. Never let two engines claim one opening.
+            current_job_id = int(current.get("job_id") or 0)
+            relay_state = (
+                relay_one_click.status(current_job_id) if current_job_id
+                else {"status": "NONE", "operation_id": ""}
+            )
+            if relay_state["status"] == "UNAVAILABLE":
+                raise RuntimeError(
+                    "Relay intent ledger unavailable; cannot safely choose a submission engine."
+                )
+            if relay_state["status"] != "NONE":
+                if relay_state["status"] == "REQUESTED" and (
+                    relay_state["operation_id"] == str(operation_id)
+                ):
+                    relay_result = relay_one_click.maybe_dispatch(str(operation_id))
+                else:
+                    relay_result = {
+                        "authorized": False,
+                        "reason": (
+                            "awaiting_exact_operation_binding"
+                            if relay_state["status"] == "PENDING_PREPARE"
+                            else "one_click_reserved_for_other_or_expired_operation"
+                        ),
+                    }
+                step_results.append({"step": "relay_one_click", "result": relay_result})
+                # A pending, expired, claimed, or mismatched Relay intent is
+                # never permission to fall through to Native ATS execution.
+                final = orchestrator.prepare_operation(str(operation_id))
+                return {
+                    "operation_id": str(operation_id),
+                    "status": final["status"],
+                    "product_stage": product_stage_for_state(final["status"]),
+                    "engine": "NATIVE",
+                    "steps": step_results,
+                    "submission_authority": False,
+                    "relay_submission_state": relay_result.get("status") or relay_result.get("reason"),
+                }
 
             if consent.status().get("enabled") is True:
                 try:
