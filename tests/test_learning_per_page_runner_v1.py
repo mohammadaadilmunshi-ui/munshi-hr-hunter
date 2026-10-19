@@ -18,6 +18,9 @@ def test_learning_runner_bash_syntax_and_stable_one_page_checkpoint():
     ).returncode == 0
     source = SCRIPT.read_text()
     assert "--pages 1 --start-page" in source
+    assert "--one-page) window=1" in source
+    assert "--five-pages) window=5" in source
+    assert "--window) window=20" in source
     assert "history_next_page" in source
     assert 'validate_response "$page" save' in source
     assert 'if ! output=' in source

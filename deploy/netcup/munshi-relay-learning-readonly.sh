@@ -4,6 +4,12 @@
 # preserves it for later retries; no external application or submit is called.
 set -Eeuo pipefail
 umask 077
+case "${1:---window}" in
+  --one-page) window=1 ;;
+  --five-pages) window=5 ;;
+  --window) window=20 ;;
+  *) echo 'LEARNING_BLOCKED=UNSUPPORTED_WINDOW' >&2; exit 2 ;;
+esac
 [[ "$(id -un)" == munshi ]] || { echo 'LEARNING_BLOCKED=WRONG_OS_OWNER' >&2; exit 12; }
 root=/opt/munshi/runtime
 state="$root/relay-learning-cursor-v1.json"
@@ -26,7 +32,7 @@ except (OSError,TypeError,ValueError,KeyError):
 print(n)
 PY
 )"
-printf 'LEARNING_MODE=AUTHORIZED_READ_ONLY; START_PAGE=%s; WINDOW_MAX=20; PER_PAGE=15\n' "$start"
+printf 'LEARNING_MODE=AUTHORIZED_READ_ONLY; START_PAGE=%s; WINDOW_MAX=%s; PER_PAGE=15\n' "$start" "$window"
 
 run_page() {
   local page="$1" output
@@ -77,7 +83,7 @@ if (( start > 1 )); then
   validate_response 1 refresh
 fi
 
-end=$((start+19))
+end=$((start+window-1))
 (( end > 200 )) && end=200
 for (( page=start; page<=end; page++ )); do
   run_page "$page"
