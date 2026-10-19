@@ -220,12 +220,12 @@ def product_css() -> str:
     """
 
 
-def inject_css(*, include_studio: bool = True) -> None:
+def inject_css() -> None:
     # Older profile/settings renderers reinject the base layer. Keep the final
     # shared system attached there too, rather than reverting the page mid-run.
-    from app.product_studio import studio_css
+    from app.product_studio import shell_css
 
-    st.markdown(product_css() + (studio_css() if include_studio else ""), unsafe_allow_html=True)
+    st.markdown(shell_css(), unsafe_allow_html=True)
 
 
 def page_intro(kicker: str, title: str, copy: str) -> None:

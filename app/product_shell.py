@@ -129,11 +129,7 @@ def render() -> None:
     # continues to require its existing explicit environment contract.
     activate_isolated_staging_preparation_features()
 
-    inject_css(include_studio=False)
-    inject_v22_css()
-    inject_job_card_interaction_css()
-    inject_presentation_css()
-    inject_studio_css()
+    inject_css()
 
     view = _query_view()
     st.session_state["product_view"] = view

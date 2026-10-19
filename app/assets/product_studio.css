@@ -9,14 +9,15 @@
 .stApp [data-testid="stElementContainer"]:has(#munshi-main) {position:absolute;height:0}
 .stApp [data-testid="stElementContainer"]:has(.munshi-mobile-dock) {display:none!important}
 .product-nav {display:none!important}
-.st-key-product_primary_routes {gap:.3rem!important;padding:.3rem 0 .8rem;border-bottom:1px solid var(--studio-line)}
+.stApp .st-key-product_primary_routes {display:grid!important;grid-template-columns:repeat(9,minmax(0,1fr));min-height:62px;gap:.3rem!important;padding:.3rem 0 .8rem;border-bottom:1px solid var(--studio-line)}
 .st-key-product_primary_routes>[data-testid="stLayoutWrapper"] {flex:0 1 auto!important;width:auto!important;min-width:0}
 [class*="st-key-product_route_"] button {min-height:44px!important;border-radius:9px!important;padding:.55rem .75rem!important;text-decoration:none;font-size:.84rem!important;border:0!important;white-space:nowrap!important}
 .stApp [class*="st-key-product_route_"][class*="_selected"] button {background:var(--m-active)!important;color:var(--m-forest)!important;font-weight:750!important}
 .stApp [class*="st-key-product_route_"][class*="_selected"] button * {color:var(--m-forest)!important}
 .st-key-product_mobile_routes {display:none!important}
 .stApp .block-container {max-width:1560px!important;padding:0 var(--studio-space) 5rem!important}
-.st-key-product_top_bar {margin-bottom:0!important;padding:.7rem var(--studio-space)!important;
+.st-key-product_top_bar {width:calc(100% + 2 * var(--studio-space))!important;
+  margin:0 calc(-1 * var(--studio-space))!important;padding:.7rem var(--studio-space)!important;
   min-height:76px;background:#fff!important;box-shadow:none!important;backdrop-filter:none!important}
 .product-header {flex-wrap:wrap;gap:.55rem 1.3rem;min-height:48px}
 .product-header .brand {font-size:1.16rem;letter-spacing:-.04em;gap:.6rem}
@@ -55,6 +56,7 @@
   border-radius:9px;border:1px solid #c4d5c9;color:var(--m-forest);font-size:1.2rem}
 .studio-shortcut-icon svg {width:20px;height:20px;display:block}
 .st-key-product_dashboard_metrics {margin:.25rem 0 .2rem}
+.st-key-product_dashboard_metrics [data-testid="stColumn"] {min-height:108px}
 .st-key-product_dashboard_metrics [data-testid="stHorizontalBlock"] {gap:.7rem!important}
 .stApp [data-testid="stMetric"] {min-height:108px;padding:1rem 1.1rem;border-radius:12px;
   background:#fff;border:1px solid var(--studio-line);box-shadow:none}
@@ -126,7 +128,7 @@
   .product-header-actions {margin-left:auto}
 }
 @media(max-width:920px) {
-  .st-key-product_primary_routes {display:none!important}
+  .stApp .st-key-product_primary_routes {display:none!important}
   .st-key-product_mobile_routes {display:flex!important;position:fixed;bottom:0;left:0;right:0;z-index:1000;
     padding:.25rem .4rem calc(.25rem + env(safe-area-inset-bottom,0px));gap:.2rem!important;background:#fff;border-top:1px solid var(--studio-line)}
   .st-key-product_mobile_routes>[data-testid="stLayoutWrapper"] {flex:1 1 0!important;width:0!important;min-width:0!important}
@@ -159,6 +161,7 @@
   .product-header .status-pill-product {white-space:normal;overflow:visible;text-overflow:clip;
     max-width:145px!important;line-height:1.35;font-size:.65rem!important}
   .stApp [data-testid="stMetric"] {min-height:96px;padding:.85rem}
+  .st-key-product_dashboard_metrics [data-testid="stColumn"] {min-height:96px}
   .section-row {flex-direction:row;align-items:flex-start;gap:.7rem}
   .section-row .product-nav-link {white-space:normal;min-width:84px;font-size:.78rem}
   .section-row h2 {font-size:1.2rem!important}

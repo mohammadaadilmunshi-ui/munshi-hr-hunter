@@ -36,6 +36,17 @@ def inject_studio_css() -> None:
     st.markdown(studio_css(), unsafe_allow_html=True)
 
 
+@lru_cache(maxsize=1)
+def shell_css() -> str:
+    """One ordered stylesheet payload prevents partially applied themes."""
+    from app.product_ui import product_css
+    from app.product_v22 import v22_css
+    from app.job_card_interaction_hotfix_v2 import interaction_css
+    from app.product_experience_vnext import presentation_css
+
+    return product_css() + v22_css() + interaction_css() + presentation_css() + studio_css()
+
+
 def dashboard_intro() -> None:
     """Navigation only: shortcuts never queue preparation or imply a receipt."""
     def icon(paths: str) -> str:

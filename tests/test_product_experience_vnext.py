@@ -74,10 +74,12 @@ def test_process_steps_are_honest_and_mobile_scrollable() -> None:
 
 def test_shell_injects_theme_after_original_layers_and_renders_dock() -> None:
     source = (ROOT / "app/product_shell.py").read_text()
-    a = source.index("    inject_v22_css()")
-    b = source.index("    inject_job_card_interaction_css()")
-    c = source.index("    inject_presentation_css()")
-    assert a < b < c
+    from app.product_studio import shell_css, studio_css
+    from app.product_v22 import v22_css
+    from app.job_card_interaction_hotfix_v2 import interaction_css
+    from app.product_ui import product_css
+    assert shell_css() == product_css() + v22_css() + interaction_css() + presentation_css() + studio_css()
+    assert "    inject_css()" in source
     assert "render_mobile_dock(view)" in source
     assert "Discovery: Unlimited" in source
     assert "Automation: Unlimited" not in source
