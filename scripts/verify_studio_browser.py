@@ -64,7 +64,7 @@ def verify(output: Path) -> list[dict]:
                     assert first and second and abs(first["y"] - second["y"]) < 2, (engine, width, "metrics did not form two columns")
                     page.locator('[data-testid="stExpander"]').last.scroll_into_view_if_needed()
                     last = page.locator('[data-testid="stExpander"]').last.bounding_box()
-                    dock = page.locator(".munshi-mobile-dock").bounding_box()
+                    dock = page.locator(".st-key-product_mobile_routes").bounding_box()
                     assert last and dock and last["y"] + last["height"] <= dock["y"] + 1, (engine, width, "dock obscures final control")
                 assert not errors, (engine, width, errors)
                 page.evaluate("window.scrollTo(0,0)")

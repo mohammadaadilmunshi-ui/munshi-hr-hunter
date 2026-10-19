@@ -27,6 +27,7 @@ from app.product_v22 import inject_v22_css, brand_logo_data_uri
 from app.product_experience_vnext import inject_presentation_css, render_mobile_dock
 from app.product_studio import inject_studio_css, workspace_location
 from app.product_shell import NAVIGATION, _nav_link
+from app.product_navigation import render_navigation
 st.set_page_config(layout="wide")
 inject_css(); inject_v22_css(); inject_presentation_css(); inject_studio_css()
 links = "".join(_nav_link(r,l,"dashboard") for r,l in NAVIGATION)
@@ -34,6 +35,7 @@ mobile = "".join(_nav_link(r,l,"dashboard",mobile=True) for r,l in (*NAVIGATION,
 with st.container(key="product_top_bar"):
  st.markdown(f'<header class="product-header"><a class="brand" href="?view=dashboard"><span class="brand-mark"><img src="{brand_logo_data_uri()}" width="38" height="38" alt=""></span>MUNSHI</a><nav class="product-nav" aria-label="Primary navigation">{links}</nav><div class="product-header-actions"><a class="product-nav-link" href="?view=settings">Settings</a><span class="status-pill-product">Discovery: Paused</span></div><details class="mobile-nav"><summary aria-label="Open navigation">Menu</summary><nav aria-label="Mobile navigation">{mobile}</nav></details></header>',unsafe_allow_html=True)
 render_mobile_dock("dashboard")
+render_navigation("dashboard", NAVIGATION)
 st.markdown(workspace_location("Dashboard"),unsafe_allow_html=True)
 rows=[
  {"id":81001,"title":"People Analytics Analyst","company_name":"Example Research Institute","location_raw":"New York, NY","hunter_score":96,"remote_type":"Hybrid","employment_type":"Full time"},
@@ -106,7 +108,8 @@ def _render(node) -> str:
 
 
 def preview_html() -> str:
-    body = _render(preview_tree().main)
+    tree = preview_tree()
+    body = "".join(element.proto.body for element in tree.get("html")) + _render(tree.main)
     # Minimal adapters for native Streamlit elements, not a replacement frontend.
     adapters = '''<style>
     body{margin:0}button,input,select{font:inherit}button{padding:.65rem .8rem;width:100%;cursor:pointer}

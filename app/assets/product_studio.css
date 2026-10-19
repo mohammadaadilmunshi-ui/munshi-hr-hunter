@@ -119,6 +119,9 @@
 .studio-activity-role>span,.studio-activity-time {font-size:.79rem;color:var(--studio-muted);line-height:1.5;overflow-wrap:anywhere}
 .studio-activity-state {font-size:.8rem;line-height:1.5;color:var(--m-forest);overflow-wrap:anywhere}
 .stApp [data-testid="stDialog"] [role="dialog"] {overscroll-behavior:contain;scroll-padding-block:4rem}
+.stApp [data-testid="stDialog"] button[aria-label="Close"] {width:44px!important;height:44px!important;min-width:44px!important;min-height:44px!important}
+.stApp .profile-entry-title,.stApp .profile-cert-name {font-size:1rem;line-height:1.5;overflow-wrap:anywhere}
+.stApp .profile-entry-subtitle,.stApp .profile-entry-details,.stApp .profile-bullets {font-size:.9rem;line-height:1.65;overflow-wrap:anywhere}
 .stApp [data-testid="stVerticalBlockBorderWrapper"],
 .stApp [class*="st-key-munshi_surface_"],.stApp [class*="st-key-munshi_tint_"] {box-shadow:none!important}
 .stApp [data-testid="stMain"] {scroll-padding-top:5rem;scroll-padding-bottom:6rem}

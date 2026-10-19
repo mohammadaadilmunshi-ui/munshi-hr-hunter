@@ -180,29 +180,26 @@ def render_compact(authority: dict[str, Any]) -> None:
         st.divider()
         preview_col, edit_col, replace_col, download_col = st.columns(4, gap="small")
         with preview_col:
-            if st.button(
+            st.button(
                 "Preview resume",
                 use_container_width=True,
                 key="master_resume_visual_preview_button",
-            ):
-                legacy._toggle("preview")
-                st.rerun()
+                on_click=legacy._toggle, args=("preview",),
+            )
         with edit_col:
-            if st.button(
+            st.button(
                 "Edit source",
                 use_container_width=True,
                 key="master_resume_visual_edit_button",
-            ):
-                legacy._toggle("edit")
-                st.rerun()
+                on_click=legacy._toggle, args=("edit",),
+            )
         with replace_col:
-            if st.button(
+            st.button(
                 "Replace file",
                 use_container_width=True,
                 key="master_resume_visual_replace_button",
-            ):
-                legacy._toggle("replace")
-                st.rerun()
+                on_click=legacy._toggle, args=("replace",),
+            )
         with download_col:
             st.download_button(
                 "Download source text",

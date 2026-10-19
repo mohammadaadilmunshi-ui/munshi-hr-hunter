@@ -103,9 +103,10 @@ def run(url: str, output: Path, *, baseline: bool = False):
 
                 button = page.get_by_role("button", name="Save", exact=True).first
                 previous = page.locator("#uiux-runtime").get_attribute("data-runs")
-                button.click();changed(page, previous)
+                button.click()
                 page.get_by_role("button", name="Saved", exact=True).first.wait_for()
-                results["interactions"].append({"action":"save job", "passed":True})
+                assert page.locator("#uiux-runtime").get_attribute("data-runs") == previous
+                results["interactions"].append({"action":"save job", "passed":True,"full_page_reruns":0})
 
                 page.get_by_role("button", name="Open job details", exact=True).first.click()
                 dialog = page.get_by_role("dialog")
@@ -119,7 +120,9 @@ def run(url: str, output: Path, *, baseline: bool = False):
                 # A native filter rerun must retain the same browser document.
                 search = page.get_by_role("textbox", name="Search jobs, companies, or locations", exact=True)
                 previous = page.locator("#uiux-runtime").get_attribute("data-runs")
-                search.fill("Compensation");search.press("Enter");changed(page, previous)
+                search.fill("Compensation");search.press("Enter")
+                page.wait_for_function("[...document.querySelectorAll('.job-title')].length>0 && [...document.querySelectorAll('.job-title')].every(e=>e.textContent.includes('Compensation'))")
+                assert page.locator("#uiux-runtime").get_attribute("data-runs") == previous
                 assert page.locator('.job-title').count() > 0
                 assert all("Compensation" in text for text in page.locator('.job-title').all_text_contents())
                 assert page.evaluate("window.uiuxDocumentSentinel") == "retained"

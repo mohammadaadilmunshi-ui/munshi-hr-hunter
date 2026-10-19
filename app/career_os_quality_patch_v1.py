@@ -20,7 +20,7 @@ from app.database import get_connection
 from app.deterministic_profile_extractor_v1 import extract_profile_from_source
 
 
-_BATCH_SIZE = 48
+_BATCH_SIZE = 24
 _WINDOW_OPTIONS = {
     "Past 1 hour": 1,
     "Past 6 hours": 6,
@@ -241,7 +241,9 @@ def _install_infinite_jobs(pages_module: Any) -> None:
             )
         pages_module._job_detail()
 
-    pages_module.browse_jobs = browse_jobs_infinite
+    # Save/filter/load-more interactions refresh the browsing surface without
+    # reconstructing the shell, global monitors or unrelated page wrappers.
+    pages_module.browse_jobs = st.fragment(browse_jobs_infinite)
     pages_module._career_os_infinite_jobs_installed = True
 
 
