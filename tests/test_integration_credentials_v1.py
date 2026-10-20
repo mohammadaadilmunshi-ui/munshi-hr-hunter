@@ -84,13 +84,15 @@ def test_smtp_adapter_accepts_vault_resolver(monkeypatch) -> None:
     class Client:
         def post(self, _url, json):
             assert json["api_key"] == "smtp2go-vault-key-abcdefghijklmnop"
-            assert json["sender"] == "notifications@munshi.systems"
+            assert json["sender"] == "MUNSHI Notifications <notifications@munshi.systems>"
             return Response()
 
     adapter = notifications.SMTP2GOAdapter(client=Client())
     result = adapter.send(
         {
             "destination_email": "candidate@example.com",
+            "event_kind": "SUBMISSION_VERIFIED",
+            "job_id": 42,
             "subject": "MUNSHI test",
             "body_text": "Verified staging notification",
         }

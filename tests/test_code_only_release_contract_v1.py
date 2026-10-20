@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "70060d8c023d16081df9d184fca6f6d5046457ef" in content
+    assert "2405721b7bb0b1185ccd67500230b293a0e7b059" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "70060d8c023d16081df9d184fca6f6d5046457ef",
+            "--expected-base", "2405721b7bb0b1185ccd67500230b293a0e7b059",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "70060d8c023d16081df9d184fca6f6d5046457ef", "HEAD",
+            "2405721b7bb0b1185ccd67500230b293a0e7b059", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )
@@ -260,4 +260,15 @@ def test_account_and_signed_import_release_files_are_explicitly_allowed():
         assert ("  " + item + chr(10)) in source
     assert "/app/hunter/tests/test_linkedin_signed_evidence_import_v1.py" in source
     assert "/app/hunter/tests/test_ats_managed_identity.py" in source
+    assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE" in source
+
+
+
+def test_branded_notification_release_files_scoped_and_smoked():
+    source = SCRIPT.read_text()
+    for path in ("app/application_notifications_v1.py",
+                 "app/notification_email_design_v1.py",
+                 "tests/test_notification_email_design_v1.py"):
+        assert ("  " + path + chr(10)) in source
+    assert "/app/hunter/tests/test_notification_email_design_v1.py" in source
     assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE" in source
