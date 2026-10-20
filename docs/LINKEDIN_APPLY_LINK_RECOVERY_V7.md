@@ -70,3 +70,24 @@ application queues were written during the diagnostic.
 The source patch does not by itself restore access to sign-in-gated LinkedIn
 URLs. Do not report the backlog as recovered or an unsigned proposal as an
 executable application destination.
+
+
+## Automatic recovery lane (October 19)
+
+The supervisor can run `python -m app.linkedin_link_recovery_v7 --automatic
+--official-only --limit 2000` every six hours when
+`MUNSHI_LINKEDIN_RECOVERY_AUTO_ENABLED=true` is explicitly injected into the
+Hunter process environment. Isolated staging never runs this lane. The automatic
+checkpoint lives alongside the mounted Hunter database in a separate
+`linkedin-link-recovery-v8` directory (not within the database itself), so
+container replacement does not silently lose the frozen cohort.
+
+The automatic lane is read-only against SQLite and uses documented public ATS
+GET endpoints with the existing caps. It never logs into LinkedIn, imports
+unsigned evidence, changes application status, or submits a job. A separate
+authorized Ed25519 signer/importer and a controlled evidence-table migration
+remain prerequisites for showing executable employer links. Changing this
+feature flag requires the existing guarded production configuration process;
+merging code alone cannot enable the lane.
+
+Production packaging: the Docker image copies app/ but not the optional standalone scripts/linkedin_link_recovery_v7.py. The runner now lives in app.linkedin_link_recovery_v7; the legacy script is a compatibility shim for local calls.

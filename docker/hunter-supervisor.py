@@ -73,6 +73,22 @@ class Lane:
     next_start_at: float | None = None
 
 
+def linkedin_recovery_lane(python: str) -> Lane | None:
+    # Never schedule on isolated staging. The opt-in is always explicit.
+    if not enabled("MUNSHI_LINKEDIN_RECOVERY_AUTO_ENABLED") or isolated_staging():
+        return None
+    return Lane(
+        "linkedin-employer-link-recovery",
+        [python, "-m", "app.linkedin_link_recovery_v7",
+         "--automatic", "--official-only", "--limit", "2000"],
+        required=False,
+        repeat=True,
+        interval=max(
+            21600, int(os.getenv("MUNSHI_LINKEDIN_RECOVERY_INTERVAL_SECONDS", "21600"))
+        ),
+    )
+
+
 children: list[Lane] = []
 stopping = False
 
@@ -194,6 +210,9 @@ def main() -> int:
                 ),
             )
         )
+    recovery_lane = linkedin_recovery_lane(python)
+    if recovery_lane is not None:
+        children.append(recovery_lane)
     discovery = enabled("HUNTER_ENABLE_DISCOVERY_SCHEDULER")
     coordinator = enabled("HUNTER_ENABLE_COORDINATOR")
     if discovery:

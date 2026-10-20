@@ -226,3 +226,65 @@ def test_existing_official_source_discovers_board_without_guessing(monkeypatch):
     assert len(r["unsigned_proposals"]) == 1
     assert r["database_writes"] == 0
     assert r["requires_signed_import"] is True
+
+
+def test_supervised_recovery_is_opt_in_bounded_and_official_only(monkeypatch):
+    import runpy
+    from pathlib import Path
+
+    supervisor = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "docker" / "hunter-supervisor.py")
+    )
+    monkeypatch.delenv("MUNSHI_LINKEDIN_RECOVERY_AUTO_ENABLED", raising=False)
+    assert supervisor["linkedin_recovery_lane"]("python") is None
+    monkeypatch.setenv("MUNSHI_LINKEDIN_RECOVERY_AUTO_ENABLED", "true")
+    monkeypatch.setenv("MUNSHI_LINKEDIN_RECOVERY_INTERVAL_SECONDS", "60")
+    monkeypatch.delenv("CLOUD_SHADOW_MODE", raising=False)
+    lane = supervisor["linkedin_recovery_lane"]("python")
+    assert lane is not None
+    assert lane.name == "linkedin-employer-link-recovery"
+    assert lane.command == [
+        "python", "-m", "app.linkedin_link_recovery_v7",
+        "--automatic", "--official-only", "--limit", "2000",
+    ]
+    assert lane.repeat is True and lane.required is False
+    assert lane.interval == 21600
+    monkeypatch.setenv("CLOUD_SHADOW_MODE", "true")
+    monkeypatch.setenv("PRODUCTION_STATE_IMPORTED", "false")
+    monkeypatch.setenv("PRODUCTION_CALLBACKS_ENABLED", "false")
+    monkeypatch.setenv("HUNTER_ENABLE_TELEGRAM", "false")
+    monkeypatch.setenv("HUNTER_ENABLE_DISCOVERY_SCHEDULER", "false")
+    monkeypatch.setenv("HUNTER_ENABLE_COORDINATOR", "false")
+    assert supervisor["linkedin_recovery_lane"]("python") is None
+
+
+def test_automatic_recovery_keeps_checkpoint_on_mounted_data_volume(monkeypatch, tmp_path):
+    import sys
+    import sqlite3
+    from app import database
+    from scripts import linkedin_link_recovery_v7 as cli
+    from app import linkedin_link_recovery_v7 as runtime_cli
+
+    db_path = tmp_path / "hunter.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("CREATE TABLE sentinel (id INTEGER PRIMARY KEY)")
+        connection.execute("INSERT INTO sentinel VALUES (1)")
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    observed = {}
+
+    def safe_read_only_preview(connection, **kwargs):
+        observed["query_only"] = connection.execute("PRAGMA query_only").fetchone()[0]
+        observed.update(kwargs)
+        return {"processed_jobs": 0, "database_writes": 0, "applications_submitted": 0}
+
+    monkeypatch.setattr(runtime_cli, "recover_links", safe_read_only_preview)
+    monkeypatch.setattr(sys, "argv", ["recover", "--automatic"])
+    assert cli.main() == 0
+    assert observed["query_only"] == 1
+    assert observed["public_get"] is True
+    assert observed["linkedin_get"] is False
+    checkpoints = list((tmp_path / "linkedin-link-recovery-v8").glob("*.json"))
+    assert len(checkpoints) == 1
+    assert checkpoints[0].stat().st_mode & 0o777 == 0o600
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM sentinel").fetchone()[0] == 1
