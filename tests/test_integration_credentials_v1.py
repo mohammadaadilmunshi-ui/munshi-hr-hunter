@@ -13,7 +13,7 @@ def test_environment_credentials_take_precedence(monkeypatch) -> None:
     def should_not_read(_credential_type: str):
         raise AssertionError("vault should not be read when env value exists")
 
-    monkeypatch.setattr(integrations, "read_secret", should_not_read)
+    monkeypatch.setattr(integrations, "read_secret_readonly", should_not_read)
     assert integrations.telegram_credentials() == (
         "123456789:environment-token-value",
         "-1001234567890",
@@ -35,13 +35,13 @@ def test_vault_fallback_resolves_telegram_and_smtp(monkeypatch) -> None:
         integrations.SMTP2GO_API_KEY_TYPE: "smtp2go-vault-key-abcdefghijklmnop",
         integrations.SMTP2GO_SENDER_TYPE: "notifications@munshi.systems",
     }
-    monkeypatch.setattr(integrations, "read_secret", lambda kind: values.get(kind))
+    monkeypatch.setattr(integrations, "read_secret_readonly", lambda kind: values.get(kind))
     assert integrations.telegram_configured() is True
     assert integrations.smtp2go_configured() is True
 
 
 def test_mail_router_readiness_keeps_external_sync_separate(monkeypatch) -> None:
-    monkeypatch.setattr(integrations, "read_secret", lambda _kind: None)
+    monkeypatch.setattr(integrations, "read_secret_readonly", lambda _kind: None)
     monkeypatch.setattr(integrations, "secret_metadata", lambda _kind: None)
     monkeypatch.setenv("MUNSHI_MAIL_SIGNING_SECRET", "x" * 64)
     monkeypatch.delenv("MUNSHI_MAIL_EXTERNAL_SYNC_CONFIRMED", raising=False)
@@ -149,3 +149,22 @@ def test_auto_prepare_and_application_pages_explain_the_real_lifecycle() -> None
     assert "**Your action now:**" in applications
     assert "This is the only customer review" in applications
     assert "No second review follows" in applications
+
+
+def test_read_only_resolution_never_calls_state_mutating_secret_reader(monkeypatch):
+    from app import secure_vault
+    monkeypatch.delenv("MUNSHI_SMTP2GO_API_KEY", raising=False)
+    monkeypatch.delenv("MUNSHI_SMTP2GO_SENDER", raising=False)
+    def write_reader_forbidden(*args, **kwargs):
+        raise AssertionError("credential resolution must never write last_used_at")
+    monkeypatch.setattr(secure_vault, "read_secret", write_reader_forbidden)
+    values = {
+        integrations.SMTP2GO_API_KEY_TYPE: "api-" + "x" * 33,
+        integrations.SMTP2GO_SENDER_TYPE: "notifications@munshi.systems",
+    }
+    monkeypatch.setattr(integrations, "read_secret_readonly", values.get)
+    assert integrations.smtp2go_credentials() == (
+        values[integrations.SMTP2GO_API_KEY_TYPE],
+        values[integrations.SMTP2GO_SENDER_TYPE],
+    )
+    assert integrations.integration_readiness()["smtp2go"]["configured"]

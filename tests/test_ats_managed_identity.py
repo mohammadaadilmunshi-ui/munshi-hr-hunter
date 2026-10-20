@@ -170,3 +170,20 @@ def test_identity_status_declares_munshi_managed_product_policy(hunter_db, monke
     assert status["password_policy"] == "MUNSHI_GENERATED_UNIQUE_PER_ATS_ACCOUNT"
     assert status["personal_email_required_for_ats"] is False
     assert status["inbound_verification_live"] is False
+
+
+
+def test_one_assigned_email_is_shared_across_new_ats_providers(hunter_db, monkeypatch):
+    # Credential preparation is not remote ATS signup.
+    _vault(monkeypatch)
+    monkeypatch.setenv("MUNSHI_APPLICATION_MAIL_RELAY_ENABLED", "1")
+    identity = ensure_application_identity()
+    for provider in ("WORKDAY", "ICIMS", "ORACLE", "GREENHOUSE", "LEVER"):
+        account = prepare_managed_account(
+            provider=provider, account_scope=provider.lower() + ".example/jobs",
+            label="Test " + provider,
+        )
+        assert account["application_email"] == identity["email_address"]
+        assert account["remote_account_created"] is False
+        assert account["browser_authority"] is False
+    assert ensure_application_identity()["identity_id"] == identity["identity_id"]
