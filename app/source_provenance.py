@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
+from app.job_destination_v1 import source_platform
+
 VERSION = "source-provenance-v1.0.0"
 
 
@@ -49,17 +51,17 @@ def format_adapter_display(job: Any) -> str:
     if explicit:
         # Preserve a specific adapter label already written by the worker.
         if explicit_l not in {"jobspy", "google", "linkedin", "indeed"}:
-            return _clean(explicit)
+            return source_platform({"source": explicit})
 
     if "linkedin" in combined:
-        return "LinkedIn Jobs (JobSpy)"
+        return "LinkedIn"
     if "indeed" in combined:
-        return "Indeed Jobs (JobSpy)"
+        return "Indeed"
     if "google" in combined:
         if "serpapi" in combined or "serp api" in combined:
             return "Google Jobs · SerpAPI"
         if "jobspy" in combined:
-            return "Google Jobs · JobSpy fallback"
+            return "Google Jobs"
         return "Google Jobs"
     if "greenhouse" in combined:
         return "Greenhouse"
@@ -88,6 +90,6 @@ def format_adapter_display(job: Any) -> str:
     if "apify" in combined:
         return "Apify"
     if "jobspy" in combined:
-        return "JobSpy"
+        return "Job board"
 
-    return _clean(explicit or source or provider or "Unknown adapter")
+    return source_platform({"source": explicit or source or provider or "Source not recorded"})

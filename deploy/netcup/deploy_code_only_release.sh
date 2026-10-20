@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=2405721b7bb0b1185ccd67500230b293a0e7b059
+LIVE_BASE=7d6861a88cc2eb8139632e3c54573ff9909bfd2f
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -164,6 +164,9 @@ git merge-base --is-ancestor "$old_head" "$target" || block 'Target is not a des
 # Anything else, including database modules, SQL scripts or Docker manifests,
 # needs the original DB-backed guarded full release.
 allowed_files=(
+  app/source_provenance.py
+  app/application_runs_v1.py
+  tests/test_source_label_presentation_v1.py
   app/application_notifications_v1.py
   app/notification_email_design_v1.py
   tests/test_application_notifications_v1.py
@@ -357,6 +360,8 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_application_notifications_runtime_v2.py \
     /app/hunter/tests/test_application_notifications_v1.py \
     /app/hunter/tests/test_notification_email_design_v1.py \
+    /app/hunter/tests/test_source_label_presentation_v1.py \
+    /app/hunter/tests/test_job_destination_v1.py \
     /app/hunter/tests/test_application_review_card_v1.py \
     /app/hunter/tests/test_prepare_worker_adapters_v1a.py \
     /app/hunter/tests/test_native_resume_cert_retention_v1.py \

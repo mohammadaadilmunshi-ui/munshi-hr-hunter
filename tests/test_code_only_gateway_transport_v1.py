@@ -51,7 +51,7 @@ def test_valid_narrow_gateway_verb_requires_installed_root_owned_wrapper():
     assert 'CODE_ONLY_DEPLOY="/opt/munshi/bin/deploy-code-only-release"' in text
     assert '[[ -x "$CODE_ONLY_DEPLOY" ]]' in text
     assert 'exec "$CODE_ONLY_DEPLOY" --commit "$commit" --branch "$branch"' in text
-    assert 'CODE_ONLY_BASE="2405721b7bb0b1185ccd67500230b293a0e7b059"' in text
+    assert 'CODE_ONLY_BASE="7d6861a88cc2eb8139632e3c54573ff9909bfd2f"' in text
 
 
 def test_new_wrapper_uses_authenticated_bounded_stdin_not_arbitrary_scp():

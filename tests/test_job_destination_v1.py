@@ -113,3 +113,24 @@ def test_linkedin_ats_is_identified_from_external_destination(url, name):
     assert result.source == 'LinkedIn'
     assert result.apply_via == name
     assert result.original_url == url
+
+
+
+@pytest.mark.parametrize(("internal", "visible"), [
+    ("JobSpy/indeed", "Indeed"),
+    ("JobSpy/linkedin", "LinkedIn"),
+    ("JobSpy/glassdoor", "Glassdoor"),
+    ("JobSpy/zip_recruiter", "ZipRecruiter"),
+    ("JobSpy/monster", "Monster"),
+    ("Indeed Jobs (JobSpy)", "Indeed"),
+    ("Indeed via JobSpy", "Indeed"),
+    ("JobSpy", "Job board"),
+    ("python-jobspy", "Job board"),
+    ("JobSpy/NewPlatform", "NewPlatform"),
+])
+def test_source_label_hides_internal_scraper_name(internal, visible):
+    from app.job_destination_v1 import source_platform
+    value = {"source": internal}
+    assert source_platform(value) == visible
+    assert value["source"] == internal
+    assert "JobSpy" not in visible

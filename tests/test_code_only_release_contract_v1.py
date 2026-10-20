@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "2405721b7bb0b1185ccd67500230b293a0e7b059" in content
+    assert "7d6861a88cc2eb8139632e3c54573ff9909bfd2f" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "2405721b7bb0b1185ccd67500230b293a0e7b059",
+            "--expected-base", "7d6861a88cc2eb8139632e3c54573ff9909bfd2f",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "2405721b7bb0b1185ccd67500230b293a0e7b059", "HEAD",
+            "7d6861a88cc2eb8139632e3c54573ff9909bfd2f", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )
@@ -272,3 +272,18 @@ def test_branded_notification_release_files_scoped_and_smoked():
         assert ("  " + path + chr(10)) in source
     assert "/app/hunter/tests/test_notification_email_design_v1.py" in source
     assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE" in source
+
+
+
+def test_source_label_release_changes_are_scoped():
+    script = SCRIPT.read_text()
+    for name in (
+        "app/source_provenance.py",
+        "app/application_runs_v1.py",
+        "tests/test_source_label_presentation_v1.py",
+        "app/job_destination_v1.py",
+        "app/notification_email_design_v1.py",
+    ):
+        assert ("  " + name + chr(10)) in script
+    assert "/app/hunter/tests/test_source_label_presentation_v1.py" in script
+    assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE" in script
