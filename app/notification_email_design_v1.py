@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Mapping, Any
 
 from app import database
+from app.job_destination_v1 import source_platform
 
 DASHBOARD = "https://dashboard.munshi.systems/"
 EVENTS = {
@@ -44,7 +45,7 @@ def _job(message: Mapping[str, Any]) -> dict[str, str]:
         if row is None:
             return {}
         return {"company": _plain(row[0]), "title": _plain(row[1]),
-                "origin": _plain(row[2], 60)}
+                "origin": source_platform({"source": _plain(row[2], 60)})}
     except (ValueError, TypeError, KeyError, sqlite3.Error, OSError):
         return {}
 
@@ -60,7 +61,8 @@ def notification_email(
     context = dict(job_context) if job_context is not None else _job(message)
     company = _plain(context.get("company") or "Employer", 160)
     position = _plain(context.get("title") or "Application", 200)
-    origin = _plain(context.get("origin") or "", 60)
+    origin = (source_platform({"source": context.get("origin")})
+              if context.get("origin") else "")
     job_id = message.get("job_id")
     reference = str(int(job_id)) if str(job_id or "").isdigit() else None
     # A source job board is not an employer or ATS confirmation channel.

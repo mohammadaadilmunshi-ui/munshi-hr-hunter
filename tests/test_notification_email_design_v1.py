@@ -26,7 +26,9 @@ def test_job_specific_html_and_accessible_text(hunter_db):
     assert "Trainer and HR Coordinator" in page
     assert "Employer confirmation received" in plain
     assert "Job reference: 901" in plain
-    assert "JobSpy/LinkedIn" in plain
+    assert "Source: LinkedIn" in plain
+    assert "JobSpy" not in plain
+    assert "JobSpy" not in page
     assert "not an original message from the employer" in plain
     assert "viewport" in page and "Review in MUNSHI" in page
     assert "https://dashboard.munshi.systems/" in page

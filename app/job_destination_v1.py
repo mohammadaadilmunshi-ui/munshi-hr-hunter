@@ -38,6 +38,9 @@ _KNOWN_PROVIDERS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
 _SOURCE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("LinkedIn", ("linkedin",)),
     ("Indeed", ("indeed",)),
+    ("ZipRecruiter", ("ziprecruiter", "zip_recruiter")),
+    ("Glassdoor", ("glassdoor",)),
+    ("Monster", ("monster",)),
     ("Google Jobs", ("google jobs", "google_jobs", "googlejobs")),
     ("USAJobs", ("usajobs",)),
     ("Adzuna", ("adzuna",)),
@@ -124,9 +127,17 @@ def source_platform(job: Any) -> str:
     for label, markers in _SOURCE_PATTERNS:
         if any(marker in lowered for marker in markers):
             return label
+    # The scraper is an internal ingestion adapter, not the user's job board.
+    # Canonical values such as JobSpy/indeed are retained unchanged in storage.
     if lowered in {"jobspy", "python-jobspy"}:
-        return "JobSpy"
-    return raw or "Source not recorded"
+        return "Job board"
+    visible = re.sub(r"^(?:python[- ]?)?jobspy\s*[/|:]\s*", "", raw, flags=re.I)
+    visible = re.sub(r"\s*\(\s*(?:python[- ]?)?jobspy\s*\)", "", visible, flags=re.I)
+    visible = re.sub(r"\s*(?:via|using|by)\s+(?:python[- ]?)?jobspy\s*$", "", visible, flags=re.I)
+    visible = visible.strip(" /|-")
+    if not visible or visible.casefold() in {"jobspy", "python-jobspy"}:
+        return "Job board" if raw else "Source not recorded"
+    return visible
 
 
 def _provider_from_url(url: str | None) -> tuple[str | None, str, str]:
