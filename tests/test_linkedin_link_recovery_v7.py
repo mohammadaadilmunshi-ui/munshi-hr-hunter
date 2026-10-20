@@ -262,7 +262,8 @@ def test_automatic_recovery_keeps_checkpoint_on_mounted_data_volume(monkeypatch,
     import sys
     import sqlite3
     from app import database
-    from scripts import linkedin_link_recovery_v7 as cli
+    # The production Docker image includes app/ but not optional local scripts/.
+    # Exercise the exact command implementation that Hunter runs.
     from app import linkedin_link_recovery_v7 as runtime_cli
 
     db_path = tmp_path / "hunter.db"
@@ -279,7 +280,7 @@ def test_automatic_recovery_keeps_checkpoint_on_mounted_data_volume(monkeypatch,
 
     monkeypatch.setattr(runtime_cli, "recover_links", safe_read_only_preview)
     monkeypatch.setattr(sys, "argv", ["recover", "--automatic"])
-    assert cli.main() == 0
+    assert runtime_cli.recovery_main() == 0
     assert observed["query_only"] == 1
     assert observed["public_get"] is True
     assert observed["linkedin_get"] is False
