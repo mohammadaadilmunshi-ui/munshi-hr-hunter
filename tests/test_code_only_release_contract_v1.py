@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "efd27f033b63aacf77594e9b82fb29dc2ba3f64f" in content
+    assert "89d4983a92436db0966e188318eeb134a5b956e9" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "efd27f033b63aacf77594e9b82fb29dc2ba3f64f",
+            "--expected-base", "89d4983a92436db0966e188318eeb134a5b956e9",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "efd27f033b63aacf77594e9b82fb29dc2ba3f64f", "HEAD",
+            "89d4983a92436db0966e188318eeb134a5b956e9", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )
@@ -137,7 +137,7 @@ def test_relay_release_acceptance_cannot_skip_atomic_dispatch_tests():
 
 
 def test_linkedin_release_cli_is_read_only_and_image_tests_are_required():
-    cli = (ROOT / "scripts/linkedin_link_recovery_v7.py").read_text()
+    cli = (ROOT / "app/linkedin_link_recovery_v7.py").read_text()
     assert "?mode=ro" in cli
     assert "PRAGMA query_only=ON" in cli
     assert "persist_verified_evidence" not in cli
@@ -236,3 +236,12 @@ def test_relay_verified_mail_outbox_is_in_signed_code_only_bundle():
     ):
         assert "  "+item+"\n" in content
     assert "/app/hunter/tests/test_relay_provider_notifications_v1.py" in content
+
+
+def test_smtp_code_only_release_scope_is_explicit_and_tested():
+    source = SCRIPT.read_text()
+    for path in ("app/integration_credentials_ui_v1.py",
+                 "tests/test_smtp_sender_validation_v1.py"):
+        assert f"  {path}\n" in source
+    assert "/app/hunter/tests/test_smtp_sender_validation_v1.py" in source
+    assert ".github/workflows/netcup-code-only-deploy.yml" in source
