@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "boards": [
+    {
+      "provider": "Teamtailor",
+      "company_name": "Teamtailor",
+      "board_url": "https://career.teamtailor.com/jobs.rss",
+      "job_path_prefix": "/jobs/",
+      "format": "teamtailor_rss",
+      "cost_mode": "free",
+      "evidence_url": "https://support.teamtailor.com/en/articles/11171756-rss-feed-how-to-guide",
+      "observed_at": "2026-10-20",
+      "enabled_by_default": false
+    }
+  ]
+}

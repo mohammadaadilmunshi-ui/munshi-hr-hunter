@@ -11,20 +11,26 @@
     "Google Jobs": "app.google_jobs_worker",
     "Greenhouse": "app.greenhouse_worker",
     "Indeed Jobs (JobSpy)": "app.indeed_jobspy_worker",
-    "Jobicy": "app.jobicy_worker",
     "JobSpy": "app.jobspy_worker",
+    "Jobicy": "app.jobicy_worker",
     "Lever": "app.lever_worker",
     "LinkedIn Jobs (JobSpy)": "app.linkedin_jobspy_worker",
     "NYC Open Data": "app.nyc_open_data_worker",
     "Personio": "app.personio_worker",
     "Pinpoint": "app.pinpoint_worker",
+    "RSS Job Feeds": "app.rss_job_feeds_worker",
     "Recruitee": "app.recruitee_worker",
     "Remote OK": "app.remote_ok_worker",
     "Remotive": "app.remotive_worker",
+    "Schema JobPosting": "app.schema_jobposting_worker",
     "SmartRecruiters": "app.smartrecruiters_worker",
+    "Teamtailor": "app.teamtailor_worker",
     "We Work Remotely": "app.we_work_remotely_worker",
     "Workable": "app.workable_worker",
     "Workday": "app.workday_worker"
   },
-  "retired_source_keys": ["googlejobsscrapling", "indeedscrapling"]
+  "retired_source_keys": [
+    "googlejobsscrapling",
+    "indeedscrapling"
+  ]
 }

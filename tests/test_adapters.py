@@ -329,7 +329,7 @@ def test_provider_failures_are_retried_recorded_and_never_silent(hunter_db, fail
         ).fetchone()
     finally:
         connection.close()
-    assert attempts == 2
+    assert attempts == (1 if isinstance(failure, ValueError) else 2)
     assert result["success"] is False
     assert result["failed_boards"] == 1
     assert result["accounting_delta"] == 0

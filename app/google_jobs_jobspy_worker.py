@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # Compatibility module for old commands. The canonical dashboard adapter is
-# now "Google Jobs" and uses the merged SerpAPI -> JobSpy provider chain.
+# now "Google Jobs" and uses free JobSpy Google discovery only.
 from app.google_jobs_worker import main
 
 

@@ -1,0 +1,35 @@
+name: Free Discovery Regression
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  free-discovery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install production lock
+        run: python -m pip install -r requirements.lock.txt
+      - name: Compile source and run deterministic discovery regressions
+        run: |
+          python -m compileall -q app scripts
+          python -m pytest -q \
+            tests/test_free_discovery_policy.py \
+            tests/test_free_discovery_gateway_handoff.py \
+            tests/test_public_board_discovery.py \
+            tests/test_randomized_source_runner.py \
+            tests/test_scheduler_policy.py \
+            tests/test_adapters.py \
+            tests/test_adapter_pipeline_contract.py \
+            tests/test_targeting.py \
+            tests/test_config_and_persistence.py \
+            tests/test_source_label_presentation_v1.py \
+            tests/test_provider_telemetry_window_v1.py \
+            tests/test_linkedin_link_contract_v2.py

@@ -17,6 +17,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.database import ROOT_DIR, get_connection, get_setting
+from app.discovery_policy import DiscoveryPolicyError, require_free_provider
+from app.source_readiness import readiness_with_boards, worker_available
 from app.source_cooldown import (
     get_adapter_timer,
     mark_source_completed,
@@ -67,6 +69,7 @@ def load_enabled_sources() -> list[dict[str, Any]]:
             for row in rows
             if normalize_source_name(row["source_name"])
             not in retired_keys
+            and readiness_with_boards(connection, dict(row), registry)["ready"]
         ]
     finally:
         connection.close()
@@ -76,7 +79,8 @@ def discover_worker(source_name: str) -> str | None:
     registry = get_setting("source_worker_registry", {}) or {}
     for configured_name, module in dict(registry.get("workers") or {}).items():
         if normalize_source_name(configured_name) == normalize_source_name(source_name):
-            return str(module or "").strip() or None
+            selected = str(module or "").strip()
+            return selected if worker_available(selected) else None
     slug = re.sub(
         r"[^a-z0-9]+", "_", source_name.lower()
     ).strip("_")
@@ -505,6 +509,22 @@ def _is_deferred(text: str, payload: dict[str, Any]) -> bool:
     )
 
 
+def _retry_after_floor(payload: dict[str, Any]) -> int:
+    values = [payload.get("retry_after_seconds", 0)]
+    errors = list(payload.get("errors") or [])
+    summary = payload.get("discovery_summary") or {}
+    if isinstance(summary, dict):
+        errors.extend(summary.get("errors") or [])
+    values.extend(x.get("retry_after_seconds", 0) for x in errors if isinstance(x, dict))
+    floor = 0
+    for value in values:
+        try:
+            floor = max(floor, int(value))
+        except (ValueError, TypeError):
+            pass
+    return floor
+
+
 def _deferred_incident_reason(payload: dict[str, Any]) -> tuple[str, str]:
     reason = str(payload.get("skip_reason") or "").casefold()
     if "backoff" in reason:
@@ -727,29 +747,19 @@ def _restore_worker_metrics_after_runner_failure(
 
 def run_one(source: dict[str, Any]) -> dict[str, Any]:
     source_name = str(source.get("source_name") or "")
-    timer_before_start = get_adapter_timer(source_name, row=source)
-    scheduled_due_at = str(timer_before_start.get("next_allowed_at") or "")
+    try:
+        require_free_provider(source_name, cost_mode=str(source.get("cost_mode", "free")))
+    except DiscoveryPolicyError:
+        return {"source": source_name, "status": "setup_required", "reason": "disabled_by_policy",
+                "network_request_made": False}
     module = discover_worker(source_name)
     if not module:
-        schedule = mark_source_completed(
-            source_name,
-            success=False,
-            worker_status="no_worker_module",
-            worker_returncode=127,
-        )
-        _record_runner_failure(
-            source_name,
-            status="no_worker_module",
-            returncode=127,
-            error="No configured worker module exists for this enabled source.",
-        )
-        return {
-            "source": source_name,
-            "status": "skipped",
-            "reason": "no_worker_module",
-            "schedule": schedule,
-        }
-
+        # Missing code is a configuration problem, not a failed provider request.
+        # Preserve historical health/metrics and avoid a retry/alert storm.
+        return {"source": source_name, "status": "setup_required", "reason": "worker_missing",
+                "network_request_made": False}
+    timer_before_start = get_adapter_timer(source_name, row=source)
+    scheduled_due_at = str(timer_before_start.get("next_allowed_at") or "")
     timeout_seconds = _source_timeout_seconds(source_name)
     mark_source_started(
         source_name,
@@ -798,7 +808,7 @@ def run_one(source: dict[str, Any]) -> dict[str, Any]:
             and completed.returncode == 0
             and not blocked
             and not deferred
-            and payload.get("success", True) is not False
+            and payload.get("success") is True
         )
         status = (
             "timeout"
@@ -819,6 +829,7 @@ def run_one(source: dict[str, Any]) -> dict[str, Any]:
         status = "runner_exception"
         returncode = 125
     finally:
+        retry_after = _retry_after_floor(payload)
         schedule = mark_source_completed(
             source_name,
             success=success or deferred,
@@ -826,10 +837,18 @@ def run_one(source: dict[str, Any]) -> dict[str, Any]:
             deferred=deferred,
             worker_status=status,
             worker_returncode=returncode,
+            **({"retry_after_seconds": retry_after} if retry_after > 0 else {}),
         )
         if not (success or deferred or partial_blocked_success):
+            error_type = str(payload.get("error_type") or "")
+            if not error_type:
+                matches = re.findall(r"(?m)^([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)):", stderr)
+                error_type = matches[-1] if matches else ""
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,120}", error_type):
+                error_type = "UnclassifiedWorkerFailure"
             failure_detail = runner_error or (
-                f"Worker finished with scheduler status {status} and return code {returncode}."
+                f"Worker finished with scheduler status {status} and return code {returncode}; "
+                f"error_type={error_type}; structured_result={bool(payload)}."
             )
             _record_runner_failure(
                 source_name,

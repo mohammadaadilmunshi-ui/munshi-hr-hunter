@@ -58,10 +58,6 @@ def format_adapter_display(job: Any) -> str:
     if "indeed" in combined:
         return "Indeed"
     if "google" in combined:
-        if "serpapi" in combined or "serp api" in combined:
-            return "Google Jobs · SerpAPI"
-        if "jobspy" in combined:
-            return "Google Jobs"
         return "Google Jobs"
     if "greenhouse" in combined:
         return "Greenhouse"

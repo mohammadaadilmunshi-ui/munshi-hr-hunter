@@ -1,34 +1,344 @@
 {
   "providers": [
-    {"provider": "Greenhouse", "module": "app.greenhouse_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "Ashby", "module": "app.ashby_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "Lever", "module": "app.lever_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "SmartRecruiters", "module": "app.smartrecruiters_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "Personio", "module": "app.personio_worker", "implemented": true, "support_level": "public_feed"},
-    {"provider": "Comeet", "module": "app.comeet_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "Pinpoint", "module": "app.pinpoint_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "Recruitee", "module": "app.recruitee_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "Workable", "module": "app.workable_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "Arbeitnow", "module": "app.arbeitnow_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "Remote OK", "module": "app.remote_ok_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "Jobicy", "module": "app.jobicy_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "Remotive", "module": "app.remotive_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "LinkedIn / JobSpy", "module": "app.linkedin_jobspy_worker", "implemented": true, "support_level": "jobspy"},
-    {"provider": "Indeed / JobSpy", "module": "app.indeed_jobspy_worker", "implemented": true, "support_level": "jobspy"},
-    {"provider": "Google Jobs / JobSpy", "module": "app.google_jobs_jobspy_worker", "implemented": true, "support_level": "jobspy"},
-    {"provider": "ZipRecruiter / JobSpy", "module": "app.jobspy_worker", "implemented": true, "support_level": "jobspy"},
-    {"provider": "Workday", "module": "app.workday_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "BambooHR", "module": "app.bamboohr_worker", "implemented": true, "support_level": "public_api"},
-    {"provider": "Teamtailor", "module": "", "implemented": false, "support_level": "blocked", "blocked_reason": "Official API requires provider authorization; no stable unauthenticated JSON contract is configured."},
-    {"provider": "iCIMS", "module": "", "implemented": false, "support_level": "blocked", "blocked_reason": "No stable provider-wide unauthenticated API contract verified; use configured public JobPosting fallback when a board exposes it."},
-    {"provider": "Jobvite", "module": "", "implemented": false, "support_level": "blocked", "blocked_reason": "No stable provider-wide unauthenticated JSON contract verified."},
-    {"provider": "Dayforce", "module": "", "implemented": false, "support_level": "blocked", "blocked_reason": "Tenant-specific public contract not yet verified."},
-    {"provider": "ADP Recruiting", "module": "", "implemented": false, "support_level": "blocked", "blocked_reason": "No stable provider-wide unauthenticated JSON contract verified."},
-    {"provider": "Paylocity", "module": "", "implemented": false, "support_level": "blocked", "blocked_reason": "Existing evidence is test-specific; a general public adapter contract is not verified."},
-    {"provider": "Oracle Recruiting", "module": "", "implemented": false, "support_level": "blocked", "blocked_reason": "Tenant-specific endpoint discovery is required."},
-    {"provider": "SAP SuccessFactors", "module": "", "implemented": false, "support_level": "blocked", "blocked_reason": "Tenant-specific endpoint discovery is required."},
-    {"provider": "Phenom", "module": "", "implemented": false, "support_level": "blocked", "blocked_reason": "Site-specific endpoint discovery is required."},
-    {"provider": "Eightfold", "module": "", "implemented": false, "support_level": "blocked", "blocked_reason": "Site-specific endpoint discovery is required."},
-    {"provider": "Built In", "module": "", "implemented": false, "support_level": "blocked", "blocked_reason": "No stable public API contract verified."}
-  ]
+    {
+      "provider": "Greenhouse",
+      "module": "app.greenhouse_worker",
+      "implemented": true,
+      "support_level": "public_api",
+      "tsenta_advertised": true,
+      "discovery_status": "PUBLIC_VERIFIED"
+    },
+    {
+      "provider": "Ashby",
+      "module": "app.ashby_worker",
+      "implemented": true,
+      "support_level": "public_api",
+      "tsenta_advertised": true,
+      "discovery_status": "PUBLIC_VERIFIED"
+    },
+    {
+      "provider": "Lever",
+      "module": "app.lever_worker",
+      "implemented": true,
+      "support_level": "public_api",
+      "tsenta_advertised": true,
+      "discovery_status": "PUBLIC_VERIFIED"
+    },
+    {
+      "provider": "SmartRecruiters",
+      "module": "app.smartrecruiters_worker",
+      "implemented": true,
+      "support_level": "public_api",
+      "tsenta_advertised": true,
+      "discovery_status": "PUBLIC_VERIFIED"
+    },
+    {
+      "provider": "Personio",
+      "module": "app.personio_worker",
+      "implemented": true,
+      "support_level": "public_feed"
+    },
+    {
+      "provider": "Comeet",
+      "module": "app.comeet_worker",
+      "implemented": true,
+      "support_level": "public_api"
+    },
+    {
+      "provider": "Pinpoint",
+      "module": "app.pinpoint_worker",
+      "implemented": true,
+      "support_level": "public_api",
+      "tsenta_advertised": true,
+      "discovery_status": "PUBLIC_VERIFIED"
+    },
+    {
+      "provider": "Recruitee",
+      "module": "app.recruitee_worker",
+      "implemented": true,
+      "support_level": "public_api",
+      "tsenta_advertised": true,
+      "discovery_status": "PUBLIC_VERIFIED"
+    },
+    {
+      "provider": "Workable",
+      "module": "app.workable_worker",
+      "implemented": true,
+      "support_level": "public_api",
+      "tsenta_advertised": true,
+      "discovery_status": "PUBLIC_VERIFIED"
+    },
+    {
+      "provider": "Arbeitnow",
+      "module": "app.arbeitnow_worker",
+      "implemented": true,
+      "support_level": "public_api"
+    },
+    {
+      "provider": "Remote OK",
+      "module": "app.remote_ok_worker",
+      "implemented": true,
+      "support_level": "public_api"
+    },
+    {
+      "provider": "Jobicy",
+      "module": "app.jobicy_worker",
+      "implemented": true,
+      "support_level": "public_api"
+    },
+    {
+      "provider": "Remotive",
+      "module": "app.remotive_worker",
+      "implemented": true,
+      "support_level": "public_api"
+    },
+    {
+      "provider": "LinkedIn / JobSpy",
+      "module": "app.linkedin_jobspy_worker",
+      "implemented": true,
+      "support_level": "jobspy"
+    },
+    {
+      "provider": "Indeed / JobSpy",
+      "module": "app.indeed_jobspy_worker",
+      "implemented": true,
+      "support_level": "jobspy"
+    },
+    {
+      "provider": "Google Jobs / JobSpy",
+      "module": "app.google_jobs_jobspy_worker",
+      "implemented": true,
+      "support_level": "jobspy"
+    },
+    {
+      "provider": "ZipRecruiter / JobSpy",
+      "module": "app.jobspy_worker",
+      "implemented": true,
+      "support_level": "jobspy"
+    },
+    {
+      "provider": "Workday",
+      "module": "app.workday_worker",
+      "implemented": true,
+      "support_level": "public_api",
+      "tsenta_advertised": true,
+      "discovery_status": "NEEDS_COMPANY_BOARD"
+    },
+    {
+      "provider": "BambooHR",
+      "module": "app.bamboohr_worker",
+      "implemented": true,
+      "support_level": "public_api",
+      "tsenta_advertised": true,
+      "discovery_status": "NEEDS_COMPANY_BOARD"
+    },
+    {
+      "provider": "Teamtailor",
+      "module": "app.teamtailor_worker",
+      "implemented": true,
+      "support_level": "public_feed",
+      "tsenta_advertised": true,
+      "discovery_status": "PUBLIC_TENANT_CONFIGURED",
+      "evidence_url": "https://support.teamtailor.com/en/articles/11171756-rss-feed-how-to-guide"
+    },
+    {
+      "provider": "iCIMS",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No stable provider-wide unauthenticated API contract verified; use configured public JobPosting fallback when a board exposes it.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "Jobvite",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No stable provider-wide unauthenticated JSON contract verified.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "Dayforce",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "Tenant-specific public contract not yet verified.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "ADP Recruiting",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No stable provider-wide unauthenticated JSON contract verified.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "Paylocity",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "Existing evidence is test-specific; a general public adapter contract is not verified.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "Oracle Recruiting",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "Tenant-specific endpoint discovery is required.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "SAP SuccessFactors",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "Tenant-specific endpoint discovery is required.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "Phenom",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "Site-specific endpoint discovery is required.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "Eightfold",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "Site-specific endpoint discovery is required."
+    },
+    {
+      "provider": "Built In",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No stable public API contract verified."
+    },
+    {
+      "provider": "Rippling",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No independently verified public employer contract; application platform support is not a discovery API.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "JazzHR",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No independently verified public employer contract; application platform support is not a discovery API.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "BreezyHR",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No independently verified public employer contract; application platform support is not a discovery API.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "UKG / UltiPro",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No independently verified public employer contract; application platform support is not a discovery API.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "Dover",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No independently verified public employer contract; application platform support is not a discovery API.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "Gem",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No independently verified public employer contract; application platform support is not a discovery API.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "Zoho Recruit",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No independently verified public employer contract; application platform support is not a discovery API.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "BrassRing",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No independently verified public employer contract; application platform support is not a discovery API.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "CareerPlug",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No independently verified public employer contract; application platform support is not a discovery API.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "Hireology",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No independently verified public employer contract; application platform support is not a discovery API.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "JOIN",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No independently verified public employer contract; application platform support is not a discovery API.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    },
+    {
+      "provider": "Polymer",
+      "module": "",
+      "implemented": false,
+      "support_level": "blocked",
+      "blocked_reason": "No independently verified public employer contract; application platform support is not a discovery API.",
+      "tsenta_advertised": true,
+      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+    }
+  ],
+  "benchmark": {
+    "url": "https://tsenta.com/ai-disclosure",
+    "observed_at": "2026-10-20",
+    "note": "Application handling roster, not evidence of public provider-wide discovery feeds."
+  }
 }
