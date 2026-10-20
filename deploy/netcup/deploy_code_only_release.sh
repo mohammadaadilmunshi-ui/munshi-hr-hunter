@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=efd27f033b63aacf77594e9b82fb29dc2ba3f64f
+LIVE_BASE=89d4983a92436db0966e188318eeb134a5b956e9
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -164,6 +164,8 @@ git merge-base --is-ancestor "$old_head" "$target" || block 'Target is not a des
 # Anything else, including database modules, SQL scripts or Docker manifests,
 # needs the original DB-backed guarded full release.
 allowed_files=(
+  app/integration_credentials_ui_v1.py
+  tests/test_smtp_sender_validation_v1.py
   .github/workflows/product-ui-validation.yml
   app/job_destination_v1.py
   app/jobspy_board_common.py
@@ -368,6 +370,7 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_tsenta_learning_sync_v1.py \
     /app/hunter/tests/test_tsenta_backend_readiness_v1.py \
     /app/hunter/tests/test_tsenta_learning_monitor_v1.py \
+    /app/hunter/tests/test_smtp_sender_validation_v1.py \
     /app/hunter/tests/test_linkedin_apply_button_v7.py \
     /app/hunter/tests/test_linkedin_link_recovery_v7.py \
     /app/hunter/tests/test_linkedin_verified_url_evidence_v5.py \
