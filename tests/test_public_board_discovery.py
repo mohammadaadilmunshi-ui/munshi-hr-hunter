@@ -410,3 +410,22 @@ def test_bamboo_and_workday_links_cannot_change_employer_or_job():
     for url in ('https://other.wd5.myworkdayjobs.com/job/analyst_REQ-1', 'https://fixture.wd5.myworkdayjobs.com/job/analyst_REQ-2'):
         with pytest.raises(ValueError):
             normalize_workday_job(w, {'externalPath': '/job/analyst_REQ-1', 'externalUrl': url})
+
+
+def test_recruitee_raw_normalized_and_rejections_reconcile(monkeypatch):
+    monkeypatch.setattr(market, '_board_rows', lambda **k: [{'board_locator': 'one', 'company_name': 'One'}])
+    class Payload:
+        def json(self):
+            return {'offers': [
+                {'id': '1', 'title': 'People Analytics Analyst', 'careers_url': 'https://one.recruitee.com/o/hr-analyst'},
+                {'id': '2', 'title': 'HR Analyst', 'careers_url': 'https://other.recruitee.com/o/hr-analyst'},
+                None,
+                {'id': '3', 'title': 'People Analytics Analyst', 'careers_url': 'https://one.recruitee.com/o/hr-analyst-3'},
+                {'id': '4', 'title': 'People Analytics Analyst', 'careers_url': 'https://one.recruitee.com/o/hr-analyst-4'},
+            ]}
+    monkeypatch.setattr(market, '_request', lambda *a: Payload())
+    monkeypatch.setattr(market, '_configured_source_tier', lambda *a: 1)
+    result = market.fetch_recruitee(Namespace(max_boards=1, max_jobs=2))
+    assert result['raw_count'] == 5
+    assert len(result['jobs']) == 2
+    assert sum(result['normalization_rejections'].values()) == 3

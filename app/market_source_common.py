@@ -584,6 +584,8 @@ def fetch_recruitee(args: argparse.Namespace) -> dict[str, Any]:
     errors: list[dict[str, Any]] = []
     requests_made = 0
     successful_boards = 0
+    raw_count = 0
+    normalization_rejections: dict[str, int] = {}
     for board in boards:
         locator = str(board.get("board_locator") or "").strip()
         url = str(board.get("board_url") or "").strip()
@@ -607,8 +609,10 @@ def fetch_recruitee(args: argparse.Namespace) -> dict[str, Any]:
             records = _pick(payload, "offers", "data", default=payload)
             if isinstance(records, dict):
                 records = records.get("offers") or []
-            for item in records or []:
+            raw_count += len(records)
+            for record_index, item in enumerate(records):
                 if not isinstance(item, dict):
+                    normalization_rejections["malformed_posting"] = normalization_rejections.get("malformed_posting", 0) + 1
                     continue
                 public_url = str(_pick(item, "careers_url", "url") or "")
                 try:
@@ -616,6 +620,7 @@ def fetch_recruitee(args: argparse.Namespace) -> dict[str, Any]:
                     if not urlparse(public_url).path.startswith("/o/"):
                         raise ValueError("Not an employer posting")
                 except ValueError:
+                    normalization_rejections["unverified_posting_url"] = normalization_rejections.get("unverified_posting_url", 0) + 1
                     errors.append({"company": board.get("company_name"), "error": "Unverified employer posting URL"})
                     continue
                 apply_url = public_url
@@ -658,7 +663,11 @@ def fetch_recruitee(args: argparse.Namespace) -> dict[str, Any]:
                 if normalized:
                     normalized["job_url"] = public_url
                     jobs.append(normalized)
+                else:
+                    normalization_rejections["missing_fields"] = normalization_rejections.get("missing_fields", 0) + 1
                 if len(jobs) >= args.max_jobs:
+                    remaining = len(records) - record_index - 1
+                    normalization_rejections["run_job_cap"] = normalization_rejections.get("run_job_cap", 0) + remaining
                     break
         except Exception as error:
             status = int(getattr(getattr(error, "response", None), "status_code", 0) or 0)
@@ -684,6 +693,8 @@ def fetch_recruitee(args: argparse.Namespace) -> dict[str, Any]:
         "http_status": 200 if not errors else None,
         "requests_made": requests_made,
         "successful_boards": successful_boards,
+        "raw_count": raw_count,
+        "normalization_rejections": normalization_rejections,
         "configuration_required": False,
         "errors": errors,
     }
