@@ -28,6 +28,17 @@ def _enrich_potential_match(
     job: dict[str, Any],
     rules: DashboardTargetingRules,
 ) -> dict[str, Any]:
+    # Each location is an observed employer location. Select using the same
+    # canonical gate; never assume a remote/global role permits US applicants.
+    candidates = job.get("public_location_candidates") or []
+    if isinstance(candidates, list):
+        for location in candidates[:100]:
+            if not isinstance(location, dict):
+                continue
+            variant = {**job, **location}
+            if evaluate_job(variant, rules).get("accepted"):
+                job = variant
+                break
     initial = evaluate_job(job, rules)
     if not initial.get("accepted"):
         return dict(job)
@@ -213,7 +224,7 @@ def record_source_metrics(
     run_id = str(summary.get("run_id") or uuid.uuid4())
     run_started_at = str(summary.get("run_started_at") or "").strip() or None
     raw = _int(raw_jobs)
-    normalized = _int(summary.get("raw_normalized") or raw)
+    normalized = _int(summary.get("raw_normalized", raw))
     within_duplicates = _int(summary.get("duplicates_within_run"))
     database_duplicates = _int(duplicate_jobs)
     duplicates = within_duplicates + database_duplicates

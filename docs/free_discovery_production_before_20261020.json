@@ -1,5 +1,5 @@
 {
-  "observed_at_utc": "2026-10-20T09:33:57.952230+00:00",
+  "observed_at_utc": "2026-10-20T09:47:17.163594+00:00",
   "mode": "read_only",
   "production_writes": 0,
   "application_submissions": 0,
@@ -7,12 +7,12 @@
   "registry_worker_count": 47,
   "source_count": 51,
   "enabled_failed_count": 23,
-  "enabled_missing_module_count": 23,
+  "enabled_missing_module_count": 22,
   "table_counts": {
     "public_adapter_boards": 1049,
     "ats_company_registry": 63,
-    "source_runs": 9144,
-    "source_run_stages": 64008
+    "source_runs": 9145,
+    "source_run_stages": 64015
   },
   "sources": [
     {
@@ -37,6 +37,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.adp_recruiting_worker",
+      "resolved_module": "app.adp_recruiting_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -92,6 +93,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": null,
       "registered_module": "app.adzuna_worker",
+      "resolved_module": "app.adzuna_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "schedule": {
@@ -127,6 +129,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": null,
       "registered_module": null,
+      "resolved_module": "app.apify_worker",
       "module_exists": false,
       "error_classification": "paid_policy_disabled",
       "schedule": {
@@ -162,6 +165,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "arbeitnow_public_api",
       "registered_module": "app.arbeitnow_worker",
+      "resolved_module": "app.arbeitnow_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -215,6 +219,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "worker",
       "registered_module": "app.ashby_worker",
+      "resolved_module": "app.ashby_worker",
       "module_exists": true,
       "error_classification": "worker_invocation_failed_unresolved",
       "last_run": {
@@ -270,6 +275,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": null,
       "registered_module": "app.bamboohr_worker",
+      "resolved_module": "app.bamboohr_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "schedule": {
@@ -305,6 +311,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.brassring_worker",
+      "resolved_module": "app.brassring_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -360,6 +367,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.breezyhr_worker",
+      "resolved_module": "app.breezyhr_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -415,6 +423,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.careerplug_worker",
+      "resolved_module": "app.careerplug_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -470,6 +479,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "comeet",
       "registered_module": "app.comeet_worker",
+      "resolved_module": "app.comeet_worker",
       "module_exists": true,
       "error_classification": "provider_degraded",
       "last_run": {
@@ -523,6 +533,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.dayforce_worker",
+      "resolved_module": "app.dayforce_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -578,6 +589,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "dice_direct_playwright",
       "registered_module": "app.dice_worker",
+      "resolved_module": "app.dice_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -631,6 +643,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.dover_worker",
+      "resolved_module": "app.dover_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -686,6 +699,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "commoncrawl+public_endpoint_validation",
       "registered_module": "app.employer_board_discovery_worker",
+      "resolved_module": "app.employer_board_discovery_worker",
       "module_exists": true,
       "error_classification": "provider_degraded",
       "last_run": {
@@ -741,6 +755,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.gem_worker",
+      "resolved_module": "app.gem_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -796,6 +811,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "google",
       "registered_module": "app.google_jobs_worker",
+      "resolved_module": "app.google_jobs_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -849,6 +865,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "direct_ats",
       "registered_module": "app.greenhouse_worker",
+      "resolved_module": "app.greenhouse_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -902,6 +919,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.hireology_worker",
+      "resolved_module": "app.hireology_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -957,6 +975,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "indeed",
       "registered_module": "app.indeed_jobspy_worker",
+      "resolved_module": "app.indeed_jobspy_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -994,8 +1013,8 @@
       "enabled": 1,
       "cost_mode": "free",
       "health_status": "failed",
-      "last_run_at": "2026-10-20 00:49:49",
-      "consecutive_failures": 90,
+      "last_run_at": "2026-10-20 09:41:40",
+      "consecutive_failures": 91,
       "request_count_last_run": 0,
       "raw_jobs_last_run": 0,
       "normalized_jobs_last_run": 0,
@@ -1010,11 +1029,12 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.join_worker",
+      "resolved_module": "app.join_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
-        "run_id": "scheduler-23073733-cc61-4c2b-a021-2c845f14df5b",
-        "completed_at": "2026-10-20 00:49:49",
+        "run_id": "scheduler-5e802865-b457-4e18-9f26-d06694c1599c",
+        "completed_at": "2026-10-20 09:41:40",
         "run_status": "failed",
         "request_count": 0,
         "raw_count": 0,
@@ -1036,7 +1056,7 @@
         "schedule_state": "failure_backoff",
         "last_worker_status": "failed",
         "last_worker_returncode": 1,
-        "consecutive_scheduler_failures": 90
+        "consecutive_scheduler_failures": 91
       },
       "public_board_counts": {
         "total": 0,
@@ -1065,6 +1085,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.jazzhr_worker",
+      "resolved_module": "app.jazzhr_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -1120,6 +1141,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "zip_recruiter",
       "registered_module": "app.jobspy_worker",
+      "resolved_module": "app.jobspy_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -1173,6 +1195,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "jobicy_public_api",
       "registered_module": "app.jobicy_worker",
+      "resolved_module": "app.jobicy_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -1226,6 +1249,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.jobvite_worker",
+      "resolved_module": "app.jobvite_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -1281,6 +1305,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "direct_ats",
       "registered_module": "app.lever_worker",
+      "resolved_module": "app.lever_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -1334,6 +1359,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "linkedin",
       "registered_module": "app.linkedin_jobspy_worker",
+      "resolved_module": "app.linkedin_jobspy_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -1387,6 +1413,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "nyc_open_data",
       "registered_module": "app.nyc_open_data_worker",
+      "resolved_module": "app.nyc_open_data_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -1440,6 +1467,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.naukri_worker",
+      "resolved_module": "app.naukri_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -1495,6 +1523,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.oracle_recruiting_worker",
+      "resolved_module": "app.oracle_recruiting_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -1550,6 +1579,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.paylocity_worker",
+      "resolved_module": "app.paylocity_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -1605,6 +1635,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.personio_worker",
+      "resolved_module": "app.personio_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -1658,6 +1689,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.phenom_worker",
+      "resolved_module": "app.phenom_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -1713,6 +1745,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "pinpoint",
       "registered_module": "app.pinpoint_worker",
+      "resolved_module": "app.pinpoint_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -1766,6 +1799,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.polymer_worker",
+      "resolved_module": "app.polymer_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -1821,8 +1855,9 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": null,
       "registered_module": null,
-      "module_exists": false,
-      "error_classification": "missing_worker_module",
+      "resolved_module": "app.rss_job_feeds_worker",
+      "module_exists": true,
+      "error_classification": "no_current_failure_evidence",
       "schedule": {
         "schedule_state": "disabled",
         "last_worker_status": null,
@@ -1856,6 +1891,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "recruitee_public_careers_api",
       "registered_module": "app.recruitee_worker",
+      "resolved_module": "app.recruitee_worker",
       "module_exists": true,
       "error_classification": "rate_limited",
       "last_run": {
@@ -1909,6 +1945,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "remote_ok_public_json",
       "registered_module": "app.remote_ok_worker",
+      "resolved_module": "app.remote_ok_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -1962,6 +1999,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "remotive_public_api",
       "registered_module": "app.remotive_worker",
+      "resolved_module": "app.remotive_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -2015,6 +2053,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.rippling_worker",
+      "resolved_module": "app.rippling_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -2070,6 +2109,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.sap_successfactors_worker",
+      "resolved_module": "app.sap_successfactors_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -2125,6 +2165,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": null,
       "registered_module": "app.schema_jobposting_worker",
+      "resolved_module": "app.schema_jobposting_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "schedule": {
@@ -2160,6 +2201,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": null,
       "registered_module": null,
+      "resolved_module": "app.serpapi_worker",
       "module_exists": false,
       "error_classification": "paid_policy_disabled",
       "schedule": {
@@ -2195,6 +2237,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "smartrecruiters",
       "registered_module": "app.smartrecruiters_worker",
+      "resolved_module": "app.smartrecruiters_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -2248,6 +2291,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.teamtailor_worker",
+      "resolved_module": "app.teamtailor_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -2303,6 +2347,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.ukg_ultipro_worker",
+      "resolved_module": "app.ukg_ultipro_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -2358,7 +2403,8 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "usajobs_official_api",
       "registered_module": null,
-      "module_exists": false,
+      "resolved_module": "app.usajobs_worker",
+      "module_exists": true,
       "error_classification": "paid_policy_disabled",
       "last_run": {
         "run_id": "df8fa967-7d60-4bd4-ba8f-24d2610607d2",
@@ -2411,6 +2457,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "we_work_remotely",
       "registered_module": "app.we_work_remotely_worker",
+      "resolved_module": "app.we_work_remotely_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -2464,6 +2511,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "workable_global_xml",
       "registered_module": "app.workable_worker",
+      "resolved_module": "app.workable_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "last_run": {
@@ -2517,6 +2565,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": null,
       "registered_module": "app.workday_worker",
+      "resolved_module": "app.workday_worker",
       "module_exists": true,
       "error_classification": "no_current_failure_evidence",
       "schedule": {
@@ -2552,6 +2601,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.zoho_recruit_worker",
+      "resolved_module": "app.zoho_recruit_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {
@@ -2607,6 +2657,7 @@
       "accounting_delta_last_run": 0,
       "provider_used_last_run": "scheduler",
       "registered_module": "app.icims_worker",
+      "resolved_module": "app.icims_worker",
       "module_exists": false,
       "error_classification": "missing_worker_module",
       "last_run": {

@@ -17,6 +17,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 
 from app.discovery_policy import require_free_url
+from app.public_board_http import retry_after_seconds, validate_board_url
 
 from app.database import get_connection, get_setting, initialize_database
 from app.dashboard_targeting_gate import (
@@ -208,7 +209,10 @@ def _request(
         params=params,
         timeout=_request_timeout() if timeout is None else float(timeout),
         stream=stream,
+        allow_redirects=False,
     )
+    if 300 <= getattr(response, "status_code", 200) < 400:
+        raise requests.HTTPError("Unapproved board redirect", response=response)
     response.raise_for_status()
     return response
 
@@ -579,6 +583,7 @@ def fetch_recruitee(args: argparse.Namespace) -> dict[str, Any]:
     jobs: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     requests_made = 0
+    successful_boards = 0
     for board in boards:
         locator = str(board.get("board_locator") or "").strip()
         url = str(board.get("board_url") or "").strip()
@@ -588,15 +593,31 @@ def fetch_recruitee(args: argparse.Namespace) -> dict[str, Any]:
                 locator = host.split(".", 1)[0]
         if not locator:
             continue
+        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9-]{0,62}", locator):
+            errors.append({"company": board.get("company_name"), "error": "Invalid Recruitee tenant locator"})
+            continue
         endpoint = f"https://{locator}.recruitee.com/api/offers/"
         try:
-            response = _request(endpoint)
             requests_made += 1
+            response = _request(endpoint)
             payload = response.json()
+            if not isinstance(payload, dict) or not isinstance(payload.get("offers"), list):
+                raise ValueError("Unverified Recruitee offers contract")
+            successful_boards += 1
             records = _pick(payload, "offers", "data", default=payload)
             if isinstance(records, dict):
                 records = records.get("offers") or []
             for item in records or []:
+                if not isinstance(item, dict):
+                    continue
+                public_url = str(_pick(item, "careers_url", "url") or "")
+                try:
+                    public_url = validate_board_url(public_url, {f"{locator.lower()}.recruitee.com"})
+                    if not urlparse(public_url).path.startswith("/o/"):
+                        raise ValueError("Not an employer posting")
+                except ValueError:
+                    errors.append({"company": board.get("company_name"), "error": "Unverified employer posting URL"})
+                    continue
                 normalized = _normalize(
                     source=f"Recruitee/{board.get('company_name') or locator}",
                     job_id=_pick(item, "id", "slug"),
@@ -607,12 +628,7 @@ def fetch_recruitee(args: argparse.Namespace) -> dict[str, Any]:
                         default=board.get("company_name") or locator,
                     ),
                     location=_flatten(_pick(item, "location", "locations")),
-                    apply_url=_pick(
-                        item,
-                        "careers_apply_url",
-                        "careers_url",
-                        "url",
-                    ),
+                    apply_url=public_url,
                     description=" ".join(
                         filter(
                             None,
@@ -632,13 +648,21 @@ def fetch_recruitee(args: argparse.Namespace) -> dict[str, Any]:
                 if len(jobs) >= args.max_jobs:
                     break
         except Exception as error:
+            status = int(getattr(getattr(error, "response", None), "status_code", 0) or 0)
+            headers = getattr(getattr(error, "response", None), "headers", {}) or {}
             errors.append(
                 {
                     "company": board.get("company_name"),
                     "endpoint": endpoint,
-                    "error": str(error),
+                    "error": f"{type(error).__name__}: HTTP {status}",
+                    "http_status": status,
+                    "retry_after_seconds": retry_after_seconds(headers.get("Retry-After", "")),
                 }
             )
+            if status in (401, 403, 429):
+                # Stop the provider run on blocking evidence, rather than
+                # moving through dozens of tenants in the same rate limit.
+                break
         if len(jobs) >= args.max_jobs:
             break
 
@@ -646,6 +670,7 @@ def fetch_recruitee(args: argparse.Namespace) -> dict[str, Any]:
         "jobs": jobs,
         "http_status": 200 if not errors else None,
         "requests_made": requests_made,
+        "successful_boards": successful_boards,
         "configuration_required": False,
         "errors": errors,
     }
@@ -673,118 +698,62 @@ def _jsonld_objects(value: Any) -> Iterable[dict[str, Any]]:
 
 
 def _parse_jsonld_jobs(
-    page_url: str,
-    text: str,
-    *,
-    company_fallback: str,
+    page_url: str, text: str, *, company_fallback: str,
 ) -> list[dict[str, Any]]:
-    jobs: list[dict[str, Any]] = []
-    scripts = re.findall(
-        r'(?is)<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
-        text,
-    )
-    for raw in scripts:
-        cleaned = html.unescape(raw).strip()
-        try:
-            payload = json.loads(cleaned)
-        except Exception:
-            continue
-        for item in _jsonld_objects(payload):
-            org = item.get("hiringOrganization") or {}
-            location = item.get("jobLocation") or item.get("jobLocationType") or ""
-            if isinstance(location, list):
-                location_text = " | ".join(_flatten(entry) for entry in location)
-            else:
-                location_text = _flatten(location)
-            applicant_locations = _flatten(
-                item.get("applicantLocationRequirements")
-            )
-            if applicant_locations:
-                location_text = " | ".join(
-                    filter(None, (location_text, applicant_locations))
-                )
-            url = (
-                item.get("url")
-                or item.get("sameAs")
-                or page_url
-            )
-            normalized = _normalize(
-                source=f"Schema JobPosting/{company_fallback}",
-                job_id=item.get("identifier"),
-                title=item.get("title"),
-                company=_pick(org, "name", default=company_fallback),
-                location=location_text or "Not specified",
-                apply_url=urljoin(page_url, str(url)),
-                description=item.get("description"),
-                date_posted=item.get("datePosted"),
-                employment_type=item.get("employmentType"),
-                salary=_flatten(item.get("baseSalary")),
-                remote_type=(
-                    "Remote"
-                    if str(item.get("jobLocationType") or "").casefold()
-                    == "telecommute"
-                    else None
-                ),
-                country=None,
-                qualifications=item.get("qualifications"),
-                responsibilities=item.get("responsibilities"),
-            )
-            if normalized:
-                jobs.append(normalized)
-    return jobs
+    from app.public_jobposting import parse_jobposting_html
+    return parse_jobposting_html(
+        page_url, text, company=company_fallback,
+        provider="Schema JobPosting", job_path_prefix="/",
+    )["jobs"]
 
 
 def fetch_schema_jobposting(args: argparse.Namespace) -> dict[str, Any]:
-    boards = _board_rows(
-        providers=(),
-        kinds=("schema", "career_page", "html"),
-        limit=args.max_boards,
-    )
-    if not boards:
-        return {
-            "jobs": [],
-            "http_status": 200,
-            "requests_made": 0,
-            "configuration_required": True,
-            "configuration_message": (
-                "Add public company career-page URLs in Market Coverage."
-            ),
-        }
-    jobs: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = []
-    requests_made = 0
+    from app.public_board_contracts import approved_public_contract
+    from app.public_board_http import PublicBoardClient
+    from app.public_jobposting import parse_jobposting_html
+
+    boards = _board_rows(providers=(), kinds=("schema", "career_page", "html"), limit=args.max_boards)
+    approved = []
+    errors = []
     for board in boards:
-        url = str(board.get("board_url") or "").strip()
-        if not url:
-            continue
         try:
-            response = _request(url, accept="text/html, application/xhtml+xml, */*")
-            requests_made += 1
-            parsed = _parse_jsonld_jobs(
-                url,
-                response.text,
-                company_fallback=str(
-                    board.get("company_name") or urlparse(url).netloc
-                ),
+            approved.append(approved_public_contract(board, format="jsonld"))
+        except ValueError:
+            errors.append({"company": board.get("company_name"), "error": "NEEDS_COMPANY_BOARD: verified public contract required"})
+    if not approved:
+        return {"jobs": [], "requests_made": 0, "configuration_required": True,
+                "configuration_message": "Add independently verified employer JSON-LD contracts; untrusted URLs cannot approve themselves.",
+                "errors": errors}
+    hosts = {str(urlparse(b["board_url"]).hostname) for b in approved}
+    client = PublicBoardClient(hosts, max_requests=min(len(approved) * 2, 20))
+    jobs = []
+    raw = 0
+    successful_boards = 0
+    rejects = {}
+    for board in approved:
+        try:
+            response = client.get(board["board_url"])
+            parsed = parse_jobposting_html(
+                board["board_url"], response.text, company=board["company_name"],
+                provider=board["provider"], job_path_prefix=board["job_path_prefix"],
             )
-            jobs.extend(parsed)
+            if not parsed["contract_observed"]:
+                raise ValueError("UNSUPPORTED_UNVERIFIED: no JobPosting contract observed")
+            successful_boards += 1
+            jobs.extend(parsed["jobs"])
+            raw += parsed["raw_count"]
+            for reason, count in parsed["rejections"].items():
+                if reason != "malformed_jsonld":
+                    rejects[reason] = rejects.get(reason, 0) + count
         except Exception as error:
-            errors.append(
-                {
-                    "company": board.get("company_name"),
-                    "url": url,
-                    "error": str(error),
-                }
-            )
+            errors.append({"company": board["company_name"], "error": str(error)})
         if len(jobs) >= args.max_jobs:
             break
-    return {
-        "jobs": jobs[: args.max_jobs],
-        "http_status": 200 if not errors else None,
-        "requests_made": requests_made,
-        "configuration_required": False,
-        "errors": errors,
-    }
+    if len(jobs) > args.max_jobs:
+        rejects["run_job_cap"] = len(jobs) - args.max_jobs
+    return {"jobs": jobs[:args.max_jobs], "raw_count": raw, "normalization_rejections": rejects,
+            "requests_made": client.requests, "successful_boards": successful_boards,
+            "configuration_required": False, "errors": errors}
 
 
 def _rss_items(root: ET.Element) -> Iterable[ET.Element]:
@@ -1075,23 +1044,26 @@ def _configuration_skip(
     state: dict[str, Any],
     message: str,
     elapsed_ms: float,
+    no_store: bool = False,
 ) -> None:
-    _update_health(
-        spec.display_name,
-        success=True,
-        raw_jobs=0,
-        eligible_jobs=0,
-        inserted_jobs=0,
-        duplicate_jobs=0,
-        rejected_jobs=0,
-        provider_used=spec.provider_used,
-        elapsed_ms=elapsed_ms,
-        http_status=200,
-        configuration_required=True,
-        error=message,
-        filter_summary={},
-    )
-    emit_source_run_result(
+    if not no_store:
+        _update_health(
+            spec.display_name,
+            success=True,
+            raw_jobs=0,
+            eligible_jobs=0,
+            inserted_jobs=0,
+            duplicate_jobs=0,
+            rejected_jobs=0,
+            provider_used=spec.provider_used,
+            elapsed_ms=elapsed_ms,
+            http_status=200,
+            configuration_required=True,
+            error=message,
+            filter_summary={},
+        )
+    emit_result = (lambda payload: print(json.dumps(payload, default=str))) if no_store else emit_source_run_result
+    emit_result(
         {
             "success": True,
             "mode": "broad-market-coverage-v2.6",
@@ -1183,11 +1155,13 @@ def cli_main(source_key: str) -> None:
         _self_test(spec)
         return
 
-    initialize_database()
+    emit_result = (lambda payload: print(json.dumps(payload, default=str))) if args.no_store_probe else emit_source_run_result
+    if not args.no_store_probe:
+        initialize_database()
     state = get_source_runtime_state(spec.display_name)
 
     if not state.get("exists"):
-        emit_source_run_result(
+        emit_result(
             {
                 "success": True,
                 "source": spec.display_name,
@@ -1200,7 +1174,7 @@ def cli_main(source_key: str) -> None:
         return
 
     if not state.get("enabled"):
-        emit_source_run_result(
+        emit_result(
             {
                 "success": True,
                 "source": spec.display_name,
@@ -1213,7 +1187,7 @@ def cli_main(source_key: str) -> None:
         return
 
     if not state.get("due") and not args.run_now and not args.no_store_probe:
-        emit_source_run_result(
+        emit_result(
             {
                 "success": True,
                 "source": spec.display_name,
@@ -1243,10 +1217,15 @@ def cli_main(source_key: str) -> None:
                     or "Source configuration is required."
                 ),
                 fetch_duration_ms,
+                no_store=args.no_store_probe,
             )
             return
 
-        raw_jobs = _dedupe_raw(fetched.get("jobs") or [])[: args.max_jobs]
+        fetched_jobs = list(fetched.get("jobs") or [])
+        raw_jobs = fetched_jobs[: args.max_jobs]
+        raw_count = int(fetched.get("raw_count", len(fetched_jobs)))
+        run_success = (bool(fetched["successful_boards"]) if "successful_boards" in fetched
+                       else not bool(fetched.get("errors")))
         for job in raw_jobs:
             job.setdefault("_query_name", "Configured provider feed")
         filtered = filter_dashboard_jobs(raw_jobs)
@@ -1301,11 +1280,15 @@ def cli_main(source_key: str) -> None:
         filtered["request_count"] = int(fetched.get("requests_made") or 0)
         filtered["duration_ms"] = round(fetch_duration_ms, 2)
         filtered["errors"] = list(fetched.get("errors") or [])
+        filtered["normalization_rejections"] = dict(fetched.get("normalization_rejections") or {})
+        if len(fetched_jobs) > len(raw_jobs):
+            filtered["normalization_rejections"]["run_job_cap"] = len(fetched_jobs) - len(raw_jobs)
+        filtered["normalization_accounting_delta"] = raw_count - len(raw_jobs) - sum(filtered["normalization_rejections"].values())
         filtered["query_requests"] = [{
             "query_name": "Configured provider feed",
             "role_family": "",
             "requests": int(fetched.get("requests_made") or 0),
-            "raw": len(raw_jobs),
+            "raw": raw_count,
             "errors": len(fetched.get("errors") or []),
             "duration_ms": filtered["duration_ms"],
         }]
@@ -1337,8 +1320,8 @@ def cli_main(source_key: str) -> None:
         if not args.no_store_probe:
             _update_health(
                 spec.display_name,
-                success=True,
-                raw_jobs=len(raw_jobs),
+                success=run_success,
+                raw_jobs=raw_count,
                 eligible_jobs=len(eligible),
                 inserted_jobs=inserted,
                 duplicate_jobs=duplicates,
@@ -1356,7 +1339,7 @@ def cli_main(source_key: str) -> None:
             )
             record_source_metrics(
                 spec.display_name,
-                raw_jobs=len(raw_jobs),
+                raw_jobs=raw_count,
                 eligible_jobs=len(eligible),
                 inserted_jobs=inserted,
                 duplicate_jobs=duplicates,
@@ -1365,9 +1348,9 @@ def cli_main(source_key: str) -> None:
                 filter_summary=filtered,
             )
 
-        emit_source_run_result(
+        emit_result(
             {
-                "success": True,
+                "success": run_success,
                 "partial_success": bool(fetched.get("errors")),
                 "mode": "broad-market-coverage-v2.6",
                 "source": spec.display_name,
@@ -1382,7 +1365,7 @@ def cli_main(source_key: str) -> None:
                 ),
                 "requests_made": int(fetched.get("requests_made") or 0),
                 "provider_used": spec.provider_used,
-                "raw_jobs_found": len(raw_jobs),
+                "raw_jobs_found": raw_count,
                 "excluded_by_role": int(filtered.get("excluded_by_role") or 0),
                 "excluded_by_location": int(filtered.get("excluded_by_location") or 0),
                 "excluded_by_hard_reject": int(filtered.get("excluded_by_hard_reject") or 0),
@@ -1421,7 +1404,7 @@ def cli_main(source_key: str) -> None:
                 error=str(error)[:2000],
                 filter_summary={},
             )
-        emit_source_run_result(
+        emit_result(
             {
                 "success": False,
                 "mode": "broad-market-coverage-v2.6",

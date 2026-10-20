@@ -503,11 +503,11 @@ def load_rows(
             "SELECT value_json FROM settings WHERE setting_key='source_worker_registry'"
         ).fetchone() if settings_exist else None
         if registry_row:
-            from app.source_readiness import source_readiness
+            from app.source_readiness import readiness_with_boards
 
             registry = json.loads(registry_row[0])
             for row in rows:
-                row["readiness"] = source_readiness(row, registry)
+                row["readiness"] = readiness_with_boards(connection, row, registry)
         return rows
     finally:
         connection.close()

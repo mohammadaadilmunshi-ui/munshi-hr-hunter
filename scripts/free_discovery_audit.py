@@ -30,10 +30,13 @@ def audit(connection: sqlite3.Connection, source_root: Path) -> dict:
         source = {k: row[k] for k in fields if k in row}
         name = source['source_name']
         module = selected.get(normalize(name), '')
+        registered_module = module
+        if not module:
+            module = 'app.' + re.sub('[^a-z0-9]+', '_', name.lower()).strip('_') + '_worker'
         exists = bool(re.fullmatch(r'app\.[a-z][a-z0-9_]*', module)) and (source_root / (module.replace('.', '/') + '.py')).is_file()
-        source.update(registered_module=module or None, module_exists=exists)
+        source.update(registered_module=registered_module or None, resolved_module=module, module_exists=exists)
         source['error_classification'] = (
-            'paid_policy_disabled' if source.get('cost_mode') != 'free'
+            'paid_policy_disabled' if source.get('cost_mode') == 'paid'
             else 'missing_worker_module' if not exists
             else 'rate_limited' if '429' in str(row.get('last_error') or '')
             else 'worker_invocation_failed_unresolved' if source.get('health_status') == 'failed'

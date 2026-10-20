@@ -42,3 +42,32 @@ def source_readiness(source: Mapping[str, Any], registry: Mapping[str, Any]) -> 
         "reason": "worker_available" if available else "worker_missing",
         "module": module if available else None,
     }
+
+
+def readiness_with_boards(connection, source: Mapping[str, Any], registry: Mapping[str, Any]) -> dict[str, Any]:
+    result = source_readiness(source, registry)
+    if not result["ready"] or result["module"] not in {
+        "app.teamtailor_worker", "app.workday_worker", "app.bamboohr_worker",
+    }:
+        return result
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='provider_board_registry'"
+    ).fetchone()
+    boards = connection.execute(
+        "SELECT company_name,board_url FROM provider_board_registry WHERE lower(provider)=lower(?) AND enabled=1",
+        (source["source_name"],),
+    ).fetchall() if exists else []
+    count = len(boards)
+    if result["module"] == "app.teamtailor_worker":
+        from app.public_board_contracts import approved_public_contract
+
+        count = 0
+        for board in boards:
+            try:
+                approved_public_contract(dict(board), format="teamtailor_rss")
+                count += 1
+            except ValueError:
+                pass
+    return {**result, "ready": count > 0,
+            "reason": "worker_available" if count else "needs_company_board",
+            "configured_board_count": count}

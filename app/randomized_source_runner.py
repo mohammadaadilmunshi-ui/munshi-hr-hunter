@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 from app.database import ROOT_DIR, get_connection, get_setting
 from app.discovery_policy import DiscoveryPolicyError, require_free_provider
-from app.source_readiness import source_readiness, worker_available
+from app.source_readiness import readiness_with_boards, worker_available
 from app.source_cooldown import (
     get_adapter_timer,
     mark_source_completed,
@@ -69,7 +69,7 @@ def load_enabled_sources() -> list[dict[str, Any]]:
             for row in rows
             if normalize_source_name(row["source_name"])
             not in retired_keys
-            and source_readiness(dict(row), registry)["ready"]
+            and readiness_with_boards(connection, dict(row), registry)["ready"]
         ]
     finally:
         connection.close()
@@ -509,6 +509,22 @@ def _is_deferred(text: str, payload: dict[str, Any]) -> bool:
     )
 
 
+def _retry_after_floor(payload: dict[str, Any]) -> int:
+    values = [payload.get("retry_after_seconds", 0)]
+    errors = list(payload.get("errors") or [])
+    summary = payload.get("discovery_summary") or {}
+    if isinstance(summary, dict):
+        errors.extend(summary.get("errors") or [])
+    values.extend(x.get("retry_after_seconds", 0) for x in errors if isinstance(x, dict))
+    floor = 0
+    for value in values:
+        try:
+            floor = max(floor, int(value))
+        except (ValueError, TypeError):
+            pass
+    return floor
+
+
 def _deferred_incident_reason(payload: dict[str, Any]) -> tuple[str, str]:
     reason = str(payload.get("skip_reason") or "").casefold()
     if "backoff" in reason:
@@ -813,6 +829,7 @@ def run_one(source: dict[str, Any]) -> dict[str, Any]:
         status = "runner_exception"
         returncode = 125
     finally:
+        retry_after = _retry_after_floor(payload)
         schedule = mark_source_completed(
             source_name,
             success=success or deferred,
@@ -820,6 +837,7 @@ def run_one(source: dict[str, Any]) -> dict[str, Any]:
             deferred=deferred,
             worker_status=status,
             worker_returncode=returncode,
+            **({"retry_after_seconds": retry_after} if retry_after > 0 else {}),
         )
         if not (success or deferred or partial_blocked_success):
             failure_detail = runner_error or (

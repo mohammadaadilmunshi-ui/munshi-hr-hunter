@@ -904,14 +904,14 @@ def save_source_policy(
                 f"Paid source enablement is blocked by AADIL free-only policy: {source_name}"
             )
         if bool(enabled):
-            from app.source_readiness import source_readiness
+            from app.source_readiness import readiness_with_boards
 
             registry_row = connection.execute(
                 "SELECT value_json FROM settings WHERE setting_key='source_worker_registry'"
             ).fetchone()
             registry = json.loads(registry_row[0]) if registry_row else {}
-            readiness = source_readiness(
-                {"source_name": source_name, "cost_mode": cost_mode}, registry,
+            readiness = readiness_with_boards(
+                connection, {"source_name": source_name, "cost_mode": cost_mode}, registry,
             )
             if not readiness["ready"]:
                 raise ValueError(f"Source cannot be enabled: {readiness['reason']}")

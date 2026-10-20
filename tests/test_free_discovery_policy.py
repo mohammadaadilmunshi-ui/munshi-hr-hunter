@@ -93,3 +93,38 @@ def test_google_configuration_has_only_free_provider():
     from pathlib import Path
     cfg = json.loads(Path("config/jobspy_boards.json").read_text())
     assert cfg["sources"]["google"]["provider_order"] == ["jobspy"]
+
+
+def test_jobspy_failure_cannot_masquerade_as_empty_success():
+    from app.free_adapter_policy_v1_1 import make_site_preserving_wrapper
+    for bad in (lambda **k: None,):
+        with pytest.raises(RuntimeError, match="returned None"):
+            make_site_preserving_wrapper(bad)(site_name=["google"])
+    def broken(**kwargs):
+        raise TypeError("'NoneType' object is not subscriptable")
+    with pytest.raises(RuntimeError, match="invalid NoneType"):
+        make_site_preserving_wrapper(broken)(site_name=["indeed"])
+    assert make_site_preserving_wrapper(lambda **k: [])(site_name=["google"]) == []
+
+
+def test_failed_cohort_replay_excludes_unavailable_workers(hunter_db):
+    from pathlib import Path
+    evidence = json.loads(Path("docs/free_discovery_production_before_20261020.json").read_text())
+    registry = {"workers": {row['source_name']: row['registered_module'] for row in evidence['sources'] if row['registered_module']}}
+    database.save_setting('source_worker_registry', registry)
+    c = database.get_connection()
+    for row in evidence['sources']:
+        c.execute("INSERT OR REPLACE INTO source_health(source_name,source_tier,enabled,cadence_minutes,cost_mode,health_status) VALUES(?,?,?,60,?,?)",
+                  (row['source_name'], row['source_tier'], row['enabled'], row['cost_mode'], row['health_status']))
+    c.commit(); c.close()
+    before = {row['source_name'] for row in evidence['sources'] if row['enabled'] and row['health_status'] == 'failed'}
+    after = {row['source_name'] for row in runner.load_enabled_sources()}
+    assert len(before) == 23
+    assert before & after == {'Ashby'}
+    assert len(before - after) == 22
+    assert 'USAJobs' in after  # genuine existing module fallback survives
+
+
+def test_retry_after_floor_includes_provider_error_evidence():
+    assert runner._retry_after_floor({'errors': [{'retry_after_seconds': 28800}]}) == 28800
+    assert runner._retry_after_floor({'discovery_summary': {'errors': [{'retry_after_seconds': '7200'}]}}) == 7200

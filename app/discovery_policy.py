@@ -11,9 +11,11 @@ class DiscoveryPolicyError(ValueError):
 
 def require_free_provider(provider: str, *, cost_mode: str = "free") -> None:
     name = re.sub(r"[^a-z0-9]", "", str(provider).casefold())
+    cost = str(cost_mode).strip().casefold()
+    proven_free = cost == "free" or (name == "usajobs" and cost == "free_key_required")
     if (
         any(token in name for token in ("serpapi", "apify"))
-        or str(cost_mode).strip().casefold() != "free"
+        or not proven_free
     ):
         raise DiscoveryPolicyError("Discovery provider disabled by free-only policy")
 
