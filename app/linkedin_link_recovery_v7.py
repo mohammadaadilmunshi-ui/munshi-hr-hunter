@@ -23,6 +23,7 @@ from app.linkedin_employer_careers_v2 import (
     board_binding_from_ats_company_registry,
     resolve_from_known_company_boards,
 )
+from app.linkedin_cross_source_probe_v1 import MAX_PROBES, inspect_candidate
 from app.linkedin_employer_link_resolver_v1 import (
     LinkResolution,
     ats_from_url,
@@ -44,6 +45,8 @@ def recover_links(
     cache: Any = None,
     now: datetime | None = None,
     on_progress: Any = None,
+    probe_public_candidates: bool = False,
+    candidate_opener: Any = None,
 ) -> dict[str, Any]:
     if not 1 <= days <= 31 or not 1 <= limit <= 2000:
         raise ValueError("Recovery window/budget is outside permitted range")
@@ -116,6 +119,7 @@ def recover_links(
                 source_verified_boards[normalize(candidate["company_name"])].add(binding)
     ats_cache = cache or ATSReadCache()
     scanned = 0
+    candidates_probed = 0
     consecutive_auth = 0
     linkedin_stopped = state.get("stop_reason") == "LINKEDIN_RATE_LIMITED"
     for job in cohort:
@@ -133,6 +137,13 @@ def recover_links(
         if candidate.resolution_status == "CANDIDATE":
             record["candidate_resolution"] = candidate.to_dict()
             record["candidate_status"] = "UNVERIFIED_CROSS_SOURCE"
+            if public_get and probe_public_candidates and candidates_probed < MAX_PROBES:
+                candidate_url = candidate.employer_apply_url
+                if ats_from_url(candidate_url):
+                    candidates_probed += 1
+                    record["candidate_probe"] = inspect_candidate(
+                        candidate_url, title=job["title"], opener=candidate_opener
+                    )
         elif candidate.resolution_status == "AMBIGUOUS":
             record["candidate_status"] = "AMBIGUOUS_CROSS_SOURCE"
         if public_get:
@@ -215,6 +226,13 @@ def recover_links(
         r for r in records.values() if r.get("candidate_resolution")
     ]
     state["unverified_candidate_count"] = len(state["unverified_candidate_proposals"])
+    state["cross_source_platform_counts"] = dict(sorted(Counter(
+        ats_from_url((r.get("candidate_resolution") or {}).get("employer_apply_url"))
+        or "Other employer website" for r in state["unverified_candidate_proposals"]
+    ).items()))
+    state["cross_source_public_checks"] = sum(
+        "candidate_probe" in r for r in records.values()
+    )
     state["official_api_requests"] = ats_cache.network_requests
     state["official_api_cache_hits"] = ats_cache.cache_hits
     state["database_writes"] = 0
@@ -242,6 +260,10 @@ def recovery_main() -> int:
         help="Use public official ATS feeds and stored cross-source leads; never request LinkedIn",
     )
     parser.add_argument(
+        "--probe-public-candidates", action="store_true",
+        help="Bounded, GET-only ATS candidate checks; always unverified pending external signature",
+    )
+    parser.add_argument(
         "--retry-blocked",
         action="store_true",
         help="Retry inaccessible pages after access has been restored",
@@ -251,6 +273,7 @@ def recovery_main() -> int:
         from app.database import DB_PATH
         args.db = args.db or DB_PATH
         args.official_only = True
+        args.probe_public_candidates = True
         # New checkpoint bucket every six hours: future jobs are not excluded by
         # an old immutable cohort snapshot. Output lives outside the jobs DB.
         now_utc = datetime.now(timezone.utc)
@@ -305,6 +328,7 @@ def recovery_main() -> int:
             linkedin_get=not args.official_only,
             checkpoint=state,
             on_progress=save,
+            probe_public_candidates=args.probe_public_candidates,
         )
     save(result)
     print(

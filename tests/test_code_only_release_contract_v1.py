@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "89d4983a92436db0966e188318eeb134a5b956e9" in content
+    assert "70060d8c023d16081df9d184fca6f6d5046457ef" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "89d4983a92436db0966e188318eeb134a5b956e9",
+            "--expected-base", "70060d8c023d16081df9d184fca6f6d5046457ef",
         ],
         check=False,
         capture_output=True,
@@ -90,7 +90,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     changed = subprocess.run(
         [
             "git", "-C", str(ROOT), "diff", "--name-only",
-            "89d4983a92436db0966e188318eeb134a5b956e9", "HEAD",
+            "70060d8c023d16081df9d184fca6f6d5046457ef", "HEAD",
         ],
         check=True, capture_output=True, text=True, timeout=10,
     )
@@ -245,3 +245,19 @@ def test_smtp_code_only_release_scope_is_explicit_and_tested():
         assert f"  {path}\n" in source
     assert "/app/hunter/tests/test_smtp_sender_validation_v1.py" in source
     assert ".github/workflows/netcup-code-only-deploy.yml" in source
+
+
+
+def test_account_and_signed_import_release_files_are_explicitly_allowed():
+    source = SCRIPT.read_text()
+    for item in (
+        "app/integration_credentials_v1.py",
+        "app/linkedin_cross_source_probe_v1.py",
+        "app/linkedin_signed_evidence_import_v1.py",
+        "tests/test_linkedin_cross_source_probe_v1.py",
+        "tests/test_linkedin_signed_evidence_import_v1.py",
+    ):
+        assert ("  " + item + chr(10)) in source
+    assert "/app/hunter/tests/test_linkedin_signed_evidence_import_v1.py" in source
+    assert "/app/hunter/tests/test_ats_managed_identity.py" in source
+    assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE" in source

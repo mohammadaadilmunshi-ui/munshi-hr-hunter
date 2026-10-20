@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=89d4983a92436db0966e188318eeb134a5b956e9
+LIVE_BASE=70060d8c023d16081df9d184fca6f6d5046457ef
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -164,6 +164,14 @@ git merge-base --is-ancestor "$old_head" "$target" || block 'Target is not a des
 # Anything else, including database modules, SQL scripts or Docker manifests,
 # needs the original DB-backed guarded full release.
 allowed_files=(
+  app/integration_credentials_v1.py
+  app/linkedin_cross_source_probe_v1.py
+  app/linkedin_signed_evidence_import_v1.py
+  docs/MUNSHI_MAIL_AND_SIGNED_LINKS_20261020.md
+  tests/test_integration_credentials_v1.py
+  tests/test_ats_managed_identity.py
+  tests/test_linkedin_cross_source_probe_v1.py
+  tests/test_linkedin_signed_evidence_import_v1.py
   app/integration_credentials_ui_v1.py
   tests/test_smtp_sender_validation_v1.py
   .github/workflows/product-ui-validation.yml
@@ -373,6 +381,10 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_smtp_sender_validation_v1.py \
     /app/hunter/tests/test_linkedin_apply_button_v7.py \
     /app/hunter/tests/test_linkedin_link_recovery_v7.py \
+    /app/hunter/tests/test_integration_credentials_v1.py \
+    /app/hunter/tests/test_ats_managed_identity.py \
+    /app/hunter/tests/test_linkedin_cross_source_probe_v1.py \
+    /app/hunter/tests/test_linkedin_signed_evidence_import_v1.py \
     /app/hunter/tests/test_linkedin_verified_url_evidence_v5.py \
     /app/hunter/tests/test_linkedin_dashboard_links_v5.py \
     /app/hunter/tests/test_linkedin_direct_apply_url_v1.py \
