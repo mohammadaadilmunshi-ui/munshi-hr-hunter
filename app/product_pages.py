@@ -703,8 +703,18 @@ def browse_jobs() -> None:
     _open_manual_add_from_query()
     page_intro("DISCOVER", "Browse jobs", "Search every stored opportunity without losing the targeting, authorization, source, or score evidence behind the match.")
     filters = _search_filters("jobs")
-    page = int(st.session_state.get("product_jobs_page", 1))
-    jobs, count = fetch_jobs(**filters, page=page, page_size=16)
+    page_size = st.selectbox(
+        "Job cards per page",
+        (16, 32, 64),
+        key="product_jobs_page_size",
+        help="Shows more stored matches per page; does not alter discovery or eligibility rules.",
+    )
+    page = max(1, int(st.session_state.get("product_jobs_page", 1)))
+    jobs, count = fetch_jobs(**filters, page=page, page_size=page_size)
+    if count and page > (count + page_size - 1) // page_size:
+        page = 1
+        st.session_state["product_jobs_page"] = 1
+        jobs, count = fetch_jobs(**filters, page=page, page_size=page_size)
     header, add = st.columns((3.2, 1))
     with header: st.markdown(f"**{count:,} matching opportunities**  ·  Page {page}")
     with add:
@@ -725,7 +735,7 @@ def browse_jobs() -> None:
             if st.button("← Previous", disabled=page <= 1, key="jobs_previous"):
                 st.session_state["product_jobs_page"] = page - 1; st.rerun()
         with next_:
-            if st.button("Next →", disabled=page * 16 >= count, key="jobs_next"):
+            if st.button("Next →", disabled=page * page_size >= count, key="jobs_next"):
                 st.session_state["product_jobs_page"] = page + 1; st.rerun()
     else:
         st.markdown('<div class="empty-product">No stored jobs match this view.</div>', unsafe_allow_html=True)

@@ -11,6 +11,26 @@
       "evidence_url": "https://support.teamtailor.com/en/articles/11171756-rss-feed-how-to-guide",
       "observed_at": "2026-10-20",
       "enabled_by_default": false
+    },
+    {
+      "provider": "BreezyHR",
+      "company_name": "ATBS",
+      "board_url": "https://atbs.breezy.hr/",
+      "format": "breezy_public_json",
+      "cost_mode": "free",
+      "evidence_url": "https://atbs.breezy.hr/json",
+      "observed_at": "2026-10-20",
+      "enabled_by_default": false
+    },
+    {
+      "provider": "BreezyHR",
+      "company_name": "Yay Lunch",
+      "board_url": "https://yay-lunch.breezy.hr/",
+      "format": "breezy_public_json",
+      "cost_mode": "free",
+      "evidence_url": "https://yay-lunch.breezy.hr/json",
+      "observed_at": "2026-10-20",
+      "enabled_by_default": false
     }
   ]
 }
