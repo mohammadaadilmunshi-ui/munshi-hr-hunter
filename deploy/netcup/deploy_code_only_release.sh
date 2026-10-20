@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=7d6861a88cc2eb8139632e3c54573ff9909bfd2f
+LIVE_BASE=e643fff0d346cb3dd67b14374d9be86b45fead5a
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -164,6 +164,15 @@ git merge-base --is-ancestor "$old_head" "$target" || block 'Target is not a des
 # Anything else, including database modules, SQL scripts or Docker manifests,
 # needs the original DB-backed guarded full release.
 allowed_files=(
+  app/source_ui_readiness_v1.py
+  app/breezyhr_worker.py
+  app/sources/breezyhr.py
+  app/source_readiness.py
+  app/pages/22_Source_Health.py
+  config/adapter_catalog.json
+  config/public_board_contracts.json
+  config/source_worker_registry.json
+  tests/test_breezy_public_discovery_v1.py
   app/source_provenance.py
   app/application_runs_v1.py
   tests/test_source_label_presentation_v1.py
@@ -360,6 +369,7 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_application_notifications_runtime_v2.py \
     /app/hunter/tests/test_application_notifications_v1.py \
     /app/hunter/tests/test_notification_email_design_v1.py \
+    /app/hunter/tests/test_breezy_public_discovery_v1.py \
     /app/hunter/tests/test_source_label_presentation_v1.py \
     /app/hunter/tests/test_job_destination_v1.py \
     /app/hunter/tests/test_application_review_card_v1.py \

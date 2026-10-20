@@ -247,12 +247,12 @@
     },
     {
       "provider": "BreezyHR",
-      "module": "",
-      "implemented": false,
-      "support_level": "blocked",
-      "blocked_reason": "No independently verified public employer contract; application platform support is not a discovery API.",
+      "module": "app.breezyhr_worker",
+      "implemented": true,
+      "support_level": "public_tenant_configured",
+      "blocked_reason": null,
       "tsenta_advertised": true,
-      "discovery_status": "UNSUPPORTED_UNVERIFIED"
+      "discovery_status": "PUBLIC_TENANT_CONFIGURED"
     },
     {
       "provider": "UKG / UltiPro",

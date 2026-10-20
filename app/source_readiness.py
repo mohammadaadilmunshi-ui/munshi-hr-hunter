@@ -47,7 +47,7 @@ def source_readiness(source: Mapping[str, Any], registry: Mapping[str, Any]) -> 
 def readiness_with_boards(connection, source: Mapping[str, Any], registry: Mapping[str, Any]) -> dict[str, Any]:
     result = source_readiness(source, registry)
     if not result["ready"] or result["module"] not in {
-        "app.teamtailor_worker", "app.workday_worker", "app.bamboohr_worker",
+        "app.teamtailor_worker", "app.breezyhr_worker", "app.workday_worker", "app.bamboohr_worker",
     }:
         return result
     exists = connection.execute(
@@ -58,13 +58,16 @@ def readiness_with_boards(connection, source: Mapping[str, Any], registry: Mappi
         (source["source_name"],),
     ).fetchall() if exists else []
     count = len(boards)
-    if result["module"] == "app.teamtailor_worker":
+    if result["module"] in {"app.teamtailor_worker", "app.breezyhr_worker"}:
         from app.public_board_contracts import approved_public_contract
 
         count = 0
         for board in boards:
             try:
-                approved_public_contract(dict(board), format="teamtailor_rss")
+                approved_public_contract(dict(board), format=(
+                    "teamtailor_rss" if result["module"] == "app.teamtailor_worker"
+                    else "breezy_public_json"
+                ))
                 count += 1
             except ValueError:
                 pass
