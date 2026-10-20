@@ -23,7 +23,6 @@ from app.runtime_config import (
     telegram_batch_limit,
 )
 from app.job_duplicate_guard import canonical_url, store_with_global_dedupe
-from app.google_jobs_provider import provider_status, serpapi_google_jobs
 from app.jobspy_pipeline import collect_jobspy_jobs
 from app.linkedin_url_contract import (
     LINKEDIN_LINK_HEALTH_THRESHOLD_PCT,

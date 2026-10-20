@@ -16,6 +16,8 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
+from app.discovery_policy import require_free_url
+
 from app.database import get_connection, get_setting, initialize_database
 from app.dashboard_targeting_gate import (
     filter_dashboard_jobs,
@@ -193,6 +195,7 @@ def _request(
     headers: dict[str, str] | None = None,
     params: dict[str, Any] | None = None,
 ) -> requests.Response:
+    require_free_url(url)
     merged = {
         "User-Agent": str(_provider_runtime().get("user_agent") or "").strip(),
         "Accept": accept,

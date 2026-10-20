@@ -17,6 +17,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.database import ROOT_DIR, get_connection, get_setting
+from app.discovery_policy import DiscoveryPolicyError, require_free_provider
+from app.source_readiness import source_readiness, worker_available
 from app.source_cooldown import (
     get_adapter_timer,
     mark_source_completed,
@@ -67,6 +69,7 @@ def load_enabled_sources() -> list[dict[str, Any]]:
             for row in rows
             if normalize_source_name(row["source_name"])
             not in retired_keys
+            and source_readiness(dict(row), registry)["ready"]
         ]
     finally:
         connection.close()
@@ -76,7 +79,8 @@ def discover_worker(source_name: str) -> str | None:
     registry = get_setting("source_worker_registry", {}) or {}
     for configured_name, module in dict(registry.get("workers") or {}).items():
         if normalize_source_name(configured_name) == normalize_source_name(source_name):
-            return str(module or "").strip() or None
+            selected = str(module or "").strip()
+            return selected if worker_available(selected) else None
     slug = re.sub(
         r"[^a-z0-9]+", "_", source_name.lower()
     ).strip("_")
@@ -727,29 +731,19 @@ def _restore_worker_metrics_after_runner_failure(
 
 def run_one(source: dict[str, Any]) -> dict[str, Any]:
     source_name = str(source.get("source_name") or "")
-    timer_before_start = get_adapter_timer(source_name, row=source)
-    scheduled_due_at = str(timer_before_start.get("next_allowed_at") or "")
+    try:
+        require_free_provider(source_name, cost_mode=str(source.get("cost_mode", "free")))
+    except DiscoveryPolicyError:
+        return {"source": source_name, "status": "setup_required", "reason": "disabled_by_policy",
+                "network_request_made": False}
     module = discover_worker(source_name)
     if not module:
-        schedule = mark_source_completed(
-            source_name,
-            success=False,
-            worker_status="no_worker_module",
-            worker_returncode=127,
-        )
-        _record_runner_failure(
-            source_name,
-            status="no_worker_module",
-            returncode=127,
-            error="No configured worker module exists for this enabled source.",
-        )
-        return {
-            "source": source_name,
-            "status": "skipped",
-            "reason": "no_worker_module",
-            "schedule": schedule,
-        }
-
+        # Missing code is a configuration problem, not a failed provider request.
+        # Preserve historical health/metrics and avoid a retry/alert storm.
+        return {"source": source_name, "status": "setup_required", "reason": "worker_missing",
+                "network_request_made": False}
+    timer_before_start = get_adapter_timer(source_name, row=source)
+    scheduled_due_at = str(timer_before_start.get("next_allowed_at") or "")
     timeout_seconds = _source_timeout_seconds(source_name)
     mark_source_started(
         source_name,

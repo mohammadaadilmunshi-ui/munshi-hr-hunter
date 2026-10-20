@@ -16,6 +16,8 @@ from urllib.parse import quote, urlparse
 
 import requests
 
+from app.discovery_policy import require_free_url
+
 from app.database import get_connection, get_setting
 from app.job_store import save_job
 from app.telegram_auto_dispatch import (
@@ -328,6 +330,7 @@ def _configured_source_tier(source_name: str) -> int:
 
 
 def _request(url: str, *, timeout: float | None = None, **kwargs: Any) -> requests.Response:
+    require_free_url(url)
     _REQUEST_METRICS["attempts"] = int(_REQUEST_METRICS.get("attempts") or 0) + 1
     user_agent = str(_runtime_policy().get("user_agent") or "").strip()
     if not user_agent:

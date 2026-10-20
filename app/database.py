@@ -903,6 +903,18 @@ def save_source_policy(
             raise ValueError(
                 f"Paid source enablement is blocked by AADIL free-only policy: {source_name}"
             )
+        if bool(enabled):
+            from app.source_readiness import source_readiness
+
+            registry_row = connection.execute(
+                "SELECT value_json FROM settings WHERE setting_key='source_worker_registry'"
+            ).fetchone()
+            registry = json.loads(registry_row[0]) if registry_row else {}
+            readiness = source_readiness(
+                {"source_name": source_name, "cost_mode": cost_mode}, registry,
+            )
+            if not readiness["ready"]:
+                raise ValueError(f"Source cannot be enabled: {readiness['reason']}")
         schedule_exists = connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_random_schedule'"
         ).fetchone() is not None
