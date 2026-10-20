@@ -15,8 +15,8 @@ from app import database
 
 DASHBOARD = "https://dashboard.munshi.systems/"
 EVENTS = {
-    "SUBMISSION_VERIFIED": ("Submission recorded", "A verified submission receipt was recorded for this application.", "#2369a5", "SUBMISSION"),
-    "EMPLOYER_EMAIL_CONFIRMED": ("Confirmation matched", "MUNSHI matched an application-confirmation message with this job. This is a MUNSHI status update, not a new employer email.", "#167450", "CONFIRMATION"),
+    "SUBMISSION_VERIFIED": ("Application submitted", "MUNSHI recorded a verified submission receipt for this application.", "#2369a5", "SUBMISSION"),
+    "EMPLOYER_EMAIL_CONFIRMED": ("Employer confirmation received", "An application-confirmation email was matched to your job record. MUNSHI has recorded the evidence for you.", "#167450", "CONFIRMATION"),
     "RECRUITER": ("Recruiter update", "A recruiter-related message was matched to this application.", "#2369a5", "COMMUNICATION"),
     "INTERVIEW": ("Interview update", "An interview-related message was matched to this application. Review the original message for next steps.", "#2369a5", "COMMUNICATION"),
     "ASSESSMENT": ("Assessment update", "An assessment-related message was matched to this application. Review the original message for deadlines.", "#7057a2", "COMMUNICATION"),
@@ -73,7 +73,7 @@ def notification_email(
         else "MUNSHI correlated a received communication to this record"
     )
     plain = (
-        f"MUNSHI | {label}\n\n{company}\n{position}\n\n"
+        f"{company} — {position}\n{label}\n\n"
         f"{description}\n\n{info}\nEvidence: {evidence}\n"
         + (f"Job reference: {reference}\n" if reference else "")
         + f"\nReview your application in MUNSHI: {DASHBOARD}\n\n"
@@ -95,7 +95,7 @@ def notification_email(
 <body style="margin:0;padding:0;background:#f3f6fa;color:#17263f;
 font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;">{esc(company)}
- · {esc(position)} — {esc(label)}.</div>
+ — {esc(position)}. {esc(label)}. Evidence details inside MUNSHI.</div>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0"
 style="width:100%;background:#f3f6fa;"><tr><td align="center" style="padding:32px 14px;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0"

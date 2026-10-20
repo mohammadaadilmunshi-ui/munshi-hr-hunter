@@ -215,12 +215,12 @@ def _notification_copy(event_kind: str, *, company: object, title: object) -> tu
     title_text = _safe_copy(title, maximum=200) or "application"
     if event_kind == "SUBMISSION_VERIFIED":
         return (
-            f"{company_text} · {title_text} | Submission recorded · MUNSHI",
+            f"{company_text} — {title_text} | Application submitted",
             f"SUBMITTED ✓\n\nMUNSHI verified the submission of your {title_text} application to {company_text}.",
         )
     if event_kind == "EMPLOYER_EMAIL_CONFIRMED":
         return (
-            f"{company_text} · {title_text} | Confirmation matched · MUNSHI",
+            f"{company_text} — {title_text} | Confirmation received",
             f"EMPLOYER EMAIL CONFIRMED ✓\n\nMUNSHI correlated an employer application-confirmation email for your {title_text} application to {company_text}.",
         )
     raise ValueError("Unsupported notification event kind.")
@@ -423,7 +423,7 @@ class SMTP2GOAdapter:
         payload = {
             "api_key": self.api_key,
             "to": [str(message["destination_email"])],
-            "sender": f"MUNSHI Notifications <{self.sender}>",
+            "sender": f"MUNSHI <{self.sender}>",
             "subject": _safe_copy(message["subject"], maximum=300),
             "text_body": text_body,
             "html_body": html_body,

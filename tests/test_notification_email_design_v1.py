@@ -24,7 +24,7 @@ def test_job_specific_html_and_accessible_text(hunter_db):
     page, plain = notification_email(message)
     assert "ElectroCraft Ohio Inc" in page
     assert "Trainer and HR Coordinator" in page
-    assert "Confirmation matched" in plain
+    assert "Employer confirmation received" in plain
     assert "Job reference: 901" in plain
     assert "JobSpy/LinkedIn" in plain
     assert "not an original message from the employer" in plain
@@ -99,7 +99,7 @@ def test_smtp2go_dual_body_named_sender_and_http_200_failure(monkeypatch, hunter
         "body_text": "MUNSHI recorded an email confirmation",
     }
     assert sender.send(message) == "accepted"
-    assert client.payload["sender"] == "MUNSHI Notifications <notifications@munshi.systems>"
+    assert client.payload["sender"] == "MUNSHI <notifications@munshi.systems>"
     assert "<!doctype html>" in client.payload["html_body"]
     assert "text_body" in client.payload
     assert client.payload["to"] == ["test@example.com"]
