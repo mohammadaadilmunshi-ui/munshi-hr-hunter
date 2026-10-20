@@ -223,7 +223,7 @@ def _communication_copy(
     }
     label = labels[category]
     return (
-        f"{company_text} · {title_text} | {label} · MUNSHI",
+        f"{company_text} — {title_text} | {label}",
         (
             f"{label}\n\nMUNSHI received a {category.lower()} communication "
             f"correlated to your {title_text} application at {company_text}. "
