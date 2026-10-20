@@ -22,7 +22,7 @@ from app.integration_credentials_v1 import (
 from app.secure_vault import VaultError, store_secret, vault_readiness
 
 _ACTOR = "streamlit:integration-credentials"
-_EMAIL = re.compile(r"^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
+_EMAIL = re.compile(r"^[^\s@\\]+@[^\s@\\]+\.[^\s@\\]+$")
 
 
 def _status_card(title: str, ready: bool, detail: str) -> None:
@@ -64,6 +64,20 @@ def _validate_sender(value: str) -> str:
     if not _EMAIL.fullmatch(value):
         raise ValueError("SMTP sender must be a valid email address.")
     return value
+
+
+def _validated_smtp_fields(
+    api_key: str, sender: str, *, existing_api_key: bool = False
+) -> tuple[str | None, str]:
+    """Validate both fields before writing either vault secret.
+
+    An existing key is write-only: a blank input means keep it unchanged.
+    """
+    normalized_sender = _validate_sender(sender)
+    normalized_key = _validate_api_key(api_key) if str(api_key or "").strip() else None
+    if normalized_key is None and not existing_api_key:
+        raise ValueError("Enter the SMTP2GO API key before saving the sender.")
+    return normalized_key, normalized_sender
 
 
 def _notification_preferences() -> None:
@@ -208,12 +222,15 @@ def render_integration_credentials() -> None:
     with right:
         st.markdown("### SMTP2GO")
         st.caption("Used only for notification preferences you explicitly enable.")
+        existing_api_key = smtp["key_source"] != "missing"
+        if existing_api_key:
+            st.caption("An API key is already stored securely. Leave the key field blank to keep it.")
         with st.form("integration_smtp_credentials", clear_on_submit=True):
             api_key = st.text_input(
                 "SMTP2GO API key",
                 type="password",
                 autocomplete="off",
-                placeholder="Paste API key",
+                placeholder="Leave blank to keep saved key" if existing_api_key else "Paste API key",
             )
             sender = st.text_input(
                 "Verified sender email",
@@ -225,15 +242,15 @@ def render_integration_credentials() -> None:
                 use_container_width=True,
             ):
                 try:
-                    store_secret(
-                        SMTP2GO_API_KEY_TYPE,
-                        _validate_api_key(api_key),
-                        actor=_ACTOR,
+                    validated_key, validated_sender = _validated_smtp_fields(
+                        api_key, sender, existing_api_key=existing_api_key
                     )
+                    if validated_key is not None:
+                        store_secret(
+                            SMTP2GO_API_KEY_TYPE, validated_key, actor=_ACTOR
+                        )
                     store_secret(
-                        SMTP2GO_SENDER_TYPE,
-                        _validate_sender(sender),
-                        actor=_ACTOR,
+                        SMTP2GO_SENDER_TYPE, validated_sender, actor=_ACTOR
                     )
                 except (ValueError, VaultError) as error:
                     st.error(str(error))
