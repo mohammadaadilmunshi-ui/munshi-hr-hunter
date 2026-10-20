@@ -77,32 +77,44 @@ def test_bad_sha_stops_locally_without_contacting_production():
     assert "Exact target SHA required" in result.stderr
 
 def test_actual_reviewed_source_delta_is_strictly_whitelisted():
+    # Validate exact reviewed root-candidate rather than installed older script.
     import re
+    from tests.test_free_discovery_gateway_handoff import proposal
 
-    script = SCRIPT.read_text()
-    match = re.search(r"allowed_files=\(\n(?P<paths>.*?)\n\)", script, re.DOTALL)
-    assert match is not None
-    allowlist = {
-        line.strip()
-        for line in match.group("paths").splitlines()
-        if line.strip()
-    }
-    changed = subprocess.run(
-        [
-            "git", "-C", str(ROOT), "diff", "--name-only",
-            "7d6861a88cc2eb8139632e3c54573ff9909bfd2f", "HEAD",
-        ],
+    handoff = proposal()
+    assert handoff["BASE_SHA"] == "504ea4ddcd9a624357ba5139629ac79c7dcefda1"
+    original = SCRIPT.read_text()
+    script = handoff["transform"]("deploy-code-only-release", original)
+    def allowed(script):
+        match = re.search(r"allowed_files=\(\n(?P<paths>.*?)\n\)", script, re.DOTALL)
+        assert match is not None
+        return set(match.group("paths").split())
+    candidate_paths = allowed(script)
+    original_paths = allowed(original)
+    diff = subprocess.run(
+        ["git", "-C", str(ROOT), "diff", "--name-only",
+         handoff["BASE_SHA"], "HEAD"],
         check=True, capture_output=True, text=True, timeout=10,
     )
-    files = {line.strip() for line in changed.stdout.splitlines() if line.strip()}
-    assert files
-    assert files <= allowlist, f"Unreviewed changes: {files - allowlist}"
-    assert not any(
-        path.startswith("migrations/")
-        or (path.startswith("scripts/") and path != "scripts/linkedin_link_recovery_v7.py")
-        or path in {"Dockerfile", "compose.yaml", "compose.netcup-shadow.yaml"}
-        for path in files
-    )
+    changed = set(diff.stdout.splitlines())
+    assert changed and changed <= candidate_paths
+    assert changed - original_paths <= set(handoff["ALLOWLIST"])
+    assert not any("*" in path or path.startswith("migrations/") for path in candidate_paths)
+    assert not any(path in ("Dockerfile", "compose.yaml", "compose.netcup-shadow.yaml")
+                   for path in changed)
+    assert all((not name.startswith("scripts/"))
+               or name in {"scripts/free_discovery_audit.py", "scripts/free_discovery_canary.py"}
+               for name in changed)
+    assert "Unreviewed source change" in script
+    assert "Code-only release forbids file deletion or renaming" in script
+
+
+def test_free_discovery_workflow_expected_live_baseline():
+    workflow = WORKFLOW.read_text()
+    assert '[[ "$EXPECTED_LIVE" == "504ea4ddcd9a624357ba5139629ac79c7dcefda1" ]] || exit 3' in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert "environment: production" in workflow
+
 
 def test_nonroot_hunter_can_read_ephemeral_test_snapshot_without_source_chmod():
     content = SCRIPT.read_text()
