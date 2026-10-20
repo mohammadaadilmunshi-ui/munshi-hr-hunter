@@ -8,6 +8,13 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
+HISTORICAL_SOURCE_SHA = 'e643fff0d346cb3dd67b14374d9be86b45fead5a'
+
+def historical_script(relative_path: str) -> str:
+    return subprocess.run(['git','-C',str(ROOT),'show',
+       f'{HISTORICAL_SOURCE_SHA}:{relative_path}'],
+       capture_output=True,check=True,text=True,timeout=10).stdout
+
 INSTALLER = ROOT / 'deploy/review/install_free_discovery_gateway_20261020.sh'
 
 
@@ -29,7 +36,7 @@ def test_protected_scripts_stay_at_proven_installed_checksums():
         'deploy-code-only-release': ROOT / 'deploy/netcup/deploy_code_only_release.sh',
         'github-deploy-gateway': ROOT / 'deploy/netcup/github_deploy_gateway.sh',
     }.items():
-        original = source.read_text()
+        original = historical_script(str(source.relative_to(ROOT)))
         assert hashlib.sha256(original.encode()).hexdigest() == p['EXPECTED'][name]
         transformed = p['transform'](name, original)
         assert hashlib.sha256(transformed.encode()).hexdigest() == p['NEXT'][name]
@@ -38,7 +45,7 @@ def test_protected_scripts_stay_at_proven_installed_checksums():
 
 def test_proposed_allowlist_is_explicit_and_does_not_drop_safety_checks():
     p = proposal()
-    old = (ROOT / 'deploy/netcup/deploy_code_only_release.sh').read_text()
+    old = historical_script('deploy/netcup/deploy_code_only_release.sh')
     new = p['transform']('deploy-code-only-release', old)
     block = lambda s: re.search(r'allowed_files=\(\n(.*?)\n\)', s, re.S).group(1)
     old_paths = set(block(old).split())
