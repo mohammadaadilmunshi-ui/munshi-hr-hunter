@@ -164,6 +164,8 @@ git merge-base --is-ancestor "$old_head" "$target" || block 'Target is not a des
 # Anything else, including database modules, SQL scripts or Docker manifests,
 # needs the original DB-backed guarded full release.
 allowed_files=(
+  tests/test_free_discovery_gateway_handoff.py
+  .github/workflows/free-discovery-regression.yml
   app/source_ui_readiness_v1.py
   app/breezyhr_worker.py
   app/sources/breezyhr.py
