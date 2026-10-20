@@ -30,7 +30,7 @@ from app.runtime_config import telegram_batch_limit
 MARKER = "AADIL_HR_HUNTER_ALL_ADAPTERS_ACTIVATION_V2_4"
 BOARD_SOURCES = {"Personio", "Pinpoint", "Comeet"}
 _REQUEST_METRICS: dict[str, int] = {"attempts": 0}
-_READ_ONLY_FETCH = ContextVar("public_board_read_only_fetch", default=False)
+_READ_ONLY_FETCH = ContextVar("public_board_read_only_fetch", default=True)
 
 
 @dataclass(frozen=True)

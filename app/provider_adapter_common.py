@@ -89,7 +89,7 @@ def _update_board(board_id: int, *, success: bool, job_count: int, error: str | 
         connection.close()
 
 
-def _update_health(provider: str, *, successes: int, failures: int, raw: int, error: str | None) -> None:
+def _update_health(provider: str, *, successes: int, failures: int, raw: int, normalized: int, error: str | None) -> None:
     status = "healthy" if successes and not failures else "degraded" if successes else "failed"
     connection = get_connection()
     try:
@@ -130,7 +130,7 @@ def _update_health(provider: str, *, successes: int, failures: int, raw: int, er
                 last_verified_at=?, updated_at=CURRENT_TIMESTAMP
             WHERE provider=?
             """,
-            (int(successes > 0 and raw > 0), provider, status, int(us_count), _utc_now(), provider),
+            (int(successes > 0 and normalized > 0), provider, status, int(us_count), _utc_now(), provider),
         )
         connection.commit()
     except Exception:
@@ -226,6 +226,12 @@ def run_provider(
         raw_count += int(result.get("raw_count", len(jobs)))
         for reason, count in dict(result.get("rejections") or {}).items():
             normalization_rejections[reason] = normalization_rejections.get(reason, 0) + int(count)
+        if int(result.get("raw_count", len(jobs))) > 0 and not jobs:
+            message = "Public payload contained records but no valid normalized postings"
+            errors.append({"company": board["company_name"], "error": message})
+            if not no_store:
+                _update_board(int(board["id"]), success=False, job_count=0, error=message)
+            continue
         duration_ms += float(result.get("duration_ms") or 0.0)
         successes += 1
         if not no_store:
@@ -282,6 +288,7 @@ def run_provider(
             successes=successes,
             failures=len(errors),
             raw=raw_count,
+            normalized=len(all_jobs),
             error=last_error,
         )
     return {

@@ -337,7 +337,11 @@ def test_comeet_invalid_board_quarantine_preserves_notes_and_no_store(hunter_db,
     assert c.execute('SELECT enabled FROM public_adapter_boards WHERE id=1').fetchone()[0] == 1
     c.close()
     assert 'must-not-log-token' not in str(errors)
-    adapters.fetch_comeet(adapters.SOURCE_SPECS['comeet'], 10)
+    token = adapters._READ_ONLY_FETCH.set(False)
+    try:
+        adapters.fetch_comeet(adapters.SOURCE_SPECS['comeet'], 10)
+    finally:
+        adapters._READ_ONLY_FETCH.reset(token)
     c = database.get_connection()
     row = c.execute('SELECT enabled,notes FROM public_adapter_boards WHERE id=1').fetchone()
     c.close()
@@ -429,3 +433,22 @@ def test_recruitee_raw_normalized_and_rejections_reconcile(monkeypatch):
     assert result['raw_count'] == 5
     assert len(result['jobs']) == 2
     assert sum(result['normalization_rejections'].values()) == 3
+
+
+def test_nonempty_unparseable_board_does_not_promote_healthy_or_live_tested(hunter_db, monkeypatch):
+    database.save_setting('provider_runtime', json.loads(Path('config/provider_runtime_policy.json').read_text()))
+    c = database.get_connection()
+    c.execute("INSERT INTO source_health(source_name,source_tier,enabled,cadence_minutes,cost_mode) VALUES('Teamtailor',1,1,60,'free')")
+    c.execute("INSERT INTO adapter_coverage(provider,implemented,enabled,live_tested) VALUES('Teamtailor',1,1,0)")
+    c.commit(); c.close()
+    monkeypatch.setattr(common, '_load_boards', lambda *a: [dict(CONTRACT, id=1)])
+    monkeypatch.setattr(common, '_update_board', lambda *a, **k: None)
+    monkeypatch.setattr(common, 'record_source_metrics', lambda *a, **k: None)
+    result = common.run_provider('Teamtailor', lambda *a: {'jobs': [], 'raw_count': 1, 'requests': 1,
+                                                         'rejections': {'invalid_identity_or_url': 1}})
+    assert result['success'] is False and result['normalized'] == 0
+    assert result['normalization_accounting_delta'] == 0
+    c = database.get_connection()
+    assert c.execute("SELECT live_tested FROM adapter_coverage WHERE provider='Teamtailor'").fetchone()[0] == 0
+    assert c.execute("SELECT health_status FROM source_health WHERE source_name='Teamtailor'").fetchone()[0] == 'failed'
+    c.close()
