@@ -593,7 +593,7 @@ def _canonical_adapter(value: Any) -> str:
     if not text:
         return ""
     if "serpapi" in lower and "google" in lower:
-        return "Google Jobs · SerpAPI"
+        return "Google Jobs"
     mapping = (
         ("linkedin", "LinkedIn"),
         ("indeed", "Indeed"),

@@ -18,7 +18,7 @@ def source_key(value: str) -> str:
 
 
 def worker_available(module: str) -> bool:
-    return bool(re.fullmatch(r"app\.[a-z][a-z0-9_]*", module)) and (
+    return bool(re.fullmatch(r"app\.[a-z][a-z0-9_]*_worker", module)) and (
         ROOT / "app" / (module.removeprefix("app.") + ".py")
     ).is_file()
 

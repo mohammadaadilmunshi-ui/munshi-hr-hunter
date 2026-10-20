@@ -355,3 +355,58 @@ def test_scheduler_backoff_is_at_least_provider_retry_after(hunter_db):
     result = source_cooldown.mark_source_completed('Fixture Recruitee', success=False, blocked=True, retry_after_seconds=28800)
     deadline = datetime.fromisoformat(result['next_run_at'])
     assert (deadline - before).total_seconds() >= 28799
+
+
+@pytest.mark.parametrize('apply,expected', [
+    ('https://one.recruitee.com/o/hr-analyst/c/new', 'https://one.recruitee.com/o/hr-analyst/c/new'),
+    ('https://two.recruitee.com/o/hr-analyst/c/new', 'https://one.recruitee.com/o/hr-analyst'),
+    ('https://one.recruitee.com/o/another-job/c/new', 'https://one.recruitee.com/o/hr-analyst'),
+    ('', 'https://one.recruitee.com/o/hr-analyst'),
+])
+def test_recruitee_preserves_confirmed_dual_links_without_contamination(monkeypatch, apply, expected):
+    monkeypatch.setattr(market, '_board_rows', lambda **k: [{'board_locator': 'one', 'company_name': 'One'}])
+    class Payload:
+        def json(self):
+            return {'offers': [{'id': '42', 'title': 'People Analytics Analyst', 'location': 'New York, NY',
+                                'careers_url': 'https://one.recruitee.com/o/hr-analyst', 'careers_apply_url': apply}]}
+    monkeypatch.setattr(market, '_request', lambda *a: Payload())
+    monkeypatch.setattr(market, '_configured_source_tier', lambda *a: 1)
+    result = market.fetch_recruitee(Namespace(max_boards=1, max_jobs=10))
+    assert result['jobs'][0]['job_url'] == 'https://one.recruitee.com/o/hr-analyst'
+    assert result['jobs'][0]['apply_url'] == expected
+
+
+def test_discovery_change_does_not_change_database_schema_contract():
+    import hashlib
+    assert hashlib.sha256(database.SCHEMA_SQL.encode()).hexdigest() == '38e0337ae5e9f031b823e8dc11804a792666205cd86d7f643624acf7a73a97d1'
+
+
+@pytest.mark.parametrize('url', ['https://127.0.0.1/careers', 'https://other.example/careers',
+                                'https://user:pass@fixture.bamboohr.com/careers', 'https://fixture.bamboohr.com/employees'])
+def test_bamboo_unapproved_board_is_rejected_before_http(url):
+    from app.sources.bamboohr import bamboo_list_url
+    with pytest.raises(ValueError):
+        bamboo_list_url({'tenant': 'fixture', 'board_url': url})
+
+
+@pytest.mark.parametrize('url', ['http://fixture.wd5.myworkdayjobs.com', 'https://127.0.0.1',
+                                'https://user:pass@fixture.wd5.myworkdayjobs.com', 'https://other.example'])
+def test_workday_unapproved_board_is_rejected_before_http(url):
+    from app.sources.workday import workday_api_base
+    with pytest.raises(ValueError):
+        workday_api_base({'tenant': 'fixture', 'site_name': 'Careers', 'board_url': url})
+
+
+def test_bamboo_and_workday_links_cannot_change_employer_or_job():
+    from app.sources.bamboohr import normalize_bamboohr_job
+    from app.sources.workday import normalize_workday_job
+    b = {'tenant': 'fixture', 'company_name': 'Fixture', 'board_url': 'https://fixture.bamboohr.com/careers'}
+    for url in ('https://other.bamboohr.com/careers/42', 'https://fixture.bamboohr.com/careers/43'):
+        with pytest.raises(ValueError):
+            normalize_bamboohr_job(b, {'id': '42', 'url': url})
+    with pytest.raises(ValueError, match='different job'):
+        normalize_bamboohr_job(b, {'id': '42'}, {'id': '43'})
+    w = {'tenant': 'fixture', 'company_name': 'Fixture', 'board_url': 'https://fixture.wd5.myworkdayjobs.com'}
+    for url in ('https://other.wd5.myworkdayjobs.com/job/analyst_REQ-1', 'https://fixture.wd5.myworkdayjobs.com/job/analyst_REQ-2'):
+        with pytest.raises(ValueError):
+            normalize_workday_job(w, {'externalPath': '/job/analyst_REQ-1', 'externalUrl': url})

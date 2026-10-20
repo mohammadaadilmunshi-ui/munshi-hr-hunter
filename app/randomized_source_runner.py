@@ -808,7 +808,7 @@ def run_one(source: dict[str, Any]) -> dict[str, Any]:
             and completed.returncode == 0
             and not blocked
             and not deferred
-            and payload.get("success", True) is not False
+            and payload.get("success") is True
         )
         status = (
             "timeout"
@@ -840,8 +840,15 @@ def run_one(source: dict[str, Any]) -> dict[str, Any]:
             **({"retry_after_seconds": retry_after} if retry_after > 0 else {}),
         )
         if not (success or deferred or partial_blocked_success):
+            error_type = str(payload.get("error_type") or "")
+            if not error_type:
+                matches = re.findall(r"(?m)^([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)):", stderr)
+                error_type = matches[-1] if matches else ""
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]{0,120}", error_type):
+                error_type = "UnclassifiedWorkerFailure"
             failure_detail = runner_error or (
-                f"Worker finished with scheduler status {status} and return code {returncode}."
+                f"Worker finished with scheduler status {status} and return code {returncode}; "
+                f"error_type={error_type}; structured_result={bool(payload)}."
             )
             _record_runner_failure(
                 source_name,

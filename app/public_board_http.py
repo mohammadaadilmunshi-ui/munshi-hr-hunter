@@ -118,7 +118,28 @@ class PublicBoardClient:
                     raise PublicBoardError("Response byte budget exhausted")
             except ValueError:
                 raise PublicBoardError("Invalid response length") from None
-            body = response.read(self.max_bytes + 1)
+            if hasattr(response, "read1"):
+                chunks = []
+                size = 0
+                while True:
+                    remaining = self.deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise PublicBoardError("Run time budget exhausted")
+                    sock = getattr(connection, "sock", None)
+                    if sock is not None:
+                        sock.settimeout(min(self.timeout, remaining))
+                    chunk = response.read1(min(65536, self.max_bytes + 1 - size))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    size += len(chunk)
+                    if size > self.max_bytes:
+                        raise PublicBoardError("Response byte budget exhausted")
+                body = b"".join(chunks)
+            else:
+                body = response.read(self.max_bytes + 1)
+            if time.monotonic() > self.deadline:
+                raise PublicBoardError("Run time budget exhausted")
             if len(body) > self.max_bytes or headers.get("content-encoding", "identity") not in ("", "identity"):
                 raise PublicBoardError("Response byte/encoding budget exhausted")
             if status == 200 and any(x in body[:65536].lower() for x in (

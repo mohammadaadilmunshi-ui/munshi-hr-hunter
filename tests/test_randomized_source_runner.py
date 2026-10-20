@@ -187,3 +187,21 @@ def test_partial_rate_limited_success_keeps_backoff_without_runner_failure(monke
             },
         )
     ]
+
+
+def test_zero_exit_without_structured_worker_result_is_not_success(monkeypatch):
+    failures = []
+    monkeypatch.setattr(randomized_source_runner, 'discover_worker', lambda *a: 'app.ashby_worker')
+    monkeypatch.setattr(randomized_source_runner, 'get_adapter_timer', lambda *a, **k: {})
+    monkeypatch.setattr(randomized_source_runner, '_source_timeout_seconds', lambda *a: 60)
+    monkeypatch.setattr(randomized_source_runner, 'mark_source_started', lambda *a, **k: None)
+    monkeypatch.setattr(randomized_source_runner, 'mark_source_completed', lambda *a, **k: k)
+    monkeypatch.setattr(randomized_source_runner, '_run_worker_command', lambda *a, **k: (subprocess.CompletedProcess([], 0, '', ''), False, None))
+    monkeypatch.setattr(randomized_source_runner, '_record_runner_failure', lambda *a, **k: failures.append(k))
+    from app import telegram_run_visibility
+    monkeypatch.setattr(telegram_run_visibility, 'reconcile_terminal_run_outbox', lambda **k: {})
+    monkeypatch.setattr(telegram_run_visibility, 'deliver_pending_operational_cards', lambda **k: {})
+    result = randomized_source_runner.run_one({'source_name': 'Ashby'})
+    assert result['status'] == 'failed'
+    assert result['schedule']['success'] is False
+    assert 'structured_result=False' in failures[0]['error']

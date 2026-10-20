@@ -618,6 +618,18 @@ def fetch_recruitee(args: argparse.Namespace) -> dict[str, Any]:
                 except ValueError:
                     errors.append({"company": board.get("company_name"), "error": "Unverified employer posting URL"})
                     continue
+                apply_url = public_url
+                original_apply = str(item.get("careers_apply_url") or "")
+                if original_apply:
+                    try:
+                        candidate = validate_board_url(original_apply, {f"{locator.lower()}.recruitee.com"})
+                        if urlparse(candidate).path.rstrip("/") in {
+                            urlparse(public_url).path.rstrip("/"),
+                            urlparse(public_url).path.rstrip("/") + "/c/new",
+                        }:
+                            apply_url = candidate
+                    except ValueError:
+                        pass
                 normalized = _normalize(
                     source=f"Recruitee/{board.get('company_name') or locator}",
                     job_id=_pick(item, "id", "slug"),
@@ -628,7 +640,7 @@ def fetch_recruitee(args: argparse.Namespace) -> dict[str, Any]:
                         default=board.get("company_name") or locator,
                     ),
                     location=_flatten(_pick(item, "location", "locations")),
-                    apply_url=public_url,
+                    apply_url=apply_url,
                     description=" ".join(
                         filter(
                             None,
@@ -644,6 +656,7 @@ def fetch_recruitee(args: argparse.Namespace) -> dict[str, Any]:
                     country=None,
                 )
                 if normalized:
+                    normalized["job_url"] = public_url
                     jobs.append(normalized)
                 if len(jobs) >= args.max_jobs:
                     break

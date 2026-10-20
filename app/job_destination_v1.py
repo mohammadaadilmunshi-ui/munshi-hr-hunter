@@ -51,6 +51,12 @@ _SOURCE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Ashby", ("ashby",)),
     ("SmartRecruiters", ("smartrecruiters", "smart recruiters")),
     ("Workday", ("workday",)),
+    ("Teamtailor", ("teamtailor",)),
+    ("Recruitee", ("recruitee",)),
+    ("BambooHR", ("bamboohr",)),
+    ("Workable", ("workable",)),
+    ("Pinpoint", ("pinpoint",)),
+    ("Comeet", ("comeet",)),
 )
 
 _AGGREGATORS = ("linkedin.com", "indeed.com", "glassdoor.com", "ziprecruiter.com")

@@ -24,7 +24,7 @@ OVERLAY = (
 )
 
 
-def run(database_path: Path) -> dict:
+def run(database_path: Path, providers: tuple[str, ...] = ('Teamtailor', 'Ashby')) -> dict:
     # Override the connection factory before importing the pipeline. Every
     # imported binding in this fresh process receives the read-only factory.
     import app.database as database
@@ -54,6 +54,8 @@ def run(database_path: Path) -> dict:
     )
     outcomes = []
     for provider, company, url in board_specs:
+        if provider not in providers:
+            continue
         from urllib.parse import urlsplit
         client = PublicBoardClient({str(urlsplit(url).hostname)}, max_requests=2, max_bytes=10_000_000)
         try:
@@ -96,7 +98,7 @@ def run(database_path: Path) -> dict:
             'rules_hash': rules.rules_hash, 'outcomes': outcomes}
 
 
-def stdin_bundle(database_path: Path) -> str:
+def stdin_bundle(database_path: Path, providers: tuple[str, ...] = ('Teamtailor', 'Ashby')) -> str:
     modules = {name: (ROOT / (name.replace('.', '/') + '.py')).read_text() for name in OVERLAY}
     hashes = {name: hashlib.sha256(value.encode()).hexdigest() for name, value in modules.items()}
     return (
@@ -120,7 +122,7 @@ def stdin_bundle(database_path: Path) -> str:
         ' exec(compile(source, module.__file__, "exec"), module.__dict__)\n'
         f'namespace = {{"__name__": "canary", "__file__": "/app/hunter/scripts/free_discovery_canary.py"}}\n'
         f'exec(compile({Path(__file__).read_text()!r}, namespace["__file__"], "exec"), namespace)\n'
-        f'result = namespace["run"](Path({str(database_path)!r}))\n'
+        f'result = namespace["run"](Path({str(database_path)!r}), {providers!r})\n'
         'result["source_module_sha256"] = expected\n'
         'print(json.dumps(result, indent=2))\n'
     )
@@ -130,9 +132,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--database', type=Path, required=True)
     parser.add_argument('--emit-stdin-bundle', action='store_true')
+    parser.add_argument('--provider', action='append', choices=('Teamtailor', 'Ashby'))
     args = parser.parse_args()
     if args.emit_stdin_bundle:
-        print(stdin_bundle(args.database))
+        print(stdin_bundle(args.database, tuple(args.provider or ('Teamtailor', 'Ashby'))))
     else:
         sys.path.insert(0, str(ROOT))
-        print(json.dumps(run(args.database), indent=2))
+        print(json.dumps(run(args.database, tuple(args.provider or ('Teamtailor', 'Ashby'))), indent=2))

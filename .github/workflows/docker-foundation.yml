@@ -46,3 +46,15 @@ jobs:
           docker run --rm --entrypoint /usr/bin/chromium munshi-hunter:foundation --version
           docker run --rm --entrypoint test munshi-hunter:foundation -f /app/hunter/integrations/hr_agent/n8n_hr_score.py
           test "$(docker run --rm --entrypoint sh munshi-hunter:foundation -c 'test ! -d /app/hunter/HackerRank && echo absent')" = absent
+      - name: Verify proven JobSpy image and container interpreter contract
+        run: |
+          docker run --rm -i --network none --read-only --entrypoint python munshi-hunter:foundation - <<'PY'
+          import hashlib, importlib.metadata, pathlib, platform, sys
+          assert platform.machine() == "x86_64"
+          assert importlib.metadata.version("python-jobspy") == "1.1.82"
+          runner = pathlib.Path("/app/hunter/tools/runners/jobspy_runner.py")
+          assert hashlib.sha256(runner.read_bytes()).hexdigest() == "0c2fcdc66ef405407f0b76451f2ac4c8c09c43b011db18bba68aecb2926c7794"
+          from app.sources.jobspy import resolve_jobspy_python
+          assert resolve_jobspy_python().resolve() == pathlib.Path(sys.executable).resolve()
+          print("JOBSPY_IMAGE_RUNTIME_CONTRACT=PASS")
+          PY

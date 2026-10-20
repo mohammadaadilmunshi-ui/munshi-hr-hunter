@@ -11,9 +11,18 @@ def test_telegram_and_application_summary_hide_scraper_label():
         ("Indeed Jobs (JobSpy)", "Indeed"),
         ("LinkedIn Jobs (JobSpy)", "LinkedIn"),
         ("JobSpy", "Job board"),
+        ("Google Jobs/SerpAPI", "Google Jobs"),
+        ("Teamtailor/Example Employer", "Teamtailor"),
+        ("Recruitee/Example Employer", "Recruitee"),
     ]:
         assert format_adapter_display({"source": input_value}) == expected
         assert _canonical_adapter(input_value) == expected
+
+
+def test_public_board_platform_labels_do_not_expose_internal_tenant_suffix():
+    from app.job_destination_v1 import source_platform
+    for provider in ('Teamtailor', 'Recruitee', 'BambooHR', 'Workable', 'Pinpoint', 'Comeet'):
+        assert source_platform({'source': provider + '/Example Employer'}) == provider
 
 
 def test_email_uses_platform_name_only_in_html_and_plain_text():

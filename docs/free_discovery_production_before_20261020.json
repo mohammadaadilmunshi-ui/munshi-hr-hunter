@@ -2405,7 +2405,7 @@
       "registered_module": null,
       "resolved_module": "app.usajobs_worker",
       "module_exists": true,
-      "error_classification": "paid_policy_disabled",
+      "error_classification": "no_current_failure_evidence",
       "last_run": {
         "run_id": "df8fa967-7d60-4bd4-ba8f-24d2610607d2",
         "completed_at": "2026-10-20 07:20:43",
