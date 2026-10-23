@@ -65,6 +65,28 @@ def test_unrecognized_status_never_becomes_submitted():
     assert tracker.normalize_tracked_application(_record(1, "OFFER"))["pipeline_stage"] == "OFFER"
 
 
+def test_missing_position_title_is_visible_without_inventing_job(isolated_database):
+    records = [
+        _record(1, positionTitle=None),
+        _record(2, "INTERVIEWING", positionTitle=""),
+        _record(3, "REJECTED", positionTitle="   "),
+    ]
+    result = tracker.persist_tracked_rows(records)
+    assert result == {"inserted": 3, "updated": 0, "skipped": 0}
+    views = tracker.external_application_views()
+    assert len(views) == 3
+    assert {view.title for view in views} == {"Position title unavailable"}
+    assert {view.canonical_state for view in views} == {
+        "APPLIED", "INTERVIEWING", "REJECTED"
+    }
+    assert tracker.normalize_tracked_application(
+        _record(4, "UNKNOWN", positionTitle="")
+    ) is None
+    assert tracker.normalize_tracked_application(
+        _record(5, companyName="", positionTitle="")
+    ) is None
+
+
 def test_upserts_are_idempotent_and_owner_scoped(isolated_database):
     connect, owner = isolated_database
     first = tracker.persist_tracked_rows([_record(1)])
@@ -155,6 +177,8 @@ def test_full_history_sync_fetches_all_804_rows_and_reports_progress(isolated_da
         _record(i, "INTERVIEWING" if i % 7 == 0 else "APPLIED")
         for i in range(804)
     ]
+    for record in records[:28]:
+        record["positionTitle"] = None  # Real provider omits titles for some records.
 
     class FullHistoryProvider:
         def __init__(self):
@@ -189,7 +213,9 @@ def test_full_history_sync_fetches_all_804_rows_and_reports_progress(isolated_da
     assert all(call["limit"] == 10 for call in provider.calls)
     assert all(call["startDate"] == "2020-01-01" for call in provider.calls)
     assert progress[-1] == (804, 804)
-    assert len(tracker.external_application_views(limit=5000)) == 804
+    views = tracker.external_application_views(limit=5000)
+    assert len(views) == 804
+    assert sum(view.title == "Position title unavailable" for view in views) == 28
 
 
 def test_bounded_sync_never_claims_full_coverage_when_more_pages_remain(
