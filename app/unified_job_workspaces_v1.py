@@ -948,9 +948,9 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
     if st.session_state.get("_relay_refresh_feedback"):
         st.info(st.session_state.pop("_relay_refresh_feedback"))
     st.caption(
-        "Application statuses update from durable records when you open or refresh this page. "
-        "This does not retry or submit any application. "
-        "Submission requires a separately verified employer receipt."
+        "MUNSHI statuses read from durable records when you open or refresh this page. "
+        "Choose Synchronize application pipeline to refresh linked external history. "
+        "Neither action retries or submits applications; employer receipts are verified separately."
     )
     if st.button(
         "↻ Synchronize application pipeline",
