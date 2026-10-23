@@ -20,6 +20,8 @@ READ_TOOLS = frozenset({
     "get_profile_status", "list_resume_profiles", "get_resume_profile",
     "get_apply_preferences", "get_auto_apply_state", "list_applications",
     "get_application_status", "get_application_review",
+    # Recruitment tracker: read-only pipeline statuses and history.
+    "list_tracked_applications",
     # Authenticated managed-inbox reads. These tools never send or mark mail.
     "list_inbox_messages", "get_inbox_message", "get_inbox_thread",
     "get_inbox_unread_count",
