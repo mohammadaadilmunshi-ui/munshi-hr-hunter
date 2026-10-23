@@ -87,8 +87,10 @@ def normalize_tracked_application(record: Mapping[str, Any]) -> dict[str, Any] |
     if not isinstance(raw_id, str) or not 1 <= len(raw_id) <= 256:
         return None
     company = _safe_text(record.get("companyName"), 240)
-    title = _safe_text(record.get("positionTitle"), 240)
-    if not company or not title:
+    # Provider-tracked applications can have a valid identity and stage even
+    # when the employer position title is omitted. Show an honest placeholder.
+    title = _safe_text(record.get("positionTitle"), 240) or "Position title unavailable"
+    if not company:
         return None
     stage = _safe_text(record.get("status"), 32).upper()
     if stage not in STAGES:
