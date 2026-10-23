@@ -150,6 +150,65 @@ def test_bounded_read_only_pagination(isolated_database):
     assert len(tracker.external_application_views()) == 12
 
 
+def test_full_history_sync_fetches_all_804_rows_and_reports_progress(isolated_database):
+    records = [
+        _record(i, "INTERVIEWING" if i % 7 == 0 else "APPLIED")
+        for i in range(804)
+    ]
+
+    class FullHistoryProvider:
+        def __init__(self):
+            self.calls = []
+
+        def call_read(self, name, params):
+            assert name == "list_tracked_applications"
+            self.calls.append(dict(params))
+            start = (params["page"] - 1) * params["limit"]
+            return {"structuredContent": {"result": {
+                "applications": records[start:start + params["limit"]],
+                "pagination": {
+                    "total": len(records),
+                    "hasMore": start + params["limit"] < len(records),
+                },
+            }}}
+
+    provider = FullHistoryProvider()
+    progress = []
+    result = tracker.sync_tracker_from_mcp(
+        mcp=provider,
+        max_pages=tracker.MAX_PAGES,
+        on_progress=lambda checked, total: progress.append((checked, total)),
+    )
+    assert result["checked"] == 804
+    assert result["inserted"] == 804
+    assert result["provider_total"] == 804
+    assert result["complete"] is True
+    assert result["employer_receipts_claimed"] == 0
+    assert result["provider_reads_only"] is True
+    assert len(provider.calls) == 81
+    assert all(call["limit"] == 10 for call in provider.calls)
+    assert all(call["startDate"] == "2020-01-01" for call in provider.calls)
+    assert progress[-1] == (804, 804)
+    assert len(tracker.external_application_views(limit=5000)) == 804
+
+
+def test_bounded_sync_never_claims_full_coverage_when_more_pages_remain(
+    isolated_database,
+):
+    class ManyPages:
+        def call_read(self, name, params):
+            page = params["page"]
+            return {"structuredContent": {"result": {
+                "applications": [_record(i + page * 10) for i in range(10)],
+                "pagination": {"total": 804, "hasMore": True},
+            }}}
+
+    report = tracker.sync_tracker_from_mcp(mcp=ManyPages(), max_pages=2)
+    assert report["checked"] == 20
+    assert report["provider_total"] == 804
+    assert report["complete"] is False
+
+
 def test_provider_result_shapes_stay_bounded():
     record = _record(3)
     assert tracker._rows({"data": [record]}) == [record]
@@ -184,7 +243,7 @@ def test_page_boundaries():
     with pytest.raises(ValueError):
         tracker.sync_tracker_from_mcp(mcp=NeverCalled(), max_pages=0)
     with pytest.raises(ValueError):
-        tracker.sync_tracker_from_mcp(mcp=NeverCalled(), max_pages=41)
+        tracker.sync_tracker_from_mcp(mcp=NeverCalled(), max_pages=tracker.MAX_PAGES + 1)
 
 
 def test_native_route_shows_tracker_stage_without_new_application(isolated_database):

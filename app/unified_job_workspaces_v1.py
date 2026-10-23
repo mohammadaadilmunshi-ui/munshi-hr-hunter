@@ -957,21 +957,45 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
         key="external_application_tracker_sync",
         help="Import existing application and interview stages; never submit or retry.",
     ):
-        from app.external_application_tracker_v1 import sync_authorized_tracker
+        from app.external_application_tracker_v1 import MAX_PAGES, sync_authorized_tracker
+
+        progress = st.progress(0, text="Checking existing application history…")
+
+        def _tracker_progress(checked: int, provider_total: int | None) -> None:
+            maximum = provider_total if provider_total and provider_total > 0 else MAX_PAGES * 10
+            progress.progress(
+                min(1.0, checked / maximum),
+                text=f"Reading application history · {checked} of {provider_total or 'up to 1,200'} checked",
+            )
 
         try:
-            with st.spinner("Reading existing application stages…"):
-                report = sync_authorized_tracker(max_pages=10)
-            st.success(
-                f"Checked {report['checked']} tracked applications · "
-                f"{report['inserted']} added · {report['updated']} refreshed. "
-                "No application was submitted."
+            report = sync_authorized_tracker(
+                max_pages=MAX_PAGES, on_progress=_tracker_progress,
             )
+            coverage = (
+                f"{report['checked']} of {report['provider_total']}"
+                if report["provider_total"] is not None
+                else str(report["checked"])
+            )
+            details = (
+                f"{report['inserted']} added · {report['updated']} refreshed · "
+                f"{report['skipped']} unsupported records. No application was submitted."
+            )
+            if report["complete"]:
+                st.success(f"Application history synchronized: {coverage} checked · {details}")
+            else:
+                st.warning(
+                    f"History sync reached its safe page limit: {coverage} checked · "
+                    f"{details} Existing records are saved; more history may remain."
+                )
         except Exception:  # noqa: BLE001 - no provider details or credentials in UI
             st.warning(
-                "Application history synchronization is temporarily unavailable. "
-                "Existing MUNSHI records are unchanged; no applications were sent."
+                "Application history synchronization was interrupted. Previously "
+                "saved records remain available; no applications were sent. "
+                "You can safely try synchronizing again."
             )
+        finally:
+            progress.empty()
 
     try:
         # Pagination bounds the rendered rail; the read projection includes every
