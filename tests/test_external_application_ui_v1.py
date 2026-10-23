@@ -100,6 +100,48 @@ with patch.object(native, 'application_views', lambda limit=None: []), patch.obj
     assert "Approve & Submit" not in labels
 
 
+def test_full_history_button_reports_completion_without_sending_applications(
+    tmp_path: Path,
+):
+    script = tmp_path / "tracker_full_history_ui.py"
+    script.write_text(
+        """
+from types import SimpleNamespace
+from unittest.mock import patch
+from app import application_view_model_v1 as native
+from app import external_application_tracker_v1 as external
+from app import unified_job_workspaces_v1 as workspace
+
+def read_all(*, max_pages, on_progress):
+    assert max_pages == external.MAX_PAGES
+    on_progress(10, 804)
+    on_progress(804, 804)
+    return {
+        'checked': 804, 'inserted': 804, 'updated': 0, 'skipped': 0,
+        'provider_total': 804, 'complete': True,
+    }
+
+page = SimpleNamespace(_show_action_feedback=lambda: None)
+with patch.object(native, 'application_views', lambda limit=None: []), patch.object(
+    external, 'external_application_views', lambda limit=5000: []
+), patch.object(external, 'sync_authorized_tracker', read_all):
+    workspace.render_applications(page, SimpleNamespace())
+""",
+        encoding="utf-8",
+    )
+    app = AppTest.from_file(str(script), default_timeout=30).run()
+    assert not app.exception
+    button = next(
+        widget for widget in app.button
+        if widget.label == "↻ Synchronize application pipeline"
+    )
+    button.click().run()
+    assert not app.exception
+    content = _text(app)
+    assert "804 of 804 checked" in content
+    assert "No application was submitted" in content
+
+
 def test_stage_filters_work_for_native_and_synced_applications():
     from types import SimpleNamespace
     from app.unified_job_workspaces_v1 import _filter_application_views
