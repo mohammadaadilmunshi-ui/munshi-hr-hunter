@@ -9,7 +9,7 @@ import hashlib
 import json
 import re
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,8 +20,9 @@ from app.tsenta_mcp_adapter_v1 import _unwrap
 
 PROVIDER = "TSENTA"
 STAGES = frozenset({"APPLIED", "GHOSTED", "INTERVIEWING", "REJECTED", "OFFER"})
-PAGE_SIZE = 10
-MAX_PAGES = 40
+PAGE_SIZE = 10  # Authenticated provider schema caps list_tracked_applications at 10.
+MAX_PAGES = 120  # Bounded history scan: 1,200 rows, with explicit truncation feedback.
+HISTORY_START_DATE = "2020-01-01"  # Explicitly include history beyond the provider's 6-month default.
 _TEXT_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _SCHEMA = (
     """CREATE TABLE IF NOT EXISTS external_application_pipeline_v1 (
@@ -186,46 +187,75 @@ def persist_tracked_rows(records: list[Mapping[str, Any]]) -> dict[str, int]:
         conn.close()
 
 
-def sync_tracker_from_mcp(*, mcp: Any, max_pages: int = 5) -> dict[str, Any]:
-    """Only authorized provider reads; never calls apply/retry/update tools."""
+def sync_tracker_from_mcp(
+    *,
+    mcp: Any,
+    max_pages: int = 10,
+    on_progress: Callable[[int, int | None], None] | None = None,
+) -> dict[str, Any]:
+    """Bounded full-history provider reads; never apply, retry or update."""
     if not 1 <= int(max_pages) <= MAX_PAGES:
         raise ValueError("Tracker sync must use bounded pagination.")
     inserted = updated = skipped = checked = 0
+    provider_total: int | None = None
+    complete = False
     seen_pages: set[tuple[str, ...]] = set()
     for page in range(1, int(max_pages) + 1):
         payload = _unwrap(
-            mcp.call_read("list_tracked_applications",
-                          {"page": page, "limit": PAGE_SIZE}),
+            mcp.call_read("list_tracked_applications", {
+                "page": page,
+                "limit": PAGE_SIZE,
+                "startDate": HISTORY_START_DATE,
+            }),
             tool_name="list_tracked_applications",
         )
         if not isinstance(payload, Mapping):
             raise TypeError("Provider tracker returned an unsupported payload.")
+        pagination = payload.get("pagination")
+        if isinstance(pagination, Mapping):
+            total = pagination.get("total")
+            if isinstance(total, int) and not isinstance(total, bool) and 0 <= total <= 1_000_000:
+                provider_total = total
         records = _rows(payload)
         page_identity = tuple(str(row.get("id") or "") for row in records)
         if page_identity in seen_pages:
-            break
+            break  # An ignored page parameter must never become an infinite scan.
         seen_pages.add(page_identity)
         result = persist_tracked_rows(records)
         inserted += result["inserted"]
         updated += result["updated"]
         skipped += result["skipped"]
         checked += len(records)
+        if on_progress is not None:
+            on_progress(checked, provider_total)
+        has_more = pagination.get("hasMore") if isinstance(pagination, Mapping) else None
         if len(records) < PAGE_SIZE:
+            complete = has_more is not True
+            break
+        if has_more is False:
+            complete = True
             break
     return {
         "checked": checked, "inserted": inserted, "updated": updated,
-        "skipped": skipped, "provider_reads_only": True,
-        "employer_receipts_claimed": 0,
+        "skipped": skipped, "provider_total": provider_total,
+        "complete": complete, "history_start_date": HISTORY_START_DATE,
+        "provider_reads_only": True, "employer_receipts_claimed": 0,
     }
 
 
-def sync_authorized_tracker(*, max_pages: int = 5) -> dict[str, Any]:
+def sync_authorized_tracker(
+    *,
+    max_pages: int = 10,
+    on_progress: Callable[[int, int | None], None] | None = None,
+) -> dict[str, Any]:
     from app.tsenta_mcp_http_v1 import TsentaMcpReadClient
     from app.tsenta_oauth_v1 import _token_for_current_owner
 
     with TsentaMcpReadClient(_token_for_current_owner()) as mcp:
         mcp.initialize()
-        return sync_tracker_from_mcp(mcp=mcp, max_pages=max_pages)
+        return sync_tracker_from_mcp(
+            mcp=mcp, max_pages=max_pages, on_progress=on_progress,
+        )
 
 
 @dataclass(frozen=True)
