@@ -1,0 +1,412 @@
+{
+  "sources": [
+    {
+      "source_name": "ADP Recruiting",
+      "source_tier": 1,
+      "registered_module": "app.adp_recruiting_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "Adzuna",
+      "source_tier": 3,
+      "registered_module": "app.adzuna_worker",
+      "enabled": 0,
+      "cost_mode": "free",
+      "health_status": "needs_credentials"
+    },
+    {
+      "source_name": "Apify",
+      "source_tier": 4,
+      "registered_module": null,
+      "enabled": 0,
+      "cost_mode": "paid",
+      "health_status": "disabled_by_policy"
+    },
+    {
+      "source_name": "Arbeitnow",
+      "source_tier": 2,
+      "registered_module": "app.arbeitnow_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "Ashby",
+      "source_tier": 1,
+      "registered_module": "app.ashby_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "BambooHR",
+      "source_tier": 1,
+      "registered_module": "app.bamboohr_worker",
+      "enabled": 0,
+      "cost_mode": "free",
+      "health_status": "fixture_tested"
+    },
+    {
+      "source_name": "BrassRing",
+      "source_tier": 1,
+      "registered_module": "app.brassring_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "BreezyHR",
+      "source_tier": 1,
+      "registered_module": "app.breezyhr_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "CareerPlug",
+      "source_tier": 1,
+      "registered_module": "app.careerplug_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "Comeet",
+      "source_tier": 1,
+      "registered_module": "app.comeet_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "degraded"
+    },
+    {
+      "source_name": "Dayforce",
+      "source_tier": 1,
+      "registered_module": "app.dayforce_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "Dice",
+      "source_tier": 3,
+      "registered_module": "app.dice_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "Dover",
+      "source_tier": 1,
+      "registered_module": "app.dover_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "Employer Board Discovery",
+      "source_tier": 2,
+      "registered_module": "app.employer_board_discovery_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "degraded"
+    },
+    {
+      "source_name": "Gem",
+      "source_tier": 1,
+      "registered_module": "app.gem_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "Google Jobs",
+      "source_tier": 3,
+      "registered_module": "app.google_jobs_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "Greenhouse",
+      "source_tier": 1,
+      "registered_module": "app.greenhouse_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "Hireology",
+      "source_tier": 1,
+      "registered_module": "app.hireology_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "Indeed Jobs (JobSpy)",
+      "source_tier": 3,
+      "registered_module": "app.indeed_jobspy_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "JOIN",
+      "source_tier": 1,
+      "registered_module": "app.join_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "JazzHR",
+      "source_tier": 1,
+      "registered_module": "app.jazzhr_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "JobSpy",
+      "source_tier": 3,
+      "registered_module": "app.jobspy_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "Jobicy",
+      "source_tier": 2,
+      "registered_module": "app.jobicy_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "Jobvite",
+      "source_tier": 1,
+      "registered_module": "app.jobvite_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "Lever",
+      "source_tier": 1,
+      "registered_module": "app.lever_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "LinkedIn Jobs (JobSpy)",
+      "source_tier": 3,
+      "registered_module": "app.linkedin_jobspy_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "NYC Open Data",
+      "source_tier": 1,
+      "registered_module": "app.nyc_open_data_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "Naukri",
+      "source_tier": 1,
+      "registered_module": "app.naukri_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "Oracle Recruiting",
+      "source_tier": 1,
+      "registered_module": "app.oracle_recruiting_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "Paylocity",
+      "source_tier": 1,
+      "registered_module": "app.paylocity_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "Personio",
+      "source_tier": 1,
+      "registered_module": "app.personio_worker",
+      "enabled": 0,
+      "cost_mode": "free",
+      "health_status": "disabled_after_timeout"
+    },
+    {
+      "source_name": "Phenom",
+      "source_tier": 1,
+      "registered_module": "app.phenom_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "Pinpoint",
+      "source_tier": 1,
+      "registered_module": "app.pinpoint_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "Polymer",
+      "source_tier": 1,
+      "registered_module": "app.polymer_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "RSS Job Feeds",
+      "source_tier": 1,
+      "registered_module": null,
+      "enabled": 0,
+      "cost_mode": "free",
+      "health_status": "installed_disabled"
+    },
+    {
+      "source_name": "Recruitee",
+      "source_tier": 1,
+      "registered_module": "app.recruitee_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "degraded"
+    },
+    {
+      "source_name": "Remote OK",
+      "source_tier": 2,
+      "registered_module": "app.remote_ok_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "Remotive",
+      "source_tier": 2,
+      "registered_module": "app.remotive_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "Rippling",
+      "source_tier": 1,
+      "registered_module": "app.rippling_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "SAP SuccessFactors",
+      "source_tier": 1,
+      "registered_module": "app.sap_successfactors_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "Schema JobPosting",
+      "source_tier": 1,
+      "registered_module": "app.schema_jobposting_worker",
+      "enabled": 0,
+      "cost_mode": "free",
+      "health_status": "installed_disabled"
+    },
+    {
+      "source_name": "SerpAPI",
+      "source_tier": 4,
+      "registered_module": null,
+      "enabled": 0,
+      "cost_mode": "paid",
+      "health_status": "disabled_by_policy"
+    },
+    {
+      "source_name": "SmartRecruiters",
+      "source_tier": 1,
+      "registered_module": "app.smartrecruiters_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "Teamtailor",
+      "source_tier": 1,
+      "registered_module": "app.teamtailor_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "UKG / UltiPro",
+      "source_tier": 1,
+      "registered_module": "app.ukg_ultipro_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "USAJobs",
+      "source_tier": 2,
+      "registered_module": null,
+      "enabled": 1,
+      "cost_mode": "free_key_required",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "We Work Remotely",
+      "source_tier": 2,
+      "registered_module": "app.we_work_remotely_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "Workable",
+      "source_tier": 1,
+      "registered_module": "app.workable_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "healthy"
+    },
+    {
+      "source_name": "Workday",
+      "source_tier": 1,
+      "registered_module": "app.workday_worker",
+      "enabled": 0,
+      "cost_mode": "free",
+      "health_status": "fixture_tested"
+    },
+    {
+      "source_name": "Zoho Recruit",
+      "source_tier": 1,
+      "registered_module": "app.zoho_recruit_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    },
+    {
+      "source_name": "iCIMS",
+      "source_tier": 1,
+      "registered_module": "app.icims_worker",
+      "enabled": 1,
+      "cost_mode": "free",
+      "health_status": "failed"
+    }
+  ]
+}

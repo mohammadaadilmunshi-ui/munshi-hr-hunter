@@ -5,7 +5,8 @@ import json
 import pandas as pd
 import streamlit as st
 
-from app.database import get_connection
+from app.database import get_connection, get_setting
+from app.source_ui_readiness_v1 import displayed_readiness, source_funnel
 
 
 st.set_page_config(
@@ -135,6 +136,11 @@ try:
         "enabled",
         "cadence_minutes",
         "health_status",
+        "cost_mode",
+        "normalized_jobs_last_run",
+        "reject_role_last_run",
+        "reject_location_last_run",
+        "reject_hard_requirement_last_run",
         "consecutive_failures",
         "last_http_status",
         "raw_jobs_last_run",
@@ -180,6 +186,12 @@ try:
             """
         ).fetchall()
     }
+    registry = get_setting("source_worker_registry", {}) or {}
+    for source in health_rows:
+        presentation, reason = displayed_readiness(connection, source, registry)
+        source["readiness_status"] = presentation
+        source["readiness_reason"] = reason
+        source.update({"funnel_" + k: v for k, v in source_funnel(source).items()})
     schedule_map = {}
 
     if "source_random_schedule" in tables:
@@ -249,11 +261,7 @@ for row in health_rows:
     else:
         record["linkedin_working_link_pct"] = None
         record["linkedin_quarantined_linkless_count"] = None
-    record["category"] = classify(
-        str(row.get("health_status") or ""),
-        int(row.get("consecutive_failures") or 0),
-        str(row.get("last_error") or ""),
-    )
+    record["category"] = str(row.get("readiness_status") or "Other")
     record.update(
         {
             "next_run_at": schedule.get("next_run_at"),
@@ -284,7 +292,7 @@ enabled = frame[
 ].copy()
 
 counts = enabled["category"].value_counts().to_dict()
-metric_columns = st.columns(4)
+metric_columns = st.columns(5)
 
 metric_columns[0].metric(
     "Enabled adapters",
@@ -292,23 +300,32 @@ metric_columns[0].metric(
 )
 metric_columns[1].metric(
     "Healthy",
-    int(counts.get("Healthy", 0)),
+    int(counts.get("Working", 0)),
 )
 metric_columns[2].metric(
     "Awaiting first run",
     int(counts.get("Awaiting first run", 0)),
 )
 metric_columns[3].metric(
-    "Setup + runtime issues",
-    int(counts.get("Setup required", 0))
-    + int(counts.get("Runtime failure", 0)),
+    "Needs implementation / board",
+    int(counts.get("Not implemented", 0))
+    + int(counts.get("Needs employer board", 0)),
+)
+metric_columns[4].metric(
+    "Degraded / rate limited",
+    int(counts.get("Degraded / failing", 0))
+    + int(counts.get("Rate limited", 0)),
 )
 
 for category in (
-    "Runtime failure",
+    "Not implemented",
+    "Needs employer board",
+    "Blocked by cost policy",
+    "Rate limited",
+    "Degraded / failing",
     "Setup required",
     "Awaiting first run",
-    "Healthy",
+    "Working",
     "Other",
 ):
     subset = enabled[
@@ -322,7 +339,10 @@ for category in (
         f"{category} · {len(subset)}",
         expanded=category
         in (
-            "Runtime failure",
+            "Not implemented",
+            "Needs employer board",
+            "Rate limited",
+            "Degraded / failing",
             "Setup required",
         ),
     ):
@@ -332,6 +352,14 @@ for category in (
             "consecutive_failures",
             "last_http_status",
             "raw_jobs_last_run",
+            "funnel_normalized",
+            "funnel_eligible",
+            "funnel_inserted",
+            "funnel_eligible_rate_pct",
+            "funnel_rejected_role",
+            "funnel_rejected_location",
+            "funnel_rejected_hard_requirement",
+            "readiness_reason",
             "jobs_found_last_run",
             "eligible_jobs_last_run",
             "inserted_jobs_last_run",

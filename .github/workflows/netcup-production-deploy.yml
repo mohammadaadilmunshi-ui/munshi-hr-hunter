@@ -113,6 +113,8 @@ jobs:
               -i "$HOME/.ssh/netcup_deploy" \
               -o BatchMode=yes \
               -o IdentitiesOnly=yes \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=20 \
               -o StrictHostKeyChecking=yes \
               "$NETCUP_USER@$NETCUP_HOST" \
               "$DEPLOY_COMMAND"

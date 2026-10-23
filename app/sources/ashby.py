@@ -252,7 +252,6 @@ def normalize_address(
             )
         )
         or parsed.get("country")
-        or "US"
     )
 
     country = normalize_country(
@@ -454,7 +453,6 @@ def normalize_secondary_locations(
                         address.get(
                             "addressCountry"
                         )
-                        or "US"
                     )
                 ),
             }
@@ -490,6 +488,7 @@ def normalize_ashby_job(
     compensation = parse_compensation(
         raw_job.get("compensation")
     )
+    secondary_locations = normalize_secondary_locations(raw_job.get("secondaryLocations"))
 
     return {
         "source": (
@@ -509,6 +508,11 @@ def normalize_ashby_job(
             or "Unknown Position"
         ),
         **location,
+        "public_location_candidates": [location] + [
+            {"location_raw": item.get("location"), "city": item.get("city"),
+             "state": item.get("state"), "country": item.get("country")}
+            for item in secondary_locations
+        ],
         "remote_type": (
             normalize_workplace_type(
                 raw_job.get(

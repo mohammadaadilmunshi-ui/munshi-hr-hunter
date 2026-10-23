@@ -3,6 +3,12 @@
 Date: October 15, 2026
 Branch: feat/linkedin-employer-url-resolution-20261015 (PR #103, draft)
 
+> Historical pre-implementation snapshot. The authenticated connector,
+> provider router and observation foundation were subsequently implemented in
+> source and tests. See
+> `docs/MUNSHI_TSENTA_NATIVE_INTEGRATION_IMPLEMENTATION_20261015.md`. Nothing
+> from that implementation was deployed or used to submit an application.
+
 This increment adds two independent, **non-deployed, inert** components.
 
 ## 1. Bounded LinkedIn employer link enrichment worker (preview mode)

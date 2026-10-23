@@ -17,6 +17,7 @@ from app import candidate_knowledge_center_v1 as knowledge_center
 from app import master_resume_visual_ui_v2 as master_resume_ui
 from app import profile_answer_center_ui_v3 as answer_center
 from app import profile_workspace_v3 as v3
+from app.product_ui import page_intro
 
 
 _DETAIL_SECTIONS = ("Candidate Truth", "Knowledge Center", "Application Answers", "Master Resume")
@@ -342,6 +343,10 @@ def _detail_navigation(authority: dict[str, Any], answers: dict[str, Any], knowl
 
 def render() -> None:
     v3.v1._inject_css()
+    page_intro(
+        "Your foundation", "Profile",
+        "Manage your experience, source resume, and reusable application answers in one place.",
+    )
     tab = v3.v1._tab_from_state()
     v3.v1._subnav(tab)
     if tab == "Resume":
@@ -362,6 +367,8 @@ def render() -> None:
 
     # One and only one mount of the interactive Master Resume control surface.
     master_resume_ui.render_compact(authority)
+    if st.session_state.pop("_profile_intake_saved", False):
+        st.success("Master Resume source saved. Build and review your structured profile below; application authority has not changed.")
     _status_cards(authority, answers)
 
     for warning in authority.get("warnings") or []:

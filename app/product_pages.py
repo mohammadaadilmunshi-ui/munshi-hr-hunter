@@ -14,19 +14,35 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from app.product_state import (
-    activity_summary, candidate_facts, clear_master_resume, create_lane, delete_lane, fetch_jobs,
-    job_filters, lanes, master_resume, research_snapshot, save_candidate_fact, save_master_resume,
-    save_review_preference, save_volume_policy, set_job_state, set_lane_enabled, tracker_rows,
-    update_lane, volume_policy,
-)
-from app.product_ui import esc, page_intro, pastel_for, safe_link, score_ring
 from app.job_destination_v1 import describe_job_destination
+from app.native_apply_pulse_v1 import apply_pulse, evidence_snapshot
 from app.linkedin_verified_url_evidence_v5 import (
     destination_buttons as linkedin_destination_buttons,
+)
+from app.linkedin_verified_url_evidence_v5 import (
     latest_verified_for_job,
 )
-
+from app.product_state import (
+    candidate_facts,
+    clear_master_resume,
+    create_lane,
+    delete_lane,
+    fetch_jobs,
+    job_filters,
+    lanes,
+    master_resume,
+    research_snapshot,
+    save_candidate_fact,
+    save_master_resume,
+    save_review_preference,
+    save_volume_policy,
+    set_job_state,
+    set_lane_enabled,
+    tracker_rows,
+    update_lane,
+    volume_policy,
+)
+from app.product_ui import esc, page_intro, pastel_for, safe_link, score_ring
 
 _LOGGER = logging.getLogger(__name__)
 _PREPARE_ERROR_KEY_PREFIX = "product_prepare_error_"
@@ -51,6 +67,16 @@ def _linkedin_link_actions(job: dict[str, Any]) -> dict[str, Any]:
             job.get("id"), type(error).__name__,
         )
     return linkedin_destination_buttons(job, verified)
+
+
+def _job_destination(job: dict[str, Any]):
+    if "linkedin" in str(job.get("source") or "").casefold():
+        links = _linkedin_link_actions(job)
+        # Project the same verified link used by buttons and provider routing.
+        # A stale raw apply_url must not label a different platform on the card.
+        job = {**job, "apply_url": links.get("employer_apply_url"),
+               "ats_platform": links.get("ats_platform")}
+    return describe_job_destination(job)
 
 
 def _render_linkedin_source_and_employer(job: dict[str, Any], *, key_prefix: str) -> None:
@@ -131,8 +157,8 @@ def _toggle_job_skipped(job_id: int, currently_skipped: bool) -> None:
 
 def _application_flow(job_id: int) -> dict[str, Any]:
     try:
+        from app import application_archive_v1 as application_archive
         from app import product_application_flow_v2 as complete_loop
-        from app import application_archive_v1
 
         result = complete_loop.flow_for_job(int(job_id))
         prepare = dict(result.get("prepare") or {})
@@ -276,14 +302,42 @@ def _open_job_detail(job_id: int) -> None:
     st.session_state[_PRODUCT_JOB_DIALOG_STATE_KEY] = int(job_id)
 
 
-def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
+def _pulse_evidence() -> dict[str, Any]:
+    try:
+        return evidence_snapshot()
+    except Exception as error:  # noqa: BLE001 - job browsing cannot depend on learning
+        _LOGGER.warning("APPLY_PULSE_EVIDENCE_UNAVAILABLE error_type=%s", type(error).__name__)
+        return {"providers": {}, "aliases": {}, "native_receipts": {}}
+
+
+def _pulse_html(pulse: dict[str, Any]) -> str:
+    number = pulse.get("percent")
+    visible = f"{int(number)}%" if isinstance(number, int) else "Growing"
+    return (
+        f'<div class="munshi-apply-pulse" '
+        f'title="{esc(pulse.get("description"), "Native application readiness")}">'
+        f'<span class="pulse-name">✦ MUNSHI Apply Pulse</span>'
+        f'<strong class="pulse-value">{visible}</strong>'
+        f'<span class="pulse-stage">{esc(pulse.get("stage"), "Learning")}</span>'
+        f'</div>'
+    )
+
+
+def _job_card(
+    row: dict[str, Any], *, key_prefix: str,
+    pulse_evidence: dict[str, Any] | None = None,
+) -> None:
     job_id = int(row["id"])
     flow = _application_flow(job_id)
-    destination = describe_job_destination(row)
+    destination = _job_destination(row)
+    pulse = apply_pulse(destination, pulse_evidence or _pulse_evidence())
     tone = pastel_for(job_id)
     tags = [row.get("remote_type"), row.get("employment_type"), row.get("salary_raw")]
     if flow.get("state"):
         tags.append(flow.get("display_status"))
+    provider_route = flow.get("provider_route") or {}
+    if provider_route.get("provider") in {"NATIVE", "TSENTA"}:
+        tags.append("Engine: " + ("MUNSHI Relay" if provider_route["provider"] == "TSENTA" else "MUNSHI"))
     if row.get("saved"):
         tags.append("Saved")
     tags_html = "".join(f'<span class="tag">{esc(tag)}</span>' for tag in tags if str(tag or "").strip())
@@ -294,13 +348,13 @@ def _job_card(row: dict[str, Any], *, key_prefix: str) -> None:
                 <div class="job-top"><span>{esc(row.get("location_raw"), "Location unknown")}<br><span class="quiet">{esc(_relative_time(row.get("first_seen_at")))}</span></span>{score_ring(row.get("hunter_score"), tone)}</div>
                 <div class="job-title">{esc(row.get("title"), "Untitled role")}</div>
                 <div>{tags_html}</div><div class="job-company">{esc(row.get("company_name"), "Company not recorded")}</div>
-                <div class="job-destination"><span><b>Apply via:</b> {esc(destination.apply_via)}</span><span><b>Source:</b> {esc(destination.source)}</span></div></div></div></div>""",
+                <div class="job-destination"><span><b>Apply via:</b> {esc(destination.apply_via)}</span><span><b>Source:</b> {esc(destination.source)}</span></div>
+                {_pulse_html(pulse)}</div></div></div>""",
             unsafe_allow_html=True,
         )
         st.button(
             "Open job details",
             key=f"job_open_{key_prefix}_{job_id}",
-            help=f"Open {row.get('title') or 'job'} details",
             use_container_width=True,
             on_click=_open_job_detail,
             args=(job_id,),
@@ -392,11 +446,20 @@ def _job_detail_dialog(job_id: int) -> None:
     row = dict(record)
     row["saved"] = int(state_record["saved"]) if state_record else 0
     row["skipped"] = int(state_record["skipped"]) if state_record else 0
-    destination = describe_job_destination(row)
+    destination = _job_destination(row)
     st.markdown(f"## {esc(row.get('title'), 'Untitled role')}", unsafe_allow_html=True)
     st.caption(f"{row.get('company_name') or 'Company not recorded'} · {row.get('location_raw') or 'Location unknown'}")
     st.caption(f"Apply via: {destination.apply_via} · Source: {destination.source}")
+    st.markdown(_pulse_html(apply_pulse(destination, _pulse_evidence())), unsafe_allow_html=True)
     flow = _application_flow(job_id)
+    from app.application_provider_ui_v1 import provider_progress
+
+    provider_summary = provider_progress(flow.get("provider_route"))
+    st.caption(
+        f"Application engine: {provider_summary['provider']} · "
+        f"{provider_summary['status']} · "
+        f"Employer receipt: {provider_summary['receipt']}"
+    )
     st.markdown(
         f"""<div class="product-callout"><div>
         <strong>Application · {esc(flow.get('display_status'))}</strong>
@@ -520,14 +583,15 @@ def _search_filters(namespace: str) -> dict[str, Any]:
     for key, default in defaults.items():
         st.session_state.setdefault(f"{namespace}_filter_{key}", stored.get(key, default))
     with st.container(key=f"product_{namespace}_search"):
-        search_left, search_right = st.columns((3.8, 1.2), gap="small")
-        with search_left:
-            query = st.text_input(
-                "Search jobs, companies, or locations",
-                placeholder="Try Techtronic, HR Coordinator, People Operations, or Philadelphia",
-                key=f"{namespace}_filter_query",
-            )
-        with search_right:
+        query = st.text_input(
+            "Search jobs, companies, or locations",
+            placeholder="Search a role, employer, or location…",
+            key=f"{namespace}_filter_query",
+        )
+        active = sum(st.session_state[f"{namespace}_filter_{key}"] != default
+                     for key, default in defaults.items() if key != "query")
+        filter_label = f"Filters · {active} active" if active else "Filters · location, match & sort"
+        with st.expander(filter_label, expanded=False, key=f"{namespace}_filter_disclosure"):
             scope = st.selectbox(
                 "Search in",
                 ["all_fields", "title_description", "title_company"],
@@ -538,17 +602,16 @@ def _search_filters(namespace: str) -> dict[str, Any]:
                 }[value],
                 key=f"{namespace}_filter_search_scope",
             )
-        exclude = st.text_input("Exclude terms", placeholder="Exclude terms — separate multiple terms with commas…", key=f"{namespace}_filter_exclude", label_visibility="collapsed")
-        controls = st.columns((1.15, 1, 1, 1.1), gap="small")
-        with controls[0]:
-            location = st.selectbox("Location", [""] + values["locations"], format_func=lambda x: x or "All locations", key=f"{namespace}_filter_location")
-        with controls[1]:
-            workplace = st.selectbox("Workplace", [""] + values["remote"], format_func=lambda x: x or "Any workplace", key=f"{namespace}_filter_workplace")
-        with controls[2]:
-            source = st.selectbox("Source", [""] + values["sources"], format_func=lambda x: x or "All sources", key=f"{namespace}_filter_source")
-        with controls[3]:
-            employment = st.selectbox("Employment", [""] + values["employment"], format_func=lambda x: x or "Any employment", key=f"{namespace}_filter_employment_type")
-        with st.expander("Advanced filters", expanded=False):
+            exclude = st.text_input("Exclude terms", placeholder="Separate excluded terms with commas…", key=f"{namespace}_filter_exclude")
+            controls = st.columns((1.15, 1, 1, 1.1), gap="small")
+            with controls[0]:
+                location = st.selectbox("Location", [""] + values["locations"], format_func=lambda x: x or "All locations", key=f"{namespace}_filter_location")
+            with controls[1]:
+                workplace = st.selectbox("Workplace", [""] + values["remote"], format_func=lambda x: x or "Any workplace", key=f"{namespace}_filter_workplace")
+            with controls[2]:
+                source = st.selectbox("Source", [""] + values["sources"], format_func=lambda x: x or "All sources", key=f"{namespace}_filter_source")
+            with controls[3]:
+                employment = st.selectbox("Employment", [""] + values["employment"], format_func=lambda x: x or "Any employment", key=f"{namespace}_filter_employment_type")
             advanced_one = st.columns((1.25, 1, 1), gap="small")
             with advanced_one[0]:
                 target_track = st.selectbox("Target track", [""] + values["target_tracks"], format_func=lambda x: x or "Any target track", key=f"{namespace}_filter_target_track")
@@ -564,11 +627,8 @@ def _search_filters(namespace: str) -> dict[str, Any]:
             with advanced_two[2]:
                 result_set = st.selectbox("Result set", ["all", "saved", "passed"], format_func=lambda x: {"all": "All jobs", "saved": "Saved", "passed": "Passed"}[x], key=f"{namespace}_filter_result_set")
             ats_only = st.toggle("Only jobs with an ATS-scored package", key=f"{namespace}_filter_ats_only")
-        reset_area, explanation = st.columns((1, 4), gap="small")
-        with reset_area:
+            st.caption("Filters update live using stored job, ATS, score and eligibility evidence.")
             st.button("Reset filters", key=f"{namespace}_reset_filters", use_container_width=True, on_click=_reset_search_filters, args=(namespace,))
-        with explanation:
-            st.caption("Filters update live. Every filter uses stored job, score, ATS, and eligibility evidence.")
     current = {
         "query": query, "exclude": exclude, "location": location, "source": source,
         "workplace": workplace, "employment_type": employment, "target_track": target_track,
@@ -585,33 +645,56 @@ def _search_filters(namespace: str) -> dict[str, Any]:
 
 def dashboard() -> None:
     _show_action_feedback()
-    page_intro("MUNSHI APPLY", "The right roles. The evidence to act.", "Search current opportunities, inspect why they match, and prepare application packages through the guarded workflow.")
+    from app.product_studio import dashboard_intro, dashboard_snapshot, recent_activity_markup
+
+    dashboard_intro()
     policy = volume_policy()
-    activity = activity_summary()
+    activity, recent_applications = dashboard_snapshot()
     label = {"unlimited": "Unlimited", "custom_limit": f"Custom target: {policy.get('daily_limit')}", "paused": "Paused", "pause_after_batch": "Pausing after current batch"}[policy["mode"]]
-    filters = _search_filters("dashboard")
     with st.container(key="product_dashboard_metrics"):
         summary = st.columns(5, gap="small")
-        summary[0].metric("Prepared today", activity["prepared_today"])
-        summary[1].metric("Submitted today", activity["submitted_today"], help="Only external submission evidence is counted.")
-        summary[2].metric("Needs review", activity["needs_you"])
-        summary[3].metric("In progress", activity["in_progress"])
-        summary[4].metric("Automation", label, help="Canonical safety and provider controls remain authoritative.")
+        summary[0].metric("Sent · 24 hours", activity["sent_24h"],
+                          help="Unique applications with provider-submitted timestamp or verified native receipt in the last rolling 24 hours.")
+        summary[1].metric("Employer confirmed", activity["employer_confirmed"],
+                          help="Current applications with independently verified employer receipt evidence.")
+        summary[2].metric("Needs your approval", activity["needs_approval"],
+                          help="Authoritative Application Center review queue; excludes historical n8n results.")
+        summary[3].metric("Receipt pending", activity["awaiting_receipt"],
+                          help="Provider reports submitted; independent employer receipt has not been matched.")
+        summary[4].metric("Outcome unknown", activity["outcome_unknown"],
+                          help="One-use dispatch claimed with no confirmed provider result. Never resubmit blindly.")
+    st.caption(
+        f"Application Center: {activity['tracked']} tracked · "
+        f"{activity['actively_processing']} active · "
+        f"{activity['recovery_needed']} need recovery · "
+        f"Discovery mode: {label}. "
+        "Metrics reflect application lifecycle evidence, not historical n8n results. "
+        "Refresh this page to load the latest state."
+    )
+    with st.expander("Refine your top matches", expanded=False):
+        filters = _search_filters("dashboard")
     jobs, count = fetch_jobs(**filters, page_size=4)
     st.markdown(f'<div class="section-row"><div><h2>Top matches</h2><span class="quiet">{count:,} opportunities · ranked by canonical Hunter score</span></div><a class="product-nav-link" href="?view=jobs" target="_self">Browse all jobs →</a></div>', unsafe_allow_html=True)
     if jobs:
+        pulse_evidence = _pulse_evidence()
         with st.container(key="product_dashboard_grid"):
             columns = st.columns(min(4, len(jobs)), gap="medium")
             for index, row in enumerate(jobs):
-                with columns[index % len(columns)]: _job_card(row, key_prefix="dashboard")
+                with columns[index % len(columns)]:
+                    _job_card(row, key_prefix="dashboard", pulse_evidence=pulse_evidence)
     else:
         st.markdown('<div class="empty-product">No jobs match the current filters. Change a filter or add a job with its complete description.</div>', unsafe_allow_html=True)
-    tracker = tracker_rows()
-    st.markdown('<div class="section-row"><div><h2>Application activity</h2><span class="quiet">Packages and dispatch evidence — never assumed submissions</span></div><a class="product-nav-link" href="?view=tracker" target="_self">Open tracker →</a></div>', unsafe_allow_html=True)
-    if tracker:
-        st.dataframe([{ "Company": x["company_name"], "Role": x["title"], "Status": x["display_status"], "ATS score": x["final_ats_score"], "Updated": x.get("completed_at") or x.get("updated_at") } for x in tracker[:8]], hide_index=True, use_container_width=True)
+    st.markdown('<div class="section-row"><div><h2>Application activity</h2><span class="quiet">Current application status and next steps</span></div><a class="product-nav-link" href="?view=tracker" target="_self">Open tracker →</a></div>', unsafe_allow_html=True)
+    if recent_applications:
+        st.markdown(recent_activity_markup([
+            {**row, "updated_label": _relative_time(row.get("updated_at"))}
+            for row in recent_applications
+        ]), unsafe_allow_html=True)
     else:
-        st.markdown('<div class="empty-product">No application-package or queue evidence yet. Preparing a job creates a traceable package record here.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="empty-product">Your applications will appear here as you prepare a role. Open a job to review its evidence and start a package.</div>', unsafe_allow_html=True)
+    from app.product_studio import engine_status_panel
+
+    engine_status_panel()
     _job_detail()
 
 
@@ -620,8 +703,18 @@ def browse_jobs() -> None:
     _open_manual_add_from_query()
     page_intro("DISCOVER", "Browse jobs", "Search every stored opportunity without losing the targeting, authorization, source, or score evidence behind the match.")
     filters = _search_filters("jobs")
-    page = int(st.session_state.get("product_jobs_page", 1))
-    jobs, count = fetch_jobs(**filters, page=page, page_size=16)
+    page_size = st.selectbox(
+        "Job cards per page",
+        (16, 32, 64),
+        key="product_jobs_page_size",
+        help="Shows more stored matches per page; does not alter discovery or eligibility rules.",
+    )
+    page = max(1, int(st.session_state.get("product_jobs_page", 1)))
+    jobs, count = fetch_jobs(**filters, page=page, page_size=page_size)
+    if count and page > (count + page_size - 1) // page_size:
+        page = 1
+        st.session_state["product_jobs_page"] = 1
+        jobs, count = fetch_jobs(**filters, page=page, page_size=page_size)
     header, add = st.columns((3.2, 1))
     with header: st.markdown(f"**{count:,} matching opportunities**  ·  Page {page}")
     with add:
@@ -629,18 +722,20 @@ def browse_jobs() -> None:
     if st.session_state.get("show_manual_job"):
         _manual_add()
     if jobs:
+        pulse_evidence = _pulse_evidence()
         with st.container(key="product_job_grid"):
             for start in range(0, len(jobs), 4):
                 with st.container(key=f"product_job_grid_row_{start}"):
                     cols = st.columns(4, gap="medium")
                     for index, row in enumerate(jobs[start:start + 4]):
-                        with cols[index]: _job_card(row, key_prefix="jobs")
+                        with cols[index]:
+                            _job_card(row, key_prefix="jobs", pulse_evidence=pulse_evidence)
         prev, _, next_ = st.columns((1, 3, 1))
         with prev:
             if st.button("← Previous", disabled=page <= 1, key="jobs_previous"):
                 st.session_state["product_jobs_page"] = page - 1; st.rerun()
         with next_:
-            if st.button("Next →", disabled=page * 16 >= count, key="jobs_next"):
+            if st.button("Next →", disabled=page * page_size >= count, key="jobs_next"):
                 st.session_state["product_jobs_page"] = page + 1; st.rerun()
     else:
         st.markdown('<div class="empty-product">No stored jobs match this view.</div>', unsafe_allow_html=True)
@@ -700,7 +795,7 @@ def _manual_add() -> None:
         result = st.session_state.get("manual_analysis")
         if isinstance(result, dict) and isinstance(result.get("job"), dict):
             job = dict(result["job"])
-            destination = describe_job_destination(job)
+            destination = _job_destination(job)
             missing = list(result.get("missing") or [])
             st.markdown("### Review job")
             identity = st.columns(3, gap="small")
@@ -859,17 +954,15 @@ def _render_auto_prepare_live_activity() -> None:
 
     @st.fragment(run_every="5s")
     def _fragment() -> None:
-        activity = activity_summary()
+        from app.dashboard_operational_metrics_v1 import operational_activity_summary
+
+        activity = operational_activity_summary()
         with st.container(key="product_auto_metrics"):
             counters = st.columns(4, gap="small")
-            counters[0].metric("Prepared today", activity["prepared_today"])
-            counters[1].metric(
-                "Submitted today",
-                activity["submitted_today"],
-                help="Requires recorded external submission evidence.",
-            )
-            counters[2].metric("Needs review", activity["needs_you"])
-            counters[3].metric("In progress", activity["in_progress"])
+            counters[0].metric("Needs approval", activity["needs_approval"])
+            counters[1].metric("Sent · 24 hours", activity["sent_24h"])
+            counters[2].metric("Receipt pending", activity["awaiting_receipt"])
+            counters[3].metric("Outcome unknown", activity["outcome_unknown"])
 
         try:
             from app import product_application_flow_v2 as complete_loop
@@ -1306,7 +1399,14 @@ def tracker() -> None:
             st.caption("No external artifact or application link is recorded.")
 
 def _inbox() -> None:
-    from app.gmail_integration import begin_authorization, connection_status, disconnect, gmail_configuration_status, stored_messages, sync_messages
+    from app.gmail_integration import (
+        begin_authorization,
+        connection_status,
+        disconnect,
+        gmail_configuration_status,
+        stored_messages,
+        sync_messages,
+    )
     status = gmail_configuration_status()
     st.caption(f"Gmail read-only · OAuth client: {status['oauth_client']} · Secure vault: {status['vault']}")
     if not status["ready"]:

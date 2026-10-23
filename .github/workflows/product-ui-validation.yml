@@ -38,7 +38,12 @@ jobs:
       - name: Run Product UI and producer-boundary tests
         run: |
           python -m pytest \
+            tests/test_product_studio.py \
+            tests/test_profile_intake_ui.py \
+            tests/test_uiux_staging_contract.py \
             tests/test_dashboard_smoke.py \
+            tests/test_device_auth.py \
+            tests/test_dashboard_device_cookie_caddy_v1.py \
             tests/test_initial_dashboard_runtime_hotfix_v1.py \
             tests/test_native_resume_quality_hotfix_v1.py \
             tests/test_native_resume_quality_hotfix_v2.py \
@@ -50,6 +55,12 @@ jobs:
             tests/test_product_n8n_dispatch.py \
             tests/test_product_manual_input.py \
             tests/test_linkedin_direct_apply_url_v1.py \
+            tests/test_linkedin_apply_button_v7.py \
+            tests/test_linkedin_link_recovery_v7.py \
+            tests/test_linkedin_verified_url_evidence_v5.py \
+            tests/test_linkedin_dashboard_links_v5.py \
+            tests/test_job_destination_v1.py \
+            tests/test_native_apply_pulse_v1.py \
             tests/test_product_schema.py \
             tests/test_secure_vault.py \
             tests/test_gmail_integration.py \

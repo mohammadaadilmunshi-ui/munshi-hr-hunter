@@ -19,6 +19,7 @@ import httpx
 
 from app.database import get_connection
 from app.integration_credentials_v1 import smtp2go_configured, smtp2go_credentials
+from app.notification_email_design_v1 import notification_email
 from app.tenant_foundation import OwnerContext, current_owner, ensure_schema as ensure_owner_schema
 
 SMTP2GO_API_URL = "https://api.smtp2go.com/v3/email/send"
@@ -214,12 +215,12 @@ def _notification_copy(event_kind: str, *, company: object, title: object) -> tu
     title_text = _safe_copy(title, maximum=200) or "application"
     if event_kind == "SUBMISSION_VERIFIED":
         return (
-            f"MUNSHI: application submitted to {company_text}",
+            f"{company_text} — {title_text} | Application submitted",
             f"SUBMITTED ✓\n\nMUNSHI verified the submission of your {title_text} application to {company_text}.",
         )
     if event_kind == "EMPLOYER_EMAIL_CONFIRMED":
         return (
-            f"MUNSHI: employer email confirmed for {company_text}",
+            f"{company_text} — {title_text} | Confirmation received",
             f"EMPLOYER EMAIL CONFIRMED ✓\n\nMUNSHI correlated an employer application-confirmation email for your {title_text} application to {company_text}.",
         )
     raise ValueError("Unsupported notification event kind.")
@@ -416,12 +417,16 @@ class SMTP2GOAdapter:
             raise NotificationError("SMTP2GO API URL must use HTTPS.")
 
     def send(self, message: dict[str, Any]) -> str:
+        # The canonical outbox remains plain-text and immutable for retries /
+        # auditing; both HTML and text are rendered from the same verified event.
+        html_body, text_body = notification_email(message)
         payload = {
             "api_key": self.api_key,
             "to": [str(message["destination_email"])],
-            "sender": self.sender,
+            "sender": f"MUNSHI <{self.sender}>",
             "subject": _safe_copy(message["subject"], maximum=300),
-            "text_body": _safe_copy(message["body_text"], maximum=4000),
+            "text_body": text_body,
+            "html_body": html_body,
         }
         client = self.client or httpx.Client(timeout=15.0)
         owns_client = self.client is None
@@ -430,11 +435,22 @@ class SMTP2GOAdapter:
             response.raise_for_status()
             decoded = response.json()
             data = decoded.get("data") if isinstance(decoded, dict) else None
-            if isinstance(data, dict):
-                identifier = data.get("email_id") or data.get("email_ids") or data.get("request_id")
-            else:
-                identifier = None
-            return _safe_copy(identifier or "smtp2go-accepted", maximum=240)
+            if not isinstance(data, dict):
+                raise NotificationDeliveryError("SMTP2GO returned an invalid send response.")
+            # SMTP2GO may return HTTP 200 with failed > 0; never mark these SENT.
+            try:
+                failures = int(data.get("failed") or 0)
+                succeeded = int(data.get("succeeded", 1))
+            except (ValueError, TypeError):
+                raise NotificationDeliveryError("SMTP2GO returned invalid delivery counts.")
+            if data.get("error") or failures != 0 or succeeded < 1 or data.get("failures"):
+                raise NotificationDeliveryError("SMTP2GO did not accept the message.")
+            identifier = data.get("email_id") or data.get("email_ids") or decoded.get("request_id")
+            if isinstance(identifier, list):
+                identifier = identifier[0] if len(identifier) == 1 else None
+            if not identifier or not isinstance(identifier, str):
+                raise NotificationDeliveryError("SMTP2GO did not confirm a message identifier.")
+            return _safe_copy(identifier, maximum=240)
         finally:
             if owns_client:
                 client.close()

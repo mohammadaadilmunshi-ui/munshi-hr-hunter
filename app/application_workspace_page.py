@@ -14,10 +14,13 @@ from typing import Any
 
 import streamlit as st
 
-from app.product_ui import esc, page_intro
 from app import product_application_flow_v2 as complete_loop
 from app.phase67_common import safe_owned_job_snapshot
-
+from app.product_experience_vnext import (
+    render_application_breadcrumb,
+    render_lifecycle_steps,
+)
+from app.product_ui import esc, page_intro
 
 _LIVE_PROGRESS_STATES = frozenset({
     "QUEUED",
@@ -210,42 +213,31 @@ def _render_job_header(snapshot: dict[str, Any]) -> None:
 
 def _render_application_lifecycle_guide() -> None:
     st.markdown("### What happens to every application")
-    steps = st.columns(5, gap="small")
-    step_copy = (
-        (
-            "1 · Prepare",
-            "MUNSHI builds the application package in the background.",
-        ),
-        (
-            "2 · Resolve gaps",
-            "You are asked only for information Candidate Truth cannot safely supply.",
-        ),
-        (
-            "3 · Review once",
-            "You review the complete package once, not the application step-by-step.",
-        ),
-        (
-            "4 · Apply",
-            "Approve & Submit grants one-use authority for the exact reviewed package.",
-        ),
-        (
-            "5 · Verify",
-            "MUNSHI records independent submission evidence and a durable receipt.",
-        ),
-    )
-    for column, (title, body) in zip(steps, step_copy):
-        with column:
-            with st.container(border=True):
-                st.markdown(f"**{title}**")
-                st.caption(body)
+    render_lifecycle_steps()
     st.info(
         "You only need to intervene when MUNSHI shows **Needs input**, "
-        "**Ready for review**, or a security checkpoint. Everything else is background work."
+        "**Ready for review**, or a protected security checkpoint."
+    )
+    st.caption(
+        "These are process stages, not proof of completed submission. "
+        "Only independently confirmed employer evidence counts as a verified receipt."
     )
 
 
-def _render_current_action(state: str) -> None:
+
+def _render_current_action(state: str, *, job_id: int | None = None) -> None:
     normalized = str(state or "").strip().upper()
+    if normalized == "READY_FOR_APPROVAL" and job_id is not None:
+        from app import relay_single_prepare_v1 as relay_one_click
+
+        intent = relay_one_click.status(int(job_id))
+        if intent["status"] in {"REQUESTED", "CLAIMED"}:
+            st.info(
+                "**Your action now:** none. The exact-job one-click Relay "
+                "authorization is recorded. MUNSHI will submit once when the "
+                "package and duplicate checks pass. Do not approve twice."
+            )
+            return
     if not normalized:
         st.info(
             "**Your action now:** none required unless you want to start this job manually. "
@@ -321,7 +313,7 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
     state = str(flow.get('state') or '')
 
     if not compact:
-        _render_current_action(state)
+        _render_current_action(state, job_id=int(job_id))
         st.markdown('### Application progress')
         st.caption(
             'The source of truth across package preparation, the one pre-browser customer '
@@ -334,45 +326,101 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
             'Prepare creates a durable application package and does not '
             'submit anything.'
         )
-        engine = st.radio(
-            'Resume engine',
-            ['NATIVE', 'N8N'],
+        submission_mode = st.radio(
+            'After the application package is ready',
+            ('REVIEW', 'RELAY_ONE_CLICK'),
             horizontal=True,
             format_func=lambda value: (
-                'MUNSHI Native' if value == 'NATIVE' else 'n8n'
+                'Review package first' if value == 'REVIEW'
+                else 'One-click prepare & submit with MUNSHI Relay'
             ),
-            key=f'complete_loop_engine_{job_id}',
-            help=(
-                'MUNSHI Native uses the truth-bound Native Resume engine. '
-                'n8n remains an optional resume-generation path.'
-            ),
+            key=f'complete_loop_submission_mode_{job_id}',
         )
+        relay_mode = submission_mode == 'RELAY_ONE_CLICK'
+        if relay_mode:
+            from app import relay_single_prepare_v1 as relay_one_click
+            from app import tsenta_backend_readiness_v1
+
+            relay_ready = bool(
+                tsenta_backend_readiness_v1.connection_status().get('execution_ready')
+            )
+            st.info(
+                'This one click authorizes MUNSHI Relay for this exact job only. '
+                'MUNSHI will generate and verify the resume, application answers, '
+                'cover-letter decision and immutable package, then submit without '
+                'another review if every eligibility and duplicate check passes. '
+                'Missing information or uncertain submissions stop safely.'
+            )
+            if not relay_ready:
+                st.warning('Relay backend execution is not verified. Choose Review package first.')
+            engine = 'NATIVE'
+        else:
+            relay_ready = False
+            engine = st.radio(
+                'Resume preparation method',
+                ['NATIVE', 'N8N'],
+                horizontal=True,
+                format_func=lambda value: (
+                    'MUNSHI Resume Studio' if value == 'NATIVE' else 'n8n (legacy)'
+                ),
+                key=f'complete_loop_engine_{job_id}',
+                help=(
+                    'MUNSHI Native uses the truth-bound Native Resume engine. '
+                    'n8n remains an optional legacy resume-generation path. '
+                    'Submission engine can be chosen at the final package review.'
+                ),
+            )
         if st.button(
-            'Prepare Application',
+            'Prepare & submit with Relay' if relay_mode else 'Prepare Application',
             type='primary',
             use_container_width=True,
+            disabled=relay_mode and not relay_ready,
             key=f'complete_loop_prepare_{job_id}',
         ):
+            started = None
             try:
-                with st.spinner(
-                    'Starting your evidence-bound application package…'
-                ):
-                    complete_loop.start_prepare_for_job(
-                        int(job_id),
-                        engine=engine,
+                with st.spinner('Creating an exact-job, durable preparation…'):
+                    if relay_mode:
+                        # Persist intent before the worker can reach its
+                        # submission engine; otherwise an unusually fast
+                        # Prepare can race the customer authorization record.
+                        relay_one_click.reserve_before_prepare(int(job_id))
+                    started = complete_loop.start_prepare_for_job(
+                        int(job_id), engine=engine,
                     )
+                    if relay_mode:
+                        if started.get('replayed'):
+                            raise PermissionError(
+                                'A preparation is already in progress. '
+                                'Use its existing review instead of creating new Relay consent.'
+                            )
+                        relay_one_click.authorize_new_operation(
+                            int(job_id), str(started.get('operation_id') or ''),
+                        )
             except Exception as error:
-                st.error(str(error))
+                if started:
+                    st.error(
+                        'Preparation was recorded but automatic Relay authority was '
+                        'not established. Open the existing package and use the '
+                        'ordinary review; do not start another application. '
+                        + str(error)
+                    )
+                else:
+                    st.error('No application was submitted. ' + str(error))
             else:
                 st.toast(
-                    'Application preparation started.',
+                    'Exact-job Relay authorization saved; preparing in background.'
+                    if relay_mode else 'Application preparation started.',
                     icon='✅',
                 )
                 st.rerun()
 
         st.caption(
+            'Relay one-click uses exact-job consent and one-use submission claims; '
+            'Review mode waits for Approve & Submit after preparation.'
+            if relay_mode else
             'Preparation only · no employer submission occurs until you review '
-            'the completed package and press Approve & Submit.'
+            'the package and press Approve & Submit.'
         )
         return flow
 
@@ -603,12 +651,12 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
         if card:
             score_col, keywords_col = st.columns(2, gap='small')
             score_col.metric(
-                'JD match',
+                'Supported requirements represented',
                 f"{card['coverage_percent']:.0f}% {card['coverage_label']}",
             )
             if int(card.get('keyword_count') or 0):
                 keywords_col.metric(
-                    'JD terms covered',
+                    'Exact JD phrases in resume',
                     f"{int(card['covered_keyword_count'])} of "
                     f"{int(card['keyword_count'])}",
                 )
@@ -618,10 +666,25 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                     f"{int(card['represented_requirement_count'])} of "
                     f"{int(card['supportable_requirement_count'])}",
                 )
+            if card.get("evidence_limited"):
+                st.warning(
+                    f"Evidence match is limited: {card['supportable_requirement_count']} "
+                    f"of {card['jd_requirement_count']} JD requirements were marked "
+                    "supportable. Do not interpret this as an overall ATS match."
+                )
             st.caption(
-                'Match uses truth-supportable Stage B requirements. '
-                'Unsupported claims never inflate this score.'
+                'The percentage measures truth-supportable requirements '
+                'represented in the resume. The phrase count separately '
+                'checks literal JD wording; these are not interchangeable.'
             )
+            if int(card.get('keyword_count') or 0) > 0 and not int(
+                card.get('covered_keyword_count') or 0
+            ):
+                st.warning(
+                    'No exact JD phrases matched, despite the supported-'
+                    'requirements score. Review the tailored resume wording; '
+                    'do not interpret the percentage as an ATS match guarantee.'
+                )
 
             st.markdown('**Required skills**')
             required_rows = list(card.get('required_skills') or [])
@@ -768,12 +831,95 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                     'It cannot create another customer review or approval prompt.'
                 )
 
-        if not review_record:
+        from app import relay_single_prepare_v1 as relay_one_click
+
+        relay_intent = relay_one_click.status(int(job_id))
+        relay_stage = str(relay_intent.get('status') or 'NONE')
+        relay_one_click_active = relay_stage in {
+            'PENDING_PREPARE', 'REQUESTED', 'CLAIMED',
+            'EXPIRED', 'INVALID', 'UNAVAILABLE',
+        } and (
+            relay_stage in {'PENDING_PREPARE', 'UNAVAILABLE'}
+            or relay_intent.get('operation_id') == str(prepare.get('operation_id') or '')
+        )
+        if relay_one_click_active:
+            if relay_stage in {'EXPIRED', 'INVALID', 'UNAVAILABLE'}:
+                st.warning(
+                    'This one-click Relay authorization cannot be verified or '
+                    'has expired. Submission is blocked; resolve the existing '
+                    'application record instead of approving a second attempt.'
+                )
+            else:
+                st.info(
+                    'One-click MUNSHI Relay consent is recorded for this exact '
+                    'preparation. The package remains visible for inspection, but '
+                    'a second Approve & Submit could duplicate the application. '
+                    'Relay will dispatch once when all package checks pass; '
+                    'an uncertain outcome requires reconciliation, never another click.'
+                )
+        elif not review_record:
             st.warning(
                 'The immutable pre-browser package review is still synchronizing. '
                 'ATS execution remains blocked.'
             )
         else:
+            from app import tsenta_backend_readiness_v1
+            from app.application_provider_ui_v1 import (
+                engine_selector_state,
+                tsenta_status_text,
+            )
+            # The engine is selected at the same immutable package-review
+            # boundary as the sole approval; never silently reserve Native
+            # while hiding the alternative.
+            selector = engine_selector_state(
+                route=flow.get('provider_route'),
+                tsenta_backend=tsenta_backend_readiness_v1.connection_status(),
+            )
+            st.markdown('**Submission engine**')
+            choice = st.radio(
+                'Choose the application submission engine',
+                options=selector['labels'],
+                index=selector['labels'].index(selector['selected']),
+                horizontal=True,
+                key=f'complete_loop_submission_engine_{job_id}',
+                disabled=selector['locked'],
+            )
+            if choice == 'MUNSHI Relay':
+                st.caption(
+                    'MUNSHI Relay securely sends your verified resume and '
+                    'application profile to a connected external service '
+                    'only after you select Approve & Submit.'
+                )
+            if choice == 'MUNSHI Relay' and not selector['can_submit_tsenta']:
+                st.warning(
+                    tsenta_status_text(
+                        tsenta_backend_readiness_v1.connection_status()
+                    )[1]
+                )
+            if selector['locked']:
+                st.info(
+                    selector['reason']
+                    + (' The current Native reservation can still use the '
+                       'normal first approval if one has not been issued.'
+                       if choice == 'MUNSHI Native' else '')
+                )
+            elif not selector['tsenta_dispatch_ready']:
+                st.caption(
+                    'MUNSHI Relay is visible for transparency but cannot submit '
+                    'until its authenticated dispatch worker and receipt '
+                    'reconciliation pass production validation.'
+                )
+            chosen_engine = (
+                'TSENTA' if choice == 'MUNSHI Relay' else 'NATIVE'
+            )
+            submit_enabled = (
+                chosen_engine == 'NATIVE'
+                and selector['selected'] == 'MUNSHI Native'
+                or (
+                    chosen_engine == 'TSENTA'
+                    and selector['can_submit_tsenta']
+                )
+            )
             skip_col, submit_col = st.columns([1, 2], gap='small')
             with skip_col:
                 if st.button(
@@ -794,19 +940,32 @@ def _render_complete_loop(job_id: int, *, compact: bool = False) -> dict[str, An
                     type='primary',
                     use_container_width=True,
                     key=f'complete_loop_approve_submit_{job_id}',
+                    disabled=not submit_enabled,
                 ):
                     try:
-                        with st.spinner('Applying now…'):
-                            complete_loop.approve_and_submit_for_job(
-                                int(job_id)
+                        with st.spinner('Recording package approval…'):
+                            result = complete_loop.approve_and_submit_for_job(
+                                int(job_id), execution_provider=chosen_engine
                             )
                     except Exception as error:
                         st.error(
                             'AutoApply could not start safely: ' + str(error)
                         )
                     else:
+                        if chosen_engine == 'TSENTA' and result.get('status') not in {
+                            'PROVIDER_SUBMITTED','EMPLOYER_CONFIRMED',
+                        }:
+                            st.warning(
+                                'Relay submission outcome needs verification. '
+                                'Do not start another application for this opening.'
+                            )
                         st.toast(
-                            'Approval recorded. Applying now.',
+                            (
+                                'MUNSHI Relay: '
+                                + str(result.get('status') or '').replace('_',' ').title()
+                                if chosen_engine == 'TSENTA'
+                                else 'Approval recorded. Browser preparation is pending.'
+                            ),
                             icon='✅',
                         )
                         st.rerun()
@@ -1197,6 +1356,7 @@ def render() -> None:
         pass
 
     snapshot = safe_owned_job_snapshot(job_id)
+    render_application_breadcrumb(job_id)
     _render_job_header(snapshot)
     _render_complete_loop_live(job_id)
     st.divider()

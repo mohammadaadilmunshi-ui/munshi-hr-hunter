@@ -18,10 +18,9 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.database import get_connection
-from app.phase67_common import safe_owned_job_snapshot
 from app.phase8_application_truth import current_application_truth_projection
+from app.phase67_common import safe_owned_job_snapshot
 from app.tenant_foundation import current_owner, current_owner_readonly
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -468,6 +467,46 @@ def _production_receipt(application_id: str | None) -> dict[str, Any] | None:
         connection.close()
 
 
+def _provider_route(job_id: int) -> dict[str, Any] | None:
+    """Read the shared Native/MUNSHI Relay ownership projection without exposing IDs."""
+    connection = get_connection()
+    try:
+        if not _table_exists(connection, 'application_provider_routes_v1'):
+            return None
+        owner = current_owner_readonly(connection)
+        row = connection.execute(
+            '''SELECT route_id,application_id,job_id,employer_url_sha256,
+                      destination_evidence,provider,state,preflight_package_id,
+                      package_digest,candidate_profile_digest,resume_sha256,
+                      attempt_count,max_attempts,next_attempt_at,last_error_code,
+                      provider_status,provider_application_id_sha256,
+                      receipt_method,receipt_evidence_digest,
+                      provider_submitted_at,employer_confirmed_at,
+                      updated_at
+                 FROM application_provider_routes_v1
+                WHERE tenant_id=? AND user_id=? AND job_id=?
+                ORDER BY datetime(updated_at) DESC,rowid DESC LIMIT 1''',
+            (owner.tenant_id, owner.user_id, int(job_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result['dispatch_claim_exists'] = False
+        if (
+            str(result.get('provider') or '') == 'TSENTA'
+            and _table_exists(connection,'tsenta_external_dispatch_claims_v1')
+        ):
+            claimed = connection.execute(
+                """SELECT 1 FROM tsenta_external_dispatch_claims_v1
+                   WHERE tenant_id=? AND user_id=? AND route_id=? LIMIT 1""",
+                (owner.tenant_id,owner.user_id,result['route_id']),
+            ).fetchone()
+            result['dispatch_claim_exists'] = claimed is not None
+        return result
+    finally:
+        connection.close()
+
+
 def _effective_state(
     prepare: dict[str, Any] | None,
     lifecycle: dict[str, Any] | None,
@@ -487,6 +526,7 @@ def _effective_state(
 def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
     prepare = _latest_prepare(int(job_id))
     lifecycle = _latest_lifecycle(int(job_id))
+    provider_route = _provider_route(int(job_id))
     state, authority = _effective_state(prepare, lifecycle)
     tasks = list((prepare or {}).get('tasks') or [])
     runtime_questions = _runtime_questions(tasks)
@@ -515,6 +555,28 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
     production_receipt = _production_receipt(application_id)
     if production_receipt is not None:
         state, authority = 'SUBMITTED', 'verified_production_receipt'
+    elif (
+        provider_route is not None
+        and provider_route.get('provider') == 'TSENTA'
+        and provider_route.get('state') == 'EMPLOYER_CONFIRMED'
+        and provider_route.get('receipt_evidence_digest')
+        and provider_route.get('employer_confirmed_at')
+    ):
+        state, authority = 'SUBMITTED', 'relay_employer_receipt_verified'
+    elif (
+        provider_route is not None
+        and provider_route.get('provider') == 'TSENTA'
+        and provider_route.get('state') == 'PROVIDER_SUBMITTED'
+    ):
+        state, authority = 'SUBMISSION_UNVERIFIED', 'relay_provider_submitted'
+    elif (
+        provider_route is not None
+        and provider_route.get('provider') == 'TSENTA'
+        and provider_route.get('dispatch_claim_exists')
+    ):
+        # After a one-use claim, even a lost provider response cannot enable
+        # the old Review action. Reconcile; never try the application again.
+        state, authority = 'SUBMITTING', 'relay_outcome_pending'
     elif internal_review is not None and internal_review.get('approval_consumed'):
         state, authority = 'SUBMITTING', 'one_use_submit_authorization'
     else:
@@ -547,7 +609,13 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
         elif execution_mandate is not None and state in {
             'RUNNING', 'READY_FOR_REVIEW', 'READY_TO_SUBMIT'
         }:
-            state, authority = 'SUBMITTING', 'single_customer_approval_recorded'
+            # A customer mandate permits preparation; it does NOT prove the
+            # employer form has been opened or that submission has started.
+            # Keep the waiting-for-ATS handoff distinct from actual execution.
+            if ats_task is not None and str(ats_task.get('status') or '') == 'PENDING':
+                state, authority = 'PREPARING_ATS', 'mandate_waiting_for_ats'
+            else:
+                state, authority = 'SUBMITTING', 'single_customer_approval_recorded'
     progress = _required_progress(tasks)
 
     if state in {
@@ -604,7 +672,12 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
         'state': state,
         'authority': authority,
         'display_status': (
-            'Applying now'
+            'Submission outcome pending' if authority == 'relay_outcome_pending'
+            else 'Provider reports submitted · receipt pending'
+            if authority == 'relay_provider_submitted'
+            else 'Employer confirmation verified'
+            if authority == 'relay_employer_receipt_verified'
+            else 'Applying now'
             if authority == 'runtime_resolution_in_progress'
             else STATE_LABELS.get(
                 state,
@@ -623,6 +696,7 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
         # Retired user-facing late-review field: deliberately never populated.
         'customer_review': None,
         'production_receipt': production_receipt,
+        'provider_route': provider_route,
         'cta': cta,
         'cta_label': cta_label,
         'submission_authority': False,
@@ -770,7 +844,51 @@ def start_prepare_for_job(
     return result
 
 
-def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
+def _reserve_native_route_for_approval(
+    *, job_id: int, preflight_package_id: str, click_key: str
+) -> dict[str, Any]:
+    """Lock the exact employer opening before minting a Native mandate.
+
+    Dashboard engine reservations and Complete Loop mandates must share the
+    same one-provider identity. An existing TSENTA lock fails closed here; a
+    matching NATIVE lock is replayed. This is not submission authority.
+    """
+    from app import application_provider_router_v1 as provider_router
+    from app.application_provider_ui_v1 import verified_apply_destination
+
+    connection = get_connection()
+    try:
+        connection.execute('PRAGMA query_only=ON')
+        row = connection.execute(
+            'SELECT * FROM jobs WHERE id=?', (int(job_id),)
+        ).fetchone()
+        if row is None:
+            raise LookupError('The selected application job no longer exists.')
+        destination = verified_apply_destination(dict(row), connection)
+    finally:
+        connection.close()
+    if not destination:
+        raise PermissionError(
+            'An independently verified employer application link is required '
+            'before authorizing Native execution.'
+        )
+
+    return provider_router.select_provider(
+        job_id=int(job_id),
+        provider='NATIVE',
+        verified_employer_url=str(destination),
+        preflight_package_id=str(preflight_package_id),
+        idempotency_key='native-approved-' + hashlib.sha256(
+            str(click_key).encode('utf-8')
+        ).hexdigest()[:40],
+    )
+
+
+def approve_and_submit_for_job(
+    job_id: int, *, approval_source: str = "CUSTOMER_CLICK",
+    consent_policy_id: str = "", consent_slot: str = "",
+    execution_provider: str = "NATIVE",
+) -> dict[str, Any]:
     """Record the sole customer package approval before browser execution.
 
     No submit authority is minted here because the live browser form does not
@@ -778,6 +896,38 @@ def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
     snapshot and derives the one-use submit authority from this mandate.
     """
     from app import application_execution_mandate_v1 as mandate_v1
+
+    selected_engine = str(execution_provider or '').strip().upper()
+    if selected_engine == 'TSENTA':
+        source = str(approval_source or '').strip().upper()
+        if source not in {'CUSTOMER_CLICK', 'ONE_CLICK_PREPARE_RELAY'}:
+            raise PermissionError(
+                'MUNSHI Relay requires exact-job customer authorization.'
+            )
+        from app.relay_application_dispatch_v1 import submit_from_dashboard
+
+        current = flow_for_job(int(job_id))
+        review = dict(current.get('package_review') or {})
+        preflight = dict((current.get('artifacts') or {}).get('preflight') or {})
+        if source == 'ONE_CLICK_PREPARE_RELAY':
+            from app.relay_single_prepare_v1 import validate_claimed_intent
+
+            if not validate_claimed_intent(
+                job_id=int(job_id),
+                operation_id=str(consent_slot or ''),
+                review_digest=str(review.get('review_digest') or ''),
+                preflight_package_id=str(preflight.get('preflight_package_id') or ''),
+            ):
+                raise PermissionError(
+                    'The single-prepare Relay authorization is absent, stale, or already invalid.'
+                )
+        return submit_from_dashboard(
+            job_id=int(job_id),
+            review_digest=str(review.get('review_digest') or ''),
+            preflight_package_id=str(preflight.get('preflight_package_id') or ''),
+        )
+    if selected_engine != 'NATIVE':
+        raise ValueError('Unknown submission engine.')
 
     flow = flow_for_job(int(job_id))
     if str(flow.get('state') or '') != 'READY_FOR_APPROVAL':
@@ -788,8 +938,21 @@ def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
     if not review or not str(preflight.get('preflight_package_id') or ''):
         raise ValueError('The exact pre-browser package review is unavailable.')
 
+    source = str(approval_source or '').strip().upper()
+    if source not in {'CUSTOMER_CLICK', 'STANDING_POLICY'}:
+        raise PermissionError('Unsupported approval source.')
+    if source == 'STANDING_POLICY':
+        from app import native_standing_consent_v1 as standing
+        if not standing.validate_reserved_slot(
+            slot=consent_slot,
+            policy_id=consent_policy_id,
+            job_id=int(job_id),
+            review_digest=str(review['review_digest']),
+        ):
+            raise PermissionError('Bounded standing consent slot is not current.')
     click_identity = (
         f"{review['preflight_package_id']}:{review['review_digest']}:"
+        f"{source}:{consent_policy_id if source == 'STANDING_POLICY' else ''}:"
         "approve-and-submit-pre-browser-v2"
     )
     click_key = (
@@ -806,6 +969,17 @@ def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
             'page_count': int(preflight.get('cover_letter_page_count') or 0),
         }
 
+    # The provider lock must precede the one-use customer mandate. Reserving
+    # does not execute or submit anything; it prevents simultaneous TSENTA
+    # ownership of an opening already approved for the Native Complete Loop.
+    route = _reserve_native_route_for_approval(
+        job_id=int(job_id),
+        preflight_package_id=str(preflight['preflight_package_id']),
+        click_key=click_key,
+    )
+    if str(route.get('provider') or '') != 'NATIVE':
+        raise PermissionError('Native execution provider could not be locked.')
+
     mandate = mandate_v1.approve_package(
         preflight_package_id=str(preflight['preflight_package_id']),
         cover_letter_decision=str(
@@ -817,11 +991,14 @@ def approve_and_submit_for_job(job_id: int) -> dict[str, Any]:
     )
     return {
         'mandate_id': str(mandate['mandate_id']),
-        'status': 'APPLYING_NOW',
+        'approval_source': source,
+        'status': 'PREPARING_ATS',
         'customer_approval_complete': True,
         'additional_customer_approval_required': False,
         'submit_authorization': None,
         'submission_authority': False,
+        'browser_execution_started': False,
+        'employer_receipt_verified': False,
     }
 
 

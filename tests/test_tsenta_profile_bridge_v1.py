@@ -5,6 +5,7 @@ import pytest
 from app.tsenta_profile_bridge_v1 import (
     build_inert_tsenta_handoff,
     compare_authorized_profile,
+    compare_candidate_truth_snapshot,
 )
 
 
@@ -52,6 +53,52 @@ def test_sensitive_token_and_passport_rejected():
                 source="authorized_tsenta_mcp",
                 explicit_profile_read_approval=True,
             )
+
+
+def test_candidate_truth_snapshot_comparison_resolves_protected_values_in_memory():
+    snapshot = {
+        "profile_revision": 7,
+        "facts": [
+            {"key": "contact.first_name", "value": "Example", "protected": False},
+            {"key": "contact.country", "value": "US", "protected": False},
+            {
+                "key": "application_defaults.authorized_to_work",
+                "value_reference": "hunter-vault://private",
+                "protected": True,
+            },
+        ],
+    }
+    report = compare_candidate_truth_snapshot(
+        snapshot,
+        {
+            "authorized_to_work": True,
+            "sponsorship_required": False,
+            "work_authorization_country": "United States",
+        },
+        {
+            "data": {
+                "personalInformation": {"firstName": " example ", "country": "USA"},
+                "workAuthorization": {
+                    "isAuthorizedToWork": True,
+                    "needsSponsorship": True,
+                    "workAuthorizations": [{"countryCode": "US"}],
+                },
+            }
+        },
+        source="authorized_tsenta_mcp",
+        explicit_profile_read_approval=True,
+    )
+
+    assert report["field_statuses"]["given_name"] == "MATCH"
+    assert report["field_statuses"]["country"] == "MATCH"
+    assert report["field_statuses"]["authorized_to_work"] == "MATCH"
+    assert report["field_statuses"]["work_authorization_country"] == "MATCH"
+    assert (
+        report["field_statuses"]["sponsorship_required"] == "CONFLICT_REQUIRES_REVIEW"
+    )
+    assert report["candidate_truth_modified"] is False
+    assert "hunter-vault" not in str(report)
+    assert "Example" not in str(report)
 
 
 def test_inert_handoff_contains_digests_no_credentials_or_submit():

@@ -43,7 +43,6 @@ def pastel_for(value: Any) -> str:
 def product_css() -> str:
     return """
     <style>
-    @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400..800&display=swap");
     :root{color-scheme:light!important;--m-font:"Manrope","Avenir Next",Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--m-bg:#F6F7F4;--m-soft:#EFF2EE;--m-surface:#FFF;--m-ink:#142129;--m-secondary:#44545B;--m-muted:#66737B;--m-border:#DFE5E0;--m-strong:#CED7D0;--m-forest:#123D31;--m-forest-hover:#0B3026;--m-active:#E4EFE9;--m-brass:#9B6E2D;--m-danger:#A84249;--m-radius:18px}
     *{box-sizing:border-box}html,body,.stApp,[data-baseweb]{color-scheme:light!important}html,body,[class*="css"],.stApp{font-family:var(--m-font)!important}button,input,textarea,select,[role="button"],[data-baseweb]{font-family:var(--m-font)!important}html,body{overflow-x:hidden;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;font-feature-settings:"kern" 1,"liga" 1}
     .stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"]{background:var(--m-bg)!important;color:var(--m-ink)}[data-testid="stHeader"],[data-testid="stDecoration"],[data-testid="stStatusWidget"],[data-testid="stSidebar"],button[kind="header"]{display:none!important}.block-container{width:100%!important;max-width:1680px!important;padding:0 2.25rem 4rem!important;margin:0 auto!important}
@@ -222,7 +221,13 @@ def product_css() -> str:
 
 
 def inject_css() -> None:
-    st.markdown(product_css(), unsafe_allow_html=True)
+    # Older profile/settings renderers reinject the base layer. Keep the final
+    # shared system attached there too, rather than reverting the page mid-run.
+    from app.product_studio import shell_css
+
+    # Streamlit sends style-only HTML to its event container, so CSS does not
+    # create document slots or wait for Markdown parsing/lazy renderer modules.
+    st.html(shell_css())
 
 
 def page_intro(kicker: str, title: str, copy: str) -> None:

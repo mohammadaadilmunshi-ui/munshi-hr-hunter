@@ -1,0 +1,104 @@
+name: Netcup Hunter Code-Only Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Exact approved 40-character release SHA"
+        required: true
+        type: string
+      expected_live_sha:
+        description: "Exact currently running Hunter SHA"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+      base: ${{ steps.check.outputs.base }}
+    steps:
+      - name: Validate exact, one-time code-only release
+        id: check
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.commit_sha }}
+          EXPECTED_LIVE: ${{ inputs.expected_live_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          [[ "$EXPECTED_LIVE" == "e643fff0d346cb3dd67b14374d9be86b45fead5a" ]] || exit 3
+          echo "sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "base=$EXPECTED_LIVE" >> "$GITHUB_OUTPUT"
+
+  ci:
+    needs: validate
+    uses: ./.github/workflows/deployment-ci-reusable.yml
+    with:
+      commit_sha: ${{ needs.validate.outputs.sha }}
+
+  deploy-code-only:
+    needs: [validate, ci]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact tested release SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Verify approved source branch and bundle
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
+          BASE_SHA: ${{ needs.validate.outputs.base }}
+        run: |
+          set -euo pipefail
+          BRANCH=feat/tsenta-connector-completion-20261015
+          git fetch --no-tags origin "$BRANCH:refs/remotes/origin/$BRANCH"
+          [[ "$(git rev-parse "refs/remotes/origin/$BRANCH")" == "$TARGET_SHA" ]] || {
+            echo 'Approved branch head changed; do not deploy a stale SHA' >&2
+            exit 11
+          }
+          git merge-base --is-ancestor "$BASE_SHA" "$TARGET_SHA"
+          bash -n deploy/netcup/deploy_code_only_release.sh
+          git bundle create "$RUNNER_TEMP/munshi-codeonly.bundle" "refs/remotes/origin/$BRANCH"
+          git bundle verify "$RUNNER_TEMP/munshi-codeonly.bundle"
+
+      - name: Configure restricted pinned-identity SSH
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_codeonly"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/netcup_codeonly" "$HOME/.ssh/known_hosts"
+
+      - name: Swap Hunter image without a database migration
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
+          BASE_SHA: ${{ needs.validate.outputs.base }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i "$HOME/.ssh/netcup_codeonly" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+          DEPLOY_COMMAND="/opt/munshi/bin/deploy-code-only-release --commit $TARGET_SHA --branch feat/tsenta-connector-completion-20261015"
+          # The existing forced-command GitHub key permits ONLY explicit
+          # approved gateway verbs. No arbitrary SSH, SCP, install or mkdir.
+          cat "$RUNNER_TEMP/munshi-codeonly.bundle" | \
+            "${SSH[@]}" "$NETCUP_USER@$NETCUP_HOST" "$DEPLOY_COMMAND"

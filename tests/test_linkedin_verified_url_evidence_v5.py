@@ -447,3 +447,23 @@ def test_expired_proof_blocks_submission_independently_of_evidence_expiry():
             signed_link_proof=signed,
             trusted_link_public_keys=keys,
         )
+
+
+def test_apply_control_capture_still_requires_independent_signature():
+    from app.linkedin_verified_url_evidence_v5 import persist_verified_evidence as unsigned_writer
+    result = replace(verified(), resolution_source='linkedin_apply_button', evidence={
+        'identity_evidence': 'strong', 'needs_employer_confirmation': False,
+        'response_sha256': 'a' * 64, 'capture_sources': ['apply_control'],
+        'submit_authorized': False,
+    })
+    c = setup()
+    with pytest.raises(PermissionError, match='Signed exact-job'):
+        unsigned_writer(c, job(), result, verified_at=NOW, now=NOW, allow_write=True)
+    persist_verified_evidence(c, job(), result, verified_at=NOW, now=NOW, allow_write=True)
+    assert latest_verified_for_job(c, job(), now=NOW)['resolution_source'] == 'linkedin_apply_button'
+
+
+def test_apply_capture_cannot_be_verified_without_response_provenance():
+    result = replace(verified(), resolution_source='linkedin_apply_button')
+    with pytest.raises(ValueError, match='capture provenance'):
+        validate_verified_evidence(job(), result, verified_at=NOW, now=NOW)

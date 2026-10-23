@@ -16,7 +16,6 @@ import streamlit as st
 from app.product_state import research_snapshot, tracker_rows
 from app.product_ui import esc, page_intro
 
-
 _RESEARCH_SECTIONS = (
     "Opportunities",
     "Companies",
@@ -79,11 +78,12 @@ def _card_grid(
     if not visible:
         return
     count = min(max(1, int(columns)), len(visible))
+    pulse_evidence = product_pages._pulse_evidence()
     grid = st.columns(count, gap="medium")
     for index, row in enumerate(visible):
         job_id = int(row["id"])
         with grid[index % count]:
-            product_pages._job_card(row, key_prefix=key_prefix)
+            product_pages._job_card(row, key_prefix=key_prefix, pulse_evidence=pulse_evidence)
             footer = str((footer_by_id or {}).get(job_id) or "").strip()
             if footer:
                 st.caption(footer)
@@ -160,6 +160,8 @@ def render_tracker(product_pages: Any) -> None:
         horizontal=True,
         label_visibility="collapsed",
         key="product_tracker_tab",
+        on_change=product_pages._sync_subroute,
+        args=("tab", "product_tracker_tab", {"Pipeline": "pipeline", "Inbox": "inbox"}),
     )
     if tab == "Inbox":
         product_pages._inbox()
@@ -439,6 +441,11 @@ def render_research(product_pages: Any) -> None:
         horizontal=True,
         label_visibility="collapsed",
         key="unified_research_section",
+        on_change=product_pages._sync_subroute,
+        args=("section", "unified_research_section", {
+            "Opportunities": "opportunities", "Companies": "companies",
+            "Role signals": "roles", "Risks": "risks",
+        }),
     )
     if section == "Opportunities":
         _research_opportunities(product_pages, snapshot)
@@ -466,6 +473,9 @@ _APPLICATION_FILTERS = {
     "Applying": "applying",
     "Needs attention": "needs_attention",
     "Submitted": "submitted",
+    "Interviewing": "interviewing",
+    "Offers": "offers",
+    "Closed": "closed",
     "Archived": "archived",
     "All": "all",
 }
@@ -482,12 +492,22 @@ def _requested_application_id() -> str | None:
 def _select_application(job_id: int, application_id: str | None = None) -> None:
     st.query_params["view"] = "prepare-application"
     st.query_params["job"] = str(int(job_id))
+    try:
+        del st.query_params["external"]
+    except (KeyError, TypeError):
+        pass
     if application_id:
         st.query_params["application"] = str(application_id)
 
 
+def _select_external_application(external_key: str) -> None:
+    st.query_params["view"] = "prepare-application"
+    _clear_application_selection()
+    st.query_params["external"] = external_key
+
+
 def _clear_application_selection() -> None:
-    for key in ("job", "application"):
+    for key in ("job", "application", "external"):
         try:
             del st.query_params[key]
         except (KeyError, TypeError):
@@ -534,6 +554,12 @@ def _filter_application_views(
             (group == "all" and not item.archived)
             or (group == "archived" and item.archived)
             or (not item.archived and item.state_group == group)
+            or (not item.archived and group == "interviewing"
+                and item.canonical_state in {"INTERVIEW", "ASSESSMENT"})
+            or (not item.archived and group == "offers"
+                and item.canonical_state == "OFFER")
+            or (not item.archived and group == "closed"
+                and item.canonical_state in {"REJECTED", "WITHDRAWN"})
         )
         and (group == "all" or item.archived == (group == "archived"))
         and (
@@ -544,7 +570,13 @@ def _filter_application_views(
     ]
 
 
-def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
+from app.product_experience_vnext import (
+    application_action_copy,
+    application_stage_markup,
+)
+
+
+def _render_application_rail(views: list[Any], selected: Any | None) -> None:
     st.markdown("### Application Center")
     # The default shows every durable application, already priority-sorted by
     # the shared read model. Filters narrow the same identities; they never hide
@@ -593,31 +625,35 @@ def _render_application_rail(views: list[Any], selected_id: int | None) -> None:
             if destination:
                 st.caption(destination)
             st.caption(f"Updated {_updated_label(item.last_update)}")
-            st.caption(f"Next: {item.next_action}")
+            st.caption(f"Next: {application_action_copy(item.canonical_state, item.next_action)}")
+            external = getattr(item, "job_id", None) is None
+            chosen = selected is not None and (
+                (external and getattr(selected, "external_key", None) == item.external_key)
+                or (not external and selected.job_id == item.job_id)
+            )
             st.button(
-                "Selected" if selected_id == item.job_id else "Open application",
-                key=f"application_rail_{item.job_id}",
-                type="primary" if selected_id == item.job_id else "secondary",
-                disabled=selected_id == item.job_id,
+                "Selected" if chosen else "Open application",
+                key=(f"application_rail_external_{item.external_key}"
+                     if external else f"application_rail_{item.job_id}"),
+                type="primary" if chosen else "secondary",
+                disabled=chosen,
                 use_container_width=True,
-                on_click=_select_application,
-                args=(item.job_id, item.application_id),
+                on_click=(_select_external_application if external else _select_application),
+                args=((item.external_key,) if external else (item.job_id, item.application_id)),
             )
 
 
 def _render_lifecycle(model: Any) -> None:
-    stages = (
-        "Job intelligence",
-        "Resume tailoring",
-        "Package checks",
-        "Needs review",
-        "Applying now",
-        "Submitted",
+    receipt = dict(model.receipt_summary or {})
+    confirmed = (
+        bool(receipt.get("receipt_id"))
+        and receipt.get("verification_status") == "VERIFIED"
     )
-    columns = st.columns(len(stages), gap="small")
-    for index, (column, label) in enumerate(zip(columns, stages), 1):
-        marker = "●" if index == model.stage_index else "✓" if index < model.stage_index else "○"
-        column.markdown(f"**{marker} {label}**" if index == model.stage_index else f"{marker} {label}")
+    st.markdown(
+        application_stage_markup(model.stage_index, receipt_verified=confirmed),
+        unsafe_allow_html=True,
+    )
+
 
 
 def _render_application_header(model: Any) -> None:
@@ -627,11 +663,29 @@ def _render_application_header(model: Any) -> None:
         <strong>{esc(model.company, 'Company')} · {esc(model.title, 'Untitled role')}</strong>
         <span>{esc(model.location, 'Location not recorded')} · {esc(model.work_arrangement)} · {match}</span>
         <span>Apply via: {esc(model.apply_via, 'Destination not recorded')} · Source: {esc(model.source_platform, 'Not recorded')}</span>
-        <span>Updated {_updated_label(model.last_update)} · Next: {esc(model.next_action)}</span>
+        <span>Updated {_updated_label(model.last_update)} · Next: {esc(application_action_copy(model.canonical_state, model.next_action))}</span>
         </div><span class="status-chip">{esc(model.human_state)}</span></div>""",
         unsafe_allow_html=True,
     )
     _render_lifecycle(model)
+    try:
+        from app.external_application_tracker_v1 import linked_application_stage_for_job
+
+        linked = linked_application_stage_for_job(model.job_id)
+    except Exception:  # noqa: BLE001 - optional tracker never breaks lifecycle
+        linked = None
+    if linked:
+        st.info(f"Recruitment tracker: {linked['label']}")
+        st.caption(
+            "The connected tracker reports this stage. It does not independently "
+            "verify an employer submission receipt."
+        )
+        with st.expander("Recruitment stage history"):
+            for event in linked["history"]:
+                st.write(
+                    f"• {str(event.get('status') or '').title()} · "
+                    f"{event.get('at') or 'Date unavailable'}"
+                )
 
 
 def _render_application_visibility_feedback() -> None:
@@ -644,36 +698,40 @@ def _render_application_visibility_feedback() -> None:
 
 
 def _render_application_visibility_actions(model: Any) -> None:
-    actions = st.columns((1, 1, 2.4), gap="small")
-    actions[0].button(
-        "Close",
-        key=f"application_close_{model.job_id}",
-        use_container_width=True,
-        on_click=_clear_application_selection,
-        help="Close this workspace selection. The application stays in your list.",
-    )
-    if model.application_id:
-        if model.archived:
-            actions[1].button(
-                "Restore",
-                key=f"application_restore_{model.job_id}",
-                type="primary",
-                use_container_width=True,
-                on_click=_restore_application,
-                args=(model.application_id, model.job_id),
-            )
-        else:
-            actions[1].button(
-                "Archive",
-                key=f"application_archive_{model.job_id}",
-                use_container_width=True,
-                on_click=_archive_application,
-                args=(model.application_id, model.job_id),
-                help="Remove from active views without deleting any application evidence.",
-            )
-    actions[2].caption(
-        "Archive changes visibility only. Job, resume, review, submission, and receipt history remain intact."
-    )
+    # These are workspace navigation/visibility actions, not submit actions.
+    # Keep them together on narrow screens instead of producing three tall
+    # stacked columns that obscure the issue and diagnostic details.
+    with st.container(key=f"application_visibility_controls_{model.job_id}"):
+        actions = st.columns(2, gap="small")
+        actions[0].button(
+            "Close",
+            key=f"application_close_{model.job_id}",
+            use_container_width=True,
+            on_click=_clear_application_selection,
+            help="Close this workspace selection. The application stays in your list.",
+        )
+        if model.application_id:
+            if model.archived:
+                actions[1].button(
+                    "Restore",
+                    key=f"application_restore_{model.job_id}",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=_restore_application,
+                    args=(model.application_id, model.job_id),
+                )
+            else:
+                actions[1].button(
+                    "Archive",
+                    key=f"application_archive_{model.job_id}",
+                    use_container_width=True,
+                    on_click=_archive_application,
+                    args=(model.application_id, model.job_id),
+                    help="Remove from active views without deleting any application evidence.",
+                )
+        st.caption(
+            "Archive changes visibility only. Job, resume, review, submission, and receipt history remain intact."
+        )
 
 
 def _run_recovery(action: str, job_id: int) -> None:
@@ -754,6 +812,8 @@ def _render_advanced_diagnostics(model: Any) -> None:
         )
         if model.projection_error:
             st.write(f"Projection error type: `{model.projection_error}`")
+        if model.failure_code:
+            st.write(f"Failure code: `{model.failure_code}`")
 
 
 def _render_application_state(app_workspace: Any, model: Any) -> None:
@@ -790,10 +850,21 @@ def _render_application_state(app_workspace: Any, model: Any) -> None:
     elif model.protected_checkpoint:
         st.warning("Action required: the employer requires a protected human checkpoint such as CAPTCHA, MFA, passkey, biometrics, or identity verification.")
         st.caption("Complete the checkpoint in this same application session. Normal employer questions remain automated from truthful stored data.")
+    elif state == "SUBMISSION_UNVERIFIED":
+        st.info(
+            "The submission provider reports the application was sent. "
+            "MUNSHI is checking for a matching employer acknowledgment; "
+            "do not approve or submit it again."
+        )
+        st.caption("Use Check provider & refresh statuses to read the managed inbox now.")
     elif model.state_group == "needs_attention":
         st.warning(model.issue_summary or "MUNSHI stopped safely before claiming success.")
         st.write(f"Stopped at: **{model.stopped_at or model.safe_progress_stage}**")
+        if model.failure_code:
+            st.caption(f"Diagnostic code: {model.failure_code}")
         st.write(f"Employer submission attempted: **{'Possibly — verify first' if model.submission_attempted else 'No evidence of an attempt'}**")
+        if model.submission_attempted:
+            st.info("Submission-related evidence exists. Refresh provider status; do not start another attempt.")
     elif model.state_group == "submitted":
         receipt = model.receipt_summary or {}
         st.success("Submitted · independently verified evidence is recorded.")
@@ -801,11 +872,44 @@ def _render_application_state(app_workspace: Any, model: Any) -> None:
         details[0].metric("Provider", str(receipt.get("provider") or "Recorded"))
         details[1].metric("Provider application ID", str(receipt.get("provider_application_id") or "Recorded"))
         details[2].metric("Verification", str(receipt.get("verification_status") or "Verified"))
-        st.caption(f"Submitted {receipt.get('submitted_at') or model.last_update or 'time recorded'} · Resume {receipt.get('resume_version_id') or 'binding recorded'}")
+        st.caption(
+            f"Submitted {receipt.get('submitted_at') or 'time recorded'} · "
+            f"Employer receipt checked {receipt.get('verified_at') or 'time recorded'} · "
+            f"Resume {receipt.get('resume_version_id') or 'binding recorded'}"
+        )
     else:
         st.info("This application is recorded. Open Tracker for later hiring-stage updates.")
     _render_recovery_center(model)
     _render_advanced_diagnostics(model)
+
+
+def _render_external_tracker_details(model: Any) -> None:
+    """Read-only historical record. Never exposes submit or recovery actions."""
+    st.markdown(
+        f"### {esc(model.company, 'Company')} · {esc(model.title, 'Role')}",
+        unsafe_allow_html=True,
+    )
+    st.info(model.human_state)
+    st.caption(
+        f"Applied {model.date_applied or 'date not recorded'} · "
+        f"Last synchronized {_updated_label(model.last_update)}"
+    )
+    st.caption(
+        "This stage is reported by the connected application tracker. "
+        "It is not independent employer-receipt verification."
+    )
+    st.markdown("**Application timeline**")
+    if not model.status_history:
+        st.write("No historical stage changes were supplied.")
+    else:
+        for event in model.status_history:
+            stage = str(event.get("status") or "").replace("_", " ").title()
+            when = str(event.get("at") or "Date unavailable")
+            st.write(f"• {stage} · {when}")
+    st.button(
+        "Close", key=f"external_close_{model.external_key}",
+        on_click=_clear_application_selection, use_container_width=True,
+    )
 
 
 def render_applications(product_pages: Any, app_workspace: Any) -> None:
@@ -819,6 +923,79 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
     if hasattr(product_pages, "_show_action_feedback"):
         product_pages._show_action_feedback()
     _render_application_visibility_feedback()
+    if st.button(
+        "↻ Check provider & refresh statuses",
+        key="application_center_refresh",
+        help="Read existing external-provider statuses and managed inbox; never retries an application.",
+    ):
+        from app.relay_application_dispatch_v1 import reconcile_owner_pending
+
+        try:
+            with st.spinner("Checking existing submissions and employer inbox…"):
+                result=reconcile_owner_pending(limit=10)
+            st.session_state["_relay_refresh_feedback"]=(
+                f"Checked {result['checked']} existing applications · "
+                f"{result['employer_confirmed']} employer confirmations found · "
+                f"{result['errors']} read errors · no applications sent."
+            )
+        except (RuntimeError,LookupError,ValueError,PermissionError,
+                TypeError,OSError):
+            st.session_state["_relay_refresh_feedback"]=(
+                "Provider lookup is temporarily unavailable. No application "
+                "was retried. Local records are displayed below."
+            )
+        st.rerun()
+    if st.session_state.get("_relay_refresh_feedback"):
+        st.info(st.session_state.pop("_relay_refresh_feedback"))
+    st.caption(
+        "MUNSHI statuses read from durable records when you open or refresh this page. "
+        "Choose Synchronize application pipeline to refresh linked external history. "
+        "Neither action retries or submits applications; employer receipts are verified separately."
+    )
+    if st.button(
+        "↻ Synchronize application pipeline",
+        key="external_application_tracker_sync",
+        help="Import existing application and interview stages; never submit or retry.",
+    ):
+        from app.external_application_tracker_v1 import MAX_PAGES, sync_authorized_tracker
+
+        progress = st.progress(0, text="Checking existing application history…")
+
+        def _tracker_progress(checked: int, provider_total: int | None) -> None:
+            maximum = provider_total if provider_total and provider_total > 0 else MAX_PAGES * 10
+            progress.progress(
+                min(1.0, checked / maximum),
+                text=f"Reading application history · {checked} of {provider_total or 'up to 1,200'} checked",
+            )
+
+        try:
+            report = sync_authorized_tracker(
+                max_pages=MAX_PAGES, on_progress=_tracker_progress,
+            )
+            coverage = (
+                f"{report['checked']} of {report['provider_total']}"
+                if report["provider_total"] is not None
+                else str(report["checked"])
+            )
+            details = (
+                f"{report['inserted']} added · {report['updated']} refreshed · "
+                f"{report['skipped']} unsupported records. No application was submitted."
+            )
+            if report["complete"]:
+                st.success(f"Application history synchronized: {coverage} checked · {details}")
+            else:
+                st.warning(
+                    f"History sync reached its safe page limit: {coverage} checked · "
+                    f"{details} Existing records are saved; more history may remain."
+                )
+        except Exception:  # noqa: BLE001 - no provider details or credentials in UI
+            st.warning(
+                "Application history synchronization was interrupted. Previously "
+                "saved records remain available; no applications were sent. "
+                "You can safely try synchronizing again."
+            )
+        finally:
+            progress.empty()
 
     try:
         # Pagination bounds the rendered rail; the read projection includes every
@@ -831,18 +1008,40 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
         )
     else:
         st.session_state["_application_center_last_good"] = views
+    from app.external_application_tracker_v1 import external_application_views
+
+    try:
+        external = external_application_views(limit=5000)
+    except Exception:  # noqa: BLE001 - provider projection cannot hide native records
+        external = []
+        st.warning("Synced application history is temporarily unavailable.")
+    views = [*views, *external]
+    stage_priority = {
+        "needs_you": 0, "interviewing": 1, "offers": 2,
+        "applying": 3, "preparing": 4, "needs_attention": 5,
+        "submitted": 6, "closed": 7,
+    }
+    # Stable sorting retains the native newest-first order within each stage.
+    views.sort(key=lambda row: stage_priority.get(row.state_group, 9))
     requested = _requested_job_id()
     requested_application = _requested_application_id()
+    requested_external = str(st.query_params.get("external") or "")
     selected = next(
-        (
-            item
-            for item in views
-            if requested_application and item.application_id == requested_application
-        ),
+        (item for item in views
+         if requested_external and getattr(item, "external_key", None) == requested_external),
         None,
     )
     if selected is None:
-        selected = next((item for item in views if item.job_id == requested), None)
+        selected = next(
+            (item for item in views
+             if requested_application and item.application_id == requested_application),
+            None,
+        )
+    if selected is None:
+        selected = next(
+            (item for item in views if requested is not None and item.job_id == requested),
+            None,
+        )
     if requested is not None and selected is None:
         try:
             selected = view_for_job(requested)
@@ -861,7 +1060,7 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
 
     rail, workspace = st.columns((0.9, 2.1), gap="large")
     with rail:
-        _render_application_rail(views, selected.job_id if selected else None)
+        _render_application_rail(views, selected)
     with workspace:
         if selected is None:
             st.markdown("### Select an application")
@@ -872,10 +1071,25 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
             metrics[1].metric("Preparing", counts.get("preparing", 0))
             metrics[2].metric("Applying", counts.get("applying", 0))
             metrics[3].metric("Needs attention", counts.get("needs_attention", 0))
+            progress = st.columns(4, gap="small")
+            progress[0].metric("Submitted", counts.get("submitted", 0))
+            progress[1].metric("Interviewing", sum(
+                item.canonical_state in {"INTERVIEW", "ASSESSMENT"}
+                or item.state_group == "interviewing"
+                for item in views if not item.archived
+            ))
+            progress[2].metric("Offers", counts.get("offers", 0))
+            progress[3].metric("Closed", counts.get("closed", 0))
+        elif getattr(selected, "job_id", None) is None:
+            _render_external_tracker_details(selected)
         else:
             _render_application_header(selected)
             _render_application_visibility_actions(selected)
             _render_application_state(app_workspace, selected)
+            if not selected.archived:
+                from app.application_provider_ui_v1 import render_workspace
+
+                render_workspace(selected.job_id)
 
 
 def install_unified_job_workspaces(product_pages: Any, application_workspace_page: Any) -> None:

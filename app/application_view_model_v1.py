@@ -13,8 +13,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app import product_application_flow_v2 as application_flow
 from app import application_archive_v1 as application_archive
+from app.application_issue_intelligence_v1 import safe_failure, submission_claim_exists
+from app import product_application_flow_v2 as application_flow
 from app.database import get_connection
 from app.job_destination_v1 import describe_job_destination
 
@@ -171,6 +172,7 @@ class ApplicationViewModel:
     allowed_recovery_actions: tuple[str, ...] = field(default_factory=tuple)
     degraded: bool = False
     projection_error: str | None = None
+    failure_code: str | None = None
     provider: str | None = None
     apply_via: str | None = None
     source_platform: str | None = None
@@ -205,7 +207,7 @@ def _next_action(state: str, *, protected: bool) -> str:
     if protected:
         return "Complete protected checkpoint"
     if state == "SUBMISSION_UNVERIFIED":
-        return "Verify before any further action"
+        return "Awaiting independent employer acknowledgment · do not resubmit"
     if state in {"FAILED_SAFELY", "BLOCKED", "CANCELLED", "NEEDS_INPUT"}:
         return "Review the issue"
     if state in APPLYING_STATES:
@@ -227,7 +229,7 @@ def _human_state(state: str, *, protected: bool) -> str:
     if state in SUBMITTED_STATES:
         return "Submitted"
     if state == "SUBMISSION_UNVERIFIED":
-        return "Needs attention"
+        return "Provider sent · receipt pending"
     return application_flow.STATE_LABELS.get(
         state,
         state.replace("_", " ").title() if state else "Not started",
@@ -241,6 +243,8 @@ def _safe_stage(state: str, tasks: list[Mapping[str, Any]]) -> tuple[str, int]:
         return "Applying now", 5
     if state in SUBMITTED_STATES:
         return "Submitted", 6
+    if state == "SUBMISSION_UNVERIFIED":
+        return "Verify receipt", 6
     for task in tasks:
         status = str(task.get("status") or "")
         if status in {"RUNNING", "NEEDS_INPUT", "FAILED"}:
@@ -259,6 +263,22 @@ def _receipt(flow: Mapping[str, Any]) -> dict[str, Any] | None:
     if not receipt:
         receipt = dict(lifecycle.get("receipt") or {})
     if not receipt:
+        relay=dict(flow.get("provider_route") or {})
+        if (
+            relay.get("provider")=="TSENTA"
+            and relay.get("state")=="EMPLOYER_CONFIRMED"
+            and relay.get("receipt_evidence_digest")
+            and relay.get("employer_confirmed_at")
+        ):
+            return {
+                "receipt_id": "Privacy-protected employer receipt",
+                "provider": "MUNSHI Relay",
+                "provider_application_id": "Stored securely (SHA-256)",
+                "verification_status": "Employer email verified",
+                "submitted_at": relay.get("provider_submitted_at"),
+                "verified_at": relay.get("employer_confirmed_at"),
+                "resume_version_id": "Approved resume binding",
+            }
         return None
     return {
         "receipt_id": receipt.get("receipt_id"),
@@ -292,8 +312,15 @@ def _issue(state: str, flow: Mapping[str, Any], *, protected: bool) -> tuple[str
         None,
     )
     if state in {"FAILED_SAFELY", "BLOCKED"}:
+        _code, detail = safe_failure(tasks)
+        if submission_claim_exists(flow):
+            return (
+                "An earlier provider dispatch or approval may already exist. "
+                "Do not resubmit; verify the existing employer outcome first.",
+                stopped,
+            )
         return (
-            f"MUNSHI stopped safely during {stopped or 'application preparation'}. No submission success was assumed.",
+            detail or f"MUNSHI stopped safely during {stopped or 'application preparation'}. No submission success was assumed.",
             stopped,
         )
     if state == "CANCELLED":
@@ -317,7 +344,7 @@ def _recovery_actions(
     review = dict(flow.get("internal_integrity_review") or {})
     if (
         state in IMMUTABLE_SUBMISSION_STATES
-        or flow.get("production_receipt")
+        or submission_claim_exists(flow)
         or review.get("approval_consumed")
     ):
         return tuple(actions)
@@ -369,6 +396,7 @@ def view_for_job(
     )
     stage, stage_index = _safe_stage(state, tasks)
     issue, stopped_at = _issue(state, flow, protected=protected)
+    failure_code, _safe_failure_message = safe_failure(tasks)
     receipt = _receipt(flow)
     application_id = str(
         lifecycle.get("application_id") or prepare.get("application_id") or ""
@@ -397,8 +425,12 @@ def view_for_job(
         protected_checkpoint=protected,
         issue_summary=issue,
         stopped_at=stopped_at,
-        submission_attempted=state in IMMUTABLE_SUBMISSION_STATES | SUBMITTED_STATES,
+        submission_attempted=(
+            state in IMMUTABLE_SUBMISSION_STATES | SUBMITTED_STATES
+            or submission_claim_exists(flow)
+        ),
         receipt_summary=receipt,
+        failure_code=failure_code,
         worker_heartbeat=dict(heartbeat or worker_health_snapshot()),
         stale=stale,
         allowed_recovery_actions=_recovery_actions(

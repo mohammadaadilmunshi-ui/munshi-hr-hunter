@@ -22,6 +22,13 @@ _KNOWN_PROVIDERS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
     ("iCIMS", ("icims.com",), ()),
     ("Workable", ("workable.com",), ()),
     ("Jobvite", ("jobvite.com",), ()),
+    ("BambooHR", ("bamboohr.com",), ()),
+    ("Paylocity", ("paylocity.com",), ()),
+    ("ADP", ("adp.com",), ()),
+    ("UKG", ("ultipro.com", "ukg.com", "ukg.net"), ()),
+    ("Rippling", ("rippling.com",), ()),
+    ("Teamtailor", ("teamtailor.com",), ()),
+    ("Recruitee", ("recruitee.com",), ()),
     ("SuccessFactors", ("successfactors.com", "successfactors.eu", "jobs.sap.com"), ()),
     ("Oracle / Taleo", ("taleo.net", "oraclecloud.com"), ("/hcmui/", "/careersection/")),
     ("LinkedIn", ("linkedin.com",), ()),
@@ -31,6 +38,9 @@ _KNOWN_PROVIDERS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
 _SOURCE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("LinkedIn", ("linkedin",)),
     ("Indeed", ("indeed",)),
+    ("ZipRecruiter", ("ziprecruiter", "zip_recruiter")),
+    ("Glassdoor", ("glassdoor",)),
+    ("Monster", ("monster",)),
     ("Google Jobs", ("google jobs", "google_jobs", "googlejobs")),
     ("USAJobs", ("usajobs",)),
     ("Adzuna", ("adzuna",)),
@@ -41,6 +51,12 @@ _SOURCE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Ashby", ("ashby",)),
     ("SmartRecruiters", ("smartrecruiters", "smart recruiters")),
     ("Workday", ("workday",)),
+    ("Teamtailor", ("teamtailor",)),
+    ("Recruitee", ("recruitee",)),
+    ("BambooHR", ("bamboohr",)),
+    ("Workable", ("workable",)),
+    ("Pinpoint", ("pinpoint",)),
+    ("Comeet", ("comeet",)),
 )
 
 _AGGREGATORS = ("linkedin.com", "indeed.com", "glassdoor.com", "ziprecruiter.com")
@@ -117,9 +133,17 @@ def source_platform(job: Any) -> str:
     for label, markers in _SOURCE_PATTERNS:
         if any(marker in lowered for marker in markers):
             return label
+    # The scraper is an internal ingestion adapter, not the user's job board.
+    # Canonical values such as JobSpy/indeed are retained unchanged in storage.
     if lowered in {"jobspy", "python-jobspy"}:
-        return "JobSpy"
-    return raw or "Source not recorded"
+        return "Job board"
+    visible = re.sub(r"^(?:python[- ]?)?jobspy\s*[/|:]\s*", "", raw, flags=re.I)
+    visible = re.sub(r"\s*\(\s*(?:python[- ]?)?jobspy\s*\)", "", visible, flags=re.I)
+    visible = re.sub(r"\s*(?:via|using|by)\s+(?:python[- ]?)?jobspy\s*$", "", visible, flags=re.I)
+    visible = visible.strip(" /|-")
+    if not visible or visible.casefold() in {"jobspy", "python-jobspy"}:
+        return "Job board" if raw else "Source not recorded"
+    return visible
 
 
 def _provider_from_url(url: str | None) -> tuple[str | None, str, str]:
@@ -169,6 +193,19 @@ def describe_job_destination(job: Any) -> JobDestination:
     """Project generic ATS/source/link facts for one normalized job."""
     exact_url = original_job_url(job)
     explicit = _explicit_provider(job)
+    # A discovery source URL is not the employer's application platform.
+    stored_apply = _safe_http_url(_value(job, "apply_url", "employer_apply_url"))
+    if source_platform(job) == "LinkedIn" and (
+        not stored_apply
+        or any(_host_matches(_host(stored_apply), a) for a in _AGGREGATORS)
+    ):
+        return JobDestination(
+            provider=None, apply_via="Employer link pending", source="LinkedIn",
+            original_url=exact_url, destination_domain=None, confidence="unknown",
+            evidence="employer_url_missing",
+        )
+    if source_platform(job) == "LinkedIn" and explicit in {"LinkedIn", "Indeed"}:
+        explicit = ""
     detected, domain, evidence = _provider_from_url(exact_url)
     provider = explicit or detected
     if provider:
@@ -176,7 +213,7 @@ def describe_job_destination(job: Any) -> JobDestination:
         confidence = "stored" if explicit else "high"
         evidence = "stored_provider" if explicit else evidence
     elif domain:
-        apply_via = f"Employer careers site · {domain}"
+        apply_via = f"Employer’s website · {domain}"
         confidence = "domain_only"
     else:
         apply_via = "Destination not recorded"

@@ -26,7 +26,7 @@ def main() -> int:
             "success": True,
             "self_test": True,
             "source": "Google Jobs",
-            "provider_chain": ["serpapi", "jobspy"],
+            "provider_chain": status["provider_chain"],
             "serpapi_available": status["serpapi_available"],
             "credential_source": status["credential_source"],
             "credential_value_logged": False,

@@ -8,8 +8,9 @@ and checked file downloads.
 from __future__ import annotations
 
 import re
+import sqlite3
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -25,6 +26,49 @@ STYLE_LABELS = {
     "medium": "Balanced",
     "aggressive": "Strong",
 }
+
+_STUDIO_REQUIRED_TABLES = frozenset({
+    "native_resume_sources", "native_resume_versions",
+    "native_resume_truth_bindings", "native_resume_job_bindings",
+    "jd_resume_tailoring_plans", "jd_resume_claim_traces",
+    "native_resume_stage_b_bindings", "native_resume_v5_artifacts",
+})
+
+
+def _ensure_studio_storage() -> None:
+    """Read-only fast path on each render; migrate only an uninitialized Studio.
+
+    Running CREATE TABLE/INDEX from every Streamlit rerun causes needless
+    SQLite schema-lock requests while production writers prepare jobs.
+    """
+    from app.database import get_connection
+
+    con = get_connection()
+    try:
+        con.execute("PRAGMA query_only=ON")
+        installed = {
+            str(row[0]) for row in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+    finally:
+        con.close()
+    if not _STUDIO_REQUIRED_TABLES.issubset(installed):
+        resume_v5.ensure_schema()
+        artifacts.ensure_schema()
+
+
+def _studio_failure_message(error: Exception) -> str:
+    detail = str(error).casefold()
+    if any(marker in detail for marker in (
+        "database is locked", "database is busy", "database table is locked",
+    )):
+        return (
+            "The production database is briefly busy. No application was submitted. "
+            "A resume version may already have been saved, so check the Resume Library "
+            "before pressing Generate again. Retry after other work has finished."
+        )
+    return str(error)
 STYLE_HELP = {
     "slight": "Keeps the current structure and makes targeted JD-specific improvements.",
     "medium": "Balances ATS alignment, readability, and preservation of your career story.",
@@ -524,7 +568,7 @@ def _job_workspace() -> tuple[int | None, dict[str, Any]]:
     return selected_id, context
 
 
-def _style_selector(key: str, default: str = "medium") -> str:
+def _style_selector(key: str, default: str = "aggressive") -> str:
     options = ["slight", "medium", "aggressive"]
     mode = st.radio(
         "Tailoring strength",
@@ -545,6 +589,8 @@ def _reusable_exact_resume(job_id: int) -> dict[str, Any] | None:
     try:
         truth = truth_binding.current_candidate_profile_snapshot()
         job = safe_owned_job_snapshot(int(job_id))
+    except sqlite3.OperationalError:
+        raise
     except Exception:  # noqa: BLE001
         return None
     for summary in resume_v5.list_versions(job_id=int(job_id), limit=12):
@@ -552,6 +598,8 @@ def _reusable_exact_resume(job_id: int) -> dict[str, Any] | None:
             continue
         try:
             record = resume_v5.get_version(str(summary["version_id"]))
+        except sqlite3.OperationalError:
+            raise
         except Exception:  # noqa: BLE001
             continue
         candidate_binding = dict(record.get("candidate_truth_binding") or {})
@@ -595,9 +643,16 @@ def _generation_panel(
     job_id: int,
     profile_ready: bool,
     writer_ready: bool,
+    generate_checked: Callable[..., tuple[dict[str, Any], dict[str, Any]]] | None = None,
 ) -> None:
     st.markdown("### Create tailored resume")
-    existing = _reusable_exact_resume(job_id)
+    try:
+        existing = _reusable_exact_resume(job_id)
+    except sqlite3.OperationalError as error:
+        # Never offer Generate while an existing version cannot be checked:
+        # a second click could create a needless duplicate immutable version.
+        st.warning(_studio_failure_message(error))
+        return
     regenerate_key = f"resume_regenerate_requested_{job_id}"
     regenerate_requested = bool(st.session_state.get(regenerate_key))
     if existing and not regenerate_requested:
@@ -675,13 +730,13 @@ def _generation_panel(
                 "Tailoring from your Profile, checking truth and JD coverage, "
                 "and building a full-page PDF…"
             ):
-                record, bundle = _generate_checked(
+                record, bundle = (generate_checked or _generate_checked)(
                     job_id=job_id,
                     rewrite_mode=mode,
                     instruction=instruction.strip(),
                 )
         except Exception as error:  # noqa: BLE001
-            st.error(str(error))
+            st.error(_studio_failure_message(error))
         else:
             version_id = str(record["version_id"])
             st.session_state.pop(regenerate_key, None)
@@ -719,7 +774,7 @@ def _downloads(version_id: str, by_kind: dict[str, Any]) -> None:
                 with st.spinner("Building and checking the final DOCX/PDF…"):
                     bundle = artifacts.materialize(version_id)
             except Exception as error:  # noqa: BLE001
-                st.error(str(error))
+                st.error(_studio_failure_message(error))
             else:
                 st.session_state[
                     f"native_resume_page_verification_{version_id}"
@@ -973,7 +1028,11 @@ def _version_label(row: dict[str, Any]) -> str:
     return f"v{row['version_number']} · {mode}"
 
 
-def _version_workspace(job_id: int, context: dict[str, Any], writer_ready: bool) -> None:
+def _version_workspace(
+    job_id: int, context: dict[str, Any], writer_ready: bool,
+    *, generate_checked: Callable[..., tuple[dict[str, Any], dict[str, Any]]] | None = None,
+    version_html: Callable[[str], str] | None = None,
+) -> None:
     all_versions = [
         row
         for row in resume_v5.list_versions(job_id=job_id, limit=100)
@@ -1073,7 +1132,7 @@ def _version_workspace(job_id: int, context: dict[str, Any], writer_ready: bool)
     else:
         metrics[3].metric("Page fit", "Needs check")
 
-    components.html(resume_v5.version_html(selected_id), height=1075, scrolling=True)
+    components.html((version_html or resume_v5.version_html)(selected_id), height=1075, scrolling=True)
 
     if quality.get("status") == "PASS":
         st.success("1 page · page fit verified · truth and evidence guards passed.")
@@ -1082,9 +1141,22 @@ def _version_workspace(job_id: int, context: dict[str, Any], writer_ready: bool)
 
     _downloads(selected_id, artifact_rows)
 
+    st.caption(
+        "Standalone Resume Studio only creates and verifies your resume. "
+        "You can keep it independent or open the canonical application workspace "
+        "to prepare a package, review it, and choose MUNSHI Relay."
+    )
+    if st.button(
+        "Continue to application package and Relay",
+        key=f"resume_studio_v4_open_package_{job_id}",
+        use_container_width=True,
+    ):
+        _open_job_view(job_id, application=True)
+        st.rerun()
+
     with st.expander("Refine this resume", expanded=False):
         prior = diagnostics.get("rewrite_mode")
-        default = prior if prior in STYLE_LABELS else "medium"
+        default = prior if prior in STYLE_LABELS else "aggressive"
         mode = _style_selector(
             f"resume_studio_v4_revision_mode_{selected_id}",
             default=default,
@@ -1109,14 +1181,14 @@ def _version_workspace(job_id: int, context: dict[str, Any], writer_ready: bool)
                 with st.spinner(
                     "Creating a new immutable version and re-running all checks…"
                 ):
-                    revised, bundle = _generate_checked(
+                    revised, bundle = (generate_checked or _generate_checked)(
                         job_id=job_id,
                         rewrite_mode=mode,
                         instruction=instruction.strip(),
                         parent_version_id=selected_id,
                     )
             except Exception as error:  # noqa: BLE001
-                st.error(str(error))
+                st.error(_studio_failure_message(error))
             else:
                 version_id = str(revised["version_id"])
                 st.session_state["native_resume_selected_version"] = version_id
@@ -1146,15 +1218,24 @@ def _version_workspace(job_id: int, context: dict[str, Any], writer_ready: bool)
         )
 
 
-def render() -> None:
-    resume_v5.ensure_schema()
-    artifacts.ensure_schema()
+def render(
+    *, appearance_controls: Callable[[], None] | None = None,
+    generate_checked: Callable[..., tuple[dict[str, Any], dict[str, Any]]] | None = None,
+    version_html: Callable[[str], str] | None = None,
+) -> None:
+    try:
+        _ensure_studio_storage()
+    except sqlite3.OperationalError as error:
+        st.warning(_studio_failure_message(error))
+        return
 
     page_intro(
         "RESUME STUDIO",
         "Resume Studio",
         "Create polished, truthful job-specific resumes directly from your MUNSHI Profile.",
     )
+    if appearance_controls is not None:
+        appearance_controls()
 
     snapshot, profile_error = _profile_snapshot()
     _profile_card(snapshot, profile_error)
@@ -1169,17 +1250,24 @@ def render() -> None:
         advanced_writer_ui._writer_settings_panel()
 
     st.divider()
-    _resume_library()
+    try:
+        _resume_library()
 
-    st.divider()
-    job_id, context = _job_workspace()
-    if job_id is None:
-        return
+        st.divider()
+        job_id, context = _job_workspace()
+        if job_id is None:
+            return
 
-    st.divider()
-    _generation_panel(
-        job_id=job_id,
-        profile_ready=snapshot is not None,
-        writer_ready=writer_ready,
-    )
-    _version_workspace(job_id, context, writer_ready)
+        st.divider()
+        _generation_panel(
+            job_id=job_id,
+            profile_ready=snapshot is not None,
+            writer_ready=writer_ready,
+            generate_checked=generate_checked,
+        )
+        _version_workspace(
+            job_id, context, writer_ready,
+            generate_checked=generate_checked, version_html=version_html,
+        )
+    except sqlite3.OperationalError as error:
+        st.warning(_studio_failure_message(error))

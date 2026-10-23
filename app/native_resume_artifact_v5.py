@@ -18,6 +18,7 @@ from pypdf import PdfReader
 
 from app import native_resume_service_v5 as resume_v5
 from app.database import get_connection
+from app.resume_read_schema_v1 import ensure_existing_read_table
 from app.tenant_foundation import current_owner
 
 ARTIFACT_VERSION = "native-resume-v5-artifact-v1"
@@ -260,7 +261,7 @@ def _row_payload(row: sqlite3.Row) -> dict[str, Any]:
 def list_artifacts(version_id: str) -> list[dict[str, Any]]:
     connection = get_connection()
     try:
-        ensure_schema(connection)
+        ensure_existing_read_table(connection, "native_resume_v5_artifacts", ensure_schema)
         owner = current_owner(connection)
         rows = connection.execute(
             """SELECT * FROM native_resume_v5_artifacts
@@ -526,7 +527,7 @@ def pdf_page_quality(version_id: str) -> dict[str, Any]:
     """Re-check page fit from the immutable stored PDF without rendering again."""
     connection = get_connection()
     try:
-        ensure_schema(connection)
+        ensure_existing_read_table(connection, "native_resume_v5_artifacts", ensure_schema)
         owner = current_owner(connection)
         row = connection.execute(
             """SELECT content FROM native_resume_v5_artifacts
@@ -545,7 +546,7 @@ def artifact_bytes(artifact_id: str) -> bytes:
     """Owner-scoped resolver for a later authenticated transport boundary."""
     connection = get_connection()
     try:
-        ensure_schema(connection)
+        ensure_existing_read_table(connection, "native_resume_v5_artifacts", ensure_schema)
         owner = current_owner(connection)
         row = connection.execute(
             """SELECT content FROM native_resume_v5_artifacts

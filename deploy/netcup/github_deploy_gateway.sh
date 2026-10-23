@@ -4,6 +4,8 @@ umask 077
 
 PRODUCTION_DEPLOY="/opt/munshi/bin/deploy-production-release"
 STAGING_DEPLOY="/opt/munshi/bin/deploy-staging-release"
+CODE_ONLY_DEPLOY="/opt/munshi/bin/deploy-code-only-release"
+CODE_ONLY_BASE="e643fff0d346cb3dd67b14374d9be86b45fead5a"
 ORIGINAL="${SSH_ORIGINAL_COMMAND:-}"
 
 if [[ "$ORIGINAL" =~ ^/opt/munshi/bin/deploy-production-release\ --commit\ ([0-9a-f]{40})\ --branch\ ([A-Za-z0-9._/-]+)$ ]]; then
@@ -24,6 +26,18 @@ if [[ "$ORIGINAL" =~ ^/opt/munshi/bin/deploy-staging-release\ --commit\ ([0-9a-f
   commit="${BASH_REMATCH[1]}"
   branch="${BASH_REMATCH[2]}"
   exec "$STAGING_DEPLOY" --commit "$commit" --branch "$branch"
+fi
+
+# Strict one-time migration-free release command. No user-supplied paths,
+# shell fragments or variant environment flags can pass the forced gateway.
+if [[ "$ORIGINAL" =~ ^/opt/munshi/bin/deploy-code-only-release\ --commit\ ([0-9a-f]{40})\ --branch\ (feat/tsenta-connector-completion-20261015)$ ]]; then
+  [[ -x "$CODE_ONLY_DEPLOY" ]] || {
+    echo "code-only deployment wrapper unavailable" >&2
+    exit 73
+  }
+  commit="${BASH_REMATCH[1]}"
+  branch="${BASH_REMATCH[2]}"
+  exec "$CODE_ONLY_DEPLOY" --commit "$commit" --branch "$branch" --expected-base "$CODE_ONLY_BASE"
 fi
 
 echo "request rejected by MUNSHI GitHub deployment gateway" >&2
