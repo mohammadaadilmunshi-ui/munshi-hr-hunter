@@ -6,11 +6,11 @@
   <string>com.aadil.hr-hunter.n8n</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/aadil/Aadil-HR-Hunter/.venv/bin/python</string>
-    <string>/Users/aadil/Aadil-HR-Hunter/scripts/start_n8n_aadil_env.py</string>
+    <string>__PROJECT_ROOT__/.venv/bin/python</string>
+    <string>__PROJECT_ROOT__/scripts/start_n8n_aadil_env.py</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/aadil/Aadil-HR-Hunter</string>
+  <string>__PROJECT_ROOT__</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -22,15 +22,15 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
-    <string>/Users/aadil</string>
+    <string>__HOME__</string>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>__PATH__</string>
     <key>PYTHONUNBUFFERED</key>
     <string>1</string>
   </dict>
   <key>StandardOutPath</key>
-  <string>/Users/aadil/Aadil-HR-Hunter/logs/n8n_launchd.out.log</string>
+  <string>__PROJECT_ROOT__/logs/n8n_launchd.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/aadil/Aadil-HR-Hunter/logs/n8n_launchd.err.log</string>
+  <string>__PROJECT_ROOT__/logs/n8n_launchd.err.log</string>
 </dict>
 </plist>

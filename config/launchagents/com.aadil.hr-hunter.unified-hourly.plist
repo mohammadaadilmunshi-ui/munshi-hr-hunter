@@ -6,7 +6,7 @@
   <string>com.aadil.hr-hunter.unified-hourly</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/aadil/Aadil-HR-Hunter/.venv/bin/python</string>
+    <string>__PROJECT_ROOT__/.venv/bin/python</string>
     <string>-m</string>
     <string>app.unified_hourly_coordinator</string>
     <string>--skip-workers</string>
@@ -16,7 +16,7 @@
     <string>420</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/aadil/Aadil-HR-Hunter</string>
+  <string>__PROJECT_ROOT__</string>
   <key>StartInterval</key>
   <integer>3600</integer>
   <key>RunAtLoad</key>
@@ -28,13 +28,13 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>__PATH__</string>
     <key>PYTHONUNBUFFERED</key>
     <string>1</string>
   </dict>
   <key>StandardOutPath</key>
-  <string>/Users/aadil/Aadil-HR-Hunter/logs/unified_hourly_launchd.out.log</string>
+  <string>__PROJECT_ROOT__/logs/unified_hourly_launchd.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/aadil/Aadil-HR-Hunter/logs/unified_hourly_launchd.err.log</string>
+  <string>__PROJECT_ROOT__/logs/unified_hourly_launchd.err.log</string>
 </dict>
 </plist>

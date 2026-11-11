@@ -16,9 +16,6 @@
     }
   },
   "telegram_heartbeat_path": "data/telegram_listener_heartbeat.json",
-  "launch_agents_directory": "/Users/aadil/Library/LaunchAgents",
-  "runtime_path": "/Users/aadil/.aadil_hr_hunter_runtime",
-  "n8n_database_path": "/Users/aadil/.n8n/database.sqlite",
   "n8n_read_only_snapshot": {
     "workflow_id": "L1u2xZkgFpi7KEuv",
     "active": true,
@@ -41,7 +38,7 @@
     "pre_unfreeze_nodes_sha256": "6ed8aafd9994d1aa0a254712781927b1c3c718212ba9f6b3aa919a2695fbdccf",
     "pre_unfreeze_connections_sha256": "e937dc4de8292abd1d563b71e9e5cf847db2a8189c6f15eb62a5ca9aebd38f6c",
     "unfrozen_at": "2026-08-24T19:09:13.180254+00:00",
-    "rollback_directory": "/Users/aadil/Aadil-HR-Hunter/rollback/n8n_controlled_unfreeze_v12_20260824_150907",
+    "rollback_directory": "rollback/n8n_controlled_unfreeze_v12_20260824_150907",
     "guardrails": {
       "require_zero_running_executions_before_mutation": true,
       "require_zero_open_hunter_dispatches_before_structural_mutation": true,

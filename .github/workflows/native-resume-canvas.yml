@@ -1,0 +1,53 @@
+name: Native Resume Canvas
+
+on:
+  pull_request:
+    paths:
+      - 'app/native_resume_presentation_v1.py'
+      - 'app/master_resume_visual_ui_v2.py'
+      - 'app/resume_studio_page_v6.py'
+      - 'app/resume_studio_page.py'
+      - 'app/profile_workspace_v4.py'
+      - 'app/profile_answer_center_ui_v3.py'
+      - 'tests/test_native_resume_studio_canvas_v1.py'
+      - 'tests/test_staging_all_recent_ui_v7.py'
+      - '.github/workflows/native-resume-canvas.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-resume-canvas:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install locked dependencies
+        run: python -m pip install -r requirements.lock.txt
+      - name: Verify packages
+        run: python -m pip check
+      - name: Compile presentation layer
+        run: |
+          python -m py_compile \
+            app/native_resume_presentation_v1.py \
+            app/master_resume_visual_ui_v2.py \
+            app/profile_answer_center_ui_v3.py \
+            app/resume_studio_page_v6.py \
+            app/resume_studio_page.py \
+            app/profile_workspace_v4.py
+      - name: Run canvas tests and Profile runtime regression
+        run: |
+          python -m pytest -q \
+            tests/test_native_resume_studio_canvas_v1.py \
+            tests/test_staging_all_recent_ui_v7.py \
+            tests/test_profile_runtime_regression_v2.py
+      - name: Guard artifact authority boundary
+        run: |
+          grep -F 'immutable Standard V5 artifact' app/resume_studio_page_v6.py
+          ! grep -RniE 'MUNSHI_FINAL_SUBMIT_ENABLED\s*=\s*(1|true|yes|on)' app/native_resume_presentation_v1.py app/master_resume_visual_ui_v2.py app/resume_studio_page_v6.py

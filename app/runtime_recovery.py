@@ -18,6 +18,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from app.platform_config import (
+    endpoint_url,
+    is_macos,
+    n8n_database_path as configured_n8n_database_path,
+)
+
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = Path.home()
@@ -26,7 +32,7 @@ LOG_DIR = ROOT / "logs"
 CONFIG_DIR = ROOT / "config" / "launchagents"
 LAUNCH_DIR = HOME / "Library" / "LaunchAgents"
 HUNTER_DB = DATA_DIR / "hunter.db"
-N8N_DB = HOME / ".n8n" / "database.sqlite"
+N8N_DB = configured_n8n_database_path()
 LOCK_PATH = DATA_DIR / "munshi_runtime_recovery.lock"
 STATE_PATH = DATA_DIR / "munshi_runtime_recovery_status.json"
 BACKOFF_PATH = DATA_DIR / "munshi_runtime_recovery_backoff.json"
@@ -56,11 +62,11 @@ class ServiceSpec:
 SERVICES = {
     "n8n": ServiceSpec(
         "n8n", "com.aadil.hr-hunter.n8n", "core", r"(^|/)n8n( |$).*start|node .*/n8n start",
-        "http://127.0.0.1:5678/healthz", 5678, 75,
+        endpoint_url("n8n", "/healthz"), 5678, 75,
     ),
     "fastapi": ServiceSpec(
         "fastapi", "com.aadil.hr-hunter.fastapi", "core", r"uvicorn .*app\.api:app",
-        "http://127.0.0.1:8000/health", 8000, 45,
+        endpoint_url("fastapi", "/health"), 8000, 45,
     ),
     "telegram": ServiceSpec(
         "telegram", "com.aadil.hr-hunter.telegram", "core", r"app\.telegram_listener",
@@ -76,7 +82,7 @@ SERVICES = {
     ),
     "streamlit": ServiceSpec(
         "streamlit", "com.aadil.hr-hunter.streamlit", "core", r"streamlit run .*/app/dashboard\.py",
-        "http://127.0.0.1:8501/_stcore/health", 8501, 60,
+        endpoint_url("streamlit", "/_stcore/health"), 8501, 60,
     ),
 }
 
@@ -175,9 +181,13 @@ class RuntimeRecovery:
             self._lock_handle = None
 
     def command(self, args: Sequence[str], timeout: int = 20) -> subprocess.CompletedProcess[str]:
+        if args and args[0] in {"launchctl", "plutil"} and not is_macos():
+            return subprocess.CompletedProcess(args, 1, "", "macOS command unavailable in portable mode")
         return self.command_runner(args, timeout)
 
     def launch_details(self, spec: ServiceSpec) -> dict[str, Any]:
+        if not is_macos():
+            return {"loaded": False, "state": "external scheduler", "pid": None, "runs": 0, "last_exit": None}
         result = self.command(
             ["launchctl", "print", f"gui/{self.uid}/{spec.label}"], timeout=10
         )
@@ -495,6 +505,8 @@ class RuntimeRecovery:
         return backup
 
     def ensure_launchagent_files(self) -> list[dict[str, str]]:
+        if not is_macos():
+            raise RecoverySafetyError("LaunchAgent recovery is macOS-only; use an external process manager.")
         LAUNCH_DIR.mkdir(parents=True, exist_ok=True)
         changes: list[dict[str, str]] = []
         for spec in SERVICES.values():
@@ -506,7 +518,11 @@ class RuntimeRecovery:
                 continue
             backup = self._plist_backup(target) if target.exists() else None
             temporary = target.with_suffix(".plist.tmp")
-            shutil.copyfile(source, temporary)
+            rendered = source.read_text(encoding="utf-8")
+            rendered = rendered.replace("__PROJECT_ROOT__", str(ROOT))
+            rendered = rendered.replace("__HOME__", str(HOME))
+            rendered = rendered.replace("__PATH__", os.environ.get("PATH", "/usr/bin:/bin"))
+            temporary.write_text(rendered, encoding="utf-8")
             os.chmod(temporary, 0o644)
             validation = self.command(["plutil", "-lint", str(temporary)], timeout=10)
             if validation.returncode != 0:

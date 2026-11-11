@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PROJECT="${AADIL_HR_HUNTER_PROJECT:-$HOME/Aadil-HR-Hunter}"
-PYTHON="$PROJECT/.venv/bin/python"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PROJECT="${AADIL_HR_HUNTER_PROJECT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+PYTHON="${AADIL_HR_HUNTER_PYTHON:-$PROJECT/.venv/bin/python}"
+if [ ! -x "$PYTHON" ]; then PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"; fi
 LOGS="$PROJECT/logs"
 DATA="$PROJECT/data"
 ENV_FILE="$PROJECT/.env"
@@ -10,6 +12,15 @@ SCHEDULER_LABEL="com.aadil.hr-hunter.randomized-sources"
 SCHEDULER_PLIST="$HOME/Library/LaunchAgents/${SCHEDULER_LABEL}.plist"
 RESTART=0
 LOAD_SCHEDULER=1
+FASTAPI_HOST="127.0.0.1"
+FASTAPI_PORT="8000"
+STREAMLIT_HOST="127.0.0.1"
+STREAMLIT_PORT="8501"
+N8N_HOST="127.0.0.1"
+N8N_PORT="5678"
+N8N_BASE_URL="http://127.0.0.1:5678"
+OLLAMA_BASE_URL="http://127.0.0.1:11434"
+OLLAMA_ENABLED=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -151,6 +162,25 @@ load_env() {
   fi
 }
 
+configure_runtime() {
+  FASTAPI_HOST="${FASTAPI_HOST:-127.0.0.1}"
+  FASTAPI_PORT="${FASTAPI_PORT:-8000}"
+  STREAMLIT_HOST="${STREAMLIT_HOST:-127.0.0.1}"
+  STREAMLIT_PORT="${STREAMLIT_PORT:-8501}"
+  N8N_HOST="${N8N_HOST:-127.0.0.1}"
+  N8N_PORT="${N8N_PORT:-5678}"
+  N8N_BASE_URL="${N8N_BASE_URL:-http://${N8N_HOST}:${N8N_PORT}}"
+  OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://${OLLAMA_HOST:-127.0.0.1}:${OLLAMA_PORT:-11434}}"
+  OLLAMA_ENABLED="${OLLAMA_ENABLED:-${OLLAMA_REQUIRED:-0}}"
+  case "$(printf '%s' "${OLLAMA_REQUIRED:-0}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on|required|enabled) OLLAMA_ENABLED=1 ;;
+  esac
+  LOGS="${AADIL_HR_HUNTER_LOGS:-$PROJECT/logs}"
+  SCHEDULER_PLIST="${LAUNCH_AGENTS_DIRECTORY:-$HOME/Library/LaunchAgents}/${SCHEDULER_LABEL}.plist"
+}
+
+is_macos() { [ "$(uname -s)" = "Darwin" ]; }
+
 restart_if_requested() {
   [ "$RESTART" -eq 1 ] || return 0
 
@@ -185,12 +215,17 @@ restart_if_requested() {
 }
 
 start_ollama() {
-  if http_ok "http://127.0.0.1:11434/api/tags"; then
+  case "$(printf '%s' "$OLLAMA_ENABLED" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on|required|enabled) ;;
+    *) log "Ollama is disabled (set OLLAMA_ENABLED=true to enable)."; return 0 ;;
+  esac
+
+  if http_ok "$OLLAMA_BASE_URL/api/tags"; then
     log "Ollama already online."
     return
   fi
 
-  if [ -d "/Applications/Ollama.app" ]; then
+  if is_macos && [ -d "/Applications/Ollama.app" ]; then
     log "Starting Ollama."
     open -gja Ollama >/dev/null 2>&1 || true
   elif command -v ollama >/dev/null 2>&1; then
@@ -200,13 +235,13 @@ start_ollama() {
     die "Ollama is not installed."
   fi
 
-  wait_http "Ollama" "http://127.0.0.1:11434/api/tags" 45 ||
+  wait_http "Ollama" "$OLLAMA_BASE_URL/api/tags" 45 ||
     die "Ollama failed. Check $LOGS/ollama.log"
 }
 
 start_n8n() {
-  if http_ok "http://127.0.0.1:5678/healthz" ||
-     http_ok "http://127.0.0.1:5678/health"; then
+  if http_ok "$N8N_BASE_URL/healthz" ||
+     http_ok "$N8N_BASE_URL/health"; then
     log "n8n already online."
     return
   fi
@@ -225,8 +260,8 @@ start_n8n() {
 
   local i
   for ((i=1; i<=90; i++)); do
-    if http_ok "http://127.0.0.1:5678/healthz" ||
-       http_ok "http://127.0.0.1:5678/health"; then
+    if http_ok "$N8N_BASE_URL/healthz" ||
+       http_ok "$N8N_BASE_URL/health"; then
       log "n8n is healthy."
       return
     fi
@@ -237,12 +272,12 @@ start_n8n() {
 }
 
 start_fastapi() {
-  if http_ok "http://127.0.0.1:8000/health"; then
+  if http_ok "http://${FASTAPI_HOST}:${FASTAPI_PORT}/health"; then
     log "FastAPI already online."
     return
   fi
 
-  if port_open 8000; then
+  if port_open "$FASTAPI_PORT"; then
     local pid command
     pid="$(port_pid 8000)"
     command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
@@ -251,11 +286,11 @@ start_fastapi() {
 
   log "Starting FastAPI."
   nohup "$PYTHON" -m uvicorn app.api:app \
-    --host 127.0.0.1 \
-    --port 8000 \
+    --host "$FASTAPI_HOST" \
+    --port "$FASTAPI_PORT" \
     > "$LOGS/fastapi.log" 2>&1 &
 
-  wait_http "FastAPI" "http://127.0.0.1:8000/health" 60 ||
+  wait_http "FastAPI" "http://${FASTAPI_HOST}:${FASTAPI_PORT}/health" 60 ||
     die "FastAPI failed. Check $LOGS/fastapi.log"
 }
 
@@ -285,12 +320,12 @@ start_telegram() {
 }
 
 start_streamlit() {
-  if http_ok "http://127.0.0.1:8501"; then
+  if http_ok "http://${STREAMLIT_HOST}:${STREAMLIT_PORT}"; then
     log "Streamlit already online."
     return
   fi
 
-  if port_open 8501; then
+  if port_open "$STREAMLIT_PORT"; then
     local pid command
     pid="$(port_pid 8501)"
     command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
@@ -299,12 +334,12 @@ start_streamlit() {
 
   log "Starting Streamlit."
   nohup "$PYTHON" -m streamlit run "$PROJECT/app/dashboard.py" \
-    --server.address 127.0.0.1 \
-    --server.port 8501 \
+    --server.address "$STREAMLIT_HOST" \
+    --server.port "$STREAMLIT_PORT" \
     --server.headless true \
     > "$LOGS/streamlit.log" 2>&1 &
 
-  wait_http "Streamlit" "http://127.0.0.1:8501" 60 ||
+  wait_http "Streamlit" "http://${STREAMLIT_HOST}:${STREAMLIT_PORT}" 60 ||
     die "Streamlit failed. Check $LOGS/streamlit.log"
 }
 
@@ -313,6 +348,8 @@ load_scheduler() {
     log "Scheduler left unchanged."
     return
   }
+
+  is_macos || { log "External scheduler owns lifecycle on non-macOS; LaunchAgents skipped."; return 0; }
 
   if [ ! -f "$SCHEDULER_PLIST" ]; then
     log "Scheduler plist not found: $SCHEDULER_PLIST"
@@ -341,23 +378,23 @@ print_summary() {
   echo "AADIL HR HUNTER — SERVICES"
   echo "============================================================"
   printf '%-22s %s\n' "n8n" "$(
-    if http_ok "http://127.0.0.1:5678/healthz" ||
-       http_ok "http://127.0.0.1:5678/health"; then echo ONLINE; else echo OFFLINE; fi
+    if http_ok "$N8N_BASE_URL/healthz" ||
+       http_ok "$N8N_BASE_URL/health"; then echo ONLINE; else echo OFFLINE; fi
   )"
-  printf '%-22s %s\n' "FastAPI" "$(status_word http_ok http://127.0.0.1:8000/health)"
+  printf '%-22s %s\n' "FastAPI" "$(status_word http_ok "http://${FASTAPI_HOST}:${FASTAPI_PORT}/health")"
   printf '%-22s %s\n' "Telegram listener" "$(
     if pgrep -f '[a]pp\.telegram_listener' >/dev/null 2>&1; then echo ONLINE; else echo OFFLINE; fi
   )"
-  printf '%-22s %s\n' "Streamlit" "$(status_word http_ok http://127.0.0.1:8501)"
-  printf '%-22s %s\n' "Ollama" "$(status_word http_ok http://127.0.0.1:11434/api/tags)"
+  printf '%-22s %s\n' "Streamlit" "$(status_word http_ok "http://${STREAMLIT_HOST}:${STREAMLIT_PORT}")"
+  printf '%-22s %s\n' "Ollama" "$(status_word http_ok "$OLLAMA_BASE_URL/api/tags")"
   printf '%-22s %s\n' "Random scheduler" "$(
-    if launchctl print "gui/$UID/$SCHEDULER_LABEL" >/dev/null 2>&1; then echo LOADED; else echo NOT_LOADED; fi
+    if is_macos && launchctl print "gui/$UID/$SCHEDULER_LABEL" >/dev/null 2>&1; then echo LOADED; else echo EXTERNAL_OR_NOT_LOADED; fi
   )"
   echo
-  echo "n8n:       http://127.0.0.1:5678"
-  echo "FastAPI:   http://127.0.0.1:8000"
-  echo "Streamlit: http://127.0.0.1:8501"
-  echo "Ollama:    http://127.0.0.1:11434"
+  echo "n8n:       $N8N_BASE_URL"
+  echo "FastAPI:   http://${FASTAPI_HOST}:${FASTAPI_PORT}"
+  echo "Streamlit: http://${STREAMLIT_HOST}:${STREAMLIT_PORT}"
+  echo "Ollama:    $OLLAMA_BASE_URL"
   echo
   echo "FINAL RESULT: STARTUP SEQUENCE COMPLETED"
 }
@@ -370,9 +407,10 @@ main() {
   [ -f "$PROJECT/app/dashboard.py" ] || die "Missing app/dashboard.py"
   [ -f "$PROJECT/data/hunter.db" ] || die "Missing data/hunter.db"
 
+  load_env
+  configure_runtime
   mkdir -p "$LOGS" "$DATA"
   cd "$PROJECT"
-  load_env
   restart_if_requested
   start_ollama
   start_n8n
