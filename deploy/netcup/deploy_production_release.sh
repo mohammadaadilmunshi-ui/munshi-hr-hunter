@@ -18,7 +18,14 @@ bundle_file=""
 deploy_ref=""
 reuse_backup=""
 
+# Keep the GitHub SSH stream active during 17 GB schema verification.
+# Heartbeat contains no applicant data or credentials.
+migration_heartbeat_pid=""
 cleanup() {
+  if [[ -n "$migration_heartbeat_pid" ]]; then
+    kill "$migration_heartbeat_pid" >/dev/null 2>&1 || true
+    wait "$migration_heartbeat_pid" >/dev/null 2>&1 || true
+  fi
   if [[ -n "${bundle_file:-}" ]]; then
     rm -f "$bundle_file" 2>/dev/null || true
   fi
@@ -575,7 +582,17 @@ prepare_storage_safe_backup
 migration_attempted=1
 
 echo "=== APPLY GUARDED MIGRATIONS 041-059 TO PRODUCTION DB ==="
+(
+  while true; do
+    sleep 20
+    printf 'PRODUCTION_MIGRATION_HEARTBEAT_UTC=%s\n' "$(date -u +%Y%m%dT%H%M%SZ)"
+  done
+) &
+migration_heartbeat_pid=$!
 timeout 1800s docker run --rm -i   --network none   --read-only   --tmpfs /tmp:rw,nosuid,nodev,size=256m   --mount "type=volume,src=$hunter_data_volume,dst=/app/hunter/data"   --entrypoint python   -e CLOUD_SHADOW_MODE=false   "$new_hunter_image_id"   /app/hunter/scripts/complete_loop_migrate.py   --db-path "$db_path"   --environment production   --authorization AUTHORIZED_GUARDED_COMPLETE_LOOP_MIGRATION   --full-quick-check
+kill "$migration_heartbeat_pid" >/dev/null 2>&1 || true
+wait "$migration_heartbeat_pid" >/dev/null 2>&1 || true
+migration_heartbeat_pid=""
 echo "PRODUCTION_COMPLETE_LOOP_MIGRATION=PASS"
 
 echo "=== RECREATE HUNTER ONLY ==="
