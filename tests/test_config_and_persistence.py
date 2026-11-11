@@ -122,14 +122,7 @@ def test_source_policy_controls_scheduler_state(hunter_db) -> None:
     try:
         connection.executescript(
             """
-            CREATE TABLE source_random_schedule (
-                source_name TEXT PRIMARY KEY,
-                next_run_at TEXT,
-                base_cadence_minutes INTEGER NOT NULL,
-                schedule_reason TEXT,
-                schedule_state TEXT,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
+            DELETE FROM source_random_schedule;
             INSERT INTO source_health(
                 source_name,source_tier,enabled,cadence_minutes,cost_mode
             ) VALUES ('Fixture Scheduled Source',1,1,60,'free');

@@ -1,0 +1,83 @@
+name: Netcup Full Auth Recovery + Edge Cutover
+
+on:
+  push:
+    branches:
+      - feat/cloud-migration-foundation
+    paths:
+      - '.github/workflows/netcup-full-auth-recovery-cutover.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-readonly-incident-probe
+  cancel-in-progress: false
+
+jobs:
+  recover-and-cutover:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Configure protected production SSH transport
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_SSH_PRIVATE_KEY"
+          test -n "$NETCUP_KNOWN_HOSTS"
+          test -n "$NETCUP_HOST"
+          test -n "$NETCUP_USER"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_recovery"
+          chmod 600 "$HOME/.ssh/netcup_recovery"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          echo "NETCUP_USER=$NETCUP_USER" >> "$GITHUB_ENV"
+          echo "NETCUP_HOST=$NETCUP_HOST" >> "$GITHUB_ENV"
+
+      - name: Read-only Hunter runtime incident probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i "$HOME/.ssh/netcup_recovery" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10)
+          "${SSH[@]}" "$NETCUP_USER@$NETCUP_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          echo "REMOTE_UID=$(id -u)"
+          if id -Gn | tr ' ' '\n' | grep -Fx docker >/dev/null; then
+            echo 'REMOTE_DOCKER_GROUP=YES'
+          else
+            echo 'REMOTE_DOCKER_GROUP=NO'
+          fi
+
+          if ! docker ps >/dev/null 2>&1; then
+            echo 'DOCKER_ACCESS=UNAVAILABLE'
+            echo 'PROBE_MUTATION=NONE'
+            exit 42
+          fi
+          echo 'DOCKER_ACCESS=AVAILABLE'
+
+          echo 'RUNTIME_CONTAINERS_BEGIN'
+          docker ps -a --format '{{.Names}}|{{.Status}}' | grep -E '(hunter|n8n|ollama|caddy)' || true
+          echo 'RUNTIME_CONTAINERS_END'
+
+          found=0
+          while IFS= read -r name; do
+            [[ -n "$name" ]] || continue
+            project="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' "$name" 2>/dev/null || true)"
+            case "$project" in
+              *staging*) continue ;;
+            esac
+            found=1
+            echo "PRODUCTION_HUNTER_NAME=$name"
+            echo "PRODUCTION_HUNTER_PROJECT=$project"
+            docker inspect --format 'PRODUCTION_HUNTER_STATE=status={{.State.Status}};exit_code={{.State.ExitCode}};started_at={{.State.StartedAt}};finished_at={{.State.FinishedAt}};restart_count={{.RestartCount}};oom_killed={{.State.OOMKilled}}' "$name"
+          done < <(docker ps -a --format '{{.Names}}' | grep -E 'hunter' || true)
+          [[ "$found" -eq 1 ]] || echo 'PRODUCTION_HUNTER=NOT_FOUND'
+          echo 'PROBE_MUTATION=NONE'
+          REMOTE

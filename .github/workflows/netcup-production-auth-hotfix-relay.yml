@@ -1,0 +1,181 @@
+name: Netcup Production Auth Hotfix Relay
+
+on:
+  push:
+    branches:
+      - feat/cloud-migration-foundation
+    paths:
+      - "config/production-auth-hotfix-request.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-production-auth-remote
+  cancel-in-progress: false
+
+env:
+  PRODUCTION_BASE_SHA: 4c0f39fa503dabb55ef3212a23d2301ad04ec18a
+  AUTH_HOTFIX_BRANCH: fix/dashboard-device-auth-prod-v1
+
+jobs:
+  resolve-and-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      commit_sha: ${{ steps.resolve.outputs.commit_sha }}
+      source_branch: ${{ steps.resolve.outputs.source_branch }}
+    steps:
+      - name: Checkout trusted production-control branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/cloud-migration-foundation
+          fetch-depth: 0
+
+      - name: Resolve exact remote auth request
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE=config/production-auth-hotfix-request.json
+          test -f "$FILE"
+          SHA="$(python -c 'import json; print(json.load(open("config/production-auth-hotfix-request.json"))["commit_sha"])')"
+          BRANCH="$(python -c 'import json; print(json.load(open("config/production-auth-hotfix-request.json"))["source_branch"])')"
+          SCOPE="$(python -c 'import json; print(json.load(open("config/production-auth-hotfix-request.json"))["scope"])')"
+          AUTH="$(python -c 'import json; print(json.load(open("config/production-auth-hotfix-request.json"))["remote_authorization"])')"
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$BRANCH" = "$AUTH_HOTFIX_BRANCH"
+          test "$SCOPE" = "dashboard_trusted_device_auth_only"
+          test "$AUTH" = "AUTHORIZED_REMOTE_PRODUCTION_AUTH_HOTFIX"
+          git fetch --no-tags origin "$BRANCH:refs/remotes/origin/$BRANCH"
+          git merge-base --is-ancestor "$PRODUCTION_BASE_SHA" "$SHA"
+          git merge-base --is-ancestor "$SHA" "refs/remotes/origin/$BRANCH"
+          mapfile -t changed < <(git diff --name-only "$PRODUCTION_BASE_SHA" "$SHA")
+          test "${#changed[@]}" -eq 5
+          for path in "${changed[@]}"; do
+            case "$path" in
+              app/device_auth.py|app/api_device_auth.py|docker/hunter-supervisor.py|deploy/caddy/Caddyfile.dashboard.template|tests/test_device_auth.py) ;;
+              *) echo "AUTH_SCOPE_VIOLATION=$path" >&2; exit 20 ;;
+            esac
+          done
+          echo "commit_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "source_branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install locked dependencies
+        run: python -m pip install -r requirements.lock.txt
+
+      - name: Verify packages
+        run: python -m pip check
+
+      - name: Verify auth implementation and repository safety
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.resolve.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          git checkout --detach "$RELEASE_SHA"
+          python -m py_compile app/device_auth.py app/api_device_auth.py docker/hunter-supervisor.py tests/test_device_auth.py
+          python -m pytest -q tests/test_device_auth.py tests/test_hunter_supervisor.py
+          grep -F '__Host-munshi_device_session' app/device_auth.py
+          grep -F '_DEFAULT_TTL_SECONDS = 30 * 24 * 60 * 60' app/device_auth.py
+          grep -F 'secure=True' app/device_auth.py
+          grep -F 'httponly=True' app/device_auth.py
+          grep -F 'samesite="lax"' app/device_auth.py
+          grep -F '@device_login path /_munshi-auth/login' deploy/caddy/Caddyfile.dashboard.template
+          grep -F 'forward_auth 127.0.0.1:8000' deploy/caddy/Caddyfile.dashboard.template
+          grep -F 'reverse_proxy 127.0.0.1:8501' deploy/caddy/Caddyfile.dashboard.template
+          ! git ls-files | grep -E '(^|/)(\.env|.*\.(db|sqlite|sqlite3|wal|shm|pem|p12|pfx|key))$'
+          git diff --check
+
+  deployment-ci:
+    needs: resolve-and-gate
+    uses: ./.github/workflows/deployment-ci-reusable.yml
+    with:
+      commit_sha: ${{ needs.resolve-and-gate.outputs.commit_sha }}
+
+  deploy-production-auth-only:
+    needs: [resolve-and-gate, deployment-ci]
+    runs-on: ubuntu-latest
+    # Bootstrap lane: staging environment supplies the already-proven shared
+    # Netcup restricted SSH credentials only. The payload remains the exact
+    # production auth candidate and the server executes the production wrapper.
+    environment: staging
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact production auth SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-and-gate.outputs.commit_sha }}
+          fetch-depth: 0
+
+      - name: Build authenticated exact-SHA bundle
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ needs.resolve-and-gate.outputs.commit_sha }}
+          DEPLOY_BRANCH: ${{ needs.resolve-and-gate.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
+          git merge-base --is-ancestor "$DEPLOY_SHA" "refs/remotes/origin/$DEPLOY_BRANCH"
+          git bundle create "$RUNNER_TEMP/munshi-production-auth.bundle" "refs/remotes/origin/$DEPLOY_BRANCH"
+          git bundle verify "$RUNNER_TEMP/munshi-production-auth.bundle"
+
+      - name: Configure restricted SSH from bootstrap credential envelope
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_SSH_PRIVATE_KEY"
+          test -n "$NETCUP_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_deploy"
+          chmod 600 "$HOME/.ssh/netcup_deploy"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy exact auth backend through hardened production wrapper
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          DEPLOY_SHA: ${{ needs.resolve-and-gate.outputs.commit_sha }}
+          DEPLOY_BRANCH: ${{ needs.resolve-and-gate.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+          test -n "$NETCUP_HOST"
+          test -n "$NETCUP_USER"
+          LOG="$RUNNER_TEMP/production-auth-deploy.log"
+          cat "$RUNNER_TEMP/munshi-production-auth.bundle" | \
+            ssh -i "$HOME/.ssh/netcup_deploy" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              "$NETCUP_USER@$NETCUP_HOST" \
+              "/opt/munshi/bin/deploy-production-release --commit $DEPLOY_SHA --branch $DEPLOY_BRANCH" | tee "$LOG"
+          grep -F "DEPLOYED_SHA=$DEPLOY_SHA" "$LOG"
+          grep -F "DEPLOYED_BRANCH=$DEPLOY_BRANCH" "$LOG"
+          grep -F "N8N_RECREATED=NO" "$LOG"
+          grep -F "OLLAMA_RECREATED=NO" "$LOG"
+          grep -F "RESULT=PRODUCTION_DEPLOYMENT_PASS" "$LOG"
+
+      - name: Record remote receipt
+        shell: bash
+        env:
+          DEPLOY_SHA: ${{ needs.resolve-and-gate.outputs.commit_sha }}
+        run: |
+          {
+            echo "### Production auth backend deployed remotely"
+            echo "- exact SHA: \`$DEPLOY_SHA\`"
+            echo "- auth-only five-file allowlist enforced"
+            echo "- staging environment used only as shared restricted-SSH secret envelope"
+            echo "- server-side production wrapper remained authoritative"
+            echo "- WAL-safe backup + rollback image enforced"
+            echo "- n8n/Ollama unchanged"
+            echo "- local terminal not required"
+            echo "- edge activation remains separately privileged until gateway capability is expanded"
+          } >> "$GITHUB_STEP_SUMMARY"

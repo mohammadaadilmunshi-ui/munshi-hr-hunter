@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from app.actions import get_company_rule_state
 from app.database import ROOT_DIR, get_connection, get_setting
 from app.telegram_control_center import format_job_added_at
+from app.integration_credentials_v1 import telegram_credentials
 from app.source_provenance import format_adapter_display
 
 # AADIL_TELEGRAM_ADDED_AT_V1
@@ -38,6 +39,16 @@ CHAT_ID = os.getenv(
 API_BASE = (
     f"https://api.telegram.org/bot{BOT_TOKEN}"
 )
+
+
+def _resolved_bot_token() -> str:
+    token, _ = telegram_credentials()
+    return BOT_TOKEN or token
+
+
+def _resolved_chat_id() -> str:
+    _, chat_id = telegram_credentials()
+    return CHAT_ID or chat_id
 
 
 STATUS_LABELS = {
@@ -108,7 +119,7 @@ def telegram_request(
     return telegram_api_request(
         method,
         payload,
-        bot_token=BOT_TOKEN,
+        bot_token=_resolved_bot_token(),
     )
 
 
@@ -630,14 +641,15 @@ def build_keyboard(
 def send_job_card(
     job_id: int,
 ) -> int:
-    if not CHAT_ID:
+    chat_id = _resolved_chat_id()
+    if not chat_id:
         raise RuntimeError(
             "TELEGRAM_CHAT_ID is missing."
         )
 
     job = get_job(job_id)
     request_payload = {
-        "chat_id": CHAT_ID,
+        "chat_id": chat_id,
         "text": format_job_card(job),
         "parse_mode": "HTML",
         "disable_web_page_preview": "true",
@@ -668,7 +680,7 @@ def send_job_card(
             INSERT INTO telegram_delivery_claims(job_id,claim_token,delivery_state,chat_id)
             VALUES (?,?,'reserved',?)
             """,
-            (job_id, claim_token, str(CHAT_ID)),
+            (job_id, claim_token, str(chat_id)),
         )
         connection.execute(
             """
@@ -759,7 +771,7 @@ def send_job_card(
                 json.dumps(
                     {
                         "message_id": message_id,
-                        "chat_id": CHAT_ID,
+                        "chat_id": chat_id,
                     }
                 ),
             ),
