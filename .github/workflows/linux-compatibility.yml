@@ -1,0 +1,41 @@
+name: Linux Compatibility
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install production lock
+        run: python -m pip install -r requirements.lock.txt
+      - name: Verify installed packages
+        run: python -m pip check
+      - name: Compile application and scripts
+        run: python -m compileall -q app scripts integrations
+      - name: Compile Stage 6 focused Python files
+        run: python -m py_compile app/hr_agent_proxy.py integrations/hr_agent/n8n_hr_score.py scripts/render_n8n_deployment_workflow.py scripts/validate_container_environment_contract.py scripts/validate_n8n_portability.py tests/test_container_environment_contract.py tests/test_hr_agent_portability.py tests/test_n8n_deployment_renderer.py
+      - name: Validate container environment contract
+        run: python scripts/validate_container_environment_contract.py
+      - name: Validate n8n portability contract
+        run: python scripts/validate_n8n_portability.py
+      - name: Validate Netcup shadow contract
+        run: python scripts/validate_netcup_shadow.py
+      - name: Audit Linux compatibility
+        run: python scripts/audit_linux_compatibility.py
+      - name: Run focused portability tests
+        run: python -m pytest tests/test_platform_config.py tests/test_linux_compatibility.py tests/test_container_environment_contract.py tests/test_hr_agent_portability.py tests/test_n8n_deployment_renderer.py tests/test_netcup_shadow.py
+      - name: Validate Netcup shell syntax
+        run: bash -n scripts/netcup/*.sh
+      - name: Import direct third-party dependencies
+        run: python -c "import bs4, dotenv, fastapi, httpx, jobspy, pandas, playwright, pycountry, pydantic, requests, streamlit, telegram, uvicorn"

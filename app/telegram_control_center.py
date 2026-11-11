@@ -14,7 +14,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.database import ROOT_DIR, get_connection
-from app.runtime_config import downstream_int
+from app.runtime_config import downstream_int, service_endpoint
 
 EASTERN = ZoneInfo("America/New_York")
 _OBSERVATIONS: list[dict[str, Any]] = []
@@ -1278,10 +1278,10 @@ def find_stored_job_cards(
     )
 
 
-def _port_open(port: int) -> bool:
+def _port_open(port: int, host: str = "127.0.0.1") -> bool:
     try:
         with socket.create_connection(
-            ("127.0.0.1", int(port)),
+            (host, int(port)),
             timeout=0.6,
         ):
             return True
@@ -1362,6 +1362,10 @@ def queue_status_text() -> str:
     finally:
         connection.close()
 
+    fastapi_host, fastapi_port = service_endpoint("fastapi")
+    n8n_host, n8n_port = service_endpoint("n8n")
+    fastapi_online = _port_open(fastapi_port, fastapi_host)
+    n8n_online = _port_open(n8n_port, n8n_host)
     lines = [
         "📨 <b>n8n dispatch queue</b>",
         "",
@@ -1408,10 +1412,10 @@ def system_status_text() -> str:
 
     _eastern = _ZoneInfo("America/New_York")
 
-    def _port_open(port: int) -> bool:
+    def _port_open(port: int, host: str = "127.0.0.1") -> bool:
         try:
             with _socket.create_connection(
-                ("127.0.0.1", port),
+                (host, port),
                 timeout=0.8,
             ):
                 return True
@@ -1692,18 +1696,18 @@ def system_status_text() -> str:
         "📊 <b>Aadil HR Hunter status</b>",
         "",
         (
-            "✅" if _port_open(8000) else "❌"
+            "✅" if fastapi_online else "❌"
         )
         + " FastAPI: "
         + (
-            "online" if _port_open(8000) else "offline"
+            "online" if fastapi_online else "offline"
         ),
         (
-            "✅" if _port_open(5678) else "❌"
+            "✅" if n8n_online else "❌"
         )
         + " n8n: "
         + (
-            "online" if _port_open(5678) else "offline"
+            "online" if n8n_online else "offline"
         ),
         f"🤖 Source runner: {runner_state}",
         (

@@ -3,11 +3,11 @@ from __future__ import annotations
 
 # Canonical design tokens. All component styling below consumes this system.
 DESIGN_TOKENS = {
-    "background": "#F4F1E9", "surface": "#FBFAF6", "surface_elevated": "#FFFFFF",
-    "sidebar": "#081722", "hero": "#0B2030", "border": "#D9D3C7",
-    "border_strong": "#BEB5A4", "text_primary": "#0C2030",
-    "text_secondary": "#445566", "text_muted": "#627181", "accent": "#AD8142",
-    "success": "#216A52", "warning": "#8A5B16", "error": "#973F3F",
+    "background": "#F7F8F6", "surface": "#FFFFFF", "surface_elevated": "#FFFFFF",
+    "sidebar": "#FFFFFF", "hero": "#F0F6F3", "border": "#E2E7E3",
+    "border_strong": "#D3DAD5", "text_primary": "#142129",
+    "text_secondary": "#4D5B63", "text_muted": "#7A8490", "accent": "#B78A4A",
+    "success": "#237256", "warning": "#9A6918", "error": "#B04C50",
 }
 
 
@@ -17,14 +17,14 @@ def premium_dashboard_css() -> str:
     <style>
     :root {
       color-scheme:light!important;
-      --ahh-background:#F4F1E9; --ahh-background-deep:#EEE9DE;
-      --ahh-surface:#FBFAF6; --ahh-surface-elevated:#FFFFFF; --ahh-surface-muted:#F0ECE3;
-      --ahh-sidebar:#081722; --ahh-sidebar-elevated:#102838; --ahh-hero:#0B2030;
-      --ahh-border:#D9D3C7; --ahh-border-strong:#BEB5A4;
-      --ahh-text-primary:#0C2030; --ahh-text-secondary:#445566; --ahh-text-muted:#586878;
-      --ahh-text-inverse:#F7F5EF; --ahh-accent:#AD8142; --ahh-accent-soft:#E7D6B8;
-      --ahh-accent-bg:#F5EDDE; --ahh-success:#216A52; --ahh-success-bg:#E5F1EB;
-      --ahh-warning:#8A5B16; --ahh-warning-bg:#F9EFD9; --ahh-error:#973F3F;
+      --ahh-background:#F7F8F6; --ahh-background-deep:#F2F4F1;
+      --ahh-surface:#FFFFFF; --ahh-surface-elevated:#FFFFFF; --ahh-surface-muted:#F2F4F1;
+      --ahh-sidebar:#FFFFFF; --ahh-sidebar-elevated:#F7F8F6; --ahh-hero:#F0F6F3;
+      --ahh-border:#E2E7E3; --ahh-border-strong:#D3DAD5;
+      --ahh-text-primary:#142129; --ahh-text-secondary:#4D5B63; --ahh-text-muted:#7A8490;
+      --ahh-text-inverse:#142129; --ahh-accent:#B78A4A; --ahh-accent-soft:#E7F1EC;
+      --ahh-accent-bg:#F5EEE3; --ahh-success:#237256; --ahh-success-bg:#E7F1EC;
+      --ahh-warning:#9A6918; --ahh-warning-bg:#F9EFD9; --ahh-error:#B04C50;
       --ahh-error-bg:#F8E7E5; --ahh-info:#2E5F7B; --ahh-info-bg:#E6EFF4;
       --ahh-disabled:#89939C; --ahh-focus:rgba(173,129,66,.24);
       --ahh-shadow-sm:0 2px 9px rgba(8,23,34,.055);
@@ -38,7 +38,7 @@ def premium_dashboard_css() -> str:
     }
     html,body,.stApp,[data-baseweb]{color-scheme:light!important}
     html,body,[class*="css"],.stApp{font-family:var(--ahh-font)}
-    .stApp{color:var(--ahh-text-primary);background:radial-gradient(circle at 92% -12%,rgba(173,129,66,.105),transparent 30rem),linear-gradient(180deg,#F8F6F0 0%,var(--ahh-background) 52%,var(--ahh-background-deep) 100%)}
+    .stApp{color:var(--ahh-text-primary);background:var(--ahh-background)}
     [data-testid="stAppViewContainer"],[data-testid="stMain"]{background:transparent}
     [data-testid="stHeader"]{height:2.8rem;background:rgba(244,241,233,.76);backdrop-filter:blur(12px)}
     [data-testid="stDecoration"],[data-testid="stStatusWidget"]{display:none!important}

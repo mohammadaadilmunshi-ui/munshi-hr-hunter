@@ -7,23 +7,23 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/aadil/Aadil-HR-Hunter/bin/aadil_hr_hunter_all_in_one.sh</string>
+    <string>__PROJECT_ROOT__/bin/aadil_hr_hunter_all_in_one.sh</string>
     <string>service-run</string>
     <string>telegram</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/aadil/Aadil-HR-Hunter</string>
+  <string>__PROJECT_ROOT__</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>30</integer>
   <key>ProcessType</key><string>Background</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>HOME</key><string>/Users/aadil</string>
-    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>__HOME__</string>
+    <key>PATH</key><string>__PATH__</string>
     <key>PYTHONUNBUFFERED</key><string>1</string>
   </dict>
-  <key>StandardOutPath</key><string>/Users/aadil/Aadil-HR-Hunter/logs/telegram_launchd.out.log</string>
-  <key>StandardErrorPath</key><string>/Users/aadil/Aadil-HR-Hunter/logs/telegram_launchd.err.log</string>
+  <key>StandardOutPath</key><string>__PROJECT_ROOT__/logs/telegram_launchd.out.log</string>
+  <key>StandardErrorPath</key><string>__PROJECT_ROOT__/logs/telegram_launchd.err.log</string>
 </dict>
 </plist>

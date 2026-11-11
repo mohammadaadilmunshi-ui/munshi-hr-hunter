@@ -14,6 +14,9 @@ from fastapi import (
     FastAPI,
     Header,
     HTTPException,
+    Query,
+    Request,
+    Response,
     status,
 )
 from pydantic import BaseModel, Field
@@ -30,6 +33,7 @@ from app.database import (
     get_connection,
     initialize_database,
 )
+from app.gmail_integration import begin_authorization, complete_authorization
 
 
 load_dotenv(ROOT_DIR / ".env")
@@ -43,6 +47,13 @@ if not API_SECRET:
     raise RuntimeError(
         "HUNTER_API_SECRET is missing from .env"
     )
+
+
+def production_callbacks_explicitly_disabled() -> bool:
+    value = os.getenv("PRODUCTION_CALLBACKS_ENABLED")
+    if value is None:
+        return False
+    return value.strip().lower() not in {"1", "true", "yes", "on"}
 
 
 @asynccontextmanager
@@ -116,9 +127,30 @@ class N8nStatusUpdate(BaseModel):
     unsupported_market_gaps: Any = None
     outreach_drafts: list[Any] | None = None
 
+    # Complete Application Loop artifact evidence.  This remains optional for
+    # legacy callbacks, but if application_id is present all immutable fields
+    # below are required and persisted atomically with the callback receipt.
+    application_id: str | None = Field(default=None, min_length=1, max_length=240)
+    preflight_package_id: str | None = Field(default=None, min_length=1, max_length=240)
+    artifact_id: str | None = None
+    version_id: str | None = None
+    version_number: int | None = None
+    filename: str | None = None
+    mime_type: str | None = None
+    artifact_reference: str | None = None
+    artifact_sha256: str | None = None
+    page_count: int | None = None
+    candidate_truth_binding: dict[str, Any] | None = None
+    job_snapshot_binding: dict[str, Any] | None = None
+    artifact_created_at: str | None = None
+
 
 def callback_receipt_key(job_id: int, payload: N8nStatusUpdate, callback_status: str) -> str:
-    if payload.request_id:
+    if payload.application_id is not None and callback_status == "completed":
+        if payload.queue_id is None or not payload.request_id:
+            raise ValueError("Application artifact callbacks require queue_id and request_id.")
+        material = ["application", str(payload.queue_id), payload.request_id]
+    elif payload.request_id:
         material = ["request", payload.request_id, callback_status]
     elif payload.queue_id is not None:
         material = ["queue", str(payload.queue_id), callback_status]
@@ -146,6 +178,168 @@ def utc_now() -> str:
     return datetime.now(
         timezone.utc
     ).isoformat()
+
+
+def _artifact_callback_binding(
+    connection: Any, *, row: Any, payload: N8nStatusUpdate,
+) -> dict[str, Any]:
+    """Resolve application evidence only from the stored queue contract."""
+    if payload.queue_id is None or not payload.request_id or not payload.preflight_package_id:
+        raise ValueError("Application artifact callbacks require queue, request, and preflight identities.")
+    queue = connection.execute(
+        """SELECT * FROM n8n_dispatch_queue WHERE id=? AND request_id=?""",
+        (int(payload.queue_id), payload.request_id),
+    ).fetchone()
+    if queue is None:
+        raise LookupError("Callback queue and request identities do not match.")
+    queue = dict(queue)
+    if str(queue["queue_status"]) not in {"dispatching", "accepted", "completed"}:
+        raise ValueError("Application artifact callback targets a queue that was not dispatched.")
+    required = ("tenant_id", "user_id", "preflight_package_id", "preflight_package_digest",
+                "application_id", "expected_job_snapshot_sha256", "expected_candidate_truth_json")
+    if any(queue.get(name) in (None, "") for name in required):
+        raise ValueError("Application artifact callback targets an unbound legacy queue.")
+    if (
+        int(queue["job_id"]) != int(row["id"])
+        or str(queue["job_fingerprint"]) != str(row["job_fingerprint"])
+        or str(queue["application_id"]) != payload.application_id
+        or str(queue["preflight_package_id"]) != payload.preflight_package_id
+    ):
+        raise ValueError("Application artifact callback identity conflicts with its queue binding.")
+    package = connection.execute(
+        """SELECT * FROM application_preflight_packages
+           WHERE package_id=? AND tenant_id=? AND user_id=?""",
+        (queue["preflight_package_id"], queue["tenant_id"], queue["user_id"]),
+    ).fetchone()
+    if package is None or (
+        int(package["job_id"]) != int(row["id"])
+        or str(package["application_id"]) != payload.application_id
+        or str(package["package_digest"]) != queue["preflight_package_digest"]
+    ):
+        raise ValueError("Application artifact callback conflicts with its stored preflight package.")
+    snapshot = json.loads(str(package["snapshot_json"]))
+    from app.phase67_common import sha256_json
+
+    if (
+        str(package["status"]) != "READY_TO_APPLY"
+        or str(snapshot.get("status") or "") != "READY_TO_APPLY"
+        or str(snapshot.get("application_id") or "") != str(payload.application_id)
+        or str(snapshot.get("job_snapshot_sha256") or "")
+            != str(queue["expected_job_snapshot_sha256"])
+        or sha256_json(snapshot) != str(package["package_digest"])
+    ):
+        raise ValueError("Application artifact callback preflight package integrity is invalid.")
+    truth = dict(snapshot.get("application_truth") or {})
+    expected_candidate = json.loads(str(queue["expected_candidate_truth_json"]))
+    callback_candidate = dict(payload.candidate_truth_binding or {})
+    required_candidate = ("source_extraction_id", "profile_revision", "profile_digest")
+    if any(expected_candidate.get(key) in (None, "") for key in required_candidate):
+        raise ValueError("Application artifact callback queue lacks an exact Candidate Truth binding.")
+    if (
+        str(package["job_snapshot_sha256"]) != queue["expected_job_snapshot_sha256"]
+        or str((payload.job_snapshot_binding or {}).get("job_snapshot_sha256") or "")
+            != queue["expected_job_snapshot_sha256"]
+        or any(str(callback_candidate.get(key)) != str(expected_candidate.get(key))
+               for key in required_candidate)
+        or any(str(dict(truth.get("candidate_profile_binding") or {}).get(key)) != str(expected_candidate.get(key))
+               for key in required_candidate)
+    ):
+        raise ValueError("Application artifact callback evidence does not match Candidate Truth or job snapshot.")
+
+    # Recompute the mutable job evidence inside the callback's BEGIN IMMEDIATE
+    # transaction, using the exact owner stored on the queue.  This closes the
+    # gap between the pre-lock full-preflight freshness check and persistence.
+    from app.phase67_common import safe_owned_job_snapshot
+
+    current_job = safe_owned_job_snapshot(
+        int(row["id"]),
+        connection=connection,
+        tenant_id=str(queue["tenant_id"]),
+        user_id=str(queue["user_id"]),
+    )
+    if str(current_job["job_snapshot_sha256"]) != str(queue["expected_job_snapshot_sha256"]):
+        raise ValueError("Application artifact callback job snapshot is stale.")
+    return queue
+
+
+def _callback_job_row(connection: Any, payload: N8nStatusUpdate) -> Any:
+    if payload.row_id is not None:
+        row = connection.execute(
+            "SELECT * FROM jobs WHERE id = ?",
+            (payload.row_id,),
+        ).fetchone()
+    else:
+        row = connection.execute(
+            "SELECT * FROM jobs WHERE job_fingerprint = ?",
+            (payload.job_fingerprint,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No matching local job was found.",
+        )
+    if payload.job_fingerprint != row["job_fingerprint"]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="row_id and job_fingerprint refer to different jobs.",
+        )
+    return row
+
+
+def _callback_payload_sha256(payload: N8nStatusUpdate) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            payload.model_dump(exclude_none=True),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _preflight_freshness_guard_before_lock(
+    connection: Any, *, payload: N8nStatusUpdate,
+) -> int | None:
+    """Check exact owner-scoped preflight freshness before taking the write lock.
+
+    ``preflight_package_freshness`` currently traverses Candidate Truth vault
+    readers that open their own SQLite connections and update vault
+    ``last_used_at`` metadata. Running that traversal while this callback owns a
+    BEGIN IMMEDIATE lock deadlocks on SQLite.  Instead, run the complete
+    freshness capture immediately before the lock, then use PRAGMA data_version
+    to prove that no other connection committed between that capture and lock
+    acquisition. The exact queue/package/job binding is revalidated again under
+    the write lock by ``_artifact_callback_binding``.
+    """
+    if payload.application_id is None or payload.n8n_status != "completed":
+        return None
+    if payload.queue_id is None or not payload.request_id or not payload.preflight_package_id:
+        raise ValueError("Application artifact callbacks require queue, request, and preflight identities.")
+    queue = connection.execute(
+        "SELECT * FROM n8n_dispatch_queue WHERE id=? AND request_id=?",
+        (int(payload.queue_id), payload.request_id),
+    ).fetchone()
+    if queue is None:
+        raise LookupError("Callback queue and request identities do not match.")
+    queue = dict(queue)
+    if any(queue.get(name) in (None, "") for name in ("tenant_id", "user_id", "preflight_package_id")):
+        raise ValueError("Application artifact callback targets an unbound legacy queue.")
+    if (
+        str(queue["preflight_package_id"]) != payload.preflight_package_id
+        or str(queue.get("application_id") or "") != str(payload.application_id)
+    ):
+        raise ValueError("Application artifact callback identity conflicts with its queue binding.")
+
+    from app.application_preflight_package_v1 import preflight_package_freshness
+    from app.tenant_foundation import owner_context
+
+    with owner_context(
+        tenant_id=str(queue["tenant_id"]),
+        user_id=str(queue["user_id"]),
+    ):
+        freshness = preflight_package_freshness(str(queue["preflight_package_id"]))
+    if not freshness.get("fresh"):
+        raise ValueError("Application artifact callback preflight inputs are stale.")
+    return int(connection.execute("PRAGMA data_version").fetchone()[0])
 
 
 def require_api_secret(
@@ -179,6 +373,32 @@ def health() -> dict[str, Any]:
         "database": DB_PATH.name,
         "timestamp": utc_now(),
     }
+
+
+@app.get(
+    "/api/gmail/oauth/start",
+    dependencies=[Depends(require_api_secret)],
+)
+def gmail_oauth_start() -> dict[str, str]:
+    """Authenticated initiation endpoint; it only returns a one-time Google URL."""
+    try:
+        return {"authorization_url": begin_authorization()}
+    except RuntimeError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from None
+
+
+@app.get("/api/gmail/oauth/callback")
+def gmail_oauth_callback(
+    code: str = Query(min_length=1, max_length=4096),
+    state_value: str = Query(alias="state", min_length=1, max_length=512),
+) -> dict[str, bool]:
+    """Google callback is state+PKCE protected because Google cannot send API auth."""
+    try:
+        complete_authorization(code, state_value)
+    except Exception:
+        # Do not reveal callback codes, state, token provider responses, or vault details.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Gmail authorization could not be completed.") from None
+    return {"success": True}
 
 
 @app.get(
@@ -339,6 +559,12 @@ def job_action(
 def n8n_status_update(
     payload: N8nStatusUpdate,
 ) -> dict[str, Any]:
+    if production_callbacks_explicitly_disabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Production callbacks are disabled on this runtime.",
+        )
+
     connection = get_connection()
 
     # Callback processing must be able to recover cleanly after restoring a
@@ -349,6 +575,15 @@ def n8n_status_update(
 
     ensure_dispatch_schema(connection)
     ensure_progress_schema(connection)
+    from app.application_preflight_package_v1 import ensure_schema as ensure_preflight_schema
+    from app.application_execution_artifact import ensure_schema as ensure_artifact_schema
+    ensure_preflight_schema(connection)
+    ensure_artifact_schema(connection)
+    receipt_columns = {column[1] for column in connection.execute("PRAGMA table_info(n8n_callback_receipts)")}
+    if "payload_sha256" not in receipt_columns:
+        connection.execute("ALTER TABLE n8n_callback_receipts ADD COLUMN payload_sha256 TEXT")
+    if "execution_artifact_id" not in receipt_columns:
+        connection.execute("ALTER TABLE n8n_callback_receipts ADD COLUMN execution_artifact_id TEXT")
 
     callback_status = normalize_callback_status(
         payload.n8n_status,
@@ -360,56 +595,98 @@ def n8n_status_update(
         unsupported_market_gaps=payload.unsupported_market_gaps,
     )
     payload.n8n_status = callback_status
+    # Schema setup is intentionally outside the receipt transaction; sqlite
+    # DDL may begin a transaction on restored databases.
+    connection.commit()
+    payload_sha256 = _callback_payload_sha256(payload)
 
     try:
-        if payload.row_id is not None:
-            row = connection.execute(
-                """
-                SELECT *
-                FROM jobs
-                WHERE id = ?
-                """,
-                (payload.row_id,),
+        # Exact successful application-artifact replays are acknowledged from
+        # the immutable receipt before re-running mutable freshness checks.
+        # Otherwise a legitimate retry could begin failing merely because the
+        # candidate edited Candidate Truth after the original callback had
+        # already committed. A changed payload under the same callback identity
+        # still conflicts.
+        if payload.application_id is not None and callback_status == "completed":
+            replay_row = _callback_job_row(connection, payload)
+            replay_key = callback_receipt_key(int(replay_row["id"]), payload, callback_status)
+            prior_receipt = connection.execute(
+                """SELECT job_id,payload_sha256,execution_artifact_id
+                   FROM n8n_callback_receipts WHERE receipt_key=?""",
+                (replay_key,),
             ).fetchone()
-        else:
-            row = connection.execute(
-                """
-                SELECT *
-                FROM jobs
-                WHERE job_fingerprint = ?
-                """,
-                (payload.job_fingerprint,),
-            ).fetchone()
+            if prior_receipt is not None:
+                if int(prior_receipt["job_id"]) != int(replay_row["id"]):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Callback receipt identity conflicts with the requested job.",
+                    )
+                if str(prior_receipt["payload_sha256"] or "") != payload_sha256:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Callback identity was replayed with different evidence.",
+                    )
+                return {
+                    "success": True,
+                    "duplicate_callback": True,
+                    "job_id": int(replay_row["id"]),
+                    "job_fingerprint": replay_row["job_fingerprint"],
+                    "n8n_status": callback_status,
+                    "queue_id": payload.queue_id,
+                    "execution_artifact_id": prior_receipt["execution_artifact_id"],
+                    "message": "Duplicate n8n callback acknowledged without replaying side effects.",
+                }
 
-        if row is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No matching local job was found.",
-            )
+        freshness_data_version = _preflight_freshness_guard_before_lock(
+            connection,
+            payload=payload,
+        )
+        connection.execute("BEGIN IMMEDIATE")
+        if freshness_data_version is not None:
+            locked_data_version = int(connection.execute("PRAGMA data_version").fetchone()[0])
+            if locked_data_version != freshness_data_version:
+                raise ValueError(
+                    "Application artifact callback inputs changed while the callback lock was acquired."
+                )
 
-        if (
-            payload.job_fingerprint
-            != row["job_fingerprint"]
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "row_id and job_fingerprint "
-                    "refer to different jobs."
-                ),
-            )
+        row = _callback_job_row(connection, payload)
 
         completed_at = (
             payload.completed_at
             or utc_now()
         )
 
+        queue_binding: dict[str, Any] | None = None
+        if payload.application_id is not None and callback_status == "completed":
+            queue_binding = _artifact_callback_binding(connection, row=row, payload=payload)
         receipt_key = callback_receipt_key(int(row["id"]), payload, callback_status)
+        prior_receipt = connection.execute(
+            """SELECT job_id,payload_sha256,execution_artifact_id
+               FROM n8n_callback_receipts WHERE receipt_key=?""",
+            (receipt_key,),
+        ).fetchone()
+        if prior_receipt is not None:
+            if int(prior_receipt["job_id"]) != int(row["id"]):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Callback receipt identity conflicts with the requested job.",
+                )
+            if payload.application_id is not None and str(prior_receipt["payload_sha256"] or "") != payload_sha256:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                                    detail="Callback identity was replayed with different evidence.")
+            connection.commit()
+            return {
+                "success": True, "duplicate_callback": True, "job_id": int(row["id"]),
+                "job_fingerprint": row["job_fingerprint"], "n8n_status": callback_status,
+                "queue_id": payload.queue_id,
+                "execution_artifact_id": prior_receipt["execution_artifact_id"],
+                "message": "Duplicate n8n callback acknowledged without replaying side effects.",
+            }
         claim = connection.execute(
             """
             INSERT OR IGNORE INTO n8n_callback_receipts (
-              receipt_key, job_id, request_id, queue_id, callback_status
-            ) VALUES (?, ?, ?, ?, ?)
+              receipt_key, job_id, request_id, queue_id, callback_status, payload_sha256
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 receipt_key,
@@ -417,19 +694,11 @@ def n8n_status_update(
                 payload.request_id,
                 payload.queue_id,
                 callback_status,
+                payload_sha256,
             ),
         )
         if int(claim.rowcount or 0) == 0:
-            connection.commit()
-            return {
-                "success": True,
-                "duplicate_callback": True,
-                "job_id": int(row["id"]),
-                "job_fingerprint": row["job_fingerprint"],
-                "n8n_status": callback_status,
-                "queue_id": payload.queue_id,
-                "message": "Duplicate n8n callback acknowledged without replaying side effects.",
-            }
+            raise RuntimeError("Callback receipt identity claim failed unexpectedly.")
 
         google_sheet_url = (
             payload.google_sheet_row_url
@@ -505,6 +774,35 @@ def n8n_status_update(
             if progress_row is not None:
                 normalized_execution_id = progress_row["execution_id"]
         normalized_payload["execution_id"] = normalized_execution_id
+
+        execution_artifact_id: str | None = None
+        # An artifact is execution evidence only once n8n has completed its
+        # preparation run.  Intermediate/error callbacks may carry partial
+        # fields, but must never claim the immutable application binding.
+        if payload.application_id is not None and callback_status == "completed":
+            from app import application_execution_artifact
+
+            artifact = application_execution_artifact.n8n(
+                application_id=payload.application_id,
+                job_id=int(row["id"]),
+                callback={
+                    **payload.model_dump(exclude_none=True),
+                    "engine": "n8n",
+                    "job_id": int(row["id"]),
+                    "created_at": payload.artifact_created_at,
+                },
+            )
+            if queue_binding is None:
+                raise ValueError("Application artifact callback lacks an exact queue binding.")
+            persisted_artifact = application_execution_artifact.persist_verified_n8n(
+                artifact, connection=connection,
+                tenant_id=str(queue_binding["tenant_id"]), user_id=str(queue_binding["user_id"]),
+            )
+            execution_artifact_id = str(persisted_artifact["execution_artifact_id"])
+            connection.execute(
+                "UPDATE n8n_callback_receipts SET execution_artifact_id=? WHERE receipt_key=?",
+                (execution_artifact_id, receipt_key),
+            )
 
         from app.universal_n8n_progress import persist_extended_result
 
@@ -628,6 +926,9 @@ def n8n_status_update(
     except HTTPException:
         connection.rollback()
         raise
+    except (ValueError, LookupError, PermissionError) as error:
+        connection.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
     except Exception as error:
         connection.rollback()
 
@@ -671,6 +972,7 @@ def n8n_status_update(
         "n8n_status": callback_status,
         "queue_id": payload.queue_id,
         "execution_id": normalized_execution_id,
+        "execution_artifact_id": execution_artifact_id,
         "message": "n8n status stored successfully.",
         "telegram_sync": telegram_sync_result,
     }
@@ -682,3 +984,138 @@ app.include_router(hr_agent_proxy_router)
 
 # AADIL_LIVE_API_ATS_GATE_V2
 # FastAPI must be restarted after this marker is installed.
+
+
+# ---------------------------------------------------------------------------
+# Hunter-owned Application Review V2 authority
+# ---------------------------------------------------------------------------
+
+
+
+class ApplicationReviewCreateRequest(BaseModel):
+    plan_id: str = Field(min_length=1, max_length=240)
+    idempotency_key: str = Field(min_length=1, max_length=240)
+    prepared_package: dict[str, Any]
+
+
+class ApplicationReviewApprovalRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=240)
+    expected_review_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_prepared_package_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_browser_form_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ApplicationReviewRevalidateRequest(BaseModel):
+    prepared_package: dict[str, Any] | None = None
+
+
+
+@app.post(
+    "/api/application-reviews",
+    dependencies=[Depends(require_api_secret)],
+)
+def create_application_review(
+    payload: ApplicationReviewCreateRequest,
+) -> dict[str, Any]:
+    from app import application_review_v2
+
+    try:
+        return application_review_v2.create_review(
+            plan_id=payload.plan_id,
+            prepared_package=payload.prepared_package,
+            idempotency_key=payload.idempotency_key,
+        )
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.get(
+    "/api/application-reviews/{review_id}",
+    dependencies=[Depends(require_api_secret)],
+)
+def get_application_review(review_id: str) -> dict[str, Any]:
+    from app import application_review_v2
+
+    try:
+        return application_review_v2.get_review(review_id)
+    except LookupError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except (PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.post(
+    "/api/application-reviews/{review_id}/revalidate",
+    dependencies=[Depends(require_api_secret)],
+)
+def revalidate_application_review(
+    review_id: str,
+    payload: ApplicationReviewRevalidateRequest,
+) -> dict[str, Any]:
+    from app import application_review_v2
+
+    try:
+        return application_review_v2.revalidate_review(
+            review_id,
+            prepared_package=payload.prepared_package,
+        )
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.post(
+    "/api/application-reviews/{review_id}/approve",
+    dependencies=[Depends(require_api_secret)],
+)
+def approve_application_review(
+    review_id: str,
+    payload: ApplicationReviewApprovalRequest,
+) -> dict[str, Any]:
+    from app import application_review_v2
+
+    try:
+        return application_review_v2.approve_review(
+            review_id=review_id,
+            idempotency_key=payload.idempotency_key,
+            expected_review_digest=payload.expected_review_digest,
+            expected_prepared_package_digest=payload.expected_prepared_package_digest,
+            expected_browser_form_digest=payload.expected_browser_form_digest,
+        )
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+# Hunter-owned private execution bridge for hosted preparation
+
+@app.post("/api/application-execution/plan-current")
+async def application_execution_plan_current(request: Request) -> Response:
+    from app import application_artifact_transport_v2
+    try:
+        body, headers = application_artifact_transport_v2.current_plan_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/json", headers=headers)
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+    except (LookupError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+@app.post("/api/application-execution/artifact")
+async def application_execution_artifact(request: Request) -> Response:
+    from app import application_artifact_transport_v2
+    try:
+        body, headers = application_artifact_transport_v2.artifact_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/octet-stream", headers=headers)
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+    except (LookupError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.post("/api/application-execution/cover-letter")
+async def application_execution_cover_letter(request: Request) -> Response:
+    from app import application_artifact_transport_v2
+    try:
+        body, headers = application_artifact_transport_v2.cover_letter_response(await request.body(), request.headers)
+        return Response(content=body, media_type="application/pdf", headers=headers)
+    except PermissionError as error:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(error)) from error
+    except (LookupError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
