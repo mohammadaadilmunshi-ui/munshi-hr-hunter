@@ -26,12 +26,13 @@ EXPECTED_MIGRATIONS = (
     "migrations.057_universal_brain_v1",
     "migrations.058_tsenta_provider_learning_foundation_v1",
     "migrations.059_tsenta_backend_oauth_v1",
+    "migrations.060_linkedin_verified_url_evidence_v5",
 )
 
 
 def test_complete_loop_migration_manifest_is_exact() -> None:
     assert complete_loop_migrate.MIGRATIONS == EXPECTED_MIGRATIONS
-    assert len(complete_loop_migrate.MIGRATIONS) == 19
+    assert len(complete_loop_migrate.MIGRATIONS) == 20
     assert complete_loop_migrate.REQUIRED_CALLBACK_COLUMNS == {
         "payload_sha256",
         "execution_artifact_id",
@@ -62,6 +63,7 @@ def test_complete_loop_migration_manifest_is_exact() -> None:
         "tsenta_observations_v1",
         "tsenta_oauth_intents_v1",
         "tsenta_oauth_connections_v1",
+        "linkedin_employer_url_evidence_v5",
     }.issubset(complete_loop_migrate.REQUIRED_TABLES)
     assert complete_loop_migrate.REQUIRED_NOTIFICATION_PREFERENCE_COLUMNS == {
         "destination_email",
@@ -92,9 +94,10 @@ def test_complete_loop_runner_tolerates_executescript_commit_boundary(
         authorization=complete_loop_migrate.PRODUCTION_AUTHORIZATION,
         full_quick_check=True,
     )
-    assert len(result["migrations"]) == 19
+    assert len(result["migrations"]) == 20
     assert "migrations.058_tsenta_provider_learning_foundation_v1" in result["migrations"]
     assert "migrations.059_tsenta_backend_oauth_v1" in result["migrations"]
+    assert "migrations.060_linkedin_verified_url_evidence_v5" in result["migrations"]
     assert "migrations.052_inbound_mail_relay_v1" in result["migrations"]
     assert result["quick_check"] == "ok"
 
