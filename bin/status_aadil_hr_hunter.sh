@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PROJECT="${AADIL_HR_HUNTER_PROJECT:-$HOME/Aadil-HR-Hunter}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PROJECT="${AADIL_HR_HUNTER_PROJECT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 LOGS="$PROJECT/logs"
 LABEL="com.aadil.hr-hunter.randomized-sources"
 
@@ -13,18 +14,26 @@ echo "============================================================"
 echo "AADIL HR HUNTER — READ-ONLY STATUS"
 echo "============================================================"
 
-N8N_CODE="$(code http://127.0.0.1:5678/healthz)"
-[ "$N8N_CODE" = "000" ] && N8N_CODE="$(code http://127.0.0.1:5678/health)"
+N8N_BASE_URL="${N8N_BASE_URL:-http://${N8N_HOST:-127.0.0.1}:${N8N_PORT:-5678}}"
+FASTAPI_BASE_URL="${FASTAPI_BASE_URL:-http://${FASTAPI_HOST:-127.0.0.1}:${FASTAPI_PORT:-8000}}"
+STREAMLIT_BASE_URL="${STREAMLIT_BASE_URL:-http://${STREAMLIT_HOST:-127.0.0.1}:${STREAMLIT_PORT:-8501}}"
+OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://${OLLAMA_HOST:-127.0.0.1}:${OLLAMA_PORT:-11434}}"
+N8N_CODE="$(code "$N8N_BASE_URL/healthz")"
+[ "$N8N_CODE" = "000" ] && N8N_CODE="$(code "$N8N_BASE_URL/health")"
 
 printf '%-22s HTTP %s\n' "n8n" "$N8N_CODE"
-printf '%-22s HTTP %s\n' "FastAPI" "$(code http://127.0.0.1:8000/health)"
-printf '%-22s HTTP %s\n' "Streamlit" "$(code http://127.0.0.1:8501)"
-printf '%-22s HTTP %s\n' "Ollama" "$(code http://127.0.0.1:11434/api/tags)"
+printf '%-22s HTTP %s\n' "FastAPI" "$(code "$FASTAPI_BASE_URL/health")"
+printf '%-22s HTTP %s\n' "Streamlit" "$(code "$STREAMLIT_BASE_URL")"
+if [ "${OLLAMA_ENABLED:-false}" = "true" ]; then
+  printf '%-22s HTTP %s\n' "Ollama" "$(code "$OLLAMA_BASE_URL/api/tags")"
+else
+  printf '%-22s %s\n' "Ollama" "DISABLED"
+fi
 printf '%-22s %s\n' "Telegram listener" "$(
   if pgrep -f '[a]pp\.telegram_listener' >/dev/null 2>&1; then echo RUNNING; else echo STOPPED; fi
 )"
 printf '%-22s %s\n' "Random scheduler" "$(
-  if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then echo LOADED; else echo NOT_LOADED; fi
+  if [ "$(uname -s)" = "Darwin" ] && launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then echo LOADED; else echo EXTERNAL_OR_NOT_LOADED; fi
 )"
 
 echo

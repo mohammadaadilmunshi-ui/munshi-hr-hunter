@@ -15,7 +15,9 @@ import requests
 from app.job_detail import build_manual_job_text as build_structured_manual_job_text
 from app.database import DB_PATH, get_connection, get_setting as get_canonical_setting
 from app.application_runs_v1 import enhance_dispatch_payload, hard_work_authorization_block
+from app.product_state import enabled_lanes, lane_matches_job
 from app.targeting import evaluate_job, load_rules
+from app.tenant_foundation import current_owner
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -125,10 +127,12 @@ def load_setting(
 def ensure_schema(
     connection: sqlite3.Connection,
 ) -> None:
-    connection.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS
-            n8n_dispatch_queue (
+    # Keep this initializer safe for migration runners and queue insertions
+    # that already own a transaction. sqlite3.executescript() implicitly
+    # commits pending work, which is incompatible with the Complete Loop's
+    # callback/receipt atomicity contract.
+    for statement in (
+        """CREATE TABLE IF NOT EXISTS n8n_dispatch_queue (
                 id INTEGER PRIMARY KEY
                     AUTOINCREMENT,
 
@@ -144,6 +148,14 @@ def ensure_schema(
 
                 request_id TEXT NOT NULL
                     UNIQUE,
+
+                tenant_id TEXT,
+                user_id TEXT,
+                preflight_package_id TEXT,
+                preflight_package_digest TEXT,
+                application_id TEXT,
+                expected_job_snapshot_sha256 TEXT,
+                expected_candidate_truth_json TEXT,
 
                 queue_status TEXT NOT NULL
                     DEFAULT 'pending',
@@ -175,23 +187,23 @@ def ensure_schema(
                 FOREIGN KEY(job_id)
                     REFERENCES jobs(id)
                     ON DELETE CASCADE
-            );
-
-        CREATE INDEX IF NOT EXISTS
-            idx_n8n_dispatch_queue_status
-        ON n8n_dispatch_queue (
-            queue_status,
-            queued_at
-        );
-
-        CREATE INDEX IF NOT EXISTS
-            idx_n8n_dispatch_queue_mode
-        ON n8n_dispatch_queue (
-            dispatch_mode,
-            queued_at
-        );
-        """
-    )
+            )""",
+        """CREATE INDEX IF NOT EXISTS idx_n8n_dispatch_queue_status
+           ON n8n_dispatch_queue(queue_status, queued_at)""",
+        """CREATE INDEX IF NOT EXISTS idx_n8n_dispatch_queue_mode
+           ON n8n_dispatch_queue(dispatch_mode, queued_at)""",
+    ):
+        connection.execute(statement)
+    # Additive for databases created before the preflight-bound queue contract.
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(n8n_dispatch_queue)")}
+    for name, definition in (
+        ("tenant_id", "TEXT"), ("user_id", "TEXT"),
+        ("preflight_package_id", "TEXT"), ("preflight_package_digest", "TEXT"),
+        ("application_id", "TEXT"), ("expected_job_snapshot_sha256", "TEXT"),
+        ("expected_candidate_truth_json", "TEXT"),
+    ):
+        if name not in columns:
+            connection.execute(f"ALTER TABLE n8n_dispatch_queue ADD COLUMN {name} {definition}")
 
 
 def normalize_status(
@@ -411,6 +423,11 @@ def build_payload(
 
         "queue_version": str(contract.get("queue_version") or ""),
     }
+    if queue.get("preflight_package_id") is not None:
+        payload.update({
+            "preflight_package_id": str(queue["preflight_package_id"]),
+            "application_id": str(queue["application_id"]),
+        })
     required = ("source_system", "schema_version", "workflow_target", "callback_url", "queue_version")
     missing = [key for key in required if not str(payload.get(key) or "").strip()]
     if missing:
@@ -531,7 +548,34 @@ def plan_candidates(
     )
 
     threshold = _required_scoring_value(scoring, "auto_n8n_threshold", float)
-    auto_limit = _required_scoring_value(scoring, "daily_auto_n8n_limit", int)
+    # Legacy scoring limits remain intact until the owner explicitly saves the
+    # product automation preference.  Once saved, this is the canonical
+    # producer-side enforcement point (not a cosmetic dashboard-only limit).
+    product_policy = load_setting(connection, "product_automation_policy_v1", {})
+    product_policy_active = bool(product_policy)
+    product_mode = str(product_policy.get("mode") or "unlimited").casefold()
+    if product_policy_active and product_mode not in {
+        "unlimited", "custom_limit", "paused", "pause_after_batch"
+    }:
+        raise RuntimeError("Product automation policy has an invalid volume mode.")
+    auto_limit: int | None
+    if product_policy_active and product_mode == "unlimited":
+        auto_limit = None
+    elif product_policy_active and product_mode in {"paused", "pause_after_batch"}:
+        auto_limit = 0
+    elif product_policy_active and product_mode == "custom_limit":
+        try:
+            raw_limit = product_policy["daily_limit"]
+            if isinstance(raw_limit, bool):
+                raise ValueError("boolean is not a quota")
+            configured_limit = int(raw_limit)
+        except (KeyError, TypeError, ValueError):
+            raise RuntimeError("Product automation policy has an invalid daily limit.") from None
+        if configured_limit < 1:
+            raise RuntimeError("Product automation policy has an invalid daily limit.")
+        auto_limit = configured_limit
+    else:
+        auto_limit = _required_scoring_value(scoring, "daily_auto_n8n_limit", int)
     manual_limit = _required_scoring_value(scoring, "daily_manual_n8n_limit", int)
 
     auto_used = count_today(
@@ -563,21 +607,37 @@ def plan_candidates(
         dict[str, Any]
     ] = []
 
-    if auto_used < auto_limit:
+    active_lanes = enabled_lanes(connection)
+
+    if auto_limit is None or auto_used < auto_limit:
         targeting_rules = load_rules()
-        auto_candidates = [
-            job
-            for job in jobs
-            if is_auto_eligible(
-                job,
-                threshold,
-                targeting_rules=targeting_rules,
-            )
-        ][:1]
+        remaining = None if auto_limit is None else max(0, auto_limit - auto_used)
+        for job in jobs:
+            # Canonical auto eligibility is always evaluated first.  Enabled
+            # product lanes are saved narrowing filters, never an alternate
+            # eligibility path or an override for work authorization/dedupe.
+            if not is_auto_eligible(job, threshold, targeting_rules=targeting_rules):
+                continue
+            matching = [lane for lane in active_lanes if lane_matches_job(lane, job)]
+            if active_lanes and not matching:
+                continue
+            lane_thresholds = [
+                float(lane["min_score"])
+                for lane in matching
+                if lane.get("min_score") is not None
+            ]
+            required_score = max([threshold, *lane_thresholds])
+            if float(job.get("hunter_score") or 0) < required_score:
+                continue
+            auto_candidates.append(job)
+            if remaining is not None and len(auto_candidates) >= remaining:
+                break
 
     return {
         "threshold": threshold,
         "auto_limit": auto_limit,
+        "product_volume_mode": product_mode if product_policy_active else "legacy",
+        "enabled_lane_count": len(active_lanes),
         "manual_limit": (
             manual_limit
         ),
@@ -599,6 +659,8 @@ def insert_queue_item(
     job: dict[str, Any],
     dispatch_mode: str,
     webhook_mode: str,
+    *,
+    preflight_package_id: str | None = None,
 ) -> dict[str, Any]:
     # Keep the queue contract self-initializing for isolated workers, tests,
     # and restored databases.  Production callers normally initialize this
@@ -606,9 +668,49 @@ def insert_queue_item(
     # ordering.
     ensure_schema(connection)
 
-    idempotency_key = (
-        create_idempotency_key(job)
-    )
+    binding: dict[str, Any] | None = None
+    if preflight_package_id is not None:
+        # This is the only entry point for an artifact-capable n8n request.
+        # The caller supplies an opaque package id; all authority comes from
+        # the owner-scoped immutable package stored locally.
+        from app.application_preflight_package_v1 import get_preflight_package
+
+        owner = current_owner(connection)
+        package = get_preflight_package(str(preflight_package_id), connection=connection)
+        snapshot = dict(package["snapshot"])
+        truth = dict(snapshot.get("application_truth") or {})
+        candidate = dict(truth.get("candidate_profile_binding") or {})
+        if (
+            str(package["status"]) != "READY_TO_APPLY"
+            or int(package["job_id"]) != int(job["id"])
+            or str(package["tenant_id"]) != owner.tenant_id
+            or str(package["user_id"]) != owner.user_id
+        ):
+            raise ValueError("Preflight package is not an exact ready owned job binding.")
+        required_candidate = ("source_extraction_id", "profile_revision", "profile_digest")
+        if any(candidate.get(key) in (None, "") for key in required_candidate):
+            raise ValueError("Preflight package lacks an exact Candidate Truth binding.")
+        binding = {
+            "tenant_id": owner.tenant_id,
+            "user_id": owner.user_id,
+            "preflight_package_id": str(package["package_id"]),
+            "preflight_package_digest": str(package["package_digest"]),
+            "application_id": str(package["application_id"]),
+            "expected_job_snapshot_sha256": str(package["job_snapshot_sha256"]),
+            "expected_candidate_truth_json": json.dumps(
+                {key: candidate[key] for key in required_candidate},
+                sort_keys=True, separators=(",", ":"),
+            ),
+        }
+
+    idempotency_key = create_idempotency_key(job)
+    if binding is not None:
+        idempotency_key = hashlib.sha256(
+            (idempotency_key + "|" + "|".join(str(binding[key]) for key in (
+                "tenant_id", "user_id", "preflight_package_id",
+                "preflight_package_digest", "application_id",
+            )) + "|" + dispatch_mode + "|" + webhook_mode).encode("utf-8")
+        ).hexdigest()
 
     request_id = create_request_id(
         int(job["id"]),
@@ -624,10 +726,11 @@ def insert_queue_item(
                 dispatch_mode,
                 idempotency_key,
                 request_id,
-                queue_status,
-                webhook_mode
+                queue_status, webhook_mode,
+                tenant_id,user_id,preflight_package_id,preflight_package_digest,
+                application_id,expected_job_snapshot_sha256,expected_candidate_truth_json
             )
-        VALUES (?, ?, ?, ?, ?, 'pending', ?)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             int(job["id"]),
@@ -638,6 +741,10 @@ def insert_queue_item(
             idempotency_key,
             request_id,
             webhook_mode,
+            *(binding.get(key) if binding else None for key in (
+                "tenant_id", "user_id", "preflight_package_id", "preflight_package_digest",
+                "application_id", "expected_job_snapshot_sha256", "expected_candidate_truth_json",
+            )),
         ),
     )
 
@@ -655,7 +762,25 @@ def insert_queue_item(
             "Queue insertion failed."
         )
 
-    return dict(row)
+    result = dict(row)
+    immutable = {
+        "job_fingerprint": str(job["job_fingerprint"]),
+        "dispatch_mode": dispatch_mode,
+        "webhook_mode": webhook_mode,
+        "preflight_package_id": binding.get("preflight_package_id") if binding else None,
+        "application_id": binding.get("application_id") if binding else None,
+    }
+    if any(result.get(key) != value for key, value in immutable.items()):
+        raise ValueError("Existing queue identity is bound to a different dispatch contract.")
+    return result
+
+
+def _begin_dispatch_transaction(connection) -> None:
+    # Schema/tenant preparation may open an implicit SQLite transaction.
+    # Commit that setup work before acquiring the dispatch write transaction.
+    if connection.in_transaction:
+        connection.commit()
+    connection.execute("BEGIN IMMEDIATE")
 
 
 def queue_candidates(
@@ -702,9 +827,7 @@ def queue_candidates(
         queued = []
 
         if not dry_run:
-            connection.execute(
-                "BEGIN IMMEDIATE"
-            )
+            _begin_dispatch_transaction(connection)
 
             for job, dispatch_mode in selected:
                 queue_row = insert_queue_item(
@@ -980,6 +1103,13 @@ def _dispatch_pending_core_all_issues_v1(
                     AS idempotency_key,
                 q.request_id
                     AS request_id,
+                q.tenant_id AS tenant_id,
+                q.user_id AS user_id,
+                q.preflight_package_id AS preflight_package_id,
+                q.preflight_package_digest AS preflight_package_digest,
+                q.application_id AS application_id,
+                q.expected_job_snapshot_sha256 AS expected_job_snapshot_sha256,
+                q.expected_candidate_truth_json AS expected_candidate_truth_json,
                 q.queue_status
                     AS queue_status,
                 q.webhook_mode
@@ -1025,6 +1155,9 @@ def _dispatch_pending_core_all_issues_v1(
                     "dispatch_mode",
                     "idempotency_key",
                     "request_id",
+                    "tenant_id", "user_id", "preflight_package_id",
+                    "preflight_package_digest", "application_id",
+                    "expected_job_snapshot_sha256", "expected_candidate_truth_json",
                     "queue_status",
                     "webhook_mode",
                     "attempt_count",

@@ -1,0 +1,44 @@
+name: Docker Foundation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docker-foundation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate Docker foundation
+        run: python scripts/validate_docker_foundation.py
+      - name: Validate Netcup shadow foundation
+        run: python scripts/validate_netcup_shadow.py
+      - name: Install proven production lock
+        run: python -m pip install -r requirements.lock.txt
+      - name: Verify installed packages
+        run: python -m pip check
+      - name: Run focused tests
+        run: python -m pytest tests/test_docker_foundation.py tests/test_netcup_shadow.py
+      - name: Validate Compose configuration
+        env:
+          HUNTER_API_SECRET: ci-placeholder-only
+          N8N_ENCRYPTION_KEY: ci-placeholder-only
+        run: docker compose -f compose.yaml -f compose.netcup-shadow.yaml config
+      - name: Validate Netcup shell syntax
+        run: bash -n scripts/netcup/*.sh
+      - name: Build Hunter image
+        run: docker build --tag munshi-hunter:foundation .
+      - name: Inspect Hunter image contents
+        run: |
+          docker run --rm --entrypoint python munshi-hunter:foundation --version
+          docker run --rm --entrypoint /usr/bin/chromium munshi-hunter:foundation --version
+          docker run --rm --entrypoint test munshi-hunter:foundation -f /app/hunter/integrations/hr_agent/n8n_hr_score.py
+          test "$(docker run --rm --entrypoint sh munshi-hunter:foundation -c 'test ! -d /app/hunter/HackerRank && echo absent')" = absent
