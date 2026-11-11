@@ -4,6 +4,8 @@ import json
 import re
 from typing import Any
 
+from app.linkedin_jobspy_description_guard import _direct_application_url
+
 DETAIL_VERSION = "job_detail_extractor_v1"
 
 PLACEHOLDERS = {
@@ -354,9 +356,19 @@ def _format_list(value: Any) -> str:
     return "\n".join(f"• {item}" for item in items) if items else "Not specified"
 
 
+def _manual_application_link(job: dict[str, Any]) -> str:
+    source = clean_text(job.get("source")).casefold()
+    job_url = clean_text(job.get("job_url"))
+    linkedin_job = source == "linkedin" or "linkedin.com/jobs/" in job_url.casefold()
+    if linkedin_job:
+        direct = _direct_application_url(job.get("apply_url"))
+        return direct or "Direct application URL unavailable"
+    return _first_useful(job.get("apply_url"), job.get("job_url"), fallback="Not specified")
+
+
 def build_manual_job_text(raw_job: dict[str, Any]) -> str:
     job = enrich_job_details(raw_job)
-    link = _first_useful(job.get("apply_url"), job.get("job_url"), fallback="Not specified")
+    link = _manual_application_link(job)
 
     sections: list[tuple[str, str]] = [
         ("Job Title", _first_useful(job.get("title"), fallback="Not specified")),

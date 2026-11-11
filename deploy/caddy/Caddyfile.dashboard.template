@@ -1,0 +1,21 @@
+# MUNSHI dashboard HTTPS template
+#
+# Activate only after:
+# 1. dashboard.munshi.systems A/AAAA DNS points to the Netcup host.
+# 2. TCP 80/443 are allowed.
+# 3. Replace DASHBOARD_USERNAME and DASHBOARD_PASSWORD_HASH.
+#
+# Generate the password hash on the Netcup host:
+#   caddy hash-password
+#
+# Never place a plaintext password here.
+
+dashboard.munshi.systems {
+    encode zstd gzip
+
+    basic_auth {
+        DASHBOARD_USERNAME DASHBOARD_PASSWORD_HASH
+    }
+
+    reverse_proxy 127.0.0.1:8501
+}
