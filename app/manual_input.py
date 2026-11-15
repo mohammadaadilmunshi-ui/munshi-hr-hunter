@@ -408,11 +408,14 @@ def persist_analyzed_job(
     if missing:
         return {"success": False, "missing_fields": missing, "job": normalized}
 
-    delays = (0.05, 0.1, 0.2)
+    # A normal background reconciliation can hold the SQLite writer lock for
+    # longer than 250 ms. Wait briefly for it instead of failing a human's job
+    # submission; duplicate protection stays inside the same transaction.
+    delays = (0.1, 0.2, 0.4)
     for attempt in range(len(delays) + 1):
         connection = get_connection()
         try:
-            connection.execute("PRAGMA busy_timeout=250")
+            connection.execute("PRAGMA busy_timeout=5000")
             connection.execute("BEGIN IMMEDIATE")
             result = save_job(connection, normalized, actor=actor)
             connection.commit()

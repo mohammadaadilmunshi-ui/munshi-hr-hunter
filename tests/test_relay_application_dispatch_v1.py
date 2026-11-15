@@ -5,6 +5,7 @@ Zero real network/SQLite writes; mocks assert exact operations and ordering.
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -348,3 +349,40 @@ def test_api_submit_endpoint_routes_optional_engine_without_breaking_native(
     p=api.JobSubmissionEngineRequest(execution_provider="TSENTA")
     assert api.approve_and_submit_job_package(12,p)["status"]=="PROVIDER_SUBMITTED"
     assert calls==[(12,"NATIVE"),(12,"TSENTA")]
+
+
+def test_receipt_reconciliation_continues_after_locked_sqlite_writer(monkeypatch):
+    """One failed readback must not abort the rest or resubmit anything."""
+    calls = []
+
+    class ReadOnlySelection:
+        def execute(self, statement, params=()):
+            assert "SELECT DISTINCT r.job_id" in statement
+            return [{"job_id": 101}, {"job_id": 102}]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(relay, "get_connection", ReadOnlySelection)
+    monkeypatch.setattr(
+        relay, "current_owner",
+        lambda _: SimpleNamespace(tenant_id="test-tenant", user_id="test-user"),
+    )
+
+    def check(job_id):
+        calls.append(job_id)
+        if job_id == 101:
+            raise sqlite3.OperationalError("database is locked")
+        return {"status": "PROVIDER_SUBMITTED", "retry_allowed": False}
+
+    monkeypatch.setattr(relay, "reconcile_from_dashboard", check)
+    result = relay.reconcile_owner_pending(limit=2)
+    assert calls == [101, 102]
+    assert result == {
+        "checked": 1,
+        "provider_submitted": 1,
+        "employer_confirmed": 0,
+        "pending": 0,
+        "errors": 1,
+        "applications_sent": 0,
+    }

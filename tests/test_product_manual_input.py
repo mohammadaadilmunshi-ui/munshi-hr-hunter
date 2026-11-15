@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import sqlite3
+import threading
+import time
+
 from app.manual_input import analyze_job_url, persist_analyzed_job, persist_manual_job
 
 
@@ -64,3 +68,43 @@ def test_greenhouse_url_analyzes_and_persists_duplicate_safe(hunter_db) -> None:
     assert first["success"] is True and first["inserted"] is True
     assert second["success"] is True and second["inserted"] is False
     assert second["job_id"] == first["job_id"]
+
+
+def test_manual_job_survives_transient_sqlite_writer_contention(hunter_db) -> None:
+    """A 1.7-second unrelated write must not reject a reviewed manual job."""
+    from app.database import get_connection
+
+    raw = """Job Title: HR Operations Analyst
+Company Name: Sample Employer
+Location: Philadelphia, PA
+Application: https://example.test/jobs/writer-contention
+Job Description: Support HR reporting and recruiting coordination.
+"""
+    writer = get_connection()
+    writer.execute("BEGIN IMMEDIATE")
+    result: dict[str, object] = {}
+
+    def save_in_background() -> None:
+        try:
+            result["saved"] = persist_manual_job(raw)
+        except sqlite3.Error as error:
+            result["error"] = error
+
+    thread = threading.Thread(target=save_in_background, daemon=True)
+    try:
+        thread.start()
+        time.sleep(1.7)  # Exceeds the former four 250-ms lock attempts.
+        assert thread.is_alive(), result
+    finally:
+        writer.rollback()
+        writer.close()
+        thread.join(timeout=9)
+    assert not thread.is_alive()
+    assert "error" not in result, result
+    saved = result["saved"]
+    assert isinstance(saved, dict)
+    assert saved["success"] is True
+    assert saved["inserted"] is True
+    again = persist_manual_job(raw)
+    assert again["inserted"] is False
+    assert again["job_id"] == saved["job_id"]

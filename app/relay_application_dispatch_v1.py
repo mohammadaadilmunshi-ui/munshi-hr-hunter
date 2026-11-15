@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import sqlite3
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -689,6 +690,9 @@ def reconcile_owner_pending(*,limit:int=10) -> dict[str,int]:
                 counts["provider_submitted"]+=1
             else:counts["pending"]+=1
         except (RuntimeError,LookupError,ValueError,TypeError,
-                PermissionError,OSError):
+                PermissionError,OSError,sqlite3.OperationalError):
+            # SQLite contention must not abort the entire read-only receipt
+            # batch. The failed route can be retried by the next poll cycle;
+            # this never retries an employer application submission.
             counts["errors"]+=1
     return counts
