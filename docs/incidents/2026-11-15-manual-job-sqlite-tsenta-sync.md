@@ -22,6 +22,7 @@
 
 - Manual reviewed-job saving now waits up to 5 seconds per writer-claim attempt (plus three bounded backoffs), keeping one transactional canonical duplicate guard. This fixes short transient lock failures without bypassing eligibility or creating an application submission.
 - Receipt reconciliation now catches SQLite operational contention *per route*, counts the failure and proceeds to later existing routes. It does **not** retry an employer submission or claim receipt proof.
+- Provider receipt polling now **checks the existing `already_applied` flag before requesting a write transaction**. Sixteen production Tsenta routes were already marked applied, and a redundant `UPDATE jobs` was the exact statement in the November 15 lock traceback. The guarded update still runs for a truly unmarked job.
 - Regression tests hold an unrelated SQLite write lock longer than the old save budget, then confirm success and dedupe; a separate test injects a readback lock and confirms the next route is still checked with zero outgoing applications.
 
 ## Release and operations gates

@@ -621,11 +621,17 @@ def reconcile_from_dashboard(job_id: int) -> dict[str, Any]:
         _mark_claim(str(claimed["claim_key"]),"ACCEPTED",identifier)
     db=get_connection()
     try:
-        db.execute(
-            "UPDATE jobs SET already_applied=1 WHERE id=? AND already_applied=0",
-            (int(job_id),),
-        )
-        db.commit()
+        applied=db.execute(
+            "SELECT already_applied FROM jobs WHERE id=?", (int(job_id),)
+        ).fetchone()
+        # Provider status is polled repeatedly. Do not ask SQLite for a writer
+        # lock when the exact job has already been marked applied.
+        if applied is not None and not bool(applied["already_applied"]):
+            db.execute(
+                "UPDATE jobs SET already_applied=1 WHERE id=? AND already_applied=0",
+                (int(job_id),),
+            )
+            db.commit()
     finally:
         db.close()
     # A provider-managed employer acknowledgment is independent of the

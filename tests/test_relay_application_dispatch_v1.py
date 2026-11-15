@@ -386,3 +386,71 @@ def test_receipt_reconciliation_continues_after_locked_sqlite_writer(monkeypatch
         "errors": 1,
         "applications_sent": 0,
     }
+
+
+@pytest.mark.parametrize("already_applied", [0, 1])
+def test_relay_readback_does_not_rewrite_already_applied_job(
+    monkeypatch, already_applied,
+):
+    """Status polling must read, not repeatedly write, an already saved result."""
+    from app import relay_inbox_receipt_v1 as inbox
+
+    writes: list[str] = []
+    route = {
+        "provider": "TSENTA", "route_id": "route-fixture",
+        "state": "PROVIDER_SUBMITTED", "receipt_evidence_digest": None,
+        "employer_url": "https://example.test/jobs/receipt-fixture",
+    }
+
+    class ReadbackDB:
+        def execute(self, statement, params=()):
+            if "SELECT * FROM application_provider_routes_v1" in statement:
+                row = route
+            elif "sqlite_master" in statement:
+                row = (1,)
+            elif "SELECT * FROM tsenta_external_dispatch_claims_v1" in statement:
+                row = {"state": "ACCEPTED"}
+            elif "SELECT already_applied FROM jobs" in statement:
+                row = {"already_applied": already_applied}
+            elif "UPDATE jobs SET already_applied=1" in statement:
+                writes.append("update")
+                return SimpleNamespace(rowcount=1)
+            else:
+                raise AssertionError("Unexpected SQL during read-only fixture")
+            return SimpleNamespace(fetchone=lambda: row)
+
+        def commit(self):
+            writes.append("commit")
+
+        def close(self):
+            pass
+
+    class ReadbackClient:
+        def __init__(self, token):
+            assert token == "synthetic-token"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def initialize(self):
+            return None
+
+    monkeypatch.setattr(relay, "get_connection", ReadbackDB)
+    monkeypatch.setattr(
+        relay, "current_owner",
+        lambda _: SimpleNamespace(tenant_id="t", user_id="u"),
+    )
+    monkeypatch.setattr(relay, "_token_for_current_owner", lambda: "synthetic-token")
+    monkeypatch.setattr(relay, "TsentaMcpApplicationClient", ReadbackClient)
+    monkeypatch.setattr(
+        relay, "_confirmed_application", lambda _client, _url: ("test-id", "COMPLETED"),
+    )
+    monkeypatch.setattr(inbox, "reconcile_employer_inbox", lambda **_kw: {"status": "PENDING"})
+
+    result = relay.reconcile_from_dashboard(101)
+    assert result["status"] == "PROVIDER_SUBMITTED"
+    assert result["retry_allowed"] is False
+    assert writes == ([] if already_applied else ["update", "commit"])
