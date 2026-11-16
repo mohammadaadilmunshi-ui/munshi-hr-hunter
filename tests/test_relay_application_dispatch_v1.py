@@ -411,7 +411,10 @@ def test_relay_readback_does_not_rewrite_already_applied_job(
             elif "sqlite_master" in statement:
                 row = (1,)
             elif "SELECT * FROM tsenta_external_dispatch_claims_v1" in statement:
-                row = {"state": "ACCEPTED"}
+                row = {
+                    "state": "ACCEPTED",
+                    "tsenta_application_id_sha256": hashlib.sha256(b"test-id").hexdigest(),
+                }
             elif "SELECT already_applied FROM jobs" in statement:
                 row = {"already_applied": already_applied}
             elif "UPDATE jobs SET already_applied=1" in statement:
@@ -447,6 +450,7 @@ def test_relay_readback_does_not_rewrite_already_applied_job(
     )
     monkeypatch.setattr(relay, "_token_for_current_owner", lambda: "synthetic-token")
     monkeypatch.setattr(relay, "TsentaMcpApplicationClient", ReadbackClient)
+    monkeypatch.setattr(relay, "TsentaMcpReadClient", ReadbackClient)
     monkeypatch.setattr(
         relay, "_confirmed_application", lambda _client, _url: ("test-id", "COMPLETED"),
     )

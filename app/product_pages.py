@@ -23,6 +23,7 @@ from app.linkedin_verified_url_evidence_v5 import (
     latest_verified_for_job,
 )
 from app.product_state import (
+    APPLY_PLATFORM_OPTIONS,
     candidate_facts,
     clear_master_resume,
     create_lane,
@@ -128,6 +129,22 @@ def _relative_time(value: Any) -> str:
         return f"{hours // 24}d ago"
     except (ValueError, TypeError):
         return "Date recorded"
+
+
+def _job_age_label(job: dict[str, Any]) -> str:
+    """Distinguish employer posting evidence from our discovery timestamp."""
+    posted = str(job.get("date_posted") or "").strip()
+    if posted:
+        try:
+            parsed = datetime.fromisoformat(posted.replace("Z", "+00:00"))
+            age = (datetime.now(parsed.tzinfo) - parsed).total_seconds()
+            if 0 <= age < 3650 * 24 * 3600:
+                value = _relative_time(posted)
+                return "Posted " + ("recently" if value == "Seen recently" else value)
+        except (TypeError, ValueError, OverflowError):
+            pass
+    value = _relative_time(job.get("first_seen_at"))
+    return "Discovered " + ("recently" if value == "Seen recently" else value)
 
 
 def _set_action_feedback(tone: str, message: str) -> None:
@@ -330,7 +347,7 @@ def _job_card(
     job_id = int(row["id"])
     flow = _application_flow(job_id)
     destination = _job_destination(row)
-    pulse = apply_pulse(destination, pulse_evidence or _pulse_evidence())
+    pulse = apply_pulse(destination, pulse_evidence if pulse_evidence is not None else _pulse_evidence())
     tone = pastel_for(job_id)
     tags = [row.get("remote_type"), row.get("employment_type"), row.get("salary_raw")]
     if flow.get("state"):
@@ -345,7 +362,7 @@ def _job_card(
         st.markdown(
             f"""<div class="job-card-click" role="presentation">
                 <div class="job-card"><div class="job-card-main" style="--card-bg:{tone}">
-                <div class="job-top"><span>{esc(row.get("location_raw"), "Location unknown")}<br><span class="quiet">{esc(_relative_time(row.get("first_seen_at")))}</span></span>{score_ring(row.get("hunter_score"), tone)}</div>
+                <div class="job-top"><span>{esc(row.get("location_raw"), "Location unknown")}<br><span class="quiet">{esc(_job_age_label(row))}</span></span>{score_ring(row.get("hunter_score"), tone)}</div>
                 <div class="job-title">{esc(row.get("title"), "Untitled role")}</div>
                 <div>{tags_html}</div><div class="job-company">{esc(row.get("company_name"), "Company not recorded")}</div>
                 <div class="job-destination"><span><b>Apply via:</b> {esc(destination.apply_via)}</span><span><b>Source:</b> {esc(destination.source)}</span></div>
@@ -555,15 +572,20 @@ def _job_detail() -> None:
     except (TypeError, ValueError):
         _clear_job_query()
         return
+    # A deep link is a one-time navigation request, not a persistent dialog
+    # trigger. Clear it before rendering, so the close (including the modal X)
+    # does not reopen the same job on every Streamlit fragment rerun.
+    _clear_job_query()
     _job_detail_dialog(job_id)
 
 def _filter_defaults() -> dict[str, Any]:
     return {
         "query": "", "exclude": "", "location": "", "source": "",
         "workplace": "", "employment_type": "", "target_track": "",
+        "apply_platform": "",
         "score_range": (0, 100), "eligibility": "all", "freshness_days": 0,
         "ats_only": False, "result_set": "all", "search_scope": "all_fields",
-        "sort_by": "match_desc",
+        "sort_by": "newest",
     }
 
 
@@ -612,6 +634,13 @@ def _search_filters(namespace: str) -> dict[str, Any]:
                 source = st.selectbox("Source", [""] + values["sources"], format_func=lambda x: x or "All sources", key=f"{namespace}_filter_source")
             with controls[3]:
                 employment = st.selectbox("Employment", [""] + values["employment"], format_func=lambda x: x or "Any employment", key=f"{namespace}_filter_employment_type")
+            apply_platform = st.selectbox(
+                "Application platform",
+                ["", *APPLY_PLATFORM_OPTIONS],
+                format_func=lambda x: x or "All application platforms",
+                key=f"{namespace}_filter_apply_platform",
+                help="The employer application system, separate from Source (Indeed, LinkedIn, etc.).",
+            )
             advanced_one = st.columns((1.25, 1, 1), gap="small")
             with advanced_one[0]:
                 target_track = st.selectbox("Target track", [""] + values["target_tracks"], format_func=lambda x: x or "Any target track", key=f"{namespace}_filter_target_track")
@@ -631,6 +660,7 @@ def _search_filters(namespace: str) -> dict[str, Any]:
             st.button("Reset filters", key=f"{namespace}_reset_filters", use_container_width=True, on_click=_reset_search_filters, args=(namespace,))
     current = {
         "query": query, "exclude": exclude, "location": location, "source": source,
+        "apply_platform": apply_platform,
         "workplace": workplace, "employment_type": employment, "target_track": target_track,
         "score_range": tuple(score_range), "minimum_score": float(score_range[0]),
         "maximum_score": float(score_range[1]), "eligibility": eligibility,
@@ -674,7 +704,18 @@ def dashboard() -> None:
     with st.expander("Refine your top matches", expanded=False):
         filters = _search_filters("dashboard")
     jobs, count = fetch_jobs(**filters, page_size=4)
-    st.markdown(f'<div class="section-row"><div><h2>Top matches</h2><span class="quiet">{count:,} opportunities · ranked by canonical Hunter score</span></div><a class="product-nav-link" href="?view=jobs" target="_self">Browse all jobs →</a></div>', unsafe_allow_html=True)
+    newest = filters.get("sort_by") == "newest"
+    heading = "Newest opportunities" if newest else "Top matches"
+    rank_copy = (
+        "newest posted first · discovery date fallback"
+        if newest else "sorted by " + str(filters.get("sort_by") or "match_desc").replace("_", " ")
+    )
+    st.markdown(
+        f'<div class="section-row"><div><h2>{esc(heading)}</h2><span class="quiet">'
+        f'{count:,} opportunities · {esc(rank_copy)}</span></div>'
+        '<a class="product-nav-link" href="?view=jobs" target="_self">Browse all jobs →</a></div>',
+        unsafe_allow_html=True,
+    )
     if jobs:
         pulse_evidence = _pulse_evidence()
         with st.container(key="product_dashboard_grid"):

@@ -20,6 +20,7 @@ from app import application_provider_router_v1 as router
 from app.database import get_connection
 from app.tenant_foundation import current_owner
 from app.tsenta_mcp_adapter_v1 import _unwrap
+from app.verified_employer_domains_v1 import reviewed_sender_matches
 
 ALLOWED_GENERIC_ATS_DOMAINS = frozenset({
     "smartrecruiters.com", "greenhouse.io", "lever.co",
@@ -142,7 +143,15 @@ def _message_proof(
         return None
     host=sender.rsplit("@",1)[1]
     company_slug=_ascii_words(company)
-    is_employer=_ascii_words((_registrable_host(host) or "").split(".")[0])==company_slug
+    is_employer=(
+        _ascii_words((_registrable_host(host) or "").split(".")[0])==company_slug
+        or reviewed_sender_matches(
+            company=company, sender_domain=_registrable_host(host) or "",
+            employer_application_url=employer_application_url,
+            source=str(listing.get("source") or ""),
+            linked_application_id=listing.get("applicationId"),
+        )
+    )
     is_known_ats=host in ALLOWED_GENERIC_ATS_DOMAINS
     # A verified employer apply URL identifies the ATS web domain.
     # New ATS domains qualify without changing a hardcoded sender allowlist,

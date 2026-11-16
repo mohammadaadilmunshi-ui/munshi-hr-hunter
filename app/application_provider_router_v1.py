@@ -206,6 +206,9 @@ def _assert_eligible(connection: sqlite3.Connection, job: Mapping[str, Any]) -> 
         raise PermissionError("Job is not in an executable discovered state.")
     if job.get("hard_rejection_reason"):
         raise PermissionError("Job has a hard eligibility rejection.")
+    from app.sponsorship_guard_v1 import explicit_no_future_sponsorship
+    if explicit_no_future_sponsorship(job):
+        raise PermissionError("Employer explicitly excludes visa sponsorship; submission blocked.")
     if bool(int(job.get("cpt_trapdoor") or 0)):
         raise PermissionError("Job is blocked by work-authorization eligibility.")
     if bool(int(job.get("already_applied") or 0)):
