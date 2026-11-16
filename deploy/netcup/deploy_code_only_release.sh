@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=e643fff0d346cb3dd67b14374d9be86b45fead5a
+LIVE_BASE=5d482f75c6ccd001912fbab41146a7f8eb9259ed
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -160,7 +160,8 @@ git cat-file -e "$target^{commit}"
 git merge-base --is-ancestor "$target" "$deploy_ref" || block 'Target absent from reviewed bundle'
 git merge-base --is-ancestor "$old_head" "$target" || block 'Target is not a descendant of deployed baseline'
 
-# Narrow one-time allowance for the already-reviewed V4 and native-route fixes.
+# Narrow code-only release scope for reviewed November manual-save and Relay receipt-sync repairs.
+# All schema, Docker, Compose and migration files remain forbidden.
 # Anything else, including database modules, SQL scripts or Docker manifests,
 # needs the original DB-backed guarded full release.
 allowed_files=(
@@ -215,6 +216,8 @@ allowed_files=(
   app/product_pages.py
   app/profile_workspace_v2.py
   app/relay_application_dispatch_v1.py
+  app/manual_input.py
+  app/relay_receipt_poll_cursor_v1.py
   app/relay_inbox_receipt_v1.py
   app/application_notifications_runtime_v3.py
   tests/test_relay_provider_notifications_v1.py
@@ -240,6 +243,9 @@ allowed_files=(
   tests/test_master_certifications_v1.py
   tests/test_jd_match_evidence_v11.py
   tests/test_relay_receipt_worker_v1.py
+  docs/MUNSHI_RELAY_FAIR_POLLING_20261115.md
+  docs/incidents/2026-11-15-manual-job-sqlite-tsenta-sync.md
+  docs/MUNSHI_ORIGINAL_DASHBOARD_CODEONLY_RELEASE_20261115.md
   tests/test_certificate_rendered_pdf_v1.py
   tests/test_profile_runtime_repair_v2.py
   app/resume_studio_page_v2.py
@@ -273,6 +279,8 @@ allowed_files=(
   tests/test_application_provider_ui_v1.py
   tests/test_engine_selector_recovery_v1.py
   tests/test_relay_application_dispatch_v1.py
+  tests/test_product_manual_input.py
+  tests/test_relay_receipt_poll_cursor_v1.py
   tests/test_relay_claim_projection_v1.py
   tests/test_relay_inbox_receipt_v1.py
   tests/test_dashboard_operational_metrics_v1.py
@@ -366,6 +374,8 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_application_provider_ui_v1.py \
     /app/hunter/tests/test_engine_selector_recovery_v1.py \
     /app/hunter/tests/test_relay_application_dispatch_v1.py \
+    /app/hunter/tests/test_product_manual_input.py \
+    /app/hunter/tests/test_relay_receipt_poll_cursor_v1.py \
     /app/hunter/tests/test_relay_inbox_receipt_v1.py \
     /app/hunter/tests/test_relay_provider_notifications_v1.py \
     /app/hunter/tests/test_application_notifications_runtime_v2.py \
