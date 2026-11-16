@@ -314,6 +314,7 @@ def test_november_dashboard_repair_is_code_only_and_release_tests_cover_it():
         "app/relay_receipt_worker_v1.py",
         "tests/test_product_manual_input.py",
         "tests/test_relay_receipt_poll_cursor_v1.py",
+        "tests/test_product_experience_vnext.py",
         "docs/MUNSHI_RELAY_FAIR_POLLING_20261115.md",
         "docs/incidents/2026-11-15-manual-job-sqlite-tsenta-sync.md",
     ):
