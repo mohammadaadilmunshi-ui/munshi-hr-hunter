@@ -47,4 +47,5 @@ def test_cross_platform_duplicate_precheck_remains_read_only(url, monkeypatch):
         )
     provider=ListingOnly(url)
     assert _prior_provider_application(provider,url) is False
-    assert provider.reads==1
+    # Full verified ATS job URL plus bounded legacy alias probe.
+    assert provider.reads==2
