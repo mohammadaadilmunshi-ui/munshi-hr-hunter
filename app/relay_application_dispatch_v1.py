@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import sqlite3
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -620,11 +621,17 @@ def reconcile_from_dashboard(job_id: int) -> dict[str, Any]:
         _mark_claim(str(claimed["claim_key"]),"ACCEPTED",identifier)
     db=get_connection()
     try:
-        db.execute(
-            "UPDATE jobs SET already_applied=1 WHERE id=? AND already_applied=0",
-            (int(job_id),),
-        )
-        db.commit()
+        applied=db.execute(
+            "SELECT already_applied FROM jobs WHERE id=?", (int(job_id),)
+        ).fetchone()
+        # Provider status is polled repeatedly. Do not ask SQLite for a writer
+        # lock when the exact job has already been marked applied.
+        if applied is not None and not bool(applied["already_applied"]):
+            db.execute(
+                "UPDATE jobs SET already_applied=1 WHERE id=? AND already_applied=0",
+                (int(job_id),),
+            )
+            db.commit()
     finally:
         db.close()
     # A provider-managed employer acknowledgment is independent of the
@@ -689,6 +696,9 @@ def reconcile_owner_pending(*,limit:int=10) -> dict[str,int]:
                 counts["provider_submitted"]+=1
             else:counts["pending"]+=1
         except (RuntimeError,LookupError,ValueError,TypeError,
-                PermissionError,OSError):
+                PermissionError,OSError,sqlite3.OperationalError):
+            # SQLite contention must not abort the entire read-only receipt
+            # batch. The failed route can be retried by the next poll cycle;
+            # this never retries an employer application submission.
             counts["errors"]+=1
     return counts
