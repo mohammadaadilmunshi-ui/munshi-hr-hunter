@@ -40,10 +40,10 @@ SUBMITTED_STATES = frozenset(
     }
 )
 ATTENTION_STATES = frozenset(
-    {"NEEDS_INPUT", "FAILED_SAFELY", "BLOCKED", "CANCELLED", "SUBMISSION_UNVERIFIED"}
+    {"NEEDS_INPUT", "FAILED_SAFELY", "BLOCKED", "CANCELLED", "SUBMISSION_UNVERIFIED", "OUTCOME_UNKNOWN"}
 )
 IMMUTABLE_SUBMISSION_STATES = frozenset(
-    {"SUBMITTED", "VERIFIED", "AWAITING_RESPONSE", "SUBMISSION_UNVERIFIED"}
+    {"SUBMITTED", "VERIFIED", "AWAITING_RESPONSE", "SUBMISSION_UNVERIFIED", "OUTCOME_UNKNOWN"}
 )
 
 
@@ -206,6 +206,8 @@ def _next_action(state: str, *, protected: bool) -> str:
         return "Review resume"
     if protected:
         return "Complete protected checkpoint"
+    if state == "OUTCOME_UNKNOWN":
+        return "Verify the existing provider attempt · never resubmit"
     if state == "SUBMISSION_UNVERIFIED":
         return "Awaiting independent employer acknowledgment · do not resubmit"
     if state in {"FAILED_SAFELY", "BLOCKED", "CANCELLED", "NEEDS_INPUT"}:
@@ -228,6 +230,8 @@ def _human_state(state: str, *, protected: bool) -> str:
         return "Applying now"
     if state in SUBMITTED_STATES:
         return "Submitted"
+    if state == "OUTCOME_UNKNOWN":
+        return "Outcome unknown · do not resubmit"
     if state == "SUBMISSION_UNVERIFIED":
         return "Provider sent · receipt pending"
     return application_flow.STATE_LABELS.get(
@@ -243,6 +247,8 @@ def _safe_stage(state: str, tasks: list[Mapping[str, Any]]) -> tuple[str, int]:
         return "Applying now", 5
     if state in SUBMITTED_STATES:
         return "Submitted", 6
+    if state == "OUTCOME_UNKNOWN":
+        return "Verify provider outcome", 6
     if state == "SUBMISSION_UNVERIFIED":
         return "Verify receipt", 6
     for task in tasks:
@@ -296,6 +302,11 @@ def _issue(state: str, flow: Mapping[str, Any], *, protected: bool) -> tuple[str
         return (
             "The employer requires a protected identity or security checkpoint.",
             "Protected checkpoint",
+        )
+    if state == "OUTCOME_UNKNOWN":
+        return (
+            "The one-use provider request returned an unknown outcome. It might have reached the employer. Never submit again; reconcile the existing attempt.",
+            "Provider outcome verification",
         )
     if state == "SUBMISSION_UNVERIFIED":
         return (

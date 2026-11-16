@@ -124,6 +124,18 @@ def job_filters() -> dict[str, list[str]]:
 
 SEARCH_SCOPES = {"all_fields", "title_description", "title_company"}
 RESULT_SETS = {"all", "saved", "passed"}
+# Application platform is distinct from the job discovery source (e.g. Indeed).
+# Patterns are fixed trusted SQL parameters, never constructed from user text.
+APPLY_PLATFORM_PATTERNS = {
+    "Workable": ("%workable.com%",),
+    "Greenhouse": ("%greenhouse.io%", "%grnh.se%"),
+    "iCIMS": ("%icims.com%",),
+    "Lever": ("%lever.co%",),
+    "Ashby": ("%ashbyhq.com%",),
+    "Workday": ("%myworkdayjobs.com%", "%myworkdaysite.com%"),
+    "SmartRecruiters": ("%smartrecruiters.com%",),
+}
+APPLY_PLATFORM_OPTIONS = tuple(APPLY_PLATFORM_PATTERNS)
 
 def fetch_jobs(
     *,
@@ -131,6 +143,7 @@ def fetch_jobs(
     exclude: str = "",
     location: str = "",
     source: str = "",
+    apply_platform: str = "",
     workplace: str = "",
     employment_type: str = "",
     minimum_score: float = 0,
@@ -144,8 +157,9 @@ def fetch_jobs(
     page: int = 1,
     search_scope: str = "all_fields",
     result_set: str = "all",
-    sort_by: str = "match_desc",
+    sort_by: str = "newest",
     page_size: int = 16,
+    include_total_count: bool = True,
 ) -> tuple[list[dict[str, Any]], int]:
     """Parameterized advanced job browser using stored canonical evidence."""
     conditions = [
@@ -212,6 +226,15 @@ def fetch_jobs(
             conditions.append(f"{column} = ?")
             params.append(value)
 
+    if apply_platform:
+        patterns = APPLY_PLATFORM_PATTERNS.get(str(apply_platform))
+        if patterns is None:
+            raise ValueError("Unknown application platform filter.")
+        urls = ("LOWER(COALESCE(j.apply_url,''))", "LOWER(COALESCE(j.job_url,''))")
+        tests = [f"{column} LIKE ?" for pattern in patterns for column in urls]
+        conditions.append("(" + " OR ".join(tests) + ")")
+        params.extend(pattern for pattern in patterns for _ in urls)
+
     if float(minimum_score or 0) > 0:
         conditions.append("COALESCE(j.hunter_score, -1) >= ?")
         params.append(float(minimum_score))
@@ -238,19 +261,27 @@ def fetch_jobs(
         LEFT JOIN n8n_results r
           ON r.id=(SELECT r2.id FROM n8n_results r2 WHERE r2.job_id=j.id ORDER BY r2.id DESC LIMIT 1)
     """
-    count = _rows(
-        f"SELECT COUNT(*) AS count FROM jobs j {joins} WHERE {where}",
-        params,
-    )[0]["count"]
+    # Infinite scrolling needs the exact total only for the first batch.
+    # Subsequent batches keep that total and avoid repeating a full COUNT.
+    count = (
+        _rows(
+            f"SELECT COUNT(*) AS count FROM jobs j {joins} WHERE {where}",
+            params,
+        )[0]["count"]
+        if include_total_count else -1
+    )
 
     sort_map = {
         "match_desc": "COALESCE(j.hunter_score,-1) DESC, j.first_seen_at DESC, j.id DESC",
-        "newest": "j.first_seen_at DESC, j.id DESC",
+        "newest": (
+            "COALESCE(date(j.date_posted),date(j.first_seen_at)) DESC, "
+            "j.first_seen_at DESC, j.id DESC"
+        ),
         "oldest": "j.first_seen_at ASC, j.id ASC",
         "company": "LOWER(COALESCE(j.company_name,'')) ASC, COALESCE(j.hunter_score,-1) DESC, j.id DESC",
         "ats_desc": "COALESCE(r.final_ats_score,-1) DESC, COALESCE(j.hunter_score,-1) DESC, j.id DESC",
     }
-    order_by = sort_map.get(str(sort_by or "").strip().casefold(), sort_map["match_desc"])
+    order_by = sort_map.get(str(sort_by or "").strip().casefold(), sort_map["newest"])
     limit = max(1, min(int(page_size), 48))
     offset = max(0, int(page) - 1) * limit
 

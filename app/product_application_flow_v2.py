@@ -74,6 +74,7 @@ STATE_LABELS = {
     'SUBMITTING': 'Applying now',
     'SUBMITTED': 'Submitted',
     'SUBMISSION_UNVERIFIED': 'Submission needs verification',
+    'OUTCOME_UNKNOWN': 'Outcome unknown · do not resubmit',
     'VERIFIED': 'Submitted',
     'AWAITING_RESPONSE': 'Awaiting response',
     'ASSESSMENT': 'Assessment',
@@ -492,16 +493,18 @@ def _provider_route(job_id: int) -> dict[str, Any] | None:
             return None
         result = dict(row)
         result['dispatch_claim_exists'] = False
+        result['dispatch_claim_state'] = None
         if (
             str(result.get('provider') or '') == 'TSENTA'
             and _table_exists(connection,'tsenta_external_dispatch_claims_v1')
         ):
             claimed = connection.execute(
-                """SELECT 1 FROM tsenta_external_dispatch_claims_v1
+                """SELECT state FROM tsenta_external_dispatch_claims_v1
                    WHERE tenant_id=? AND user_id=? AND route_id=? LIMIT 1""",
                 (owner.tenant_id,owner.user_id,result['route_id']),
             ).fetchone()
             result['dispatch_claim_exists'] = claimed is not None
+            result['dispatch_claim_state'] = str(claimed['state']) if claimed else None
         return result
     finally:
         connection.close()
@@ -572,6 +575,12 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
     elif (
         provider_route is not None
         and provider_route.get('provider') == 'TSENTA'
+        and provider_route.get('dispatch_claim_state') == 'UNKNOWN'
+    ):
+        state, authority = 'OUTCOME_UNKNOWN', 'relay_outcome_unknown'
+    elif (
+        provider_route is not None
+        and provider_route.get('provider') == 'TSENTA'
         and provider_route.get('dispatch_claim_exists')
     ):
         # After a one-use claim, even a lost provider response cannot enable
@@ -625,6 +634,7 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
         'SUBMITTING',
         'SUBMITTED',
         'SUBMISSION_UNVERIFIED',
+        'OUTCOME_UNKNOWN',
         'VERIFIED',
         'AWAITING_RESPONSE',
         'ASSESSMENT',
@@ -654,6 +664,8 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
         cta, cta_label = 'workspace', 'Applying now'
     elif state in {'SUBMITTED', 'VERIFIED', 'AWAITING_RESPONSE'}:
         cta, cta_label = 'workspace', 'View receipt'
+    elif state == 'OUTCOME_UNKNOWN':
+        cta, cta_label = 'workspace', 'Verify existing attempt'
     elif state == 'SUBMISSION_UNVERIFIED':
         cta, cta_label = 'workspace', 'Verify submission'
     elif state in {'ASSESSMENT', 'INTERVIEW', 'OFFER', 'REJECTED', 'WITHDRAWN'}:
@@ -672,7 +684,8 @@ def flow_for_job(job_id: int, *, summary: bool = False) -> dict[str, Any]:
         'state': state,
         'authority': authority,
         'display_status': (
-            'Submission outcome pending' if authority == 'relay_outcome_pending'
+            'Submission outcome unknown · do not resubmit' if authority == 'relay_outcome_unknown'
+            else 'Submission outcome pending' if authority == 'relay_outcome_pending'
             else 'Provider reports submitted · receipt pending'
             if authority == 'relay_provider_submitted'
             else 'Employer confirmation verified'

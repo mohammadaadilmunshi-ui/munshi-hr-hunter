@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
 from app.database import get_connection, get_setting
+from app.sponsorship_guard_v1 import explicit_no_future_sponsorship
 
 
 RULES_ENGINE_VERSION = "canonical-targeting-v3.1"
@@ -507,6 +508,13 @@ def hard_requirement_evidence(job: Mapping[str, Any], rules: CanonicalRules) -> 
         phrase_matches.append(
             {"configured_term": raw, "field": field, "evidence": str(evidence_text)[:500]}
         )
+
+    if explicit_no_future_sponsorship(job):
+        phrase_matches.append({
+            "configured_term": "explicit_no_future_sponsorship",
+            "field": "work_authorization",
+            "evidence": "Employer states sponsorship is unavailable.",
+        })
 
     return {
         "rejected": bool(required_experience or phrase_matches),

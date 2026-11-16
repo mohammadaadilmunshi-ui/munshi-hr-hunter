@@ -138,11 +138,14 @@ def engine_selector_state(
     A cross-provider handoff requires its own atomic approval/revocation
     workflow after checking active mandates, claims and employer receipts.
     """
-    selected = str((route or {}).get("provider") or "NATIVE").upper()
+    tsenta_ready = tsenta_backend.get("execution_ready") is True
+    selected = str(
+        (route or {}).get("provider")
+        or ("TSENTA" if tsenta_ready else "NATIVE")
+    ).upper()
     if selected not in PROVIDER_LABELS:
         selected = "NATIVE"
     reserved = bool(route)
-    tsenta_ready = tsenta_backend.get("execution_ready") is True
     existing_relay_unclaimed = bool(
         reserved
         and selected == "TSENTA"

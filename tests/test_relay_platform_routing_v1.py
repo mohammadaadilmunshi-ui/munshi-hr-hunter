@@ -36,7 +36,15 @@ class ListingOnly:
         return {"structuredContent":{"result":{"applications":[]}}}
 
 @pytest.mark.parametrize("url",SUPPORTED_EXAMPLES)
-def test_cross_platform_duplicate_precheck_remains_read_only(url):
+def test_cross_platform_duplicate_precheck_remains_read_only(url, monkeypatch):
+    if "workable.com" in url:
+        # This generic legacy URL is not a real Workable job. Stub its public
+        # read-only identity resolution, covered independently by focused tests.
+        from app import relay_application_dispatch_v1 as relay
+        monkeypatch.setattr(
+            relay, "resolved_workable_identities",
+            lambda _url: frozenset({"workable:code:ABCD"}),
+        )
     provider=ListingOnly(url)
     assert _prior_provider_application(provider,url) is False
     assert provider.reads==1

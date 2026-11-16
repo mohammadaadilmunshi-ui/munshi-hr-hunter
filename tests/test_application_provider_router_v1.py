@@ -190,7 +190,9 @@ def test_failed_route_has_bounded_durable_retry_and_shared_projection(
     assert retried["attempt_count"] == 1
     assert projection["provider"] == "TSENTA"
     assert projection["state"] == "PREPARATION"
-    assert "provider_application_id_sha256" not in projection
+    # The deployed read model includes the optional HASH field for engine
+    # safety checks, but a failed/unsubmitted route must expose no ID value.
+    assert projection.get("provider_application_id_sha256") is None
 
 
 def test_provider_completion_may_be_first_observed_state(hunter_db, monkeypatch):

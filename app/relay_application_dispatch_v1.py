@@ -20,6 +20,9 @@ from app.tenant_foundation import current_owner
 from app.tsenta_mcp_adapter_v1 import TsentaMcpAdapter, _unwrap
 from app.tsenta_mcp_http_v1 import TsentaMcpApplicationClient
 from app.tsenta_oauth_v1 import _token_for_current_owner
+from app.workable_identity_v1 import (
+    _workable_url, lookup_terms, resolved_workable_identities, url_identities,
+)
 
 CLAIM_TABLE = "tsenta_external_dispatch_claims_v1"
 CLAIM_SCHEMA = f"""CREATE TABLE IF NOT EXISTS {CLAIM_TABLE} (
@@ -202,68 +205,89 @@ def _mark_claim(claim_key: str, status: str, app_id: str | None = None) -> None:
         db.close()
 
 
+def _provider_identity_search(
+    mcp: TsentaMcpApplicationClient,
+    employer_url: str,
+) -> list[Mapping[str, Any]]:
+    """Exhaust bounded read-only queries for exact employer ATS aliases.
+
+    Workable public listings can advertise another canonical /j/ ID and a
+    numeric /jobs/ ID. Resolving that identity is mandatory BEFORE any apply
+    request. A failed read is not evidence of absence and blocks submission.
+    """
+    workable = _workable_url(employer_url)
+    identities = (
+        resolved_workable_identities(employer_url)
+        if workable else url_identities(employer_url)
+    )
+    terms = (
+        lookup_terms(employer_url, identities)
+        if workable else (
+            employer_url.rsplit("/", 1)[-1].split("-", 1)[0],
+        )
+    )
+    if not terms or not identities:
+        raise RuntimeError("Employer ATS identity could not be verified.")
+    matched: dict[str, Mapping[str, Any]] = {}
+    for query in terms:
+        for page in range(1, 5):
+            result = _unwrap(
+                mcp.call_read("list_applications", {
+                    "query": query, "page": page, "limit": 50,
+                }), tool_name="list_applications",
+            )
+            rows = result.get("applications") if isinstance(result, Mapping) else None
+            if not isinstance(rows, list):
+                raise RuntimeError("Provider duplicate-check response unavailable.")
+            for row in rows:
+                if not isinstance(row, Mapping):
+                    continue
+                candidate_url = str(row.get("url") or "")
+                if not candidate_url or not (url_identities(candidate_url) & identities):
+                    continue
+                # A provider ID is not required to BLOCK an existing application;
+                # it is required later for independent readback verification.
+                key = str(row.get("applicationId") or candidate_url)
+                matched[key] = row
+            if len(rows) < 50:
+                break
+        else:
+            # No negative conclusion is allowed after an incomplete provider scan.
+            raise RuntimeError("Unable to exhaust provider duplicate-check inventory.")
+    return list(matched.values())
+
+
 def _confirmed_application(
     mcp: TsentaMcpApplicationClient,
     employer_url: str,
-) -> tuple[str,str] | None:
-    """Independent readback from provider listing plus detailed terminal state."""
-    matches=[]
-    query=employer_url.rsplit("/",1)[-1].split("-",1)[0]
-    for page in range(1,5):
-        result=_unwrap(
-            mcp.call_read("list_applications",{
-                "query":query,"page":page,"limit":50,
-            }),tool_name="list_applications",
-        )
-        rows=result.get("applications") if isinstance(result,Mapping) else None
-        if not isinstance(rows,list):
-            return None
-        matches.extend(
-            r for r in rows if isinstance(r,Mapping)
-            and r.get("url")==employer_url
-        )
-        if len(matches)>1 or len(rows)<50:
-            break
-    if len(matches)!=1:
+) -> tuple[str, str] | None:
+    """Verify exactly one completed application against its ATS job identity."""
+    matches = _provider_identity_search(mcp, employer_url)
+    if len(matches) != 1:
         return None
-    record=matches[0]
-    ident=record.get("applicationId")
-    if not isinstance(ident,str) or not ident or record.get("status")!="COMPLETED":
+    record = matches[0]
+    ident = record.get("applicationId")
+    if not isinstance(ident, str) or not ident or record.get("status") != "COMPLETED":
         return None
-    detail=_unwrap(mcp.call_read(
-        "get_application_status",{"applicationId":ident},
-    ),tool_name="get_application_status")
-    if not isinstance(detail,Mapping) or (
-        detail.get("status")!="COMPLETED"
-        or detail.get("statusLabel")!="sent"
+    detail = _unwrap(mcp.call_read(
+        "get_application_status", {"applicationId": ident},
+    ), tool_name="get_application_status")
+    if not isinstance(detail, Mapping) or (
+        detail.get("status") != "COMPLETED"
+        or detail.get("statusLabel") != "sent"
         or detail.get("isTerminal") is not True
         or detail.get("needsAction") is not False
         or detail.get("errorCode") is not None
     ):
         return None
-    return ident,"COMPLETED"
+    return ident, "COMPLETED"
 
 
 def _prior_provider_application(
     mcp: TsentaMcpApplicationClient, url: str
 ) -> bool:
-    """Read-before-write duplicate check against the connected account."""
-    query=url.rsplit("/",1)[-1].split("-",1)[0]
-    for page in range(1,5):
-        payload=_unwrap(
-            mcp.call_read("list_applications",{
-                "query":query,"page":page,"limit":50,
-            }),tool_name="list_applications",
-        )
-        rows=payload.get("applications") if isinstance(payload,Mapping) else None
-        if not isinstance(rows,list):
-            raise RuntimeError("Provider duplicate-check response unavailable.")
-        if any(isinstance(row,Mapping) and row.get("url")==url for row in rows):
-            return True
-        if len(rows)<50:
-            return False
-    # Never assume no duplicate when the bounded pagination is exhausted.
-    raise RuntimeError("Unable to exhaust provider duplicate-check inventory.")
+    """Read-before-write deduplication, including Workable ATS aliases."""
+    return bool(_provider_identity_search(mcp, url))
 
 
 def submit_from_dashboard(

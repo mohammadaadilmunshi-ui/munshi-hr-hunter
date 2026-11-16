@@ -40,7 +40,8 @@ with patch.object(pages,"job_filters",return_value=values):
  st.session_state["test_filters"] = pages._search_filters("jobs")
 ''').run()
     assert not app.exception
-    assert len(app.selectbox) == 10
+    assert len(app.selectbox) == 11
+    assert app.selectbox(key="jobs_filter_apply_platform").label == "Application platform"
     app.selectbox(key='jobs_filter_location').set_value('Remote, US').run()
     assert not app.exception
     assert app.session_state['test_filters']['location'] == 'Remote, US'
