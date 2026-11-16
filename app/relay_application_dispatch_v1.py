@@ -10,7 +10,7 @@ import base64
 import hashlib
 import sqlite3
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app import application_provider_router_v1 as router
@@ -18,7 +18,7 @@ from app.database import get_connection
 from app.mailbox_verification_service import runtime_health
 from app.tenant_foundation import current_owner
 from app.tsenta_mcp_adapter_v1 import TsentaMcpAdapter, _unwrap
-from app.tsenta_mcp_http_v1 import TsentaMcpApplicationClient
+from app.tsenta_mcp_http_v1 import TsentaMcpApplicationClient, TsentaMcpReadClient
 from app.tsenta_oauth_v1 import _token_for_current_owner
 from app.workable_identity_v1 import (
     _workable_url, lookup_terms, resolved_workable_identities, url_identities,
@@ -220,12 +220,16 @@ def _provider_identity_search(
         resolved_workable_identities(employer_url)
         if workable else url_identities(employer_url)
     )
-    terms = (
+    # The provider's application listing does not always expose a URL, but
+    # its exact-link query does return a signed-in job-link match annotation.
+    # Query the FULL trusted URL first; never infer an exact match from title.
+    aliases = (
         lookup_terms(employer_url, identities)
         if workable else (
             employer_url.rsplit("/", 1)[-1].split("-", 1)[0],
         )
     )
+    terms = tuple(dict.fromkeys((employer_url, *aliases)))
     if not terms or not identities:
         raise RuntimeError("Employer ATS identity could not be verified.")
     matched: dict[str, Mapping[str, Any]] = {}
@@ -243,8 +247,26 @@ def _provider_identity_search(
                 if not isinstance(row, Mapping):
                     continue
                 candidate_url = str(row.get("url") or "")
-                if not candidate_url or not (url_identities(candidate_url) & identities):
-                    continue
+                if candidate_url:
+                    # An explicit contradictory provider URL must NEVER be
+                    # overridden by a search-match annotation.
+                    if not (url_identities(candidate_url) & identities):
+                        continue
+                else:
+                    # Live Relay responses may omit url, title and company.
+                    # Only a returned match from an exact full HTTPS job-link
+                    # query with explicit 'job link' provenance qualifies.
+                    matched_on = row.get("matchedOn") or []
+                    if not isinstance(matched_on, list):
+                        continue
+                    if (
+                        query != employer_url
+                        or "job link" not in {
+                            str(term).strip().casefold() for term in matched_on
+                        }
+                        or not str(row.get("applicationId") or "").strip()
+                    ):
+                        continue
                 # A provider ID is not required to BLOCK an existing application;
                 # it is required later for independent readback verification.
                 key = str(row.get("applicationId") or candidate_url)
@@ -257,11 +279,11 @@ def _provider_identity_search(
     return list(matched.values())
 
 
-def _confirmed_application(
+def _confirmed_application_record(
     mcp: TsentaMcpApplicationClient,
     employer_url: str,
-) -> tuple[str, str] | None:
-    """Verify exactly one completed application against its ATS job identity."""
+) -> Mapping[str, Any] | None:
+    """Exact-job provider terminal proof; does NOT verify employer receipt."""
     matches = _provider_identity_search(mcp, employer_url)
     if len(matches) != 1:
         return None
@@ -273,14 +295,65 @@ def _confirmed_application(
         "get_application_status", {"applicationId": ident},
     ), tool_name="get_application_status")
     if not isinstance(detail, Mapping) or (
-        detail.get("status") != "COMPLETED"
+        detail.get("applicationId") not in {None, ident}
+        or detail.get("status") != "COMPLETED"
         or detail.get("statusLabel") != "sent"
         or detail.get("isTerminal") is not True
         or detail.get("needsAction") is not False
         or detail.get("errorCode") is not None
     ):
         return None
-    return ident, "COMPLETED"
+    return record
+
+
+def _confirmed_application(
+    mcp: TsentaMcpApplicationClient,
+    employer_url: str,
+) -> tuple[str, str] | None:
+    """Preserve the existing public two-field provider readback contract."""
+    record = _confirmed_application_record(mcp, employer_url)
+    if record is None:
+        return None
+    return str(record["applicationId"]), "COMPLETED"
+
+
+def _matches_unknown_claim(
+    record: Mapping[str, Any],
+    route: Mapping[str, Any],
+    claim: Mapping[str, Any],
+    *,
+    pdf_artifact_bound: bool = False,
+) -> bool:
+    """Only repair a lost callback for one exact job and one recent claim.
+
+    An older application to the same opening is evidence against resubmission
+    but is NOT proof that the later unknown request itself completed.
+    """
+    if str(claim.get("state") or "") != "UNKNOWN" or not pdf_artifact_bound:
+        return False
+    if (
+        str(claim.get("route_id") or "") != str(route.get("route_id") or "")
+        or int(claim.get("job_id") or 0) != int(route.get("job_id") or -1)
+        or str(claim.get("application_id") or "")
+           != str(route.get("application_id") or "")
+        or not route.get("application_id")
+        or str(claim.get("employer_url_sha256") or "")
+           != str(route.get("employer_url_sha256") or "")
+        or not route.get("employer_url_sha256")
+    ):
+        return False
+    try:
+        claimed = datetime.fromisoformat(str(claim["created_at"]).replace("Z", "+00:00"))
+        applied = datetime.fromisoformat(str(record["createdAt"]).replace("Z", "+00:00"))
+        if claimed.tzinfo is None or applied.tzinfo is None:
+            return False
+        return (
+            claimed - timedelta(seconds=10)
+            <= applied
+            <= claimed + timedelta(minutes=30)
+        )
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
 
 
 def _prior_provider_application(
@@ -626,16 +699,59 @@ def reconcile_from_dashboard(job_id: int) -> dict[str, Any]:
             f"SELECT * FROM {CLAIM_TABLE} WHERE route_id=?",
             (route["route_id"],),
         ).fetchone() if claim_exists else None
+        claimed = dict(claimed) if claimed is not None else None
         if not claimed:
             return {"status":"NO_DISPATCH_CLAIM","retry_allowed":False}
+        pdf_artifact_bound = False
+        if str(claimed["state"]) == "UNKNOWN":
+            # Two DIFFERENT valid SHA-256 bindings: route.resume_sha256 is
+            # preflight metadata; claim.pdf_sha256 is the actual one-page PDF.
+            # Verify the latter through the original package + owner + job,
+            # not by comparing hashes with different meanings.
+            pdf_artifact_bound = db.execute(
+                """SELECT 1 FROM application_preflight_packages p
+                     JOIN native_resume_v5_artifacts a
+                       ON a.tenant_id=p.tenant_id AND a.user_id=p.user_id
+                      AND a.version_id=p.resume_version_id
+                    WHERE p.package_id=? AND p.tenant_id=? AND p.user_id=?
+                      AND p.job_id=? AND a.artifact_kind='PDF'
+                      AND a.mime_type='application/pdf' AND a.page_count=1
+                      AND a.sha256=? LIMIT 1""",
+                (
+                    str(route["preflight_package_id"]),
+                    owner.tenant_id, owner.user_id, int(job_id),
+                    str(claimed.get("pdf_sha256") or ""),
+                ),
+            ).fetchone() is not None
     finally:
         db.close()
-    with TsentaMcpApplicationClient(_token_for_current_owner()) as client:
+    with TsentaMcpReadClient(_token_for_current_owner()) as client:
         client.initialize()
-        found=_confirmed_application(client,route["employer_url"])
+        # Lost/unknown claims cannot be reconciled from a bare job match:
+        # require a terminal provider status AND an execution timestamp inside
+        # the immutable claim window, with exact URL / PDF bindings.
+        if claimed["state"] == "UNKNOWN":
+            proof = _confirmed_application_record(client, route["employer_url"])
+            if proof is None or not _matches_unknown_claim(
+                proof, route, claimed, pdf_artifact_bound=pdf_artifact_bound
+            ):
+                return {"status": "OUTCOME_UNKNOWN", "retry_allowed": False}
+            found = (str(proof["applicationId"]), "COMPLETED")
+        elif claimed["state"] == "ACCEPTED":
+            found = _confirmed_application(client, route["employer_url"])
+            if (
+                found is None
+                or str(claimed.get("tsenta_application_id_sha256") or "")
+                   != _digest(found[0])
+            ):
+                return {"status": "PROVIDER_STATUS_PENDING", "retry_allowed": False}
+        else:
+            # CLAIMED can mean an active external request; never race or
+            # infer completion during its one-time dispatch window.
+            return {"status": "OUTCOME_PENDING", "retry_allowed": False}
     if found is None:
-        return {"status":"PROVIDER_STATUS_PENDING","retry_allowed":False}
-    identifier,status=found
+        return {"status": "PROVIDER_STATUS_PENDING", "retry_allowed": False}
+    identifier, status = found
     if route["state"] not in {"PROVIDER_SUBMITTED","EMPLOYER_CONFIRMED"}:
         router.record_provider_status(
             route_id=route["route_id"],provider_status=status,
@@ -663,7 +779,7 @@ def reconcile_from_dashboard(job_id: int) -> dict[str, Any]:
     try:
         from app.relay_inbox_receipt_v1 import reconcile_employer_inbox
 
-        with TsentaMcpApplicationClient(_token_for_current_owner()) as mcp:
+        with TsentaMcpReadClient(_token_for_current_owner()) as mcp:
             mcp.initialize()
             receipt=reconcile_employer_inbox(job_id=int(job_id),mcp=mcp)
         if receipt.get("status")=="EMPLOYER_CONFIRMED":
