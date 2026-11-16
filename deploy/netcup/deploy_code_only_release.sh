@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=5d482f75c6ccd001912fbab41146a7f8eb9259ed
+LIVE_BASE=2984b69f12a97ae6d4838204f04cff7d9580e694
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -318,6 +318,23 @@ allowed_files=(
   tests/test_code_only_gateway_transport_v1.py
   .github/workflows/netcup-code-only-deploy.yml
   tests/test_code_only_release_contract_v1.py
+  # Approved November 16 2026 P0 safety / exact Relay / employer receipts.
+  app/career_os_quality_patch_v1.py
+  app/product_state.py
+  app/sponsorship_guard_v1.py
+  app/targeting.py
+  app/verified_employer_domains_v1.py
+  app/workable_identity_v1.py
+  config/verified_employer_domains_v1.json
+  tests/test_application_provider_router_v1.py
+  tests/test_job_card_dialog_scroll_v26.py
+  tests/test_product_studio.py
+  tests/test_production_p0_safety_20261116.py
+  tests/test_production_ux_20261116.py
+  tests/test_relay_exact_link_unknown_v1.py
+  tests/test_verified_employer_domains_v1.py
+  tests/test_workable_identity_v1.py
+
 )
 allowed_file() {
   for f in "${allowed_files[@]}"; do
@@ -405,6 +422,14 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_product_experience_vnext.py \
     /app/hunter/tests/test_unified_job_workspaces_v1.py \
     /app/hunter/tests/test_relay_platform_routing_v1.py \
+    /app/hunter/tests/test_production_p0_safety_20261116.py \
+    /app/hunter/tests/test_production_ux_20261116.py \
+    /app/hunter/tests/test_workable_identity_v1.py \
+    /app/hunter/tests/test_relay_exact_link_unknown_v1.py \
+    /app/hunter/tests/test_verified_employer_domains_v1.py \
+    /app/hunter/tests/test_job_card_dialog_scroll_v26.py \
+    /app/hunter/tests/test_product_state.py \
+    /app/hunter/tests/test_product_studio.py \
     /app/hunter/tests/test_relay_claim_projection_v1.py \
     /app/hunter/tests/test_tsenta_mcp_adapter_v1.py \
     /app/hunter/tests/test_tsenta_submission_preflight_v1.py \
