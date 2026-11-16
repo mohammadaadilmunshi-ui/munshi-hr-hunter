@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "e643fff0d346cb3dd67b14374d9be86b45fead5a" in content
+    assert "5d482f75c6ccd001912fbab41146a7f8eb9259ed" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "e643fff0d346cb3dd67b14374d9be86b45fead5a",
+            "--expected-base", "5d482f75c6ccd001912fbab41146a7f8eb9259ed",
         ],
         check=False,
         capture_output=True,
@@ -83,7 +83,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     match = re.search(r"allowed_files=\(\n(?P<paths>.*?)\n\)", content, re.DOTALL)
     assert match is not None
     allowlist = set(match.group("paths").split())
-    base = "e643fff0d346cb3dd67b14374d9be86b45fead5a"
+    base = "5d482f75c6ccd001912fbab41146a7f8eb9259ed"
     result = subprocess.run(
         ["git", "-C", str(ROOT), "diff", "--name-only", base, "HEAD"],
         capture_output=True, check=True, text=True, timeout=10,
@@ -113,7 +113,7 @@ def test_breezy_free_source_is_explicit_and_in_isolated_image_checks():
 
 
 def test_new_workflow_expected_baseline():
-    assert '[[ "$EXPECTED_LIVE" == "e643fff0d346cb3dd67b14374d9be86b45fead5a" ]] || exit 3' in WORKFLOW.read_text()
+    assert '[[ "$EXPECTED_LIVE" == "5d482f75c6ccd001912fbab41146a7f8eb9259ed" ]] || exit 3' in WORKFLOW.read_text()
     assert "cancel-in-progress: false" in WORKFLOW.read_text()
 
 
@@ -300,3 +300,31 @@ def test_source_label_release_changes_are_scoped():
         assert ("  " + name + chr(10)) in script
     assert "/app/hunter/tests/test_source_label_presentation_v1.py" in script
     assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE" in script
+
+
+
+def test_november_dashboard_repair_is_code_only_and_release_tests_cover_it():
+    script = SCRIPT.read_text()
+    baseline = "5d482f75c6ccd001912fbab41146a7f8eb9259ed"
+    assert f"LIVE_BASE={baseline}" in script
+    for name in (
+        "app/manual_input.py",
+        "app/relay_application_dispatch_v1.py",
+        "app/relay_receipt_poll_cursor_v1.py",
+        "app/relay_receipt_worker_v1.py",
+        "tests/test_product_manual_input.py",
+        "tests/test_relay_receipt_poll_cursor_v1.py",
+        "docs/MUNSHI_RELAY_FAIR_POLLING_20261115.md",
+        "docs/incidents/2026-11-15-manual-job-sqlite-tsenta-sync.md",
+    ):
+        assert f"  {name}\n" in script
+    for name in (
+        "test_product_manual_input.py",
+        "test_relay_receipt_poll_cursor_v1.py",
+        "test_relay_application_dispatch_v1.py",
+        "test_relay_receipt_worker_v1.py",
+    ):
+        assert f"/app/hunter/tests/{name}" in script
+    gateway = (ROOT / "deploy/netcup/github_deploy_gateway.sh").read_text()
+    assert f'CODE_ONLY_BASE="{baseline}"' in gateway
+    assert f'[[ "$EXPECTED_LIVE" == "{baseline}" ]] || exit 3' in WORKFLOW.read_text()
