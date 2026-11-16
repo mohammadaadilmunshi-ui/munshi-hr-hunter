@@ -356,3 +356,19 @@ def test_20261116_p0_scope_and_isolated_release_tests():
         "test_product_state.py", "test_product_studio.py",
     ):
         assert "/app/hunter/tests/"+name in script
+
+
+
+def test_synthetic_preview_is_real_source_and_exclusively_test_mounted():
+    """Preserve strict isolated UI preview checks without expanding live image."""
+    release = SCRIPT.read_text()
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    assert (ROOT / "scripts/render_studio_preview.py").is_file()
+    assert 'cp -p "$REPO/scripts/render_studio_preview.py" "$test_copy/render_studio_preview.py"' in release
+    assert 'chmod 0644 "$test_copy/render_studio_preview.py"' in release
+    assert ('--mount "type=bind,src=$test_copy/render_studio_preview.py,'
+            'dst=/app/hunter/scripts/render_studio_preview.py,readonly"') in release
+    assert "/app/hunter/tests/test_product_studio.py" in release
+    assert "docker run --rm --network none --read-only" in release
+    assert "COPY scripts/render_studio_preview.py" not in dockerfile
+    assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE" in release

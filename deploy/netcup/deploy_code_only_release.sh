@@ -375,6 +375,13 @@ test_copy="$(mktemp -d "$ROOT/runtime/codeonly-test-source.XXXXXXXX")"
 mkdir -m 0700 "$test_copy/tests"
 cp -a "$REPO/tests/." "$test_copy/tests/"
 chmod -R a+rX "$test_copy/tests"
+# The synthetic preview test imports a real source-controlled helper omitted
+# from the production Docker image on purpose. Mount that one helper only for
+# the isolated, network-disabled test run; do not weaken or skip its assertions.
+[[ -f "$REPO/scripts/render_studio_preview.py" ]] ||
+  block 'Synthetic preview helper absent from exact approved release'
+cp -p "$REPO/scripts/render_studio_preview.py" "$test_copy/render_studio_preview.py"
+chmod 0644 "$test_copy/render_studio_preview.py"
 [[ -r "$test_copy/tests/test_native_cover_letter_writer_v1.py" ]] ||
   block 'Private test snapshot could not be created'
 echo 'ISOLATED_TEST_SOURCE=EPHEMERAL_COPY (production permissions unchanged)'
@@ -382,6 +389,7 @@ timeout 900 docker run --rm --network none --read-only \
   --tmpfs /tmp:rw,nosuid,nodev,size=512m \
   --tmpfs /app/hunter/data:rw,nosuid,nodev,size=256m,uid=10001,gid=10001,mode=0700 \
   --mount "type=bind,src=$test_copy/tests,dst=/app/hunter/tests,readonly" \
+  --mount "type=bind,src=$test_copy/render_studio_preview.py,dst=/app/hunter/scripts/render_studio_preview.py,readonly" \
   --entrypoint python -e CLOUD_SHADOW_MODE=false \
   -e HUNTER_API_SECRET=isolated-codeonly-ci-tests-not-production-12345 \
   "$new_image" -m pytest -q -p no:cacheprovider \
