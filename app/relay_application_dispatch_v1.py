@@ -678,7 +678,7 @@ def reconcile_owner_pending(*,limit:int=10) -> dict[str,int]:
                WHERE r.tenant_id=? AND r.user_id=? AND r.provider='TSENTA'
                  AND r.state IN ('PREPARATION','FILLING','PAUSED',
                                  'PROVIDER_SUBMITTED')
-               ORDER BY r.updated_at DESC, r.job_id ASC""",
+               ORDER BY r.job_id ASC""",
             (owner.tenant_id,owner.user_id),
         )]
     finally:
@@ -707,7 +707,8 @@ def reconcile_owner_pending(*,limit:int=10) -> dict[str,int]:
                     counts["employer_confirmed"]+=1
                 elif status=="PROVIDER_SUBMITTED":
                     counts["provider_submitted"]+=1
-                else:counts["pending"]+=1
+                else:
+                    counts["pending"]+=1
             except (RuntimeError,LookupError,ValueError,TypeError,
                     PermissionError,OSError,sqlite3.OperationalError):
                 # A single failed readback cannot starve the remaining routes,

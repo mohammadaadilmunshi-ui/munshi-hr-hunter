@@ -13,10 +13,11 @@ receipt polling lanes with no common exclusion.
 
 ## Fix
 A single per-owner, SHA-256 pseudonymized cursor file in the existing
-Hunter database volume stores only a cursor offset and schema version, no
-application IDs or answers. A non-blocking kernel advisory file lock ensures
+Hunter database volume stores only the last processed internal job ID and
+schema version, not a list of applications, account data, or answers. A non-blocking kernel advisory file lock ensures
 host cron and Hunter supervisor cannot perform overlapping readback batches.
-Each successful lock claim rotates a bounded window of existing claimed jobs;
+Each successful lock claim rotates a bounded, job-ID-ordered window of
+existing claimed jobs, even when jobs are inserted or removed;
 no new job/application discovery, provider application creation, form submit,
 retry, OTP or employer communication is authorized by this component.
 A failure advances the cursor so it does not starve other jobs; subsequent

@@ -14,6 +14,7 @@ import fcntl
 import hashlib
 import json
 import os
+from bisect import bisect_right
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -70,19 +71,23 @@ def receipt_poll_window(
         prior = os.read(descriptor, 256)
         try:
             stored = json.loads(prior) if prior else {}
-            offset = int(stored.get("next_offset", 0))
-        except (ValueError, TypeError, AttributeError):
-            offset = 0
+        except (ValueError, TypeError):
+            stored = {}
 
-        total = len(jobs)
-        offset %= total
-        selected = [
-            int(jobs[(offset + index) % total])
-            for index in range(min(limit, total))
-        ]
+        # A positional offset is not stable when incoming jobs change the
+        # ordering: ten new jobs per poll can make us repeatedly re-read the
+        # same ten routes forever. Use the stable numeric job ID as a keyset
+        # cursor, and wrap only after the highest existing job.
+        ordered = sorted({int(job_id) for job_id in jobs})
+        try:
+            last_job_id = int(stored.get("last_job_id", -1))
+        except (ValueError, TypeError, AttributeError):
+            last_job_id = -1
+        start = bisect_right(ordered, last_job_id)
+        selected = (ordered[start:] + ordered[:start])[:limit]
         updated = json.dumps({
-            "version": 1,
-            "next_offset": (offset + len(selected)) % total,
+            "version": 2,
+            "last_job_id": selected[-1],
         }, separators=(",", ":")).encode("ascii")
         os.lseek(descriptor, 0, os.SEEK_SET)
         os.write(descriptor, updated)
