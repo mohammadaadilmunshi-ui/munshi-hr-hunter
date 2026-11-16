@@ -120,7 +120,9 @@ def test_legacy_application_surface_reuses_status_projection_with_manual_refresh
     assert 'application_action_copy(model.canonical_state, model.next_action)' in source
     assert "application_stage_markup(model.stage_index, receipt_verified=confirmed)" in source
     assert "application_center_refresh" in source
-    assert "This does not retry or submit" in source
+    # The status-refresh screen now describes BOTH read-only actions.
+    # Verify its actual user-facing safety promise rather than obsolete copy.
+    assert "Neither action retries or submits applications" in source
 
 
 

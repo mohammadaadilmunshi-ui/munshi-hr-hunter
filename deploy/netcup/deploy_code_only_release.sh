@@ -281,6 +281,7 @@ allowed_files=(
   tests/test_relay_application_dispatch_v1.py
   tests/test_product_manual_input.py
   tests/test_relay_receipt_poll_cursor_v1.py
+  tests/test_product_experience_vnext.py
   tests/test_relay_claim_projection_v1.py
   tests/test_relay_inbox_receipt_v1.py
   tests/test_dashboard_operational_metrics_v1.py
