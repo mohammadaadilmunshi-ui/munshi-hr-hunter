@@ -351,8 +351,10 @@ def test_api_submit_endpoint_routes_optional_engine_without_breaking_native(
     assert calls==[(12,"NATIVE"),(12,"TSENTA")]
 
 
-def test_receipt_reconciliation_continues_after_locked_sqlite_writer(monkeypatch):
+def test_receipt_reconciliation_continues_after_locked_sqlite_writer(monkeypatch, tmp_path):
     """One failed readback must not abort the rest or resubmit anything."""
+    from app import database
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "hunter.sqlite")
     calls = []
 
     class ReadOnlySelection:

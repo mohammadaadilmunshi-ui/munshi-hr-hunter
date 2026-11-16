@@ -32,3 +32,24 @@ def test_supervisor_polls_separately_from_prepare_worker():
     assert 'Lane("employer-receipt-readback"' in src
     assert 'interval=max(300,' in src
     assert 'MUNSHI_PREPARE_RUNTIME_WORKER_ENABLED' in src
+
+
+
+def test_duplicate_poll_does_not_write_notification_outbox(monkeypatch):
+    monkeypatch.setattr(
+        relay, "reconcile_owner_pending",
+        lambda *, limit: {"already_running": 1, "applications_sent": 0},
+    )
+    from app import application_notifications_runtime_v3 as notifications
+    monkeypatch.setattr(
+        notifications, "sync_notification_outbox",
+        lambda: (_ for _ in ()).throw(AssertionError("outbox must not run")),
+    )
+    assert worker.run_once(limit=5) == {
+        "status": "already_running",
+        "checked": 0,
+        "confirmed": 0,
+        "errors": 0,
+        "applications_sent": 0,
+        "notifications_queued": 0,
+    }

@@ -678,27 +678,39 @@ def reconcile_owner_pending(*,limit:int=10) -> dict[str,int]:
                WHERE r.tenant_id=? AND r.user_id=? AND r.provider='TSENTA'
                  AND r.state IN ('PREPARATION','FILLING','PAUSED',
                                  'PROVIDER_SUBMITTED')
-               ORDER BY r.updated_at DESC LIMIT ?""",
-            (owner.tenant_id,owner.user_id,int(limit)),
+               ORDER BY r.updated_at DESC, r.job_id ASC""",
+            (owner.tenant_id,owner.user_id),
         )]
     finally:
         db.close()
     counts={"checked":0,"provider_submitted":0,"employer_confirmed":0,
             "pending":0,"errors":0,"applications_sent":0}
-    for job in jobs:
-        try:
-            result=reconcile_from_dashboard(job)
-            counts["checked"]+=1
-            status=result.get("status")
-            if status=="EMPLOYER_CONFIRMED":
-                counts["employer_confirmed"]+=1
-            elif status=="PROVIDER_SUBMITTED":
-                counts["provider_submitted"]+=1
-            else:counts["pending"]+=1
-        except (RuntimeError,LookupError,ValueError,TypeError,
-                PermissionError,OSError,sqlite3.OperationalError):
-            # SQLite contention must not abort the entire read-only receipt
-            # batch. The failed route can be retried by the next poll cycle;
-            # this never retries an employer application submission.
-            counts["errors"]+=1
+    from app.relay_receipt_poll_cursor_v1 import receipt_poll_window
+
+    # Both the five-minute host poller and Hunter's supervisor use this same
+    # cursor/lock. Without it, LIMIT N always polls only the newest N jobs.
+    with receipt_poll_window(
+        tenant_id=owner.tenant_id,
+        user_id=owner.user_id,
+        jobs=jobs,
+        limit=int(limit),
+    ) as selected:
+        if selected is None:
+            counts["already_running"]=1
+            return counts
+        for job in selected:
+            try:
+                result=reconcile_from_dashboard(job)
+                counts["checked"]+=1
+                status=result.get("status")
+                if status=="EMPLOYER_CONFIRMED":
+                    counts["employer_confirmed"]+=1
+                elif status=="PROVIDER_SUBMITTED":
+                    counts["provider_submitted"]+=1
+                else:counts["pending"]+=1
+            except (RuntimeError,LookupError,ValueError,TypeError,
+                    PermissionError,OSError,sqlite3.OperationalError):
+                # A single failed readback cannot starve the remaining routes,
+                # and nothing here retries or initiates employer submission.
+                counts["errors"]+=1
     return counts

@@ -16,6 +16,14 @@ def run_once(*, limit: int = 5) -> dict[str, Any]:
     result = reconcile_owner_pending(limit=limit)
     if result.get("applications_sent") != 0:
         raise RuntimeError("Receipt polling returned unexpected submission authority.")
+    if result.get("already_running"):
+        # Another authorized poller holds the shared cursor/lease. Avoid even
+        # the notification-outbox write while that poller is active.
+        return {
+            "status": "already_running",
+            "checked": 0, "confirmed": 0, "errors": 0,
+            "applications_sent": 0, "notifications_queued": 0,
+        }
     from app.application_notifications_runtime_v3 import sync_notification_outbox
     # Durable outbox projection never sends and has no submission authority.
     queued = sync_notification_outbox()
