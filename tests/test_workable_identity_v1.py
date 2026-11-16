@@ -118,3 +118,13 @@ def test_workable_missing_canonical_evidence_fails_closed(monkeypatch):
     monkeypatch.setattr(identity.httpx, "Client", lambda **_kwargs: fake)
     with pytest.raises(RuntimeError, match="alias evidence"):
         identity.resolved_workable_identities(SOURCE)
+
+
+
+def test_numeric_workable_job_identity_supports_both_alias_shapes():
+    urls = (
+        "https://apply.workable.com/otdcareers/jobs/6274373",
+        "https://otdcareers.workable.com/jobs/6274373",
+    )
+    for url in urls:
+        assert "workable:otdcareers:job:6274373" in identity.url_identities(url)

@@ -101,3 +101,16 @@ def test_job_card_age_labels_posting_vs_discovery():
     assert posted.startswith("Posted ")
     assert discovered.startswith("Discovered ")
     assert "Posted" not in discovered
+
+
+def test_initialized_product_reads_do_not_run_schema_ddl(hunter_db, monkeypatch):
+    from app import product_state
+
+    def unexpected_schema_write(_connection):
+        raise AssertionError("An initialized product read must not run schema DDL")
+
+    monkeypatch.setattr(product_state, "ensure_schema", unexpected_schema_write)
+    rows = product_state.job_filters()
+    assert "sources" in rows
+    _, count = product_state.fetch_jobs(page_size=10)
+    assert count >= 0

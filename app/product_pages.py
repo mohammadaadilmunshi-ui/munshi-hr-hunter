@@ -572,6 +572,10 @@ def _job_detail() -> None:
     except (TypeError, ValueError):
         _clear_job_query()
         return
+    # A deep link is a one-time navigation request, not a persistent dialog
+    # trigger. Clear it before rendering, so the close (including the modal X)
+    # does not reopen the same job on every Streamlit fragment rerun.
+    _clear_job_query()
     _job_detail_dialog(job_id)
 
 def _filter_defaults() -> dict[str, Any]:

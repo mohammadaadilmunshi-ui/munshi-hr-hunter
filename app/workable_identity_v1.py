@@ -38,7 +38,7 @@ def url_identities(url: str) -> frozenset[str]:
     host = str(parts.hostname or "").casefold()
     pieces = [part for part in parts.path.split("/") if part]
     org = ""
-    if host == "apply.workable.com" and len(pieces) > 2 and pieces[1] == "j":
+    if host == "apply.workable.com" and len(pieces) > 2 and pieces[1] in {"j", "jobs"}:
         org = pieces[0].casefold()
     elif host not in {"apply.workable.com", "workable.com"}:
         org = host.split(".")[0]

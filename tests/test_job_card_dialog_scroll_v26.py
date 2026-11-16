@@ -39,3 +39,12 @@ def test_open_button_is_transparent_overlay_on_colored_card_only() -> None:
     assert '[class*="st-key-job_open_"]{' in source
     assert "height:224px!important" in source
     assert "opacity:0!important" in source
+
+
+
+def test_query_job_link_is_consumed_before_opening_dialog() -> None:
+    source = _source("app/product_pages.py")
+    start = source.index("def _job_detail() -> None:")
+    end = source.index("\ndef _filter_defaults()", start)
+    detail = source[start:end]
+    assert detail.index("    _clear_job_query()\n    _job_detail_dialog(job_id)") > 0

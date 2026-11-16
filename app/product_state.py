@@ -97,7 +97,17 @@ def valid_view(value: Any) -> str:
 def _rows(sql: str, parameters: Iterable[Any] = ()) -> list[dict[str, Any]]:
     connection = get_connection()
     try:
-        ensure_schema(connection)
+        # Product reads should not repeatedly execute CREATE TABLE/INDEX DDL.
+        # Existing production tables are stable; keep first-run schema repair
+        # for fresh/partial installations without mutating normal reads.
+        existing = connection.execute(
+            """SELECT COUNT(*) FROM sqlite_master
+                 WHERE type='table' AND name IN
+                   ('product_job_state','auto_prepare_lanes',
+                    'candidate_profile_facts','gmail_messages')"""
+        ).fetchone()[0]
+        if int(existing) != 4:
+            ensure_schema(connection)
         return [dict(row) for row in connection.execute(sql, tuple(parameters)).fetchall()]
     finally:
         connection.close()
