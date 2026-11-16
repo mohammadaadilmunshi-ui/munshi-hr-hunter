@@ -156,6 +156,55 @@ def test_native_resume_worker_completes_exact_pdf_docx(worker_db, monkeypatch):
 
 
 
+
+def test_background_prepare_installs_json_transport_guard_before_model_call(
+    worker_db, monkeypatch
+):
+    operation = _start(key="workers-native-json-guard")
+    calls = []
+
+    def install_quality_guard():
+        calls.append("guard-installed")
+        return {"success": True}
+
+    def generate_with_guard(**_kwargs):
+        assert calls == ["guard-installed"], (
+            "Durable Prepare must install the same JSON budget/completion guard "
+            "as the interactive Resume Studio before calling the model."
+        )
+        calls.append("generate")
+        return {
+            "version_id": "guarded-resume",
+            "version_number": 1,
+            "stage_b_bound": True,
+        }
+
+    monkeypatch.setattr(
+        workers.native_resume_quality_hotfix_v2,
+        "install",
+        install_quality_guard,
+    )
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "generate_resume",
+        generate_with_guard,
+    )
+    monkeypatch.setattr(
+        workers.native_resume_artifact_v5,
+        "materialize",
+        lambda version_id, **_kwargs: _bundle(),
+    )
+
+    result = workers.run_native_resume_once(
+        operation_id=operation["operation_id"],
+        worker_id="native-worker-guarded",
+    )
+
+    assert result["task_status"] == "SUCCEEDED"
+    assert calls == ["guard-installed", "generate"]
+    assert result["submission_authority"] is False
+
+
 def test_native_retry_reuses_validated_version_without_second_model_call(
     worker_db, monkeypatch
 ):

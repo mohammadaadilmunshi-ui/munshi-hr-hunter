@@ -25,6 +25,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app import native_resume_artifact_v5
+from app import native_resume_quality_hotfix_v2
 from app import native_resume_service_v5
 from app import application_preflight_package_v1 as preflight_v1
 from app import prepare_orchestrator_v1 as orchestrator
@@ -297,6 +298,12 @@ def run_native_resume_once(
         record = _reusable_generated_resume(operation=operation, task=task, rewrite_mode=rewrite_mode)
         reused_generated_version = record is not None
         if record is None:
+            # The interactive Studio installs the structured-output reliability
+            # patch, but durable Prepare runs in an independent process. Install
+            # the same idempotent protection before any paid model call. It
+            # enforces a complete JSON output envelope without changing saved
+            # credentials, model selection, call-count limits or submit authority.
+            native_resume_quality_hotfix_v2.install()
             record = native_resume_service_v5.generate_resume(
                 job_id=int(operation["job_id"]),
                 instruction=str(instruction or "").strip(),
