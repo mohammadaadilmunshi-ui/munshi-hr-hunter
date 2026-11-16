@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "reviewed_employers": [
+    {
+      "company_name": "Ansa Biotechnologies",
+      "sender_domain": "ansabio.com",
+      "ats_board_origin": "https://job-boards.greenhouse.io/ansabiotechnologies",
+      "reviewed_on": "2026-11-16",
+      "source_urls": [
+        "https://ansabio.com/company/careers/",
+        "https://www.linkedin.com/company/ansabio/",
+        "https://job-boards.greenhouse.io/ansabiotechnologies"
+      ]
+    }
+  ]
+}
