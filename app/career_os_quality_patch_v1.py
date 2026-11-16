@@ -122,6 +122,60 @@ def _increase_job_batches() -> None:
     )
 
 
+def _install_scroll_to_top() -> None:
+    """Small accessible top-of-page control; no Streamlit rerun or side effect."""
+    components.html(
+        """
+<script>
+(() => {
+  try {
+    const parentWin = window.parent;
+    const doc = parentWin.document;
+    const container = doc.querySelector('[data-testid="stAppViewContainer"]');
+    const id = 'munshi-jobs-scroll-top';
+    let button = doc.getElementById(id);
+    if (button) return;
+    button = doc.createElement('button');
+    button.id = id;
+    button.type = 'button';
+    button.textContent = '↑';
+    button.setAttribute('aria-label', 'Scroll to top of job listings');
+    button.title = 'Back to top';
+    button.style.cssText = [
+      'position:fixed', 'right:16px',
+      'bottom:calc(86px + env(safe-area-inset-bottom))',
+      'height:42px', 'width:42px',
+      'border-radius:50%', 'border:1px solid #cbd5d1',
+      'color:#19392f', 'background:#fff', 'font-size:24px',
+      'box-shadow:0 2px 12px rgba(12,25,21,.13)',
+      'cursor:pointer', 'z-index:10001', 'display:none'
+    ].join(';');
+    const scrollAmount = () => Math.max(
+      parentWin.scrollY || 0, doc.documentElement.scrollTop || 0,
+      doc.body.scrollTop || 0, container ? container.scrollTop || 0 : 0
+    );
+    const update = () => {
+      button.style.display = scrollAmount() > 550 ? 'block' : 'none';
+    };
+    button.addEventListener('click', () => {
+      if (container) container.scrollTo({top:0,behavior:'smooth'});
+      parentWin.scrollTo({top:0,behavior:'smooth'});
+    });
+    doc.body.appendChild(button);
+    parentWin.addEventListener('scroll', update, {passive:true});
+    if (container) container.addEventListener('scroll', update, {passive:true});
+    update();
+  } catch (_) {
+    // The job browser still works without this convenience control.
+  }
+})();
+</script>
+        """,
+        height=0,
+        scrolling=False,
+    )
+
+
 def _autoload_sentinel() -> None:
     """Click the ordinary Streamlit load-more control when the bottom nears view."""
     st.markdown(
@@ -182,6 +236,7 @@ def _install_infinite_jobs(pages_module: Any) -> None:
             "Search every stored opportunity without losing the targeting, authorization, source, or score evidence behind the match.",
         )
         filters = pages_module._search_filters("jobs")
+        _install_scroll_to_top()
         signature = _filter_signature(filters)
         if st.session_state.get("product_jobs_filter_signature_v1") != signature:
             st.session_state["product_jobs_filter_signature_v1"] = signature
@@ -195,8 +250,10 @@ def _install_infinite_jobs(pages_module: Any) -> None:
                 **filters,
                 page=page,
                 page_size=_BATCH_SIZE,
+                include_total_count=(page == 1),
             )
-            count = int(total)
+            if page == 1:
+                count = int(total)
             jobs.extend(chunk)
             if len(chunk) < _BATCH_SIZE:
                 break
@@ -225,13 +282,14 @@ def _install_infinite_jobs(pages_module: Any) -> None:
             pages_module._manual_add()
 
         if jobs:
+            pulse_evidence = pages_module._pulse_evidence()
             with st.container(key="product_job_grid"):
                 for start in range(0, len(jobs), 4):
                     with st.container(key=f"product_job_grid_row_{start}"):
                         cols = st.columns(4, gap="medium")
                         for index, row in enumerate(jobs[start:start + 4]):
                             with cols[index]:
-                                pages_module._job_card(row, key_prefix="jobs")
+                                pages_module._job_card(row, key_prefix="jobs", pulse_evidence=pulse_evidence)
             if len(jobs) < count:
                 _autoload_sentinel()
             else:
