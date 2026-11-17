@@ -50,12 +50,12 @@ def shell_css() -> str:
     from app.job_card_interaction_hotfix_v2 import interaction_css
     from app.product_experience_vnext import presentation_css
 
-    dark_styles = "<style>" + (
-        Path(__file__).parent / "assets" / "graphite_dark.css"
-    ).read_text() + "</style>"
+    assets = Path(__file__).parent / "assets"
+    dark_styles = "<style>" + (assets / "graphite_dark.css").read_text() + "</style>"
+    contrast_styles = "<style>" + (assets / "graphite_contrast.css").read_text() + "</style>"
     return "\n".join(dedent(layer).strip() for layer in (
         product_css(), v22_css(), interaction_css(), presentation_css(),
-        studio_css(), dark_styles,
+        studio_css(), dark_styles, contrast_styles,
     ))
 
 

@@ -80,10 +80,11 @@ def test_shell_injects_theme_after_original_layers_and_renders_dock() -> None:
     from app.product_ui import product_css
     from textwrap import dedent
     dark_layer = "<style>" + (ROOT / "app/assets/graphite_dark.css").read_text() + "</style>"
+    contrast_layer = "<style>" + (ROOT / "app/assets/graphite_contrast.css").read_text() + "</style>"
     assert shell_css() == "\n".join(
         dedent(layer).strip() for layer in (
             product_css(), v22_css(), interaction_css(), presentation_css(),
-            studio_css(), dark_layer,
+            studio_css(), dark_layer, contrast_layer,
         )
     )
     assert 'html[data-munshi-theme="dark"]' in shell_css()
