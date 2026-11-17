@@ -42,6 +42,15 @@ html:not([data-munshi-ready]) body:not(:has([data-testid=stException])) #munshi-
  observer.observe(document.documentElement,{childList:true,subtree:true});
 })();
 </script>"""
+BRAND_HEAD = """<link rel="icon" href="/app/static/favicon.ico" sizes="any">
+<link rel="icon" href="/app/static/favicon-light.png" type="image/png" media="(prefers-color-scheme: light)">
+<link rel="icon" href="/app/static/favicon-dark.png" type="image/png" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" sizes="180x180" href="/app/static/apple-touch-icon.png">
+<link rel="manifest" href="/app/static/manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="MUNSHI">
+<meta name="theme-color" content="#202125">"""
+
 STATUS = '<div id="munshi-boot-status" role="status" aria-live="polite"><strong>MUNSHI</strong><span>Opening your workspace…</span></div>'
 
 
@@ -52,7 +61,7 @@ def package(source: str, theme: str) -> str:
     source = source.replace(STATUS, "")
     if "</head>" not in source or "<body>" not in source:
         raise ValueError("Unsupported Streamlit HTML: refusing an unverified patch")
-    return source.replace("</head>", START + theme + early_theme_boot() + BOOT + END + "</head>", 1).replace("<body>", "<body>" + STATUS, 1)
+    return source.replace("</head>", START + BRAND_HEAD + theme + early_theme_boot() + BOOT + END + "</head>", 1).replace("<body>", "<body>" + STATUS, 1)
 
 
 if __name__ == "__main__":

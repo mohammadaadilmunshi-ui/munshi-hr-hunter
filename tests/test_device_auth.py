@@ -137,3 +137,36 @@ def test_active_api_mounts_cookie_auth_router():
     from pathlib import Path
     source = (Path(__file__).resolve().parent.parent / "app" / "api.py").read_text()
     assert "app.include_router(dashboard_device_auth_router)" in source
+
+
+@pytest.mark.parametrize("asset", sorted(device_auth._PUBLIC_BRAND_ASSETS))
+def test_public_crown_icon_assets_can_load_before_cookie_enrollment(asset):
+    response = _client().get(
+        "/_munshi-auth/verify",
+        headers={"X-Munshi-Original-URI": asset},
+        follow_redirects=False,
+    )
+    assert response.status_code == 204
+    assert "x-munshi-auth-user" not in response.headers
+
+
+@pytest.mark.parametrize(
+    "private_uri",
+    [
+        "/",
+        "/_stcore/stream",
+        "/app/static/private.json",
+        "/app/static/icon-512.png/anything",
+        "/app/static/../secret",
+        "/app/static/icon-512.png%2Fsecret",
+        "/api/jobs",
+    ],
+)
+def test_icon_allowlist_does_not_expose_private_paths(private_uri):
+    response = _client().get(
+        "/_munshi-auth/verify",
+        headers={"X-Munshi-Original-URI": private_uri},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/_munshi-auth/login?next=")

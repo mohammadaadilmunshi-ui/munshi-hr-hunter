@@ -29,6 +29,19 @@ from app.database import DB_PATH
 
 router = APIRouter(include_in_schema=False)
 
+# Tiny, non-sensitive brand assets only. An iOS Home Screen installation may
+# request its icon without carrying a dashboard session cookie.
+_PUBLIC_BRAND_ASSETS = frozenset({
+    "/app/static/apple-touch-icon.png",
+    "/app/static/favicon.ico",
+    "/app/static/favicon-light.png",
+    "/app/static/favicon-dark.png",
+    "/app/static/icon-192.png",
+    "/app/static/icon-512.png",
+    "/app/static/icon-maskable-512.png",
+    "/app/static/manifest.json",
+})
+
 _AUDIENCE = "munshi-dashboard-device-auth-v1"
 _DEFAULT_COOKIE_NAME = "__Host-munshi_device_session"
 _DEFAULT_TTL_SECONDS = 24 * 60 * 60
@@ -250,6 +263,12 @@ def dashboard_device_verify(
     x_munshi_original_uri: str | None = Header(default=None, alias="X-Munshi-Original-URI"),
 ) -> Response:
     """Caddy forward-auth endpoint for normal HTTP and Streamlit reconnects."""
+    # Permit only immutable, curated icon/manifest files. Never authorize a
+    # directory prefix; protected dashboard/API paths still require a cookie.
+    original_path = str(x_munshi_original_uri or "").partition("?")[0]
+    if original_path in _PUBLIC_BRAND_ASSETS:
+        return _no_store(Response(status_code=204))
+
     payload = verify_device_token(request.cookies.get(cookie_name()))
     if payload is not None:
         response = Response(status_code=204)
