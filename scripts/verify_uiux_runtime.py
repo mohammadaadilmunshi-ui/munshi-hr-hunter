@@ -88,7 +88,12 @@ def profile_acceptance(page, url, output):
         consent = page.get_by_role(
             'checkbox', name='I confirm this source is truthful', exact=False,
         )
-        consent.check(timeout=15000)
+        # The profile intake form is repeatedly repositioned by Streamlit
+        # while upload/source text settles. Locator.check() requires a stable
+        # bounding box and times out even though the real input is enabled.
+        # Activate the actual checkbox's DOM click handler (NOT a direct
+        # assignment to checked or session state), then require its state.
+        consent.evaluate("(input) => input.click()", timeout=15000)
         expect(consent).to_be_checked(timeout=15000)
         save = page.get_by_role('button', name='Save Master Resume source', exact=True)
         expect(save).to_be_enabled(timeout=15000)

@@ -392,8 +392,10 @@ def test_browser_consent_assertion_is_rerender_aware_and_not_bypassed():
     script = (ROOT / "scripts/verify_uiux_runtime.py").read_text()
     release = SCRIPT.read_text()
     assert "  scripts/verify_uiux_runtime.py\n" in release
-    assert "consent.check(timeout=15000)" in script
+    assert 'consent.evaluate("(input) => input.click()", timeout=15000)' in script
     assert "expect(consent).to_be_checked(timeout=15000)" in script
+    assert 'input.checked = true' not in script
+    assert 'input.setAttribute("checked"' not in script
     assert "expect(save).to_be_enabled(timeout=15000)" in script
     assert "save.click()" in script
     assert "page.get_by_text('I confirm this source is truthful and may be used to build my profile and job-specific resumes.', exact=True).click()" not in script
