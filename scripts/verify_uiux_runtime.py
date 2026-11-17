@@ -55,6 +55,32 @@ def changed(page, previous):
     ready(page)
 
 
+def stale_elements_do_not_dim_the_document(page):
+    """Assert Streamlit's real stale wrapper stays readable during a rerun.
+
+    Set and restore only an inert DOM attribute on synthetic staging. This is
+    a visual acceptance probe, not an application click or submission.
+    """
+    candidate = page.locator('[data-testid="stElementContainer"]').first
+    candidate.wait_for(state='visible', timeout=15000)
+    assert candidate.evaluate(
+        """async el => {
+          const original = el.getAttribute('data-stale');
+          el.setAttribute('data-stale', 'true');
+          try {
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            const css = getComputedStyle(el);
+            return Number(css.opacity) >= 0.99 &&
+              css.transitionProperty === 'none' &&
+              css.filter === 'none';
+          } finally {
+            if (original === null) el.removeAttribute('data-stale');
+            else el.setAttribute('data-stale', original);
+          }
+        }"""
+    ), 'Stale Streamlit widget must not fade or blur the entire dashboard'
+
+
 def mobile_dock(page):
     dock = page.locator('.st-key-product_mobile_routes')
     assert dock.bounding_box()['height'] <= 90, 'Bottom navigation must not cover the page'
@@ -67,6 +93,7 @@ def mobile_dock(page):
 
 def profile_acceptance(page, url, output):
     page.goto(url + '/?view=profile'); ready(page)
+    stale_elements_do_not_dim_the_document(page)
     intake = page.get_by_role('textbox', name='Review your source text', exact=True)
     if intake.count():
         source = ('Alex Fixture\nalex.fixture@example.invalid | New York, NY\n'

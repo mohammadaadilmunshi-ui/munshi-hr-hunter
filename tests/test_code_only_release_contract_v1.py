@@ -399,3 +399,16 @@ def test_browser_consent_assertion_is_rerender_aware_and_not_bypassed():
     assert "expect(save).to_be_enabled(timeout=15000)" in script
     assert "save.click()" in script
     assert "page.get_by_text('I confirm this source is truthful and may be used to build my profile and job-specific resumes.', exact=True).click()" not in script
+
+def test_visual_stale_opacity_override_is_scoped_and_browser_enforced():
+    css = (ROOT / "app/product_ui.py").read_text()
+    browser = (ROOT / "scripts/verify_uiux_runtime.py").read_text()
+    release = SCRIPT.read_text()
+    assert "  app/product_ui.py\n" in release
+    assert '[data-testid="stElementContainer"][data-stale="true"]' in css
+    assert 'opacity:1!important;' in css
+    assert 'transition-property:none!important;' in css
+    assert 'filter:none!important;' in css
+    assert 'stale_elements_do_not_dim_the_document(page)' in browser
+    assert 'getComputedStyle(el)' in browser
+    assert 'do not' not in browser.lower().split('stale_elements_do_not_dim_the_document(page)')[1][:200]

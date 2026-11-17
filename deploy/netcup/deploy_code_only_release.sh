@@ -215,6 +215,7 @@ allowed_files=(
   app/product_application_flow_v2.py
   app/product_pages.py
   app/native_resume_service.py
+  app/product_ui.py
   app/profile_workspace_v2.py
   app/relay_application_dispatch_v1.py
   app/manual_input.py
