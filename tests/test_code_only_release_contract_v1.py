@@ -376,6 +376,10 @@ def test_synthetic_preview_is_real_source_and_exclusively_test_mounted():
 def test_mobile_incremental_read_cache_is_in_exact_release_allowlist_and_image_tests():
     source=SCRIPT.read_text()
     assert "  tests/test_mobile_incremental_read_cache_20261116.py\n" in source
+    assert "  tests/test_docx_zip_stability_v1.py\n" in source
+    assert "  app/native_resume_service.py\n" in source
+    assert "/app/hunter/tests/test_docx_zip_stability_v1.py" in source
+    assert "/app/hunter/tests/test_native_resume_artifact_v5.py" in source
     assert "  tests/test_application_center_renderer_v2.py\n" in source
     assert "/app/hunter/tests/test_application_center_renderer_v2.py" in source
     assert "/app/hunter/tests/test_mobile_incremental_read_cache_20261116.py" in source
