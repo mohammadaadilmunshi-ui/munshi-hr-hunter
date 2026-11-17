@@ -248,8 +248,8 @@ def workspace_acceptance(page, url, output):
         'Automation': ('automation', 'Automation'),
         'Integrations': ('integrations', 'Integrations'),
         'Profile & defaults': ('profile', 'Profile & defaults'),
-        'Credentials': ('credentials', 'Credentials'),
-        'Apply': ('apply', 'Review before preparation'),
+        'Credentials': ('credentials', 'Credentials & AutoApply'),
+        'Apply': ('apply', 'Review and submission authority'),
     }
     for section, (route, heading) in settings_sections.items():
         previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
