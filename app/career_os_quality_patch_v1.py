@@ -11,7 +11,8 @@ submission authority, databases, adapters, or deployment/runtime contracts.
 from __future__ import annotations
 
 import json
-from typing import Any
+import time
+from typing import Any, Callable, MutableMapping
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -21,6 +22,8 @@ from app.deterministic_profile_extractor_v1 import extract_profile_from_source
 
 
 _BATCH_SIZE = 24
+_JOB_PAGE_CACHE_KEY = "product_jobs_page_snapshot_v2"
+_JOB_PAGE_CACHE_TTL_SECONDS = 20
 # Retain the prior 48 × 60 browsing capacity while reducing first-render work.
 _MAX_VISIBLE_JOBS = 48 * 60
 _WINDOW_OPTIONS = {
@@ -113,6 +116,54 @@ def _filter_signature(filters: dict[str, Any]) -> str:
         else:
             normalized[key] = value
     return json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _incremental_job_page_rows(
+    *,
+    session: MutableMapping[str, Any],
+    signature: str,
+    batches: int,
+    fetch: Callable[..., tuple[list[dict[str, Any]], int]],
+    now: float | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Cache only read-only job rows inside this browser session.
+
+    Streamlit reruns all visible cards, but existing job pages no longer
+    re-query SQLite on every filter keystroke or load-more click. Status and
+    receipt checks still execute live in each card and are NEVER cached here.
+    A short TTL bounds recency drift; job save/pass callbacks invalidate it.
+    """
+    current = time.monotonic() if now is None else float(now)
+    cached = session.get(_JOB_PAGE_CACHE_KEY)
+    if not (
+        isinstance(cached, dict)
+        and cached.get("signature") == signature
+        and isinstance(cached.get("pages"), dict)
+        and isinstance(cached.get("count"), int)
+        and isinstance(cached.get("created"), (float, int))
+        and 0 <= current - float(cached["created"]) < _JOB_PAGE_CACHE_TTL_SECONDS
+    ):
+        cached = {"signature": signature, "created": current, "pages": {}, "count": -1}
+        # Install only after a successful initial fetch; a failed read is not
+        # silently presented as an empty result on the next rerun.
+
+    count = int(cached["count"])
+    pages: dict[int, list[dict[str, Any]]] = cached["pages"]
+    jobs: list[dict[str, Any]] = []
+    for page in range(1, min(max(1, int(batches)), _MAX_VISIBLE_JOBS // _BATCH_SIZE) + 1):
+        if page not in pages:
+            chunk, total = fetch(page=page, page_size=_BATCH_SIZE,
+                                 include_total_count=(page == 1))
+            pages[page] = chunk
+            if page == 1:
+                count = int(total)
+                cached["count"] = count
+        chunk = pages[page]
+        jobs.extend(chunk)
+        if len(chunk) < _BATCH_SIZE or (count >= 0 and len(jobs) >= count):
+            break
+    session[_JOB_PAGE_CACHE_KEY] = cached
+    return jobs, count
 
 
 def _increase_job_batches() -> None:
@@ -243,20 +294,14 @@ def _install_infinite_jobs(pages_module: Any) -> None:
             st.session_state["product_jobs_visible_batches_v1"] = 1
 
         batches = max(1, int(st.session_state.get("product_jobs_visible_batches_v1", 1)))
-        jobs: list[dict[str, Any]] = []
-        count = 0
-        for page in range(1, batches + 1):
-            chunk, total = pages_module.fetch_jobs(
-                **filters,
-                page=page,
-                page_size=_BATCH_SIZE,
-                include_total_count=(page == 1),
-            )
-            if page == 1:
-                count = int(total)
-            jobs.extend(chunk)
-            if len(chunk) < _BATCH_SIZE:
-                break
+        jobs, count = _incremental_job_page_rows(
+            session=st.session_state,
+            signature=signature,
+            batches=batches,
+            fetch=lambda **pagination: pages_module.fetch_jobs(
+                **filters, **pagination
+            ),
+        )
 
         deduplicated: list[dict[str, Any]] = []
         seen: set[int] = set()

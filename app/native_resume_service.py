@@ -1086,12 +1086,23 @@ def render_docx_bytes(document: ResumeDocument) -> bytes:
     doc_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'''
     buffer = io.BytesIO()
+    # ZIP defaults each part's timestamp to wall-clock time. Identical resume
+    # content rendered across a two-second boundary then yields different
+    # bytes and hashes, violating immutable artifact/retry guarantees. Freeze
+    # *ZIP entry metadata only*. All existing XML, text, fonts and page layout
+    # stay byte-for-byte identical.
+    parts = (
+        ("[Content_Types].xml", content_types),
+        ("_rels/.rels", rels),
+        ("word/document.xml", document_xml),
+        ("word/styles.xml", styles_xml),
+        ("word/_rels/document.xml.rels", doc_rels),
+    )
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("[Content_Types].xml", content_types)
-        archive.writestr("_rels/.rels", rels)
-        archive.writestr("word/document.xml", document_xml)
-        archive.writestr("word/styles.xml", styles_xml)
-        archive.writestr("word/_rels/document.xml.rels", doc_rels)
+        for name, xml in parts:
+            entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(entry, xml)
     return buffer.getvalue()
 
 

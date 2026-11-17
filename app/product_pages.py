@@ -164,11 +164,14 @@ def _show_action_feedback() -> None:
 
 def _toggle_job_saved(job_id: int, currently_saved: bool) -> None:
     set_job_state(int(job_id), saved=not bool(currently_saved))
+    # The card's saved flag must reflect the write on the immediate rerun.
+    st.session_state.pop("product_jobs_page_snapshot_v2", None)
     _set_action_feedback("success", "Removed from Saved jobs." if currently_saved else "Saved job.")
 
 
 def _toggle_job_skipped(job_id: int, currently_skipped: bool) -> None:
     set_job_state(int(job_id), skipped=not bool(currently_skipped))
+    st.session_state.pop("product_jobs_page_snapshot_v2", None)
     _set_action_feedback("success", "Restored job to results." if currently_skipped else "Passed on job.")
 
 
@@ -237,6 +240,7 @@ def _prepare_job(job_id: int) -> dict[str, Any] | None:
             else "Application preparation started."
         )
         _set_action_feedback("success", message)
+        st.session_state.pop("_application_center_read_snapshot_v1", None)
         st.session_state["application_workspace_notice"] = {
             "tone": "success",
             "message": message,

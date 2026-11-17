@@ -45,6 +45,22 @@ def product_css() -> str:
     <style>
     :root{color-scheme:light!important;--m-font:"Manrope","Avenir Next",Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--m-bg:#F6F7F4;--m-soft:#EFF2EE;--m-surface:#FFF;--m-ink:#142129;--m-secondary:#44545B;--m-muted:#66737B;--m-border:#DFE5E0;--m-strong:#CED7D0;--m-forest:#123D31;--m-forest-hover:#0B3026;--m-active:#E4EFE9;--m-brass:#9B6E2D;--m-danger:#A84249;--m-radius:18px}
     *{box-sizing:border-box}html,body,.stApp,[data-baseweb]{color-scheme:light!important}html,body,[class*="css"],.stApp{font-family:var(--m-font)!important}button,input,textarea,select,[role="button"],[data-baseweb]{font-family:var(--m-font)!important}html,body{overflow-x:hidden;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;font-feature-settings:"kern" 1,"liga" 1}
+    /*
+     * Streamlit 1.58 marks old widgets data-stale=true during a fragment/page
+     * rerun, then fades their wrapper to 0.33 opacity after 0.5 seconds.
+     * On an iPhone this washes out the entire job/application grid during
+     * otherwise routine filter and scroll updates. Preserve old content at
+     * normal contrast until its new authoritative projection replaces it.
+     *
+     * Scope ONLY to Streamlit's stElementContainer stale wrapper: do not
+     * suppress real per-operation spinners, error indicators, modal overlays,
+     * disabled button states or application/receipt truth checks.
+     */
+    .stApp [data-testid="stElementContainer"][data-stale="true"]{
+      opacity:1!important;
+      transition-property:none!important;
+      filter:none!important;
+    }
     .stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"]{background:var(--m-bg)!important;color:var(--m-ink)}[data-testid="stHeader"],[data-testid="stDecoration"],[data-testid="stStatusWidget"],[data-testid="stSidebar"],button[kind="header"]{display:none!important}.block-container{width:100%!important;max-width:1680px!important;padding:0 2.25rem 4rem!important;margin:0 auto!important}
     h1,h2,h3{color:var(--m-ink)!important;letter-spacing:-.032em!important}h1{font-size:clamp(1.85rem,3vw,2.6rem)!important;line-height:1.08!important;font-weight:750!important;margin:.25rem 0 .65rem!important}h2{font-size:1.38rem!important;font-weight:700!important}h3{font-size:1.05rem!important;font-weight:700!important}p,[data-testid="stCaptionContainer"]{color:var(--m-secondary);letter-spacing:-.008em}
     .st-key-product_top_bar{width:100vw!important;max-width:none!important;margin:0 calc(50% - 50vw) 1.4rem!important;padding:.7rem max(1.25rem,calc((100vw - 1630px)/2))!important;min-height:66px;background:#FFF;border-bottom:1px solid var(--m-border);position:sticky;top:0;z-index:100}.product-header{min-height:50px;display:flex;align-items:center;gap:1.4rem}.brand{display:inline-flex;align-items:center;gap:.58rem;color:var(--m-forest)!important;text-decoration:none!important;font-size:1.12rem;font-weight:800;letter-spacing:-.04em;white-space:nowrap}.brand-mark{display:inline-grid;place-items:center;width:29px;height:29px;font-size:.9rem;font-weight:900;color:#FFF;background:var(--m-forest);clip-path:polygon(50% 0,100% 100%,72% 100%,50% 55%,28% 100%,0 100%)}

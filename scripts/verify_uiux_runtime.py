@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 import time
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 VIEWS = ("dashboard", "jobs", "prepare-application", "auto-prepare", "tracker", "profile", "resume-studio", "research", "settings")
 OBSERVE = """const supported=PerformanceObserver.supportedEntryTypes;
@@ -55,6 +55,34 @@ def changed(page, previous):
     ready(page)
 
 
+def stale_elements_do_not_dim_the_document(page):
+    """Assert Streamlit's real stale wrapper stays readable during a rerun.
+
+    Set and restore only an inert DOM attribute on synthetic staging. This is
+    a visual acceptance probe, not an application click or submission.
+    """
+    # Style-only st.html nodes are zero-height elements. Probe an actual
+    # visible content wrapper, not the first zero-height CSS injection.
+    candidate = page.locator('[data-testid="stElementContainer"]:visible').first
+    candidate.wait_for(state='visible', timeout=15000)
+    assert candidate.evaluate(
+        """async el => {
+          const original = el.getAttribute('data-stale');
+          el.setAttribute('data-stale', 'true');
+          try {
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            const css = getComputedStyle(el);
+            return Number(css.opacity) >= 0.99 &&
+              css.transitionProperty === 'none' &&
+              css.filter === 'none';
+          } finally {
+            if (original === null) el.removeAttribute('data-stale');
+            else el.setAttribute('data-stale', original);
+          }
+        }"""
+    ), 'Stale Streamlit widget must not fade or blur the entire dashboard'
+
+
 def mobile_dock(page):
     dock = page.locator('.st-key-product_mobile_routes')
     assert dock.bounding_box()['height'] <= 90, 'Bottom navigation must not cover the page'
@@ -67,6 +95,7 @@ def mobile_dock(page):
 
 def profile_acceptance(page, url, output):
     page.goto(url + '/?view=profile'); ready(page)
+    stale_elements_do_not_dim_the_document(page)
     intake = page.get_by_role('textbox', name='Review your source text', exact=True)
     if intake.count():
         source = ('Alex Fixture\nalex.fixture@example.invalid | New York, NY\n'
@@ -81,9 +110,23 @@ def profile_acceptance(page, url, output):
         assert intake.input_value().strip() == source.strip()
         page.get_by_role('textbox', name='Source name', exact=True).fill('Synthetic QA Master Resume')
         intake.fill(source)
-        page.get_by_text('I confirm this source is truthful and may be used to build my profile and job-specific resumes.', exact=True).click()
-        assert page.get_by_role('checkbox', name='I confirm this source is truthful', exact=False).is_checked()
-        page.get_by_role('button', name='Save Master Resume source', exact=True).click()
+        # Use the actual consent control, not label text that can be replaced
+        # by a Streamlit rerender between click and immediate is_checked().
+        # This still fails closed if consent cannot persist or Save stays
+        # disabled: no synthetic test can skip truth confirmation.
+        consent = page.get_by_role(
+            'checkbox', name='I confirm this source is truthful', exact=False,
+        )
+        # The profile intake form is repeatedly repositioned by Streamlit
+        # while upload/source text settles. Locator.check() requires a stable
+        # bounding box and times out even though the real input is enabled.
+        # Activate the actual checkbox's DOM click handler (NOT a direct
+        # assignment to checked or session state), then require its state.
+        consent.evaluate("(input) => input.click()", timeout=15000)
+        expect(consent).to_be_checked(timeout=15000)
+        save = page.get_by_role('button', name='Save Master Resume source', exact=True)
+        expect(save).to_be_enabled(timeout=15000)
+        save.click()
         page.get_by_role('button', name='Build profile from Master Resume', exact=True).wait_for()
     build = page.get_by_role('button', name='Build profile from Master Resume', exact=True)
     if build.count():

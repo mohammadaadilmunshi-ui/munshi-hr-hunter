@@ -9,7 +9,8 @@ telemetry back to Settings -> Advanced/System.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from typing import Any
+import time
+from typing import Any, Callable, MutableMapping
 
 import streamlit as st
 
@@ -468,6 +469,7 @@ def _requested_job_id() -> int | None:
 
 
 _APPLICATION_FILTERS = {
+    "Active": "active",
     "Needs you": "needs_you",
     "Preparing": "preparing",
     "Applying": "applying",
@@ -490,6 +492,7 @@ def _requested_application_id() -> str | None:
 
 
 def _select_application(job_id: int, application_id: str | None = None) -> None:
+    st.session_state.pop("_application_center_read_snapshot_v1", None)
     st.query_params["view"] = "prepare-application"
     st.query_params["job"] = str(int(job_id))
     try:
@@ -523,6 +526,7 @@ def _archive_application(application_id: str, job_id: int) -> None:
         st.session_state["application_visibility_error"] = str(error)
         return
     st.session_state["application_visibility_success"] = "Application archived. Its lifecycle, resume, history, and receipts were preserved."
+    st.session_state.pop("_application_center_read_snapshot_v1", None)
     _clear_application_selection()
 
 
@@ -535,6 +539,7 @@ def _restore_application(application_id: str, job_id: int) -> None:
         st.session_state["application_visibility_error"] = str(error)
         return
     st.session_state["application_visibility_success"] = "Application restored to active views."
+    st.session_state.pop("_application_center_read_snapshot_v1", None)
 
 
 def _updated_label(value: str | None) -> str:
@@ -554,6 +559,18 @@ def _filter_application_views(
             (group == "all" and not item.archived)
             or (group == "archived" and item.archived)
             or (not item.archived and item.state_group == group)
+            or (
+                group == "active" and not item.archived
+                and (
+                    item.state_group in {
+                        "needs_you", "preparing", "applying",
+                        "needs_attention", "interviewing", "offers",
+                    }
+                    or item.canonical_state in {
+                        "INTERVIEW", "ASSESSMENT", "OFFER",
+                    }
+                )
+            )
             or (not item.archived and group == "interviewing"
                 and item.canonical_state in {"INTERVIEW", "ASSESSMENT"})
             or (not item.archived and group == "offers"
@@ -578,10 +595,9 @@ from app.product_experience_vnext import (
 
 def _render_application_rail(views: list[Any], selected: Any | None) -> None:
     st.markdown("### Application Center")
-    # The default shows every durable application, already priority-sorted by
-    # the shared read model. Filters narrow the same identities; they never hide
-    # the existence of other current work on first open.
-    default_choice = "All"
+    # The first view focuses on work in progress. The complete durable archive
+    # remains one explicitly labeled filter away, not deleted or truncated.
+    default_choice = "Active"
     choice = st.selectbox(
         "Filter applications",
         list(_APPLICATION_FILTERS),
@@ -595,9 +611,13 @@ def _render_application_rail(views: list[Any], selected: Any | None) -> None:
     )
     group = _APPLICATION_FILTERS[choice]
     visible = _filter_application_views(views, group=group, query=query)
-    st.caption(f"{len(visible)} application{'s' if len(visible) != 1 else ''}")
+    st.caption(f"{len(visible)} application{'s' if len(visible) != 1 else ''} · Select All to view complete history.")
     if not visible:
-        st.info("No applications match this view.")
+        st.info(
+            "No applications match this stage. Your selected application may "
+            "have advanced; choose Active or All for the current record."
+            if selected is not None else "No applications match this view."
+        )
         return
     page_size = 25
     page_count = max(1, (len(visible) + page_size - 1) // page_size)
@@ -743,6 +763,7 @@ def _run_recovery(action: str, job_id: int) -> None:
         st.session_state["application_recovery_error"] = str(error)
     else:
         st.session_state["application_recovery_success"] = action
+        st.session_state.pop("_application_center_read_snapshot_v1", None)
 
 
 def _render_recovery_center(model: Any) -> None:
@@ -767,6 +788,7 @@ def _render_recovery_center(model: Any) -> None:
             "Refresh state",
             key=f"application_refresh_{model.job_id}",
             use_container_width=True,
+            on_click=lambda: st.session_state.pop(_APPLICATION_CENTER_CACHE_KEY, None),
         )
         durable = [
             action
@@ -912,6 +934,45 @@ def _render_external_tracker_details(model: Any) -> None:
     )
 
 
+_APPLICATION_CENTER_CACHE_TTL_SECONDS = 12.0
+_APPLICATION_CENTER_CACHE_KEY = "_application_center_read_snapshot_v1"
+
+
+def _application_center_source_snapshot(
+    *,
+    session: MutableMapping[str, Any],
+    native_reader: Callable[[], list[Any]],
+    external_reader: Callable[[], list[Any]],
+    now: float | None = None,
+) -> tuple[list[Any], list[Any], bool]:
+    """Per-session bounded read cache for full, high-cost application histories.
+
+    A Streamlit filter keystroke reruns the script. Keep the successful source
+    projections for at most 12 seconds so typing and paging do not rebuild
+    4,000+ application view models repeatedly. Application submissions and
+    worker events are never cached; the status-refresh, select, archive,
+    restore, and recovery actions invalidate this read snapshot. No shared
+    global cache: different signed-in sessions cannot share candidate data.
+    """
+    current = time.monotonic() if now is None else float(now)
+    snapshot = session.get(_APPLICATION_CENTER_CACHE_KEY)
+    if (
+        isinstance(snapshot, dict)
+        and isinstance(snapshot.get("created"), (float, int))
+        and 0 <= current - float(snapshot["created"]) < _APPLICATION_CENTER_CACHE_TTL_SECONDS
+        and isinstance(snapshot.get("native"), list)
+        and isinstance(snapshot.get("external"), list)
+    ):
+        return snapshot["native"], snapshot["external"], True
+    native = native_reader()
+    session["_application_center_last_good"] = native
+    external = external_reader()
+    session[_APPLICATION_CENTER_CACHE_KEY] = {
+        "created": current, "native": native, "external": external,
+    }
+    return native, external, False
+
+
 def render_applications(product_pages: Any, app_workspace: Any) -> None:
     from app.application_view_model_v1 import application_views, view_for_job
 
@@ -933,6 +994,7 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
         try:
             with st.spinner("Checking existing submissions and employer inbox…"):
                 result=reconcile_owner_pending(limit=10)
+            st.session_state.pop(_APPLICATION_CENTER_CACHE_KEY, None)
             st.session_state["_relay_refresh_feedback"]=(
                 f"Checked {result['checked']} existing applications · "
                 f"{result['employer_confirmed']} employer confirmations found · "
@@ -940,6 +1002,7 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
             )
         except (RuntimeError,LookupError,ValueError,PermissionError,
                 TypeError,OSError):
+            st.session_state.pop(_APPLICATION_CENTER_CACHE_KEY, None)
             st.session_state["_relay_refresh_feedback"]=(
                 "Provider lookup is temporarily unavailable. No application "
                 "was retried. Local records are displayed below."
@@ -972,6 +1035,7 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
             report = sync_authorized_tracker(
                 max_pages=MAX_PAGES, on_progress=_tracker_progress,
             )
+            st.session_state.pop(_APPLICATION_CENTER_CACHE_KEY, None)
             coverage = (
                 f"{report['checked']} of {report['provider_total']}"
                 if report["provider_total"] is not None
@@ -995,27 +1059,41 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
                 "You can safely try synchronizing again."
             )
         finally:
+            st.session_state.pop(_APPLICATION_CENTER_CACHE_KEY, None)
             progress.empty()
 
-    try:
-        # Pagination bounds the rendered rail; the read projection includes every
-        # durable application so older items never require name recall or search.
-        views = application_views(limit=None)
-    except Exception:
-        views = list(st.session_state.get("_application_center_last_good") or [])
-        st.warning(
-            "Live application state is temporarily busy. Showing the last successful read; no application action was changed."
-        )
-    else:
-        st.session_state["_application_center_last_good"] = views
     from app.external_application_tracker_v1 import external_application_views
 
+    # The data remains complete, but rapid UI-only filter/page reruns reuse
+    # a short-lived, session-private snapshot instead of recomputing 4k rows.
+    # External history failure may not hide otherwise healthy native records.
+    external_failed = False
+
+    def read_external() -> list[Any]:
+        nonlocal external_failed
+        try:
+            return external_application_views(limit=5000)
+        except Exception:  # noqa: BLE001 - preserve native view on provider errors
+            external_failed = True
+            return []
+
     try:
-        external = external_application_views(limit=5000)
-    except Exception:  # noqa: BLE001 - provider projection cannot hide native records
-        external = []
+        native, external, _cached = _application_center_source_snapshot(
+            session=st.session_state,
+            native_reader=lambda: application_views(limit=None),
+            external_reader=read_external,
+        )
+    except Exception:  # noqa: BLE001 - fail visible, never invent application state
+        native = list(st.session_state.get("_application_center_last_good") or [])
+        external = read_external()
+        st.warning(
+            "Live application state is temporarily busy. Showing the last "
+            "successful read; no application action was changed."
+        )
+    if external_failed:
+        st.session_state.pop(_APPLICATION_CENTER_CACHE_KEY, None)
         st.warning("Synced application history is temporarily unavailable.")
-    views = [*views, *external]
+    views = [*native, *external]
     stage_priority = {
         "needs_you": 0, "interviewing": 1, "offers": 2,
         "applying": 3, "preparing": 4, "needs_attention": 5,
