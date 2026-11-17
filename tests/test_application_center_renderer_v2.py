@@ -66,10 +66,24 @@ with patch.object(vm, 'application_views', lambda limit=250: views), patch.objec
     rendered = _text(app)
 
     assert not app.exception
-    for value in ("Preparing", "Needs review", "Needs attention", "Submitted", "Applying now"):
+    for value in ("Preparing", "Needs review", "Needs attention", "Applying now"):
         assert value in rendered
+    assert "Submitted" not in rendered
     assert "Select an application" in rendered
     assert "Company 3" in rendered
+
+    # The default Active view is compact, but the complete durable archive is
+    # still one ordinary filter selection away (never dropped from projection).
+    filter_widget = next(
+        widget for widget in app.selectbox
+        if widget.label == "Filter applications"
+    )
+    assert filter_widget.value == "Active"
+    app = filter_widget.set_value("All").run()
+    assert not app.exception
+    all_rendered = _text(app)
+    for value in ("Preparing", "Needs review", "Needs attention", "Submitted", "Applying now"):
+        assert value in all_rendered
 
 
 def test_needs_review_opens_resume_only_compact_review(tmp_path: Path) -> None:

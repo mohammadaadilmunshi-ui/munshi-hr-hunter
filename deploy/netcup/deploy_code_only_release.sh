@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=2984b69f12a97ae6d4838204f04cff7d9580e694
+LIVE_BASE=6a4298faa95e97dc9b298c426084069a5f270703
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -331,6 +331,8 @@ allowed_files=(
   tests/test_product_studio.py
   tests/test_production_p0_safety_20261116.py
   tests/test_production_ux_20261116.py
+  tests/test_mobile_incremental_read_cache_20261116.py
+  tests/test_application_center_renderer_v2.py
   tests/test_relay_exact_link_unknown_v1.py
   tests/test_verified_employer_domains_v1.py
   tests/test_workable_identity_v1.py
@@ -432,6 +434,8 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_relay_platform_routing_v1.py \
     /app/hunter/tests/test_production_p0_safety_20261116.py \
     /app/hunter/tests/test_production_ux_20261116.py \
+    /app/hunter/tests/test_mobile_incremental_read_cache_20261116.py \
+    /app/hunter/tests/test_application_center_renderer_v2.py \
     /app/hunter/tests/test_workable_identity_v1.py \
     /app/hunter/tests/test_relay_exact_link_unknown_v1.py \
     /app/hunter/tests/test_verified_employer_domains_v1.py \
