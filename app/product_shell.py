@@ -14,6 +14,7 @@ from app.product_experience_vnext import inject_presentation_css, render_mobile_
 from app.staging_feature_policy import activate_isolated_staging_preparation_features
 from app.product_studio import inject_studio_css, workspace_location
 from app.product_navigation import render_navigation
+from app.appearance_theme_v1 import appearance_toggle_html, appearance_controller_html
 
 
 RESUME_STUDIO_VIEW = "resume-studio"
@@ -134,6 +135,9 @@ def render() -> None:
     activate_isolated_staging_preparation_features()
 
     inject_css()
+    # One static client preference handler: no app rerun, database read, or
+    # backend event. The prepaint counterpart is packaged in index.html.
+    st.html(appearance_controller_html(), unsafe_allow_javascript=True)
 
     view = _query_view()
     st.session_state["product_view"] = view
@@ -173,7 +177,7 @@ def render() -> None:
                 </div>
                 <details class="mobile-nav">
                     <summary aria-label="Open navigation">Menu</summary>
-                    <nav aria-label="Mobile navigation">{mobile_links}</nav>
+                    <nav aria-label="Mobile navigation">{mobile_links}{appearance_toggle_html()}</nav>
                 </details>
             </header>''',
             unsafe_allow_html=True,
@@ -312,6 +316,14 @@ def render() -> None:
         st.fragment(pages[view])()
     else:
         pages[view]()
+    if view == "settings":
+        # Same browser-local appearance switch, also reachable on desktop.
+        st.markdown(
+            '<section class="munshi-appearance-settings">'
+            '<h3>Appearance</h3>' + appearance_toggle_html(settings=True)
+            + '</section>',
+            unsafe_allow_html=True,
+        )
     render_resume_engine_selector()
     # Persistent presentation-only observer for explicit dashboard n8n runs.
     # It survives navigation, reads durable queue/execution/callback evidence,

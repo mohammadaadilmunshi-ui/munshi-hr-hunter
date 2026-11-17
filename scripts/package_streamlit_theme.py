@@ -14,6 +14,8 @@ sys.path.insert(0, str(ROOT))
 
 START = "<!-- munshi-packaged-theme -->"
 END = "<!-- /munshi-packaged-theme -->"
+from app.appearance_theme_v1 import early_theme_boot
+
 BOOT = """<style>
 #munshi-boot-status{display:none}
 html:not([data-munshi-ready]) body:not(:has([data-testid=stException])) [data-testid=stMain]{content-visibility:hidden;contain-intrinsic-size:auto 100vh}
@@ -50,7 +52,7 @@ def package(source: str, theme: str) -> str:
     source = source.replace(STATUS, "")
     if "</head>" not in source or "<body>" not in source:
         raise ValueError("Unsupported Streamlit HTML: refusing an unverified patch")
-    return source.replace("</head>", START + theme + BOOT + END + "</head>", 1).replace("<body>", "<body>" + STATUS, 1)
+    return source.replace("</head>", START + theme + early_theme_boot() + BOOT + END + "</head>", 1).replace("<body>", "<body>" + STATUS, 1)
 
 
 if __name__ == "__main__":

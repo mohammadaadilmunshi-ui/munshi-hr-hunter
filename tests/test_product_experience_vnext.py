@@ -79,7 +79,14 @@ def test_shell_injects_theme_after_original_layers_and_renders_dock() -> None:
     from app.job_card_interaction_hotfix_v2 import interaction_css
     from app.product_ui import product_css
     from textwrap import dedent
-    assert shell_css() == "\n".join(dedent(layer).strip() for layer in (product_css(), v22_css(), interaction_css(), presentation_css(), studio_css()))
+    dark_layer = "<style>" + (ROOT / "app/assets/graphite_dark.css").read_text() + "</style>"
+    assert shell_css() == "\n".join(
+        dedent(layer).strip() for layer in (
+            product_css(), v22_css(), interaction_css(), presentation_css(),
+            studio_css(), dark_layer,
+        )
+    )
+    assert 'html[data-munshi-theme="dark"]' in shell_css()
     assert "    inject_css()" in source
     assert "render_mobile_dock(view)" in source
     assert "Discovery: Unlimited" in source

@@ -43,7 +43,7 @@ from app.product_state import (
     update_lane,
     volume_policy,
 )
-from app.product_ui import esc, page_intro, pastel_for, safe_link, score_ring
+from app.product_ui import dark_palette_for, esc, page_intro, pastel_for, safe_link, score_ring
 
 _LOGGER = logging.getLogger(__name__)
 _PREPARE_ERROR_KEY_PREFIX = "product_prepare_error_"
@@ -353,6 +353,7 @@ def _job_card(
     destination = _job_destination(row)
     pulse = apply_pulse(destination, pulse_evidence if pulse_evidence is not None else _pulse_evidence())
     tone = pastel_for(job_id)
+    dark_tone, dark_accent = dark_palette_for(job_id)
     tags = [row.get("remote_type"), row.get("employment_type"), row.get("salary_raw")]
     if flow.get("state"):
         tags.append(flow.get("display_status"))
@@ -365,7 +366,7 @@ def _job_card(
     with st.container(key=f"product_card_{key_prefix}_{job_id}"):
         st.markdown(
             f"""<div class="job-card-click" role="presentation">
-                <div class="job-card"><div class="job-card-main" style="--card-bg:{tone}">
+                <div class="job-card"><div class="job-card-main" style="--card-bg:{tone};--card-dark-bg:{dark_tone};--card-dark-accent:{dark_accent}">
                 <div class="job-top"><span>{esc(row.get("location_raw"), "Location unknown")}<br><span class="quiet">{esc(_job_age_label(row))}</span></span>{score_ring(row.get("hunter_score"), tone)}</div>
                 <div class="job-title">{esc(row.get("title"), "Untitled role")}</div>
                 <div>{tags_html}</div><div class="job-company">{esc(row.get("company_name"), "Company not recorded")}</div>
@@ -1658,7 +1659,8 @@ def research() -> None:
         selected_id = st.selectbox("Inspect a scored opportunity", list(labels), format_func=labels.get, key="product_research_match")
         match = next(item for item in snapshot["top_matches"] if int(item["id"]) == selected_id)
         tone = pastel_for(match["id"])
-        st.markdown(f"""<div class="intelligence-card" style="background:{tone}"><div class="page-kicker-product">MATCH + ELIGIBILITY EVIDENCE</div><div class="evidence-list">
+        dark_tone, _ = dark_palette_for(match["id"])
+        st.markdown(f"""<div class="intelligence-card" style="background:{tone};--card-dark-bg:{dark_tone}"><div class="page-kicker-product">MATCH + ELIGIBILITY EVIDENCE</div><div class="evidence-list">
             <div class="evidence-item"><b>Hunter match</b>{esc(match.get("hunter_score"))}%</div><div class="evidence-item"><b>Target track</b>{esc(match.get("target_track"))}</div>
             <div class="evidence-item"><b>Source</b>{esc(match.get("source"))}</div><div class="evidence-item"><b>Location</b>{esc(match.get("location_raw"))}</div>
             <div class="evidence-item"><b>Workplace</b>{esc(match.get("remote_type"))}</div><div class="evidence-item"><b>Work authorization</b>{esc(_authorization_summary(match.get("work_authorization")))}</div>

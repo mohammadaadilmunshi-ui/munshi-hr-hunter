@@ -29,6 +29,37 @@ PASTELS = (
     "#F0E4D2",  # warm oat
 )
 
+# Mirrors the 18 production PASTELS positions exactly; existing job-ID color
+# identity stays stable. Each tuple is (dark surface, accessible accent).
+DARK_JOB_PALETTES = (
+    ("#263735", "#A3D4C0"),  # mint
+    ("#293747", "#BCD4F0"),  # powder blue
+    ("#3C2D35", "#ECC7D6"),  # blush
+    ("#383226", "#E4D092"),  # sand
+    ("#342D41", "#D4C4F0"),  # lavender
+    ("#263A3D", "#A8DEDB"),  # aqua
+    ("#40302B", "#EBC3AE"),  # peach
+    ("#30382D", "#CEE2B4"),  # sage
+    ("#3D302F", "#F0C8BB"),  # warm rose
+    ("#293443", "#BCD0EC"),  # cloud blue
+    ("#273832", "#ADDCC7"),  # soft jade
+    ("#3A3040", "#E6C7EB"),  # lilac mist
+    ("#343A2A", "#D7E2AB"),  # pistachio
+    ("#27374B", "#B8D5F6"),  # sky
+    ("#41302F", "#F2BBAE"),  # coral mist
+    ("#393328", "#E9DAB0"),  # cream
+    ("#2E3344", "#C9CEF2"),  # periwinkle
+    ("#3A322A", "#E7CEAC"),  # warm oat
+)
+
+assert len(DARK_JOB_PALETTES) == len(PASTELS)
+
+
+def dark_palette_for(value: Any) -> tuple[str, str]:
+    """Same job-ID selection as pastel_for, without changing original colors."""
+    digest = hashlib.sha256(str(value or "unknown").encode("utf-8")).digest()
+    return DARK_JOB_PALETTES[digest[0] % len(DARK_JOB_PALETTES)]
+
 
 def esc(value: Any, fallback: str = "Not available") -> str:
     text = str(value or "").strip()
