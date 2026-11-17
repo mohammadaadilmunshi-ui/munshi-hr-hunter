@@ -349,6 +349,7 @@ allowed_files=(
   tests/test_external_tracker_sync_background_v1.py
   tests/test_sitewide_fragment_isolation_v1.py
   tests/test_notification_schema_read_hotpath_v1.py
+  tests/test_external_application_ui_v1.py
 
 )
 allowed_file() {
@@ -454,6 +455,7 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_external_tracker_sync_background_v1.py \
     /app/hunter/tests/test_sitewide_fragment_isolation_v1.py \
     /app/hunter/tests/test_notification_schema_read_hotpath_v1.py \
+    /app/hunter/tests/test_external_application_ui_v1.py \
     /app/hunter/tests/test_external_application_tracker_v1.py \
     /app/hunter/tests/test_main_dashboard_lifecycle_e2e_v1.py \
     /app/hunter/tests/test_workable_identity_v1.py \
