@@ -429,11 +429,13 @@ def test_fluid_sitewide_fragments_async_history_and_sqlite_release_contract():
         "docker/hunter-supervisor.py",
         "tests/test_external_tracker_sync_background_v1.py",
         "tests/test_sitewide_fragment_isolation_v1.py",
+        "tests/test_notification_schema_read_hotpath_v1.py",
     ):
         assert "  "+name+"\n" in gate
     for name in (
         "test_external_tracker_sync_background_v1.py",
         "test_sitewide_fragment_isolation_v1.py",
+        "test_notification_schema_read_hotpath_v1.py",
         "test_external_application_tracker_v1.py",
         "test_application_center_renderer_v2.py",
         "test_application_notifications_v1.py",

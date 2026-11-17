@@ -110,7 +110,10 @@ def test_exact_signed_linkedin_url_only(monkeypatch):
 
 def test_dashboard_wiring_is_original_product_workspace():
     product_src = inspect.getsource(product_pages.dashboard)
-    workspace_src = inspect.getsource(unified_job_workspaces_v1.render_applications)
+    workspace_src = (
+        inspect.getsource(unified_job_workspaces_v1.render_applications)
+        + inspect.getsource(unified_job_workspaces_v1._application_center_content)
+    )
     # The original dashboard now renders the authoritative lifecycle snapshot
     # directly; render_dashboard_summary() was removed by the product refresh.
     assert "dashboard_snapshot()" in product_src

@@ -1,6 +1,24 @@
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
+
+
+@pytest.fixture(autouse=True)
+def restore_synthetic_application_provider_fixtures():
+    """AppTest fragments require persistent fakes; restore them after each test."""
+    from app import application_view_model_v1 as native
+    from app import external_application_tracker_v1 as external
+    from app import external_tracker_sync_background_v1 as background
+    original = (
+        native.application_views, external.external_application_views,
+        background.request_sync, background.read_status,
+    )
+    try:
+        yield
+    finally:
+        (native.application_views, external.external_application_views,
+         background.request_sync, background.read_status) = original
 
 
 def _text(app: AppTest) -> str:
@@ -34,10 +52,9 @@ tracked = external.ExternalApplicationView(
 )
 page = SimpleNamespace(_show_action_feedback=lambda: None)
 native_workspace = SimpleNamespace()
-with patch.object(native, 'application_views', lambda limit=None: []), patch.object(
-    external, 'external_application_views', lambda limit=5000: [tracked]
-):
-    workspace.render_applications(page, native_workspace)
+native.application_views = lambda limit=None: []
+external.external_application_views = lambda limit=5000, stages=None: [tracked]
+workspace.render_applications(page, native_workspace)
 """,
         encoding="utf-8",
     )
@@ -83,10 +100,9 @@ tracked = external.ExternalApplicationView(
 st.query_params['external']='a'*64
 page = SimpleNamespace(_show_action_feedback=lambda: None)
 native_workspace = SimpleNamespace()
-with patch.object(native, 'application_views', lambda limit=None: []), patch.object(
-    external, 'external_application_views', lambda limit=5000: [tracked]
-):
-    workspace.render_applications(page, native_workspace)
+native.application_views = lambda limit=None: []
+external.external_application_views = lambda limit=5000, stages=None: [tracked]
+workspace.render_applications(page, native_workspace)
 """,
         encoding="utf-8",
     )
@@ -100,32 +116,36 @@ with patch.object(native, 'application_views', lambda limit=None: []), patch.obj
     assert "Approve & Submit" not in labels
 
 
-def test_full_history_button_reports_completion_without_sending_applications(
+def test_full_history_button_queues_read_only_sync_without_blocking_applications(
     tmp_path: Path,
 ):
     script = tmp_path / "tracker_full_history_ui.py"
     script.write_text(
         """
 from types import SimpleNamespace
-from unittest.mock import patch
+import streamlit as st
 from app import application_view_model_v1 as native
 from app import external_application_tracker_v1 as external
+from app import external_tracker_sync_background_v1 as background
 from app import unified_job_workspaces_v1 as workspace
 
-def read_all(*, max_pages, on_progress):
-    assert max_pages == external.MAX_PAGES
-    on_progress(10, 804)
-    on_progress(804, 804)
-    return {
-        'checked': 804, 'inserted': 804, 'updated': 0, 'skipped': 0,
-        'provider_total': 804, 'complete': True,
-    }
+native.application_views = lambda limit=None: []
+external.external_application_views = lambda limit=5000, stages=None: []
 
+def queue_only(mode):
+    st.session_state["provider_requests"] = st.session_state.get("provider_requests",0) + 1
+    st.session_state["requested_mode"] = mode
+    return {"state":"QUEUED", "checked":0}
+
+def status_only(mode):
+    if st.session_state.get("requested_mode") == mode:
+        return {"state":"QUEUED", "checked":0}
+    return {"state":"IDLE", "checked":0}
+
+background.request_sync = queue_only
+background.read_status = status_only
 page = SimpleNamespace(_show_action_feedback=lambda: None)
-with patch.object(native, 'application_views', lambda limit=None: []), patch.object(
-    external, 'external_application_views', lambda limit=5000: []
-), patch.object(external, 'sync_authorized_tracker', read_all):
-    workspace.render_applications(page, SimpleNamespace())
+workspace.render_applications(page, SimpleNamespace())
 """,
         encoding="utf-8",
     )
@@ -138,8 +158,11 @@ with patch.object(native, 'application_views', lambda limit=None: []), patch.obj
     button.click().run()
     assert not app.exception
     content = _text(app)
-    assert "804 of 804 checked" in content
-    assert "No application was submitted" in content
+    assert app.session_state["provider_requests"] == 1
+    assert app.session_state["requested_mode"] == "history"
+    assert "queued for readback" in content
+    assert "No applications were sent" not in content  # request-only, no outcome claim
+    assert "Neither action submits, retries or approves jobs" in content
 
 
 def test_stage_filters_work_for_native_and_synced_applications():
