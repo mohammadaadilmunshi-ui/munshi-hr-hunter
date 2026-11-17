@@ -129,8 +129,12 @@ def profile_acceptance(page, url, output):
                   'SKILLS\nExcel, Power BI, SQL, recruiting operations\n')
         previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
         page.locator('input[type=file]').set_input_files({'name':'synthetic-qa-resume.txt','mimeType':'text/plain','buffer':source.encode()})
-        changed(page,previous)
+        # Upload is a fragment interaction, unlike an explicit permanent
+        # profile write. Verify the actual source text instead of waiting for
+        # the global shell to rerun.
+        expect(intake).to_have_value(re.compile('Alex Fixture'), timeout=30000)
         assert intake.input_value().strip() == source.strip()
+        assert page.locator('#uiux-runtime').first.get_attribute('data-runs') == previous
         page.get_by_role('textbox', name='Source name', exact=True).fill('Synthetic QA Master Resume')
         intake.fill(source)
         # Use the actual consent control, not label text that can be replaced
@@ -173,8 +177,12 @@ def profile_acceptance(page, url, output):
     page.screenshot(path=str(output / 'chromium-profile-paper-visible.png'))
     previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
     page.get_by_role('button', name='Preview resume', exact=True).click()
-    changed(page, previous)
+    page.locator('iframe[title="st.iframe"]').first.wait_for(
+        state='detached', timeout=30000,
+    )
     assert page.locator('iframe[title="st.iframe"]').count() == 0
+    assert page.locator('#uiux-runtime').first.get_attribute('data-runs') == previous
+    ready(page)
     page.locator('.st-key-product_primary_routes').get_by_role('button', name='Resume Studio', exact=True).click()
     page.get_by_text('Resume appearance · preview only', exact=True).click()
     jake = page.get_by_role('button', name='Jake', exact=True)
