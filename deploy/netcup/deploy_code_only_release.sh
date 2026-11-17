@@ -319,6 +319,7 @@ allowed_files=(
   tests/test_code_only_gateway_transport_v1.py
   .github/workflows/netcup-code-only-deploy.yml
   tests/test_code_only_release_contract_v1.py
+  scripts/verify_uiux_runtime.py
   # Approved November 16 2026 P0 safety / exact Relay / employer receipts.
   app/career_os_quality_patch_v1.py
   app/product_state.py

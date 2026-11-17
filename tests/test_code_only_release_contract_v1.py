@@ -387,3 +387,13 @@ def test_mobile_incremental_read_cache_is_in_exact_release_allowlist_and_image_t
     assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE" in source
     assert "CODE_ONLY_SCHEMA_MIGRATIONS=NONE" in source
     assert "LIVE_BASE=6a4298faa95e97dc9b298c426084069a5f270703" in source
+
+def test_browser_consent_assertion_is_rerender_aware_and_not_bypassed():
+    script = (ROOT / "scripts/verify_uiux_runtime.py").read_text()
+    release = SCRIPT.read_text()
+    assert "  scripts/verify_uiux_runtime.py\n" in release
+    assert "consent.check(timeout=15000)" in script
+    assert "expect(consent).to_be_checked(timeout=15000)" in script
+    assert "expect(save).to_be_enabled(timeout=15000)" in script
+    assert "save.click()" in script
+    assert "page.get_by_text('I confirm this source is truthful and may be used to build my profile and job-specific resumes.', exact=True).click()" not in script

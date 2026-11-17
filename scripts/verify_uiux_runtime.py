@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 import time
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 VIEWS = ("dashboard", "jobs", "prepare-application", "auto-prepare", "tracker", "profile", "resume-studio", "research", "settings")
 OBSERVE = """const supported=PerformanceObserver.supportedEntryTypes;
@@ -81,9 +81,18 @@ def profile_acceptance(page, url, output):
         assert intake.input_value().strip() == source.strip()
         page.get_by_role('textbox', name='Source name', exact=True).fill('Synthetic QA Master Resume')
         intake.fill(source)
-        page.get_by_text('I confirm this source is truthful and may be used to build my profile and job-specific resumes.', exact=True).click()
-        assert page.get_by_role('checkbox', name='I confirm this source is truthful', exact=False).is_checked()
-        page.get_by_role('button', name='Save Master Resume source', exact=True).click()
+        # Use the actual consent control, not label text that can be replaced
+        # by a Streamlit rerender between click and immediate is_checked().
+        # This still fails closed if consent cannot persist or Save stays
+        # disabled: no synthetic test can skip truth confirmation.
+        consent = page.get_by_role(
+            'checkbox', name='I confirm this source is truthful', exact=False,
+        )
+        consent.check(timeout=15000)
+        expect(consent).to_be_checked(timeout=15000)
+        save = page.get_by_role('button', name='Save Master Resume source', exact=True)
+        expect(save).to_be_enabled(timeout=15000)
+        save.click()
         page.get_by_role('button', name='Build profile from Master Resume', exact=True).wait_for()
     build = page.get_by_role('button', name='Build profile from Master Resume', exact=True)
     if build.count():
