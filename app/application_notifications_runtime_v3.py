@@ -169,11 +169,39 @@ def ensure_schema(connection: sqlite3.Connection | None = None) -> None:
             connection.close()
 
 
+def _runtime_schema_ready(connection: sqlite3.Connection) -> bool:
+    """Read-only check before any legacy v1/v2 executescript DDL.
+
+    Production has a complete v3 notification schema. Re-running the legacy
+    executescript on every preferences read and 60-second worker cycle can
+    block unrelated application UI reads and create sqlite BUSY failures.
+    Fresh or old databases retain the existing full ensure_schema fallback.
+    """
+    prefs = _column_names(connection, "application_notification_preferences_v1")
+    return (
+        "communication_email_enabled" in prefs
+        and _outbox_supports_communications(connection)
+        and bool(connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' "
+            "AND name='idx_application_notification_outbox_delivery_v1'"
+        ).fetchone())
+        and bool(connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' "
+            "AND name='idx_application_notification_outbox_owner_v1'"
+        ).fetchone())
+    )
+
+
+def _ensure_runtime_schema_if_needed(connection: sqlite3.Connection) -> None:
+    if not _runtime_schema_ready(connection):
+        ensure_schema(connection)
+
+
 def get_preference(*, connection: sqlite3.Connection | None = None) -> dict[str, Any]:
     owns = connection is None
     connection = connection or get_connection()
     try:
-        ensure_schema(connection)
+        _ensure_runtime_schema_if_needed(connection)
         owner = current_owner(connection)
         row = connection.execute(
             """
@@ -453,7 +481,7 @@ def save_preference(
 def sync_notification_outbox() -> int:
     connection = get_connection()
     try:
-        ensure_schema(connection)
+        _ensure_runtime_schema_if_needed(connection)
         owner = current_owner(connection)
         connection.execute("BEGIN IMMEDIATE")
         queued = _sync_outbox_transaction(connection, owner=owner)
@@ -469,7 +497,7 @@ def sync_notification_outbox() -> int:
 def application_communication_rows(*, limit: int = 100) -> list[dict[str, Any]]:
     connection = get_connection()
     try:
-        ensure_schema(connection)
+        _ensure_runtime_schema_if_needed(connection)
         if not (
             storage._table_exists(connection, "application_communication_events_v2")
             and storage._table_exists(connection, "mail_events_v2")

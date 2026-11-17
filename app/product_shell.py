@@ -299,7 +299,19 @@ def render() -> None:
         "research": product_pages.research,
         "settings": product_pages.settings,
     }
-    pages[view]()
+    # Isolate normal widgets from shell/nav and independent n8n monitoring.
+    # Some routes already contain smaller live-progress fragments. Current
+    # Streamlit supports these nested fragment boundaries; each remains tied
+    # to its own durable status reader. Browse Jobs already owns a fragment
+    # and Applications is explicitly split into two sibling fragments.
+    fragment_safe_routes = frozenset({
+        "dashboard", "tracker", "research", "settings", "profile",
+        "auto-prepare", PREPARE_APPLICATION_VIEW, RESUME_STUDIO_VIEW,
+    })
+    if view in fragment_safe_routes:
+        st.fragment(pages[view])()
+    else:
+        pages[view]()
     render_resume_engine_selector()
     # Persistent presentation-only observer for explicit dashboard n8n runs.
     # It survives navigation, reads durable queue/execution/callback evidence,

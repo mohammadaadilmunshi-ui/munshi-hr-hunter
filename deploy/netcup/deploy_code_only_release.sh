@@ -6,7 +6,7 @@ umask 077
 
 ROOT=/opt/munshi
 REPO="$ROOT/repo"
-LIVE_BASE=6a4298faa95e97dc9b298c426084069a5f270703
+LIVE_BASE=cc9dbf29428551a258bbbb619b99071c445ff055
 RELEASE_BRANCH=feat/tsenta-connector-completion-20261015
 H=munshi-netcup-shadow-hunter-1
 A=munshi-apply-production-apply-1
@@ -341,6 +341,14 @@ allowed_files=(
   tests/test_verified_employer_domains_v1.py
   tests/test_workable_identity_v1.py
 
+  # Reviewed site-wide fragment / background readback UI responsiveness.
+  app/external_application_tracker_v1.py
+  app/external_tracker_sync_background_v1.py
+  app/product_shell.py
+  tests/test_external_application_tracker_v1.py
+  tests/test_external_tracker_sync_background_v1.py
+  tests/test_sitewide_fragment_isolation_v1.py
+
 )
 allowed_file() {
   for f in "${allowed_files[@]}"; do
@@ -442,6 +450,10 @@ timeout 900 docker run --rm --network none --read-only \
     /app/hunter/tests/test_docx_zip_stability_v1.py \
     /app/hunter/tests/test_native_resume_artifact_v5.py \
     /app/hunter/tests/test_application_center_renderer_v2.py \
+    /app/hunter/tests/test_external_tracker_sync_background_v1.py \
+    /app/hunter/tests/test_sitewide_fragment_isolation_v1.py \
+    /app/hunter/tests/test_external_application_tracker_v1.py \
+    /app/hunter/tests/test_main_dashboard_lifecycle_e2e_v1.py \
     /app/hunter/tests/test_workable_identity_v1.py \
     /app/hunter/tests/test_relay_exact_link_unknown_v1.py \
     /app/hunter/tests/test_verified_employer_domains_v1.py \

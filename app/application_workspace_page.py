@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import time
 import streamlit as st
 
 from app import product_application_flow_v2 as complete_loop
@@ -68,6 +69,49 @@ def _job_options(limit: int = 250) -> list[dict[str, Any]]:
             }
         )
     return visible
+
+
+_PREPARE_JOB_PICKER_TTL_SECONDS = 30.0
+_PREPARE_JOB_PICKER_CACHE_KEY = "_prepare_owned_job_options_snapshot_v1"
+
+
+def _job_options_session_snapshot(
+    *, requested: int | None = None, now: float | None = None,
+) -> list[dict[str, Any]]:
+    """Cache only the dropdown metadata; selected job authority stays live.
+
+    Each old render revalidated 250 jobs to display a dropdown (~1s on the
+    real production database). A 30-second session-local window avoids doing
+    this on each form field, while exact deep-linked older jobs remain
+    selectable after independent ownership verification.
+    """
+    current = time.monotonic() if now is None else float(now)
+    cache = st.session_state.get(_PREPARE_JOB_PICKER_CACHE_KEY)
+    if not (
+        isinstance(cache, dict)
+        and isinstance(cache.get("created"), (float, int))
+        and 0 <= current - float(cache["created"]) < _PREPARE_JOB_PICKER_TTL_SECONDS
+        and isinstance(cache.get("rows"), list)
+    ):
+        cache = {"created": current, "rows": _job_options()}
+        st.session_state[_PREPARE_JOB_PICKER_CACHE_KEY] = cache
+    rows = list(cache["rows"])
+    if requested and requested not in {int(row["id"]) for row in rows}:
+        try:
+            owner_snapshot = safe_owned_job_snapshot(int(requested))
+        except (LookupError, ValueError):
+            pass
+        else:
+            job = dict(owner_snapshot["job"])
+            rows.insert(0, {
+                "id": int(job["id"]),
+                "company_name": job.get("company_name") or "Company",
+                "title": job.get("title") or "Untitled role",
+                "location_raw": job.get("location_raw") or "Location not recorded",
+                "hunter_score": job.get("hunter_score"),
+                "job_snapshot_sha256": owner_snapshot["job_snapshot_sha256"],
+            })
+    return rows
 
 
 def _job_label(row: dict[str, Any]) -> str:
@@ -1320,13 +1364,13 @@ def render() -> None:
         "MUNSHI builds the package in the background, surfaces only genuine missing information, and keeps submission verification separate from preparation.",
     )
     _render_application_lifecycle_guide()
-    jobs = _job_options()
+    requested = _requested_job_id()
+    jobs = _job_options_session_snapshot(requested=requested)
     if not jobs:
         st.info("No owned jobs are available yet. Add or discover a job first.")
         return
 
     by_id = {int(row["id"]): row for row in jobs}
-    requested = _requested_job_id()
     default_id = requested if requested in by_id else int(jobs[0]["id"])
     labels = {_job_label(row): int(row["id"]) for row in jobs}
     default_label = next(label for label, value in labels.items() if value == default_id)

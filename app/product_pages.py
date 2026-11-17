@@ -677,6 +677,35 @@ def _search_filters(namespace: str) -> dict[str, Any]:
     query_args.pop("score_range", None)
     return query_args
 
+@st.fragment
+def _dashboard_top_matches_fragment() -> None:
+    """Refresh only the Home recommendation controls and cards on edits."""
+    with st.expander("Refine your top matches", expanded=False):
+        filters = _search_filters("dashboard")
+    jobs, count = fetch_jobs(**filters, page_size=4)
+    newest = filters.get("sort_by") == "newest"
+    heading = "Newest opportunities" if newest else "Top matches"
+    rank_copy = (
+        "newest posted first · discovery date fallback"
+        if newest else "sorted by " + str(filters.get("sort_by") or "match_desc").replace("_", " ")
+    )
+    st.markdown(
+        f'<div class="section-row"><div><h2>{esc(heading)}</h2><span class="quiet">'
+        f'{count:,} opportunities · {esc(rank_copy)}</span></div>'
+        '<a class="product-nav-link" href="?view=jobs" target="_self">Browse all jobs →</a></div>',
+        unsafe_allow_html=True,
+    )
+    if jobs:
+        pulse_evidence = _pulse_evidence()
+        with st.container(key="product_dashboard_grid"):
+            columns = st.columns(min(4, len(jobs)), gap="medium")
+            for index, row in enumerate(jobs):
+                with columns[index % len(columns)]:
+                    _job_card(row, key_prefix="dashboard", pulse_evidence=pulse_evidence)
+    else:
+        st.markdown('<div class="empty-product">No jobs match the current filters. Change a filter or add a job with its complete description.</div>', unsafe_allow_html=True)
+
+
 def dashboard() -> None:
     _show_action_feedback()
     from app.product_studio import dashboard_intro, dashboard_snapshot, recent_activity_markup
@@ -705,30 +734,7 @@ def dashboard() -> None:
         "Metrics reflect application lifecycle evidence, not historical n8n results. "
         "Refresh this page to load the latest state."
     )
-    with st.expander("Refine your top matches", expanded=False):
-        filters = _search_filters("dashboard")
-    jobs, count = fetch_jobs(**filters, page_size=4)
-    newest = filters.get("sort_by") == "newest"
-    heading = "Newest opportunities" if newest else "Top matches"
-    rank_copy = (
-        "newest posted first · discovery date fallback"
-        if newest else "sorted by " + str(filters.get("sort_by") or "match_desc").replace("_", " ")
-    )
-    st.markdown(
-        f'<div class="section-row"><div><h2>{esc(heading)}</h2><span class="quiet">'
-        f'{count:,} opportunities · {esc(rank_copy)}</span></div>'
-        '<a class="product-nav-link" href="?view=jobs" target="_self">Browse all jobs →</a></div>',
-        unsafe_allow_html=True,
-    )
-    if jobs:
-        pulse_evidence = _pulse_evidence()
-        with st.container(key="product_dashboard_grid"):
-            columns = st.columns(min(4, len(jobs)), gap="medium")
-            for index, row in enumerate(jobs):
-                with columns[index % len(columns)]:
-                    _job_card(row, key_prefix="dashboard", pulse_evidence=pulse_evidence)
-    else:
-        st.markdown('<div class="empty-product">No jobs match the current filters. Change a filter or add a job with its complete description.</div>', unsafe_allow_html=True)
+    _dashboard_top_matches_fragment()
     st.markdown('<div class="section-row"><div><h2>Application activity</h2><span class="quiet">Current application status and next steps</span></div><a class="product-nav-link" href="?view=tracker" target="_self">Open tracker →</a></div>', unsafe_allow_html=True)
     if recent_applications:
         st.markdown(recent_activity_markup([

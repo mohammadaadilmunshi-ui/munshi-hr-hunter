@@ -15,7 +15,7 @@ def test_bash_has_valid_syntax():
 
 def test_exact_baseline_and_source_delta_guard():
     content = SCRIPT.read_text()
-    assert "6a4298faa95e97dc9b298c426084069a5f270703" in content
+    assert "cc9dbf29428551a258bbbb619b99071c445ff055" in content
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in content
     assert "git bundle verify" in content
     assert 'git merge-base --is-ancestor "$old_head" "$target"' in content
@@ -66,7 +66,7 @@ def test_bad_sha_stops_locally_without_contacting_production():
         [
             "bash", str(SCRIPT), "--commit", "invalid",
             "--branch", "feat/tsenta-connector-completion-20261015",
-            "--expected-base", "6a4298faa95e97dc9b298c426084069a5f270703",
+            "--expected-base", "cc9dbf29428551a258bbbb619b99071c445ff055",
         ],
         check=False,
         capture_output=True,
@@ -83,7 +83,7 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     match = re.search(r"allowed_files=\(\n(?P<paths>.*?)\n\)", content, re.DOTALL)
     assert match is not None
     allowlist = set(match.group("paths").split())
-    base = "6a4298faa95e97dc9b298c426084069a5f270703"
+    base = "cc9dbf29428551a258bbbb619b99071c445ff055"
     result = subprocess.run(
         ["git", "-C", str(ROOT), "diff", "--name-only", base, "HEAD"],
         capture_output=True, check=True, text=True, timeout=10,
@@ -113,7 +113,7 @@ def test_breezy_free_source_is_explicit_and_in_isolated_image_checks():
 
 
 def test_new_workflow_expected_baseline():
-    assert '[[ "$EXPECTED_LIVE" == "6a4298faa95e97dc9b298c426084069a5f270703" ]] || exit 3' in WORKFLOW.read_text()
+    assert '[[ "$EXPECTED_LIVE" == "cc9dbf29428551a258bbbb619b99071c445ff055" ]] || exit 3' in WORKFLOW.read_text()
     assert "cancel-in-progress: false" in WORKFLOW.read_text()
 
 
@@ -305,7 +305,7 @@ def test_source_label_release_changes_are_scoped():
 
 def test_november_dashboard_repair_is_code_only_and_release_tests_cover_it():
     script = SCRIPT.read_text()
-    baseline = "6a4298faa95e97dc9b298c426084069a5f270703"
+    baseline = "cc9dbf29428551a258bbbb619b99071c445ff055"
     assert f"LIVE_BASE={baseline}" in script
     for name in (
         "app/manual_input.py",
@@ -334,7 +334,7 @@ def test_november_dashboard_repair_is_code_only_and_release_tests_cover_it():
 
 def test_20261116_p0_scope_and_isolated_release_tests():
     script=SCRIPT.read_text()
-    base="6a4298faa95e97dc9b298c426084069a5f270703"
+    base="cc9dbf29428551a258bbbb619b99071c445ff055"
     assert f"LIVE_BASE={base}" in script
     assert '[[ "$old_head" == "$LIVE_BASE" ]]' in script
     assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE (image rollback only)" in script
@@ -386,7 +386,7 @@ def test_mobile_incremental_read_cache_is_in_exact_release_allowlist_and_image_t
     assert "docker run --rm --network none --read-only" in source
     assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE" in source
     assert "CODE_ONLY_SCHEMA_MIGRATIONS=NONE" in source
-    assert "LIVE_BASE=6a4298faa95e97dc9b298c426084069a5f270703" in source
+    assert "LIVE_BASE=cc9dbf29428551a258bbbb619b99071c445ff055" in source
 
 def test_browser_consent_assertion_is_rerender_aware_and_not_bypassed():
     script = (ROOT / "scripts/verify_uiux_runtime.py").read_text()
@@ -413,3 +413,41 @@ def test_visual_stale_opacity_override_is_scoped_and_browser_enforced():
     assert 'getComputedStyle(el)' in browser
     assert "'[data-testid=\"stElementContainer\"]:visible'" in browser
     assert 'do not' not in browser.lower().split('stale_elements_do_not_dim_the_document(page)')[1][:200]
+
+
+
+def test_fluid_sitewide_fragments_async_history_and_sqlite_release_contract():
+    gate=SCRIPT.read_text()
+    assert "LIVE_BASE=cc9dbf29428551a258bbbb619b99071c445ff055" in gate
+    for name in (
+        "app/external_tracker_sync_background_v1.py",
+        "app/application_workspace_page.py",
+        "app/external_application_tracker_v1.py",
+        "app/unified_job_workspaces_v1.py",
+        "app/application_notifications_runtime_v3.py",
+        "app/product_shell.py", "app/product_pages.py",
+        "docker/hunter-supervisor.py",
+        "tests/test_external_tracker_sync_background_v1.py",
+        "tests/test_sitewide_fragment_isolation_v1.py",
+    ):
+        assert "  "+name+"\n" in gate
+    for name in (
+        "test_external_tracker_sync_background_v1.py",
+        "test_sitewide_fragment_isolation_v1.py",
+        "test_external_application_tracker_v1.py",
+        "test_application_center_renderer_v2.py",
+        "test_application_notifications_v1.py",
+        "test_relay_provider_notifications_v1.py",
+    ):
+        assert "/app/hunter/tests/"+name in gate
+    assert "docker run --rm --network none --read-only" in gate
+    assert "CODE_ONLY_NEW_DATABASE_BACKUP=NONE" in gate
+    assert "CODE_ONLY_SCHEMA_MIGRATIONS=NONE" in gate
+    worker=(ROOT/"app/external_tracker_sync_background_v1.py").read_text()
+    assert "def request_sync(mode: str)" in worker
+    assert "def worker_once()" in worker
+    assert "reconcile_owner_pending(limit=10)" in worker
+    assert "list_tracked_applications" in worker
+    assert "database_path().parent" in worker
+    assert "CREATE TABLE" not in worker
+    assert "apply_to_job(" not in worker

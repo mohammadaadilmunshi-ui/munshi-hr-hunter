@@ -2,7 +2,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
+
+
+@pytest.fixture(autouse=True)
+def restore_synthetic_application_model_readers():
+    """Keep fragment fixtures active through AppTest, never across tests."""
+    from app import application_view_model_v1 as vm
+    original_views, original_one = vm.application_views, vm.view_for_job
+    try:
+        yield
+    finally:
+        vm.application_views = original_views
+        vm.view_for_job = original_one
 
 
 def _text(app: AppTest) -> str:
@@ -54,10 +67,11 @@ views = [
 ]
 pages = SimpleNamespace(_show_action_feedback=lambda: None)
 workspace = SimpleNamespace(_render_complete_loop=lambda *args, **kwargs: st.write('resume review'))
-with patch.object(vm, 'application_views', lambda limit=250: views), patch.object(
-    vm, 'view_for_job', lambda job_id: next(item for item in views if item.job_id == job_id)
-):
-    workspaces.render_applications(pages, workspace)
+# Fragment rerenders may occur after their parent body has exited. Keep the
+# in-fixture fake model readers installed for the complete synthetic session.
+vm.application_views = lambda limit=250: views
+vm.view_for_job = lambda job_id: next(item for item in views if item.job_id == job_id)
+workspaces.render_applications(pages, workspace)
 """,
         encoding="utf-8",
     )
@@ -112,10 +126,9 @@ pages = SimpleNamespace(_show_action_feedback=lambda: None)
 def compact_review(job_id, *, compact=False):
     st.write(f'RESUME_ONLY_REVIEW:{job_id}:{compact}')
 workspace = SimpleNamespace(_render_complete_loop=compact_review)
-with patch.object(vm, 'application_views', lambda limit=250: [review]), patch.object(
-    vm, 'view_for_job', lambda job_id: review
-):
-    workspaces.render_applications(pages, workspace)
+vm.application_views = lambda limit=250: [review]
+vm.view_for_job = lambda job_id: review
+workspaces.render_applications(pages, workspace)
 """,
         encoding="utf-8",
     )
@@ -226,12 +239,10 @@ cached = vm.ApplicationViewModel(
 st.session_state['_application_center_last_good'] = [cached]
 pages = SimpleNamespace(_show_action_feedback=lambda: None)
 workspace = SimpleNamespace(_render_complete_loop=lambda *args, **kwargs: None)
-with patch.object(
-    vm,
-    'application_views',
-    lambda limit=250: (_ for _ in ()).throw(sqlite3.OperationalError('database is locked')),
-):
-    workspaces.render_applications(pages, workspace)
+vm.application_views = lambda limit=250: (
+    _ for _ in ()
+).throw(sqlite3.OperationalError('database is locked'))
+workspaces.render_applications(pages, workspace)
 """,
         encoding="utf-8",
     )
