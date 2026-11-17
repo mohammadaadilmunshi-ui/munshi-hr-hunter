@@ -55,6 +55,29 @@ def changed(page, previous):
     ready(page)
 
 
+def fragment_changed(
+    page, previous: str, *, key: str, value: str, heading: str | None = None,
+) -> None:
+    """Verify isolated section, URL, and visible content with no shell rerun.
+
+    This is stricter than a global rerun assertion: prove that the actual
+    section was updated without replacing the top-level navigation.
+    """
+    page.wait_for_function(
+        """([key, value]) => new URL(location.href).searchParams.get(key) === value""",
+        arg=[key, value], timeout=30000,
+    )
+    if heading:
+        page.get_by_role('heading', name=heading, exact=True).wait_for(
+            state='visible', timeout=30000,
+        )
+    ready(page)
+    assert (
+        page.locator('#uiux-runtime').first.get_attribute('data-runs') == previous
+    ), f"Fragment selection {key}={value} triggered an unnecessary full page rerun"
+    assert not page.locator('[data-testid="stException"]').count()
+
+
 def stale_elements_do_not_dim_the_document(page):
     """Assert Streamlit's real stale wrapper stays readable during a rerun.
 
@@ -189,27 +212,43 @@ def workspace_acceptance(page, url, output):
     page.goto(url + '/?view=tracker');ready(page)
     previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
     page.get_by_text('Inbox',exact=True).click()
-    changed(page,previous)
     page.get_by_role('button',name='Connect Gmail',exact=True).wait_for()
+    fragment_changed(page,previous,key='tab',value='inbox')
     assert page.get_by_role('button',name='Connect Gmail',exact=True).is_disabled()
     assert 'tab=inbox' in page.url
     previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
-    page.get_by_text('Pipeline',exact=True).click();changed(page,previous)
+    page.get_by_text('Pipeline',exact=True).click()
     page.get_by_role('combobox',name=re.compile(r'\. Status$')).wait_for()
+    fragment_changed(page,previous,key='tab',value='pipeline')
     page.goto(url + '/?view=research');ready(page)
-    for section in ('Companies','Role signals','Risks','Opportunities'):
+    research_sections = {
+        'Companies': ('companies', 'Companies worth a closer look'),
+        'Role signals': ('roles', 'Role signals from your strongest matches'),
+        'Risks': ('risks', 'Risks and eligibility evidence'),
+        'Opportunities': ('opportunities', 'Best current opportunities'),
+    }
+    for section, (route, heading) in research_sections.items():
         previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
         page.get_by_text(section,exact=True).click()
-        changed(page,previous)
-        assert not page.locator('[data-testid=stException]').count()
+        fragment_changed(
+            page,previous,key='section',value=route,heading=heading,
+        )
     page.goto(url + '/?view=settings');ready(page)
     page.get_by_role('button',name='Save review preference',exact=True).click()
     page.get_by_text('Review preference saved.',exact=True).wait_for()
-    for section in ('Automation','Integrations','Profile & defaults','Credentials','Apply'):
+    settings_sections = {
+        'Automation': ('automation', 'Automation'),
+        'Integrations': ('integrations', 'Integrations'),
+        'Profile & defaults': ('profile', 'Profile & defaults'),
+        'Credentials': ('credentials', 'Credentials'),
+        'Apply': ('apply', 'Review before preparation'),
+    }
+    for section, (route, heading) in settings_sections.items():
         previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
         page.get_by_text(section,exact=True).click()
-        changed(page,previous)
-        assert not page.locator('[data-testid=stException]').count()
+        fragment_changed(
+            page,previous,key='section',value=route,heading=heading,
+        )
     page.goto(url + '/?view=jobs');ready(page)
     details = page.get_by_role('button',name='Open job details',exact=True).first
     details.focus()
