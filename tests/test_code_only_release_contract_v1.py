@@ -411,4 +411,5 @@ def test_visual_stale_opacity_override_is_scoped_and_browser_enforced():
     assert 'filter:none!important;' in css
     assert 'stale_elements_do_not_dim_the_document(page)' in browser
     assert 'getComputedStyle(el)' in browser
+    assert "'[data-testid=\"stElementContainer\"]:visible'" in browser
     assert 'do not' not in browser.lower().split('stale_elements_do_not_dim_the_document(page)')[1][:200]

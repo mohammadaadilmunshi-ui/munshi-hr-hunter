@@ -61,7 +61,9 @@ def stale_elements_do_not_dim_the_document(page):
     Set and restore only an inert DOM attribute on synthetic staging. This is
     a visual acceptance probe, not an application click or submission.
     """
-    candidate = page.locator('[data-testid="stElementContainer"]').first
+    # Style-only st.html nodes are zero-height elements. Probe an actual
+    # visible content wrapper, not the first zero-height CSS injection.
+    candidate = page.locator('[data-testid="stElementContainer"]:visible').first
     candidate.wait_for(state='visible', timeout=15000)
     assert candidate.evaluate(
         """async el => {
