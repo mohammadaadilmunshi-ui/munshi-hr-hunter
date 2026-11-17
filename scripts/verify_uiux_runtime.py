@@ -55,6 +55,29 @@ def changed(page, previous):
     ready(page)
 
 
+def fragment_changed(
+    page, previous: str, *, key: str, value: str, heading: str | None = None,
+) -> None:
+    """Verify isolated section, URL, and visible content with no shell rerun.
+
+    This is stricter than a global rerun assertion: prove that the actual
+    section was updated without replacing the top-level navigation.
+    """
+    page.wait_for_function(
+        """([key, value]) => new URL(location.href).searchParams.get(key) === value""",
+        arg=[key, value], timeout=30000,
+    )
+    if heading:
+        page.get_by_role('heading', name=heading, exact=True).wait_for(
+            state='visible', timeout=30000,
+        )
+    ready(page)
+    assert (
+        page.locator('#uiux-runtime').first.get_attribute('data-runs') == previous
+    ), f"Fragment selection {key}={value} triggered an unnecessary full page rerun"
+    assert not page.locator('[data-testid="stException"]').count()
+
+
 def stale_elements_do_not_dim_the_document(page):
     """Assert Streamlit's real stale wrapper stays readable during a rerun.
 
@@ -106,8 +129,12 @@ def profile_acceptance(page, url, output):
                   'SKILLS\nExcel, Power BI, SQL, recruiting operations\n')
         previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
         page.locator('input[type=file]').set_input_files({'name':'synthetic-qa-resume.txt','mimeType':'text/plain','buffer':source.encode()})
-        changed(page,previous)
+        # Upload is a fragment interaction, unlike an explicit permanent
+        # profile write. Verify the actual source text instead of waiting for
+        # the global shell to rerun.
+        expect(intake).to_have_value(re.compile('Alex Fixture'), timeout=30000)
         assert intake.input_value().strip() == source.strip()
+        assert page.locator('#uiux-runtime').first.get_attribute('data-runs') == previous
         page.get_by_role('textbox', name='Source name', exact=True).fill('Synthetic QA Master Resume')
         intake.fill(source)
         # Use the actual consent control, not label text that can be replaced
@@ -150,8 +177,12 @@ def profile_acceptance(page, url, output):
     page.screenshot(path=str(output / 'chromium-profile-paper-visible.png'))
     previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
     page.get_by_role('button', name='Preview resume', exact=True).click()
-    changed(page, previous)
+    page.locator('iframe[title="st.iframe"]').first.wait_for(
+        state='detached', timeout=30000,
+    )
     assert page.locator('iframe[title="st.iframe"]').count() == 0
+    assert page.locator('#uiux-runtime').first.get_attribute('data-runs') == previous
+    ready(page)
     page.locator('.st-key-product_primary_routes').get_by_role('button', name='Resume Studio', exact=True).click()
     page.get_by_text('Resume appearance · preview only', exact=True).click()
     jake = page.get_by_role('button', name='Jake', exact=True)
@@ -189,27 +220,43 @@ def workspace_acceptance(page, url, output):
     page.goto(url + '/?view=tracker');ready(page)
     previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
     page.get_by_text('Inbox',exact=True).click()
-    changed(page,previous)
     page.get_by_role('button',name='Connect Gmail',exact=True).wait_for()
+    fragment_changed(page,previous,key='tab',value='inbox')
     assert page.get_by_role('button',name='Connect Gmail',exact=True).is_disabled()
     assert 'tab=inbox' in page.url
     previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
-    page.get_by_text('Pipeline',exact=True).click();changed(page,previous)
+    page.get_by_text('Pipeline',exact=True).click()
     page.get_by_role('combobox',name=re.compile(r'\. Status$')).wait_for()
+    fragment_changed(page,previous,key='tab',value='pipeline')
     page.goto(url + '/?view=research');ready(page)
-    for section in ('Companies','Role signals','Risks','Opportunities'):
+    research_sections = {
+        'Companies': ('companies', 'Companies worth a closer look'),
+        'Role signals': ('roles', 'Role signals from your strongest matches'),
+        'Risks': ('risks', 'Risks and eligibility evidence'),
+        'Opportunities': ('opportunities', 'Best current opportunities'),
+    }
+    for section, (route, heading) in research_sections.items():
         previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
         page.get_by_text(section,exact=True).click()
-        changed(page,previous)
-        assert not page.locator('[data-testid=stException]').count()
+        fragment_changed(
+            page,previous,key='section',value=route,heading=heading,
+        )
     page.goto(url + '/?view=settings');ready(page)
     page.get_by_role('button',name='Save review preference',exact=True).click()
     page.get_by_text('Review preference saved.',exact=True).wait_for()
-    for section in ('Automation','Integrations','Profile & defaults','Credentials','Apply'):
+    settings_sections = {
+        'Automation': ('automation', 'Automation'),
+        'Integrations': ('integrations', 'Integrations'),
+        'Profile & defaults': ('profile', 'Profile & defaults'),
+        'Credentials': ('credentials', 'Credentials & AutoApply'),
+        'Apply': ('apply', 'Review and submission authority'),
+    }
+    for section, (route, heading) in settings_sections.items():
         previous = page.locator('#uiux-runtime').first.get_attribute('data-runs')
         page.get_by_text(section,exact=True).click()
-        changed(page,previous)
-        assert not page.locator('[data-testid=stException]').count()
+        fragment_changed(
+            page,previous,key='section',value=route,heading=heading,
+        )
     page.goto(url + '/?view=jobs');ready(page)
     details = page.get_by_role('button',name='Open job details',exact=True).first
     details.focus()

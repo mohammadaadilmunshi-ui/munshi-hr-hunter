@@ -165,8 +165,16 @@ assert len(app.metric) == 5
 def test_dashboard_filters_and_engines_are_secondary_to_operational_metrics():
     source = (ROOT / "app/product_pages.py").read_text()
     dashboard = source.split("def dashboard()", 1)[1].split("def browse_jobs()", 1)[0]
-    assert dashboard.index('key="product_dashboard_metrics"') < dashboard.index('_search_filters("dashboard")')
-    assert "Top matches" in dashboard
+    recommendations = source.split(
+        "def _dashboard_top_matches_fragment()", 1
+    )[1].split("def dashboard()", 1)[0]
+    assert dashboard.index('key="product_dashboard_metrics"') < dashboard.index(
+        "_dashboard_top_matches_fragment()"
+    )
+    assert "@st.fragment" in source
+    assert "def _dashboard_top_matches_fragment" in source
+    assert '_search_filters("dashboard")' in recommendations
+    assert "Top matches" in recommendations
     assert "engine_status_panel()" in dashboard
 
 

@@ -9,6 +9,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -138,55 +139,87 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         connection.execute(statement)
 
 
+def _mirror_schema_ready(connection: sqlite3.Connection) -> bool:
+    # Normal polling should never acquire a DDL write lock merely because
+    # the application mirror already exists. Initialization is still retained
+    # for new installs and for missing/migrated index definitions.
+    tables = {
+        str(row[0]) for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('external_application_pipeline_v1','tenants',"
+            "'app_users','tenant_memberships')"
+        )
+    }
+    index = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='index' "
+        "AND name='idx_external_application_pipeline_owner'"
+    ).fetchone()
+    return len(tables) == 4 and index is not None
+
+
 def persist_tracked_rows(records: list[Mapping[str, Any]]) -> dict[str, int]:
     normalized = [row for record in records
                   if (row := normalize_tracked_application(record)) is not None]
-    conn = get_connection()
-    try:
-        ensure_schema(conn)
-        owner = current_owner(conn)
-        conn.commit()
-        inserted = updated = 0
-        conn.execute("BEGIN IMMEDIATE")
-        for row in normalized:
-            existed = conn.execute(
-                """SELECT 1 FROM external_application_pipeline_v1
-                   WHERE tenant_id=? AND user_id=? AND provider=? AND external_key=?""",
-                (owner.tenant_id, owner.user_id, PROVIDER, row["external_key"]),
-            ).fetchone()
-            conn.execute(
-                """INSERT INTO external_application_pipeline_v1(
-                    tenant_id,user_id,provider,external_key,
-                    provider_application_sha256,company_name,position_title,
-                    pipeline_stage,date_applied,status_history_json
-                ) VALUES(?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(tenant_id,user_id,provider,external_key) DO UPDATE SET
-                    provider_application_sha256=COALESCE(
-                        excluded.provider_application_sha256,
-                        external_application_pipeline_v1.provider_application_sha256),
-                    company_name=excluded.company_name,
-                    position_title=excluded.position_title,
-                    pipeline_stage=excluded.pipeline_stage,
-                    date_applied=COALESCE(excluded.date_applied,
-                                          external_application_pipeline_v1.date_applied),
-                    status_history_json=excluded.status_history_json,
-                    observed_at=CURRENT_TIMESTAMP""",
-                (owner.tenant_id, owner.user_id, PROVIDER, row["external_key"],
-                 row["provider_application_sha256"], row["company_name"],
-                 row["position_title"], row["pipeline_stage"],
-                 row["date_applied"], row["status_history_json"]),
-            )
-            if existed:
-                updated += 1
-            else:
-                inserted += 1
-        conn.commit()
-        return {"inserted": inserted, "updated": updated, "skipped": len(records) - len(normalized)}
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    # Retry only the whole idempotent, exact-provider-key transaction when
+    # another writer holds the SQLite lock. No partial update or fuzzy match.
+    for retry in range(3):
+        conn = get_connection()
+        try:
+            if not _mirror_schema_ready(conn):
+                ensure_schema(conn)
+            owner = current_owner(conn)
+            conn.commit()
+            inserted = updated = 0
+            conn.execute("BEGIN IMMEDIATE")
+            for row in normalized:
+                existed = conn.execute(
+                    """SELECT 1 FROM external_application_pipeline_v1
+                       WHERE tenant_id=? AND user_id=? AND provider=? AND external_key=?""",
+                    (owner.tenant_id, owner.user_id, PROVIDER, row["external_key"]),
+                ).fetchone()
+                conn.execute(
+                    """INSERT INTO external_application_pipeline_v1(
+                        tenant_id,user_id,provider,external_key,
+                        provider_application_sha256,company_name,position_title,
+                        pipeline_stage,date_applied,status_history_json
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(tenant_id,user_id,provider,external_key) DO UPDATE SET
+                        provider_application_sha256=COALESCE(
+                            excluded.provider_application_sha256,
+                            external_application_pipeline_v1.provider_application_sha256),
+                        company_name=excluded.company_name,
+                        position_title=excluded.position_title,
+                        pipeline_stage=excluded.pipeline_stage,
+                        date_applied=COALESCE(excluded.date_applied,
+                                              external_application_pipeline_v1.date_applied),
+                        status_history_json=excluded.status_history_json,
+                        observed_at=CURRENT_TIMESTAMP""",
+                    (owner.tenant_id, owner.user_id, PROVIDER, row["external_key"],
+                     row["provider_application_sha256"], row["company_name"],
+                     row["position_title"], row["pipeline_stage"],
+                     row["date_applied"], row["status_history_json"]),
+                )
+                if existed:
+                    updated += 1
+                else:
+                    inserted += 1
+            conn.commit()
+            return {
+                "inserted": inserted, "updated": updated,
+                "skipped": len(records) - len(normalized),
+            }
+        except sqlite3.OperationalError as error:
+            conn.rollback()
+            if "locked" in str(error).lower() and retry < 2:
+                time.sleep(0.12 * (retry + 1))
+                continue
+            raise
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    raise RuntimeError("Tracker mirror transaction exceeded bounded retries.")
 
 
 def sync_tracker_from_mcp(
@@ -289,7 +322,19 @@ _LABELS = {
 }
 
 
-def external_application_views(*, limit: int = 500) -> list[ExternalApplicationView]:
+def external_application_views(
+    *, limit: int = 500, stages: tuple[str, ...] | None = None,
+) -> list[ExternalApplicationView]:
+    """Read only the provider stages needed by a selected dashboard view.
+
+    Active defaults to INTERVIEWING/OFFER rather than materializing thousands
+    of already submitted jobs. All-history remains available on explicit
+    selection, and exact application identity dedupe is unchanged.
+    """
+    if stages is not None:
+        stages = tuple(dict.fromkeys(str(stage).upper() for stage in stages))
+        if not stages or any(stage not in STAGES for stage in stages):
+            raise ValueError("Only known application stages may be filtered.")
     conn = get_connection()
     try:
         exists = conn.execute(
@@ -314,16 +359,22 @@ def external_application_views(*, limit: int = 500) -> list[ExternalApplicationV
                    AND e.provider_application_sha256 IS NOT NULL)"""
             if route_exists else ""
         )
+        stage_filter = (
+            "AND e.pipeline_stage IN (" + ",".join("?" for _ in stages) + ")"
+            if stages else ""
+        )
         rows = conn.execute(
             f"""SELECT e.external_key,e.company_name,e.position_title,
                        e.pipeline_stage,e.date_applied,e.status_history_json,
                        e.observed_at
                   FROM external_application_pipeline_v1 e
                  WHERE e.tenant_id=? AND e.user_id=? AND e.provider=?
+                       {stage_filter}
                        {duplicate_guard}
                  ORDER BY COALESCE(e.date_applied,e.observed_at) DESC
                  LIMIT ?""",
-            (owner.tenant_id, owner.user_id, PROVIDER, max(1, min(int(limit), 5000))),
+            (owner.tenant_id, owner.user_id, PROVIDER, *(stages or ()),
+             max(1, min(int(limit), 5000))),
         ).fetchall()
         views = []
         for row in rows:

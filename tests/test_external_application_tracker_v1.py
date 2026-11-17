@@ -293,3 +293,32 @@ def test_native_route_shows_tracker_stage_without_new_application(isolated_datab
     assert linked["employer_receipt_verified"] is False
     assert linked["history"][0]["status"] == "APPLIED"
     assert tracker.linked_application_stage_for_job(45) is None
+
+
+def test_stage_bounded_application_views_skip_thousands_of_submitted_rows(isolated_database):
+    records = [
+        _record(1, "APPLIED"), _record(2, "APPLIED"),
+        _record(3, "INTERVIEWING"), _record(4, "OFFER"),
+        _record(5, "REJECTED"),
+    ]
+    tracker.persist_tracked_rows(records)
+    all_views = tracker.external_application_views(limit=5000)
+    active_views = tracker.external_application_views(
+        limit=5000, stages=("INTERVIEWING", "OFFER"),
+    )
+    assert len(all_views) == 5
+    assert {v.canonical_state for v in active_views} == {"INTERVIEWING", "OFFER"}
+    assert {v.company for v in active_views} == {"Employer 3", "Employer 4"}
+    assert len(tracker.external_application_views(
+        limit=5000, stages=("REJECTED",),
+    )) == 1
+    # Identical and overlapping filters do not double-count.
+    assert len(tracker.external_application_views(
+        limit=5000, stages=("OFFER", "OFFER"),
+    )) == 1
+
+
+def test_provider_stage_filter_rejects_unknown_and_sql_injection(isolated_database):
+    for stages in ((), ("submitted",), ("APPLIED');DROP TABLE jobs;--",)):
+        with pytest.raises(ValueError):
+            tracker.external_application_views(stages=stages)

@@ -122,7 +122,15 @@ def test_legacy_application_surface_reuses_status_projection_with_manual_refresh
     assert "application_center_refresh" in source
     # The status-refresh screen now describes BOTH read-only actions.
     # Verify its actual user-facing safety promise rather than obsolete copy.
-    assert "Neither action retries or submits applications" in source
+    assert "Neither action submits, retries or approves jobs" in source
+    assert 'request_sync("history")' in source
+    assert 'request_sync("receipts")' in source
+    # Streamlit must only request background readback, never wait through a
+    # provider search or mutate one-use application claims in the UI.
+    controls = source[source.index("def _application_sync_controls()"):
+                      source.index("def _application_center_content(")]
+    assert "sync_authorized_tracker(" not in controls
+    assert "reconcile_owner_pending(" not in controls
 
 
 

@@ -934,6 +934,27 @@ def _render_external_tracker_details(model: Any) -> None:
     )
 
 
+def _provider_stages_for_application_choice(choice: str) -> tuple[str, ...] | None:
+    """Only an explicit view filter can omit historical external stages.
+
+    Unknown selectors fail open into full read rather than suppressing a saved
+    provider record. The user can always select All to inspect the archive.
+    """
+    group = _APPLICATION_FILTERS.get(str(choice or "Active"))
+    return {
+        "active": ("INTERVIEWING", "OFFER"),
+        "interviewing": ("INTERVIEWING",),
+        "offers": ("OFFER",),
+        "closed": ("REJECTED",),
+        "submitted": ("APPLIED", "GHOSTED"),
+        "archived": ("REJECTED",),
+        "needs_you": ("INTERVIEWING", "OFFER"),
+        "preparing": ("INTERVIEWING", "OFFER"),
+        "applying": ("INTERVIEWING", "OFFER"),
+        "needs_attention": ("INTERVIEWING", "OFFER"),
+    }.get(group)
+
+
 _APPLICATION_CENTER_CACHE_TTL_SECONDS = 12.0
 _APPLICATION_CENTER_CACHE_KEY = "_application_center_read_snapshot_v1"
 
@@ -944,6 +965,7 @@ def _application_center_source_snapshot(
     native_reader: Callable[[], list[Any]],
     external_reader: Callable[[], list[Any]],
     now: float | None = None,
+    source_signature: str = "all",
 ) -> tuple[list[Any], list[Any], bool]:
     """Per-session bounded read cache for full, high-cost application histories.
 
@@ -960,6 +982,7 @@ def _application_center_source_snapshot(
         isinstance(snapshot, dict)
         and isinstance(snapshot.get("created"), (float, int))
         and 0 <= current - float(snapshot["created"]) < _APPLICATION_CENTER_CACHE_TTL_SECONDS
+        and snapshot.get("source_signature") == source_signature
         and isinstance(snapshot.get("native"), list)
         and isinstance(snapshot.get("external"), list)
     ):
@@ -969,13 +992,12 @@ def _application_center_source_snapshot(
     external = external_reader()
     session[_APPLICATION_CENTER_CACHE_KEY] = {
         "created": current, "native": native, "external": external,
+        "source_signature": source_signature,
     }
     return native, external, False
 
 
 def render_applications(product_pages: Any, app_workspace: Any) -> None:
-    from app.application_view_model_v1 import application_views, view_for_job
-
     page_intro(
         "APPLICATIONS",
         "Applications",
@@ -984,95 +1006,124 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
     if hasattr(product_pages, "_show_action_feedback"):
         product_pages._show_action_feedback()
     _render_application_visibility_feedback()
-    if st.button(
-        "↻ Check provider & refresh statuses",
-        key="application_center_refresh",
-        help="Read existing external-provider statuses and managed inbox; never retries an application.",
-    ):
-        from app.relay_application_dispatch_v1 import reconcile_owner_pending
+    _application_sync_controls()
+    _application_center_content(product_pages, app_workspace)
 
+
+@st.fragment(run_every="6s")
+def _application_sync_controls() -> None:
+    """Small, independently refreshing control: no provider call in Streamlit."""
+    from app.external_tracker_sync_background_v1 import request_sync, read_status
+
+    with st.expander("Synchronization & provider checks", expanded=False):
+        st.caption(
+            "Read existing provider stages and employer receipts in the "
+            "background. Neither action submits, retries or approves jobs."
+        )
+        left, right = st.columns(2, gap="small")
+        with left:
+            if st.button(
+                "↻ Check provider & refresh statuses",
+                key="application_center_refresh",
+                use_container_width=True,
+            ):
+                try:
+                    request_sync("receipts")
+                    st.session_state["_application_center_read_snapshot_v1"] = None
+                except (RuntimeError, PermissionError, OSError, ValueError):
+                    st.error("Could not queue the read-only provider check.")
+        with right:
+            if st.button(
+                "↻ Synchronize application pipeline",
+                key="external_application_tracker_sync",
+                use_container_width=True,
+            ):
+                try:
+                    request_sync("history")
+                    st.session_state["_application_center_read_snapshot_v1"] = None
+                except (RuntimeError, PermissionError, OSError, ValueError):
+                    st.error("Could not queue the read-only application-history sync.")
+
+    labels = {
+        "history": "Application history",
+        "receipts": "Provider receipt check",
+    }
+    for mode, label in labels.items():
         try:
-            with st.spinner("Checking existing submissions and employer inbox…"):
-                result=reconcile_owner_pending(limit=10)
-            st.session_state.pop(_APPLICATION_CENTER_CACHE_KEY, None)
-            st.session_state["_relay_refresh_feedback"]=(
-                f"Checked {result['checked']} existing applications · "
-                f"{result['employer_confirmed']} employer confirmations found · "
-                f"{result['errors']} read errors · no applications sent."
-            )
-        except (RuntimeError,LookupError,ValueError,PermissionError,
-                TypeError,OSError):
-            st.session_state.pop(_APPLICATION_CENTER_CACHE_KEY, None)
-            st.session_state["_relay_refresh_feedback"]=(
-                "Provider lookup is temporarily unavailable. No application "
-                "was retried. Local records are displayed below."
-            )
-        st.rerun()
-    if st.session_state.get("_relay_refresh_feedback"):
-        st.info(st.session_state.pop("_relay_refresh_feedback"))
-    st.caption(
-        "MUNSHI statuses read from durable records when you open or refresh this page. "
-        "Choose Synchronize application pipeline to refresh linked external history. "
-        "Neither action retries or submits applications; employer receipts are verified separately."
-    )
-    if st.button(
-        "↻ Synchronize application pipeline",
-        key="external_application_tracker_sync",
-        help="Import existing application and interview stages; never submit or retry.",
-    ):
-        from app.external_application_tracker_v1 import MAX_PAGES, sync_authorized_tracker
-
-        progress = st.progress(0, text="Checking existing application history…")
-
-        def _tracker_progress(checked: int, provider_total: int | None) -> None:
-            maximum = provider_total if provider_total and provider_total > 0 else MAX_PAGES * 10
-            progress.progress(
-                min(1.0, checked / maximum),
-                text=f"Reading application history · {checked} of {provider_total or 'up to 1,200'} checked",
-            )
-
-        try:
-            report = sync_authorized_tracker(
-                max_pages=MAX_PAGES, on_progress=_tracker_progress,
-            )
-            st.session_state.pop(_APPLICATION_CENTER_CACHE_KEY, None)
-            coverage = (
-                f"{report['checked']} of {report['provider_total']}"
-                if report["provider_total"] is not None
-                else str(report["checked"])
-            )
-            details = (
-                f"{report['inserted']} added · {report['updated']} refreshed · "
-                f"{report['skipped']} unsupported records. No application was submitted."
-            )
-            if report["complete"]:
-                st.success(f"Application history synchronized: {coverage} checked · {details}")
+            result = read_status(mode)
+        except (RuntimeError, PermissionError, OSError, ValueError):
+            st.warning(f"{label} status is temporarily unavailable.")
+            continue
+        state = str(result.get("state") or "IDLE")
+        checked = int(result.get("checked") or 0)
+        if state in {"QUEUED", "RUNNING"}:
+            total = result.get("provider_total")
+            if mode == "history" and isinstance(total, int) and total > 0:
+                st.progress(min(1.0, checked / total), text=(
+                    f"{label}: reading {checked:,} of {total:,} tracked "
+                    "records without blocking this page."
+                ))
             else:
-                st.warning(
-                    f"History sync reached its safe page limit: {coverage} checked · "
-                    f"{details} Existing records are saved; more history may remain."
+                st.caption(
+                    f"{label}: {'queued for readback' if state == 'QUEUED' else 'reading provider evidence'}"
+                    f"{f' · {checked:,} checked' if checked else ''}. You can navigate freely."
                 )
-        except Exception:  # noqa: BLE001 - no provider details or credentials in UI
-            st.warning(
-                "Application history synchronization was interrupted. Previously "
-                "saved records remain available; no applications were sent. "
-                "You can safely try synchronizing again."
-            )
-        finally:
-            st.session_state.pop(_APPLICATION_CENTER_CACHE_KEY, None)
-            progress.empty()
+        elif state in {"COMPLETE", "PARTIAL"}:
+            request_id = (mode, result.get("request_id"), state)
+            if st.session_state.get(f"_last_tracker_sync_ack_{mode}") != request_id:
+                st.session_state[f"_last_tracker_sync_ack_{mode}"] = request_id
+                st.session_state.pop("_application_center_read_snapshot_v1", None)
+            if mode == "history":
+                text = (
+                    f"{label}: {checked:,} verified provider records checked · "
+                    f"{int(result.get('inserted') or 0):,} new · "
+                    f"{int(result.get('updated') or 0):,} refreshed."
+                )
+                if state == "PARTIAL":
+                    st.warning(text + " The provider history reached its bounded limit; earlier saved records remain available.")
+                else:
+                    st.caption(text)
+            else:
+                st.caption(
+                    f"{label}: {checked} existing applications checked; "
+                    f"{int(result.get('employer_confirmed') or 0)} verified acknowledgments."
+                )
+        elif state == "ERROR":
+            code = str(result.get("error_code") or "EXTERNAL_READ_FAILED")
+            guidance = {
+                "AUTHORIZATION_UNAVAILABLE": "Reconnect MUNSHI Relay under Settings → Integrations.",
+                "PROVIDER_TIMEOUT": "The provider did not respond in time. Retry the sync.",
+                "STORAGE_BUSY": "The application database was busy. Your saved records are intact; retry.",
+                "PROVIDER_RESPONSE_UNSUPPORTED": "The provider returned data that cannot be verified safely.",
+                "PROVIDER_PAGINATION_REPEATED": "The provider repeated a page; existing records were preserved.",
+            }.get(code, "The provider read could not finish. Previously saved records remain available.")
+            st.warning(f"{label} paused. {guidance} No applications were sent.")
 
+
+@st.fragment
+def _application_center_content(product_pages: Any, app_workspace: Any) -> None:
+    from app.application_view_model_v1 import application_views, view_for_job
     from app.external_application_tracker_v1 import external_application_views
 
     # The data remains complete, but rapid UI-only filter/page reruns reuse
     # a short-lived, session-private snapshot instead of recomputing 4k rows.
     # External history failure may not hide otherwise healthy native records.
     external_failed = False
+    chosen_filter = str(st.session_state.get("application_center_filter") or "Active")
+    # Exact deep links must not disappear merely because the user's previous
+    # view was Active. Allow the full provider list for an exact external link.
+    source_stages = (
+        None if str(st.query_params.get("external") or "")
+        else _provider_stages_for_application_choice(chosen_filter)
+    )
+    source_signature = repr(source_stages)
 
     def read_external() -> list[Any]:
         nonlocal external_failed
         try:
-            return external_application_views(limit=5000)
+            if source_stages is None:
+                return external_application_views(limit=5000)
+            return external_application_views(limit=5000, stages=source_stages)
         except Exception:  # noqa: BLE001 - preserve native view on provider errors
             external_failed = True
             return []
@@ -1082,8 +1133,11 @@ def render_applications(product_pages: Any, app_workspace: Any) -> None:
             session=st.session_state,
             native_reader=lambda: application_views(limit=None),
             external_reader=read_external,
+            source_signature=source_signature,
         )
-    except Exception:  # noqa: BLE001 - fail visible, never invent application state
+    except Exception as error:  # noqa: BLE001 - fail visible, never invent application state
+        import logging
+        logging.getLogger(__name__).warning("Application Center read error type: %s", type(error).__name__)
         native = list(st.session_state.get("_application_center_last_good") or [])
         external = read_external()
         st.warning(

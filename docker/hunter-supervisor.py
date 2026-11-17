@@ -192,6 +192,15 @@ def main() -> int:
                  interval=max(300, int(os.getenv(
                      "MUNSHI_RELAY_RECEIPT_POLL_INTERVAL_SECONDS", "600"))))
         )
+    # Explicit user-requested Relay history and receipt reads happen outside
+    # Streamlit, in small bounded batches. Without a queued request this lane
+    # only reads its small control file; it never submits applications.
+    if os.getenv("MUNSHI_EXTERNAL_TRACKER_SYNC_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}:
+        children.append(
+            Lane("application-tracker-readback",
+                 [python, "-m", "app.external_tracker_sync_background_v1", "--worker"],
+                 required=False, repeat=True, interval=8)
+        )
     if enabled("MUNSHI_APPLICATION_NOTIFICATION_WORKER_ENABLED"):
         children.append(
             Lane(
