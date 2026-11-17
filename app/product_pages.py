@@ -706,11 +706,31 @@ def _dashboard_top_matches_fragment() -> None:
         st.markdown('<div class="empty-product">No jobs match the current filters. Change a filter or add a job with its complete description.</div>', unsafe_allow_html=True)
 
 
+@st.fragment(run_every="60s")
+def _dashboard_career_progress_fragment() -> None:
+    """Refresh only the two small Home progress cards without a full rerun."""
+    from app.product_studio import career_progress_markup
+    from app.career_progress_snapshot_v1 import career_progress_snapshot
+
+    try:
+        progress = career_progress_snapshot()
+        progress_html = career_progress_markup(
+            progress.applications_submitted, progress.companies_interviewing,
+        )
+    except Exception as error:  # noqa: BLE001 - metrics must not block Home
+        _LOGGER.warning(
+            "HOME_CAREER_PROGRESS_READ_FAILED error_type=%s", type(error).__name__,
+        )
+        progress_html = career_progress_markup(None, None)
+    st.markdown(progress_html, unsafe_allow_html=True)
+
+
 def dashboard() -> None:
     _show_action_feedback()
     from app.product_studio import dashboard_intro, dashboard_snapshot, recent_activity_markup
 
     dashboard_intro()
+    _dashboard_career_progress_fragment()
     policy = volume_policy()
     activity, recent_applications = dashboard_snapshot()
     label = {"unlimited": "Unlimited", "custom_limit": f"Custom target: {policy.get('daily_limit')}", "paused": "Paused", "pause_after_batch": "Pausing after current batch"}[policy["mode"]]
