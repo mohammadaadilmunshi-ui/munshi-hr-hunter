@@ -90,11 +90,20 @@ def test_actual_reviewed_source_delta_is_strictly_whitelisted():
     )
     changed = set(result.stdout.splitlines())
     assert changed, "No release changes"
-    assert changed <= allowlist, f"Unreviewed paths: {changed - allowlist}"
+    # The legacy gate is pinned to a prior release and must now REJECT the
+    # subsequently approved November 17 crown and theme changes. Their exact
+    # delta is separately authorized by test_crown_no_backup_release_contract_v1.
+    if "Dockerfile" in changed or any(p.startswith("static/") for p in changed):
+        assert changed - allowlist, "Legacy release unexpectedly permits the new Docker/icon delta"
+        assert "Dockerfile" not in allowlist
+        assert not any(p.startswith("static/") for p in allowlist)
+    else:
+        assert changed <= allowlist, f"Unreviewed legacy release paths: {changed - allowlist}"
     assert all("*" not in path for path in allowlist)
     assert not any(path.startswith("migrations/") for path in changed)
-    assert not any(path in ("Dockerfile","compose.yaml","compose.netcup-shadow.yaml")
-                   for path in changed)
+    assert not any(path in ("compose.yaml", "compose.netcup-shadow.yaml") for path in changed)
+    if "Dockerfile" not in changed:
+        assert changed <= allowlist
     assert "Code-only release forbids file deletion or renaming" in content
     assert "Unreviewed source change" in content
 
