@@ -55,7 +55,7 @@ jobs:
               [[ "$EXPECTED_LIVE" == "31c6c5b7c2942b7c0416ce1dc2f0dd11898f8d5a" ]] || exit 5
               ;;
             icon-route-20261118)
-              [[ "$RELEASE_SHA" == "854fcc01bc80f3a209195274d6e6d099c02d8e66" ]] || exit 7
+              [[ "$RELEASE_SHA" == "7998acf6f89a3f9dd00d574f14777efa31772ab3" ]] || exit 7
               [[ "$EXPECTED_LIVE" == "b910c4976f3a3c81f57cb89950a6314cdc6b8048" ]] || exit 8
               ;;
             *) echo "Unapproved release kind" >&2; exit 6 ;;
@@ -115,7 +115,7 @@ jobs:
             icon-route-20261118)
               git merge-base --is-ancestor "$TARGET_SHA" "refs/remotes/origin/$BRANCH"
               script_sha="$(git show "refs/remotes/origin/$BRANCH:deploy/netcup/deploy_icon_route_no_backup_release_v1.sh" | sha256sum | cut -d' ' -f1)"
-              [[ "$script_sha" == "91e485f154c8d89654c2fed6243349055e1ee2079e4253d5260741a4034e40c0" ]] || {
+              [[ "$script_sha" == "b6ad6b95acd3bd45228e08e8be8f6d0053df08f6fe2ee661a4955e03f34b450c" ]] || {
                 echo 'Icon-routing release script checksum mismatch' >&2
                 exit 15
               }

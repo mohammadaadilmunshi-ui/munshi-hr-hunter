@@ -1,7 +1,7 @@
 # One-time Netcup icon-route hotfix, no database backup
 
 **Previously deployed app:** `b910c4976f3a3c81f57cb89950a6314cdc6b8048`
-**Exactly reviewed icon 404 fix:** `854fcc01bc80f3a209195274d6e6d099c02d8e66`
+**Exactly reviewed icon 404 fix:** `7998acf6f89a3f9dd00d574f14777efa31772ab3`
 **Protected branch:** `feat/tsenta-connector-completion-20261015`
 
 The original crown/theme release succeeded, but the browser requests for `/app/static/*` returned 404: the edge routes to FastAPI, not Streamlit. This hotfix registers a FastAPI route that serves only eight existing source-controlled icon/manifest files. Existing dashboard access rules remain intact.
@@ -22,9 +22,9 @@ The server's SSH gateway is root-owned. The unprivileged `munshi` account cannot
 
 The administrator may verify the tiny staged files at `/opt/munshi/runtime/icon-route-20261118/` using these fixed hashes:
 
-- Release script: `91e485f154c8d89654c2fed6243349055e1ee2079e4253d5260741a4034e40c0`
-- Exact-match gateway: `841935f53dc4c6f6ca9a65eb75ff189d2d4a691c3bfca004e9d787cda1361b83`
-- Root installer: `3cb64e5efe88948c7c462f12b1b21bb20cfe11c617b8b63f6ebd09fedc449591`
+- Release script: `b6ad6b95acd3bd45228e08e8be8f6d0053df08f6fe2ee661a4955e03f34b450c`
+- Exact-match gateway: `d5264b5ff54eb3eb4d7f21c7b169d03415db44e6e80b8841b9c2e5db7d7d8c59`
+- Root installer: `c1202d0e5675748842bf4f36f0072b5475315c99be6999b16721088f7271f1c0`
 
 After independently reviewing the PR and confirming checksums, run at an **authorized Netcup root console**, not under the restricted deploy user:
 
@@ -50,7 +50,7 @@ gh workflow run netcup-code-only-deploy.yml \
   --repo mohammadaadilmunshi-ui/munshi-hr-hunter \
   --ref feat/tsenta-connector-completion-20261015 \
   -f release_kind=icon-route-20261118 \
-  -f commit_sha=854fcc01bc80f3a209195274d6e6d099c02d8e66 \
+  -f commit_sha=7998acf6f89a3f9dd00d574f14777efa31772ab3 \
   -f expected_live_sha=b910c4976f3a3c81f57cb89950a6314cdc6b8048
 ```
 
@@ -58,7 +58,7 @@ The workflow runs production CI and only then passes a pinned Git bundle to one 
 
 ## Acceptance
 
-- Git HEAD equals `854fcc01bc80f3a209195274d6e6d099c02d8e66`, Hunter healthy.
+- Git HEAD equals `7998acf6f89a3f9dd00d574f14777efa31772ab3`, Hunter healthy.
 - All eight `https://dashboard.munshi.systems/app/static/{filename}` routes answer HTTP 200 with correct MIME and binary data, without needing a login token.
 - Requests to `/` still redirect unauthenticated visitors to the enrollment/login flow; no private paths become public.
 - Original crown and system-aware loading screen remain unchanged.

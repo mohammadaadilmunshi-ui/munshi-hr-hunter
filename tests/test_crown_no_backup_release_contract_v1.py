@@ -99,7 +99,7 @@ def test_gateway_exact_match_additive_without_legacy_access_changes():
     if 'ICON_ROUTE_COMMAND="' in script:
         # The second approved gate adds exactly one pinned icon-404 command,
         # retaining every previous crown and legacy gateway route.
-        assert gateway_hash == "841935f53dc4c6f6ca9a65eb75ff189d2d4a691c3bfca004e9d787cda1361b83"
+        assert gateway_hash == "d5264b5ff54eb3eb4d7f21c7b169d03415db44e6e80b8841b9c2e5db7d7d8c59"
     else:
         assert gateway_hash == GATE_HASH
 

@@ -33,7 +33,7 @@ while (($#)); do
   esac
 done
 [[ "$target" =~ ^[0-9a-f]{40}$ ]] || block 'Exact target SHA required'
-[[ "$target" == "854fcc01bc80f3a209195274d6e6d099c02d8e66" ]] || block 'Target differs from reviewed icon-routing hotfix'
+[[ "$target" == "7998acf6f89a3f9dd00d574f14777efa31772ab3" ]] || block 'Target differs from reviewed icon-routing hotfix'
 [[ "$expected_base" == "$LIVE_BASE" ]] || block 'Expected production baseline changed'
 [[ "$branch" == "$RELEASE_BRANCH" ]] || block 'Only the approved production source branch is allowed'
 [[ "$(id -un)" == munshi ]] || block 'Must run as authorized munshi owner'

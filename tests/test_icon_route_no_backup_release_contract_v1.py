@@ -13,9 +13,9 @@ ADMIN = ROOT / "deploy/netcup/install_icon_route_no_backup_gate_v1.sh"
 WORKFLOW = ROOT / ".github/workflows/netcup-code-only-deploy.yml"
 
 LIVE = "b910c4976f3a3c81f57cb89950a6314cdc6b8048"
-TARGET = "854fcc01bc80f3a209195274d6e6d099c02d8e66"
-DEPLOY_HASH = "91e485f154c8d89654c2fed6243349055e1ee2079e4253d5260741a4034e40c0"
-GATE_HASH = "841935f53dc4c6f6ca9a65eb75ff189d2d4a691c3bfca004e9d787cda1361b83"
+TARGET = "7998acf6f89a3f9dd00d574f14777efa31772ab3"
+DEPLOY_HASH = "b6ad6b95acd3bd45228e08e8be8f6d0053df08f6fe2ee661a4955e03f34b450c"
+GATE_HASH = "d5264b5ff54eb3eb4d7f21c7b169d03415db44e6e80b8841b9c2e5db7d7d8c59"
 OLD_GATE_HASH = "7a6c0f1e786f2c81722164b972565a5e400bfe1a615d86b6e4b204f975632798"
 EXPECTED = {
     ".github/workflows/netcup-code-only-deploy.yml",
