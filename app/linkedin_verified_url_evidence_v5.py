@@ -22,7 +22,7 @@ from app.linkedin_url_contract import canonical_linkedin_job_url
 
 _TABLE = "linkedin_employer_url_evidence_v5"
 _ALLOWED_SOURCES = frozenset(
-    {"verified_first_party_careers", "official_public_ats", "ats_company_registry"}
+    {"verified_first_party_careers", "official_public_ats", "ats_company_registry", "linkedin_apply_button"}
 )
 MAX_AGE = timedelta(days=7)
 DDL = """
@@ -123,6 +123,16 @@ def validate_verified_evidence(
         "matching_fields"
     ):
         raise ValueError("Official ATS source lacks explicit matching fields")
+    if result.resolution_source == "linkedin_apply_button":
+        digest = evidence.get("response_sha256")
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(c not in "0123456789abcdef" for c in digest)
+            or not evidence.get("capture_sources")
+            or not set(evidence["capture_sources"]).issubset({"code#applyUrl", "apply_control"})
+        ):
+            raise ValueError("LinkedIn Apply control lacks exact capture provenance")
     if int(job.get("id") or 0) < 1:
         raise ValueError("Persisted job identity must be positive")
     content = {
@@ -332,6 +342,7 @@ def destination_buttons(
         "linkedin_job_url": original,
         "employer_apply_url": employer_url,
         "employer_link_state": "VERIFIED" if employer_url else "UNAVAILABLE",
+        "ats_platform": verified.get("ats_platform") if employer_url and verified else None,
         "prepare_action": "INTERNAL_MUNSHI",
         "submit_authorized": False,
     }

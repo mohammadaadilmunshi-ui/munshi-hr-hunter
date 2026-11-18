@@ -145,19 +145,7 @@ def render_compact(authority: dict[str, Any]) -> None:
 
     with st.container(border=True):
         if not master.get("configured") or not source:
-            left, right = st.columns((3.5, 1.2), gap="medium")
-            with left:
-                st.caption("MASTER RESUME AUTHORITY")
-                st.markdown("### Add your Master Resume")
-                st.write(
-                    "Add the resume MUNSHI should treat as permanent evidence for Candidate Truth and future job-specific resumes."
-                )
-            with right:
-                st.link_button(
-                    "Open Resume Studio",
-                    "?view=resume-studio",
-                    use_container_width=True,
-                )
+            render_intake()
             return
 
         label = str(master.get("label") or source.get("label") or "Master Resume")
@@ -192,29 +180,26 @@ def render_compact(authority: dict[str, Any]) -> None:
         st.divider()
         preview_col, edit_col, replace_col, download_col = st.columns(4, gap="small")
         with preview_col:
-            if st.button(
+            st.button(
                 "Preview resume",
                 use_container_width=True,
                 key="master_resume_visual_preview_button",
-            ):
-                legacy._toggle("preview")
-                st.rerun()
+                on_click=legacy._toggle, args=("preview",),
+            )
         with edit_col:
-            if st.button(
+            st.button(
                 "Edit source",
                 use_container_width=True,
                 key="master_resume_visual_edit_button",
-            ):
-                legacy._toggle("edit")
-                st.rerun()
+                on_click=legacy._toggle, args=("edit",),
+            )
         with replace_col:
-            if st.button(
+            st.button(
                 "Replace file",
                 use_container_width=True,
                 key="master_resume_visual_replace_button",
-            ):
-                legacy._toggle("replace")
-                st.rerun()
+                on_click=legacy._toggle, args=("replace",),
+            )
         with download_col:
             st.download_button(
                 "Download source text",
@@ -232,3 +217,54 @@ def render_compact(authority: dict[str, Any]) -> None:
     if st.session_state.get("master_resume_preview_open"):
         _render_visual_preview(source)
     _render_legacy_edit_replace(source)
+
+
+def render_intake() -> None:
+    """First-use intake belongs to Profile, with the existing source authority.
+
+    Saving a source never confirms extracted Candidate Truth or generates a
+    tailored resume. Widget-owned keys are only set before their widgets mount.
+    """
+    from app.native_resume_service import save_confirmed_source
+    from app.resume_profile_details_v31 import extract_uploaded_source
+    import hashlib
+
+    st.markdown("### Add your Master Resume")
+    st.caption("Upload a file or paste your experience. Review the source before saving; you will confirm the structured profile separately.")
+    upload = st.file_uploader(
+        "Master Resume file", type=["pdf", "docx", "txt", "md"],
+        key="profile_intake_upload",
+    )
+    if upload is not None:
+        digest = hashlib.sha256(upload.getvalue()).hexdigest()
+        if st.session_state.get("_profile_intake_upload_digest") != digest:
+            try:
+                text, kind = extract_uploaded_source(upload.name, upload.getvalue())
+            except (ValueError, RuntimeError) as error:
+                st.error(f"Could not read this file: {error}. Paste the source text below to continue.")
+            else:
+                st.session_state["profile_intake_text"] = text
+                st.session_state["profile_intake_label"] = upload.name
+                st.session_state["_profile_intake_kind"] = kind
+                st.session_state["_profile_intake_upload_digest"] = digest
+    st.session_state.setdefault("profile_intake_label", "Master Resume")
+    with st.form("profile_intake_form"):
+        label = st.text_input("Source name", key="profile_intake_label", max_chars=240)
+        text = st.text_area("Review your source text", key="profile_intake_text", height=280,
+                            placeholder="Paste your complete resume or career history…")
+        confirmed = st.checkbox("I confirm this source is truthful and may be used to build my profile and job-specific resumes.", key="profile_intake_confirmed")
+        save = st.form_submit_button("Save Master Resume source", type="primary", use_container_width=True)
+    if save:
+        if not text.strip():
+            st.error("Add your resume text or upload a readable file before saving.")
+        elif not confirmed:
+            st.error("Review the source and check the truth confirmation before saving.")
+        else:
+            try:
+                save_confirmed_source(content_text=text, label=label or "Master Resume",
+                                      source_kind=str(st.session_state.get("_profile_intake_kind") or "pasted_text"))
+            except (ValueError, RuntimeError) as error:
+                st.error(f"Source was not saved: {error}")
+            else:
+                st.session_state["_profile_intake_saved"] = True
+                st.rerun()

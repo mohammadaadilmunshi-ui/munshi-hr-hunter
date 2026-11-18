@@ -1,6 +1,6 @@
 """Profile Workspace V2: immediate extracted-profile preview and explicit promotion.
 
-V1 owns the approved MUNSHI/Tsenta-inspired visual renderer and public-logo resolver.
+V1 owns the approved MUNSHI/MUNSHI Relay-inspired visual renderer and public-logo resolver.
 V2 changes only the handoff state machine so an extracted profile is visible before
 confirmation. Confirmation promotes the reviewed snapshot to permanent authority;
 it is no longer a prerequisite for seeing the extracted output.
@@ -62,8 +62,7 @@ def _render_uninitialized(source: dict[str, Any]) -> None:
     if not source:
         st.markdown(
             '<div class="profile-empty"><h3>Your MUNSHI profile has no Master Resume yet</h3>'
-            '<p>Upload and confirm a Master Resume in Resume Studio. MUNSHI will then build the reusable structured profile shown here.</p>'
-            '<a class="profile-edit-link" href="?view=resume-studio" target="_self">Upload Master Resume in Resume Studio →</a></div>',
+            '<p>Add and review your Master Resume in the Profile source form above. Then build and confirm your structured profile here.</p></div>',
             unsafe_allow_html=True,
         )
         return

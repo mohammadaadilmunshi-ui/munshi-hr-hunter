@@ -1228,6 +1228,7 @@ def run_guarded_main(
                 "mode": (
                     "guarded-adapter-failure"
                 ),
+                "error_type": type(error).__name__,
                 "source": source_name,
                 "worker_action": "run",
                 "network_request_made": None,

@@ -33,6 +33,7 @@ from xml.sax.saxutils import escape as xml_escape
 import httpx
 
 from app.database import get_connection
+from app.resume_read_schema_v1 import ensure_existing_read_table
 from app.native_resume_studio import (
     ResumeDocument,
     ats_readiness_issues,
@@ -800,7 +801,7 @@ def _owner_version(connection: sqlite3.Connection, version_id: str) -> dict[str,
 def get_version(version_id: str) -> dict[str, Any]:
     connection = get_connection()
     try:
-        ensure_schema(connection)
+        ensure_existing_read_table(connection, "native_resume_versions", ensure_schema)
         return _owner_version(connection, version_id)
     finally:
         connection.close()
@@ -809,7 +810,7 @@ def get_version(version_id: str) -> dict[str, Any]:
 def list_versions(*, job_id: int | None = None, limit: int = 100) -> list[dict[str, Any]]:
     connection = get_connection()
     try:
-        ensure_schema(connection)
+        ensure_existing_read_table(connection, "native_resume_versions", ensure_schema)
         owner = current_owner(connection)
         where = "tenant_id=? AND user_id=?"
         params: list[Any] = [owner.tenant_id, owner.user_id]
@@ -1085,12 +1086,23 @@ def render_docx_bytes(document: ResumeDocument) -> bytes:
     doc_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'''
     buffer = io.BytesIO()
+    # ZIP defaults each part's timestamp to wall-clock time. Identical resume
+    # content rendered across a two-second boundary then yields different
+    # bytes and hashes, violating immutable artifact/retry guarantees. Freeze
+    # *ZIP entry metadata only*. All existing XML, text, fonts and page layout
+    # stay byte-for-byte identical.
+    parts = (
+        ("[Content_Types].xml", content_types),
+        ("_rels/.rels", rels),
+        ("word/document.xml", document_xml),
+        ("word/styles.xml", styles_xml),
+        ("word/_rels/document.xml.rels", doc_rels),
+    )
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("[Content_Types].xml", content_types)
-        archive.writestr("_rels/.rels", rels)
-        archive.writestr("word/document.xml", document_xml)
-        archive.writestr("word/styles.xml", styles_xml)
-        archive.writestr("word/_rels/document.xml.rels", doc_rels)
+        for name, xml in parts:
+            entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(entry, xml)
     return buffer.getvalue()
 
 

@@ -6,6 +6,7 @@ candidate-facing review data. It never approves, submits, or mints authority.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
 from typing import Any
 
 from app import jd_resume_plan_v1 as planner
@@ -149,9 +150,25 @@ def build_review_card(
         for value in plan.get("supported_jd_terms") or []
         if _text(value)
     ]
-    covered_terms = [
-        term for term in supported_terms if term.casefold() in resume_text
+    # JD extraction sometimes emits full quoted sentences as 'keywords'.
+    # Only short phrases belong in this separate literal-phrase metric; longer
+    # requirements are represented by the evidence-backed coverage metric.
+    short_terms = [
+        term.strip('\"“” ')
+        for term in supported_terms
+        if len(re.findall(r"[A-Za-z0-9]+", term)) <= 4
     ]
+    covered_terms = [
+        term for term in short_terms if term.casefold() in resume_text
+    ]
+    requirement_refs = [item for item in plan.get("requirement_refs") or []
+                        if isinstance(item, Mapping)]
+    supportable_count = int(
+        coverage.get("supportable_requirement_count")
+        or diagnostics.get("jd_supported_requirement_count") or 0
+    )
+    evidence_limited = (len(requirement_refs) >= 10 and
+                        supportable_count < len(requirement_refs) / 4)
 
     current_bullets = _bullets(document)
     current_skills = _skills(document)
@@ -179,7 +196,11 @@ def build_review_card(
 
     return {
         "coverage_percent": round(percent, 1),
-        "coverage_label": _coverage_label(percent),
+        "coverage_label": (
+            "Limited evidence" if evidence_limited else _coverage_label(percent)
+        ),
+        "jd_requirement_count": len(requirement_refs),
+        "evidence_limited": evidence_limited,
         "represented_requirement_count": int(
             coverage.get("represented_requirement_count")
             or diagnostics.get("jd_supported_requirement_represented_count")
@@ -191,7 +212,7 @@ def build_review_card(
             or 0
         ),
         "covered_keyword_count": len(covered_terms),
-        "keyword_count": len(supported_terms),
+        "keyword_count": len(short_terms),
         "required_skills": _requirement_rows(
             plan, represented_ids=represented_ids
         ),

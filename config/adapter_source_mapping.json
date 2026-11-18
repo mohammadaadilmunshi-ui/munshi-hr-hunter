@@ -1,24 +1,171 @@
 {
   "schema_version": 1,
   "providers": [
-    {"provider": "Greenhouse", "source_name": "Greenhouse", "fixture_evidence": "app.greenhouse_adapter_test"},
-    {"provider": "Ashby", "source_name": "Ashby", "fixture_evidence": "app.ashby_adapter_test"},
-    {"provider": "Lever", "source_name": "Lever", "fixture_evidence": "app.lever_adapter_test"},
-    {"provider": "SmartRecruiters", "source_name": "SmartRecruiters", "fixture_evidence": "app.smartrecruiters_adapter_test"},
-    {"provider": "Personio", "source_name": "Personio"},
-    {"provider": "Comeet", "source_name": "Comeet"},
-    {"provider": "Pinpoint", "source_name": "Pinpoint"},
-    {"provider": "Recruitee", "source_name": "Recruitee"},
-    {"provider": "Workable", "source_name": "Workable"},
-    {"provider": "Arbeitnow", "source_name": "Arbeitnow"},
-    {"provider": "Remote OK", "source_name": "Remote OK"},
-    {"provider": "Jobicy", "source_name": "Jobicy"},
-    {"provider": "Remotive", "source_name": "Remotive"},
-    {"provider": "LinkedIn / JobSpy", "source_name": "LinkedIn Jobs (JobSpy)"},
-    {"provider": "Indeed / JobSpy", "source_name": "Indeed Jobs (JobSpy)"},
-    {"provider": "Google Jobs / JobSpy", "source_name": "Google Jobs"},
-    {"provider": "ZipRecruiter / JobSpy", "source_name": "JobSpy"},
-    {"provider": "Workday", "source_name": "Workday", "fixture_evidence": "tests.test_adapters"},
-    {"provider": "BambooHR", "source_name": "BambooHR", "fixture_evidence": "tests.test_adapters"}
+    {
+      "provider": "Greenhouse",
+      "source_name": "Greenhouse",
+      "fixture_evidence": "app.greenhouse_adapter_test"
+    },
+    {
+      "provider": "Ashby",
+      "source_name": "Ashby",
+      "fixture_evidence": "app.ashby_adapter_test"
+    },
+    {
+      "provider": "Lever",
+      "source_name": "Lever",
+      "fixture_evidence": "app.lever_adapter_test"
+    },
+    {
+      "provider": "SmartRecruiters",
+      "source_name": "SmartRecruiters",
+      "fixture_evidence": "app.smartrecruiters_adapter_test"
+    },
+    {
+      "provider": "Personio",
+      "source_name": "Personio"
+    },
+    {
+      "provider": "Comeet",
+      "source_name": "Comeet"
+    },
+    {
+      "provider": "Pinpoint",
+      "source_name": "Pinpoint"
+    },
+    {
+      "provider": "Recruitee",
+      "source_name": "Recruitee"
+    },
+    {
+      "provider": "Workable",
+      "source_name": "Workable"
+    },
+    {
+      "provider": "Arbeitnow",
+      "source_name": "Arbeitnow"
+    },
+    {
+      "provider": "Remote OK",
+      "source_name": "Remote OK"
+    },
+    {
+      "provider": "Jobicy",
+      "source_name": "Jobicy"
+    },
+    {
+      "provider": "Remotive",
+      "source_name": "Remotive"
+    },
+    {
+      "provider": "LinkedIn / JobSpy",
+      "source_name": "LinkedIn Jobs (JobSpy)"
+    },
+    {
+      "provider": "Indeed / JobSpy",
+      "source_name": "Indeed Jobs (JobSpy)"
+    },
+    {
+      "provider": "Google Jobs / JobSpy",
+      "source_name": "Google Jobs"
+    },
+    {
+      "provider": "ZipRecruiter / JobSpy",
+      "source_name": "JobSpy"
+    },
+    {
+      "provider": "Workday",
+      "source_name": "Workday",
+      "fixture_evidence": "tests.test_adapters"
+    },
+    {
+      "provider": "BambooHR",
+      "source_name": "BambooHR",
+      "fixture_evidence": "tests.test_adapters"
+    },
+    {
+      "provider": "Rippling",
+      "source_name": "Rippling"
+    },
+    {
+      "provider": "iCIMS",
+      "source_name": "iCIMS"
+    },
+    {
+      "provider": "JazzHR",
+      "source_name": "JazzHR"
+    },
+    {
+      "provider": "Jobvite",
+      "source_name": "Jobvite"
+    },
+    {
+      "provider": "BreezyHR",
+      "source_name": "BreezyHR"
+    },
+    {
+      "provider": "Oracle Recruiting",
+      "source_name": "Oracle Recruiting"
+    },
+    {
+      "provider": "Paylocity",
+      "source_name": "Paylocity"
+    },
+    {
+      "provider": "UKG / UltiPro",
+      "source_name": "UKG / UltiPro"
+    },
+    {
+      "provider": "ADP Recruiting",
+      "source_name": "ADP Recruiting"
+    },
+    {
+      "provider": "Dover",
+      "source_name": "Dover"
+    },
+    {
+      "provider": "Gem",
+      "source_name": "Gem"
+    },
+    {
+      "provider": "Zoho Recruit",
+      "source_name": "Zoho Recruit"
+    },
+    {
+      "provider": "BrassRing",
+      "source_name": "BrassRing"
+    },
+    {
+      "provider": "CareerPlug",
+      "source_name": "CareerPlug"
+    },
+    {
+      "provider": "Dayforce",
+      "source_name": "Dayforce"
+    },
+    {
+      "provider": "Hireology",
+      "source_name": "Hireology"
+    },
+    {
+      "provider": "JOIN",
+      "source_name": "JOIN"
+    },
+    {
+      "provider": "Phenom",
+      "source_name": "Phenom"
+    },
+    {
+      "provider": "Polymer",
+      "source_name": "Polymer"
+    },
+    {
+      "provider": "SAP SuccessFactors",
+      "source_name": "SAP SuccessFactors"
+    },
+    {
+      "provider": "Teamtailor",
+      "source_name": "Teamtailor"
+    }
   ]
 }

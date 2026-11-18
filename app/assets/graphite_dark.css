@@ -1,0 +1,430 @@
+/* MUNSHI Graphite & Platinum: opt-in only. All light rules remain untouched.
+   No global inversions, no animated page overlays, no changes to resume paper.
+   Selected explicitly on html[data-munshi-theme="dark"] by local preference.
+*/
+html[data-munshi-theme="dark"] {
+  color-scheme:dark!important;
+  --m-bg:#111317;
+  --m-soft:#23262D;
+  --m-surface:#1D2026;
+  --m-ink:#F0F0EE;
+  --m-secondary:#C6C9D0;
+  --m-muted:#ADB5C0;
+  --m-border:#373C44;
+  --m-strong:#4C535F;
+  --m-forest:#DDE1E5;       /* historical token name; platinum, not green */
+  --m-forest-hover:#FFFFFF;
+  --m-active:#30343D;
+  --m-brass:#D0BB93;
+  --m-danger:#F2A2AC;
+  --studio-line:#373C44;
+  --studio-muted:#ADB5C0;
+  --studio-accent-ink:#D0BB93;
+  --mn-forest:#DDE1E5;
+  --mn-forest-dark:#FFFFFF;
+  --mn-cream:#111317;
+  --mn-brass:#D0BB93;
+  --mn-ink:#F0F0EE;
+  --mn-muted:#ADB5C0;
+  --mn-border:#373C44;
+  --mn-surface:#1D2026;
+  background:#111317;
+}
+html[data-munshi-theme="dark"] body,
+html[data-munshi-theme="dark"] .stApp,
+html[data-munshi-theme="dark"] [data-baseweb] {color-scheme:dark!important}
+html[data-munshi-theme="dark"] body,
+html[data-munshi-theme="dark"] .stApp,
+html[data-munshi-theme="dark"] [data-testid="stAppViewContainer"],
+html[data-munshi-theme="dark"] [data-testid="stMain"] {
+  background:#111317!important;color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp h1,
+html[data-munshi-theme="dark"] .stApp h2,
+html[data-munshi-theme="dark"] .stApp h3,
+html[data-munshi-theme="dark"] .stApp h4,
+html[data-munshi-theme="dark"] .stApp p,
+html[data-munshi-theme="dark"] .stApp label,
+html[data-munshi-theme="dark"] .stApp [data-testid="stWidgetLabel"] p,
+html[data-munshi-theme="dark"] .stApp [data-testid="stMarkdownContainer"] {
+  color:var(--m-ink)
+}
+html[data-munshi-theme="dark"] .stApp a:not(.brand) {color:#B8D4EF}
+html[data-munshi-theme="dark"] .stApp [data-testid="stCaptionContainer"],
+html[data-munshi-theme="dark"] .stApp [data-testid="stCaptionContainer"] p,
+html[data-munshi-theme="dark"] .stApp .quiet {color:#ADB5C0!important}
+
+/* Shell, navigation, mobile dock and menu. */
+html[data-munshi-theme="dark"] .stApp .st-key-product_top_bar,
+html[data-munshi-theme="dark"] .stApp .st-key-product_top_bar [data-testid="stVerticalBlock"] {
+  background:#181B20!important;border-color:#373C44!important
+}
+html[data-munshi-theme="dark"] .stApp .brand,
+html[data-munshi-theme="dark"] .stApp .studio-location strong,
+html[data-munshi-theme="dark"] .stApp .product-nav-link.active,
+html[data-munshi-theme="dark"] .stApp .mobile-nav-link.active,
+html[data-munshi-theme="dark"] .stApp .mobile-nav summary,
+html[data-munshi-theme="dark"] .stApp .status-pill-product {
+  color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp .product-header .brand-mark {background:transparent!important}
+html[data-munshi-theme="dark"] .stApp .status-pill-product {
+  background:#272B31!important;border-color:#454951!important
+}
+html[data-munshi-theme="dark"] .stApp .product-nav-link,
+html[data-munshi-theme="dark"] .stApp .mobile-nav-link {color:#C6C9D0!important}
+html[data-munshi-theme="dark"] .stApp .product-nav-link:hover,
+html[data-munshi-theme="dark"] .stApp .mobile-nav-link:hover,
+html[data-munshi-theme="dark"] .stApp .mobile-nav-link.active {
+  background:#30343D!important;color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp .mobile-nav summary {
+  background:#252930!important;border-color:#4C535F!important
+}
+html[data-munshi-theme="dark"] .stApp .mobile-nav nav {
+  background:#1D2026!important;border-color:#424751!important;
+  box-shadow:0 24px 54px rgba(0,0,0,.45)!important
+}
+html[data-munshi-theme="dark"] .stApp .munshi-mobile-dock,
+html[data-munshi-theme="dark"] .stApp .st-key-product_mobile_routes {
+  background:#181B20!important;border-color:#373C44!important
+}
+html[data-munshi-theme="dark"] .stApp .munshi-dock-link,
+html[data-munshi-theme="dark"] .stApp .munshi-dock-link svg {color:#C6C9D0!important;stroke:#C6C9D0!important}
+html[data-munshi-theme="dark"] .stApp .munshi-dock-link[aria-current="page"] {
+  color:#F0F0EE!important;background:#30343D!important
+}
+html[data-munshi-theme="dark"] .stApp [class*="st-key-product_route_"] button {
+  background:transparent!important;color:#C6C9D0!important
+}
+html[data-munshi-theme="dark"] .stApp [class*="st-key-product_route_"][class*="_selected"] button {
+  background:#30343D!important;color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp [class*="st-key-product_route_"][class*="_selected"] button * {
+  color:#F0F0EE!important
+}
+/* Original, tiny owl: two eyes close very briefly and quietly. */
+.munshi-appearance-row {border-top:1px solid #E4E9E5;margin-top:.28rem;padding:.65rem .15rem .12rem}
+.munshi-theme-switch {
+  width:100%;display:flex;align-items:center;gap:.8rem;
+  font:inherit;font-weight:690;font-size:.88rem;
+  padding:.7rem .72rem;border:1px solid #D5DED8;border-radius:12px;
+  background:#F3F6F3;color:#243A33;min-height:58px;cursor:pointer;text-align:left;
+}
+.munshi-theme-switch:hover {background:#EAF0EC}
+.munshi-theme-switch:focus-visible {outline:3px solid #9F8B5B;outline-offset:2px}
+.munshi-owl {display:grid;place-items:center;width:36px;height:36px;flex:none;
+  background:#E0E9E4;border:1px solid #C2D2C9;border-radius:12px;color:#30443E}
+.munshi-owl svg {display:block;width:27px;height:27px}
+.munshi-owl-eye {transform-box:fill-box;transform-origin:center}
+@keyframes munshiOwlBlink {
+  0%,44%,49%,53%,100% {transform:scaleY(1)}
+  50%,51% {transform:scaleY(.11)}
+}
+.munshi-owl-eye {animation:munshiOwlBlink 7.2s ease-in-out infinite}
+.munshi-theme-copy {display:flex;flex-direction:column;gap:.12rem;flex:1;min-width:0}
+.munshi-theme-hint {font-size:.7rem;font-weight:480;color:#67766E}
+.munshi-switch-track {display:inline-flex;align-items:center;flex:none;width:36px;height:22px;
+  padding:3px;border-radius:999px;background:#CED8D1;transition:background .16s ease}
+.munshi-switch-knob {width:16px;height:16px;background:#fff;border-radius:50%;
+  box-shadow:0 1px 3px #0002;transition:transform .16s ease}
+html[data-munshi-theme="dark"] .munshi-appearance-row {border-color:#434750}
+html[data-munshi-theme="dark"] .munshi-theme-switch {
+  background:#292D34;border-color:#454951;color:#F0F0EE
+}
+html[data-munshi-theme="dark"] .munshi-theme-switch:hover {background:#333841}
+html[data-munshi-theme="dark"] .munshi-owl {background:#3C3630;border-color:#746950;color:#F0D5A4}
+html[data-munshi-theme="dark"] .munshi-theme-hint {color:#BDC1CC}
+html[data-munshi-theme="dark"] .munshi-switch-track {background:#C7B58E}
+html[data-munshi-theme="dark"] .munshi-switch-knob {transform:translateX(14px);background:#1D2026}
+.munshi-appearance-settings {max-width:460px;margin:1rem 0 1.25rem}
+.munshi-appearance-settings .munshi-appearance-row {padding:0;border-top:0;margin:0}
+.munshi-appearance-settings .munshi-theme-switch {width:100%}
+@media(prefers-reduced-motion:reduce) {
+ .munshi-owl-eye {animation:none!important}
+ .munshi-switch-track,.munshi-switch-knob {transition:none!important}
+}
+@media(max-width:920px) {
+ .mobile-nav nav {max-height:calc(100dvh - 170px);overflow-y:auto;overscroll-behavior:contain}
+ .munshi-appearance-row {position:relative}
+}
+
+/* Home: differentiated but neutral hero and metrics. */
+html[data-munshi-theme="dark"] .studio-command {background:#24272E!important;border-color:#3B414B!important}
+html[data-munshi-theme="dark"] .studio-command h1,
+html[data-munshi-theme="dark"] .studio-context {color:#F0F0EE!important}
+html[data-munshi-theme="dark"] .studio-command p {color:#C6C9D0!important}
+html[data-munshi-theme="dark"] .studio-shortcuts a {
+  background:#30343D!important;border-color:#484E59!important;color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .studio-shortcuts a:hover {background:#383D47!important}
+html[data-munshi-theme="dark"] .studio-shortcuts small {color:#B8C0CD!important}
+html[data-munshi-theme="dark"] .studio-shortcut-icon,
+html[data-munshi-theme="dark"] .studio-progress-icon {
+  background:#3A3E46!important;border-color:#535863!important;color:#E4DECE!important
+}
+html[data-munshi-theme="dark"] .studio-progress-heading h2,
+html[data-munshi-theme="dark"] .studio-progress-number,
+html[data-munshi-theme="dark"] .studio-progress-label {color:#F0F0EE!important}
+html[data-munshi-theme="dark"] .studio-progress-card,
+html[data-munshi-theme="dark"] .stApp [data-testid="stMetric"],
+html[data-munshi-theme="dark"] .studio-activity,
+html[data-munshi-theme="dark"] .studio-activity a {
+  background:#1D2026!important;border-color:#373C44!important;color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .studio-activity a:hover {background:#292D34!important}
+html[data-munshi-theme="dark"] .studio-activity li+li {border-color:#373C44}
+html[data-munshi-theme="dark"] .studio-activity-state {color:#D0BB93!important}
+html[data-munshi-theme="dark"] .stApp [data-testid="stMetricLabel"] p {color:#BDC3CD!important}
+html[data-munshi-theme="dark"] .stApp [data-testid="stMetricValue"] {color:#F0F0EE!important}
+
+/* General product cards, settings, applications, tracker and workspace. */
+html[data-munshi-theme="dark"] .stApp :is(
+ .surface,.product-callout,.split-panel,.table-shell,.lane-card,.artifact-card,
+ .intelligence-card,.empty-product,.settings-v22-card,.system-stat,.profile-source,
+ .profile-fact-card,.product-dialog-card,.package-fact,.profile-left-card,
+ .profile-right-card,.profile-hero,.profile-selector,.profile-empty,.profile-logo,
+ .profile-default-box,.profile-cert-card,.evidence-section,.evidence-fact,
+ .snapshot-card,.integration-card,.policy-card,.muted-panel
+) {background:#1D2026!important;border-color:#373C44!important;color:#F0F0EE!important}
+html[data-munshi-theme="dark"] .stApp .settings-illustration {
+ background:linear-gradient(145deg,#252831,#303039)!important;color:#C6C9D0!important
+}
+html[data-munshi-theme="dark"] .stApp .status-chip,
+html[data-munshi-theme="dark"] .stApp .profile-selector,
+html[data-munshi-theme="dark"] .stApp .profile-chip.gray {
+ background:#30343D!important;color:#DCE0E6!important;border-color:#474D57!important
+}
+html[data-munshi-theme="dark"] .stApp .page-kicker-product {color:#D0BB93!important}
+html[data-munshi-theme="dark"] .stApp .profile-name,
+html[data-munshi-theme="dark"] .stApp .profile-edit-link,
+html[data-munshi-theme="dark"] .stApp .profile-logo-fallback,
+html[data-munshi-theme="dark"] .stApp .profile-entry-title,
+html[data-munshi-theme="dark"] .stApp .profile-section-title,
+html[data-munshi-theme="dark"] .stApp .profile-default-row strong,
+html[data-munshi-theme="dark"] .stApp .settings-v22-card b,
+html[data-munshi-theme="dark"] .stApp .system-stat .value,
+html[data-munshi-theme="dark"] .stApp .profile-source b,
+html[data-munshi-theme="dark"] .stApp .profile-fact-card b,
+html[data-munshi-theme="dark"] .stApp .package-fact span,
+html[data-munshi-theme="dark"] .stApp .product-dialog-card strong,
+html[data-munshi-theme="dark"] .stApp .pipeline-open {color:#F0F0EE!important}
+html[data-munshi-theme="dark"] .stApp :is(
+ .profile-entry-subtitle,.profile-entry-meta,.profile-entry-details,
+ .profile-summary,.profile-bullets,.profile-entry-details li,
+ .profile-default-row,.profile-section-count,.profile-cert-issuer,
+ .profile-contact,.settings-v22-card span,.settings-v22-copy,
+ .profile-source span,.profile-fact-card span,.product-dialog-card span,
+ .package-fact b,.pipeline-status-copy,.system-stat .label,.system-stat .help
+) {color:#B8C0CD!important}
+html[data-munshi-theme="dark"] .stApp .profile-tab-link.active {
+ background:#30343D!important;color:#F0F0EE!important;border-color:#4C535F!important
+}
+html[data-munshi-theme="dark"] .stApp .profile-tab-link,
+html[data-munshi-theme="dark"] .stApp .profile-subaction {color:#C6C9D0!important}
+html[data-munshi-theme="dark"] .stApp .profile-chip:not(.gray) {
+  background:#283D3A!important;color:#B2E0D2!important
+}
+html[data-munshi-theme="dark"] .stApp .profile-chip.orange,
+html[data-munshi-theme="dark"] .stApp .profile-complete {
+  background:#45382C!important;color:#EAD1A8!important;border-color:#806E53!important
+}
+html[data-munshi-theme="dark"] .stApp .profile-badge {
+  background:#283D3A!important;color:#B2E0D2!important
+}
+html[data-munshi-theme="dark"] .stApp .profile-role:before {border-color:#1D2026!important}
+html[data-munshi-theme="dark"] .stApp .profile-timeline:before {background:#4C535F!important}
+html[data-munshi-theme="dark"] .stApp .profile-logo {background:#F3F3F1!important}
+/* Employer logos have their own intrinsic colors. Do not invert them. */
+html[data-munshi-theme="dark"] .stApp [class*="st-key-product_"][class*="_search"],
+html[data-munshi-theme="dark"] .stApp [data-testid="stForm"],
+html[data-munshi-theme="dark"] .stApp [data-testid="stExpander"] {
+ background:#1D2026!important;border-color:#373C44!important;color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp [data-testid="stExpander"] summary,
+html[data-munshi-theme="dark"] .stApp [data-testid="stExpander"] summary * {
+ background:#1D2026!important;color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp :is(
+ [data-testid="stTextInput"] input,[data-testid="stTextArea"] textarea,
+ [data-baseweb="input"]>div,[data-baseweb="textarea"]>div,
+ [data-baseweb="select"]>div,[data-testid="stNumberInput"] input
+) {background:#23262D!important;color:#F0F0EE!important;
+ border-color:#4C535F!important;-webkit-text-fill-color:#F0F0EE!important;
+ caret-color:#F0F0EE!important}
+html[data-munshi-theme="dark"] .stApp :is(input,textarea)::placeholder {
+ color:#ADB5C0!important;-webkit-text-fill-color:#ADB5C0!important
+}
+html[data-munshi-theme="dark"] .stApp :is(
+ [data-baseweb="popover"],[data-baseweb="menu"],[role="listbox"],[role="option"]
+) {background:#24272E!important;color:#F0F0EE!important;border-color:#4C535F!important}
+html[data-munshi-theme="dark"] .stApp [role="option"][aria-selected="true"] {
+ background:#343943!important
+}
+html[data-munshi-theme="dark"] .stApp :is(
+ .stButton>button,.stLinkButton>a,[data-testid="stFormSubmitButton"]>button,
+ [data-testid="stDownloadButton"]>button
+) {background:#292D34!important;color:#F0F0EE!important;border-color:#515761!important}
+html[data-munshi-theme="dark"] .stApp :is(
+ .stButton>button,.stLinkButton>a,[data-testid="stFormSubmitButton"]>button
+):hover {background:#363B44!important;border-color:#6B737F!important}
+html[data-munshi-theme="dark"] .stApp :is(
+ .stButton>button[kind="primary"],.stLinkButton>a[kind="primary"],
+ [data-testid="stFormSubmitButton"]>button[kind="primary"],
+ [data-testid="stDownloadButton"]>button[kind="primary"]
+) {background:#DDE1E5!important;border-color:#DDE1E5!important;
+ color:#1B2026!important;-webkit-text-fill-color:#1B2026!important}
+html[data-munshi-theme="dark"] .stApp :is(
+ .stButton>button[kind="primary"],.stLinkButton>a[kind="primary"],
+ [data-testid="stFormSubmitButton"]>button[kind="primary"]
+):hover {background:#FFFFFF!important;color:#111317!important;border-color:#FFFFFF!important}
+html[data-munshi-theme="dark"] .stApp [role="radio"],
+html[data-munshi-theme="dark"] .stApp [role="checkbox"] {accent-color:#D0BB93!important}
+html[data-munshi-theme="dark"] .stApp [data-testid="stRadio"] label,
+html[data-munshi-theme="dark"] .stApp [data-testid="stSegmentedControl"] button {
+ background:#282C33!important;color:#F0F0EE!important;border-color:#4C535F!important
+}
+html[data-munshi-theme="dark"] .stApp [data-testid="stSegmentedControl"] button[aria-pressed="true"] {
+ background:#DDE1E5!important;color:#1B2026!important
+}
+html[data-munshi-theme="dark"] .stApp [data-testid="stTabs"] [role="tab"] {color:#C6C9D0!important}
+html[data-munshi-theme="dark"] .stApp [data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+ color:#F0F0EE!important;background:#30343D!important
+}
+html[data-munshi-theme="dark"] .stApp :is(
+ [data-testid="stDataFrame"],[data-testid="stTable"],
+ [data-testid="stDataEditor"],[data-testid="stCode"],[data-testid="stJson"]
+) {background:#1D2026!important;color:#F0F0EE!important;border-color:#373C44!important}
+html[data-munshi-theme="dark"] .stApp [data-testid="stAlert"] {
+ background:#24272E!important;border-color:#4C535F!important
+}
+html[data-munshi-theme="dark"] .stApp .pipeline-row {border-color:#373C44!important}
+html[data-munshi-theme="dark"] .stApp .pipeline-row-link:hover {background:#30343D!important}
+html[data-munshi-theme="dark"] .stApp .status-pill.good {background:#263B35!important;color:#A9E3C7!important}
+html[data-munshi-theme="dark"] .stApp .status-pill.warn {background:#423827!important;color:#F1D39B!important}
+html[data-munshi-theme="dark"] .stApp .status-pill.bad {background:#432D35!important;color:#F2ACB5!important}
+
+/* Job cards: preserve all 18 distinct palettes, match ring and Apply Pulse. */
+html[data-munshi-theme="dark"] .stApp [class*="st-key-product_card_"] {
+ background:#1D2026!important;border-color:#434850!important
+}
+html[data-munshi-theme="dark"] .stApp .job-card-main {
+ background:var(--card-dark-bg,#30343D)!important
+}
+html[data-munshi-theme="dark"] .stApp :is(
+ .job-title,.job-company
+) {color:#F0F0EE!important}
+html[data-munshi-theme="dark"] .stApp :is(
+ .job-top,.job-meta,.job-destination,.job-destination b
+) {color:#C6C9D0!important}
+html[data-munshi-theme="dark"] .stApp .job-top .quiet {color:#B7BEC8!important}
+html[data-munshi-theme="dark"] .stApp .tag {
+ background:rgba(255,255,255,.105)!important;border-color:rgba(255,255,255,.12)!important;
+ color:#E5E3DE!important
+}
+html[data-munshi-theme="dark"] .stApp .score-ring {
+ background:conic-gradient(var(--card-dark-accent,#D0BB93) var(--score),
+ rgba(255,255,255,.14) 0)!important
+}
+html[data-munshi-theme="dark"] .stApp .score-ring-inner {
+ background:var(--card-dark-bg,#30343D)!important;
+ color:var(--card-dark-accent,#D0BB93)!important
+}
+html[data-munshi-theme="dark"] .stApp .score-ring-inner small {color:#D6D8DB!important}
+html[data-munshi-theme="dark"] .stApp .munshi-apply-pulse {
+ background:#293A38!important;border-color:#53766C!important;color:#B5DDD0!important
+}
+html[data-munshi-theme="dark"] .stApp .munshi-apply-pulse .pulse-stage {
+ color:#B5DDD0!important
+}
+html[data-munshi-theme="dark"] .stApp [class*="st-key-job_open_"] button {
+ background:#292D34!important;color:#F0F0EE!important;border-color:#515761!important
+}
+html[data-munshi-theme="dark"] .stApp .intelligence-card[style*="--card-dark-bg"] {
+ background:var(--card-dark-bg)!important
+}
+
+/* Dialog and full-height job details drawer: V2.2 hard-coded light surface. */
+html[data-munshi-theme="dark"] [data-baseweb="modal"] {
+ background:rgba(7,9,12,.70)!important
+}
+html[data-munshi-theme="dark"] body:has(.job-detail-drawer-marker) div[data-baseweb="modal"] {
+ background:rgba(7,9,12,.64)!important;
+ backdrop-filter:blur(5px) saturate(.9)!important
+}
+html[data-munshi-theme="dark"] [data-testid="stDialog"],
+html[data-munshi-theme="dark"] [data-testid="stDialog"]>div,
+html[data-munshi-theme="dark"] [data-testid="stDialog"] [role="dialog"] {
+ background:#24272E!important;color:#F0F0EE!important;color-scheme:dark!important;
+ border-color:#434850!important
+}
+html[data-munshi-theme="dark"] [data-testid="stDialog"]:has(.job-detail-drawer-marker),
+html[data-munshi-theme="dark"] [data-testid="stDialog"]:has(.job-detail-drawer-marker)>div {
+ background:transparent!important
+}
+html[data-munshi-theme="dark"] [data-testid="stDialog"] [data-testid="stMarkdownContainer"],
+html[data-munshi-theme="dark"] [data-testid="stDialog"] [data-testid="stMarkdownContainer"] *,
+html[data-munshi-theme="dark"] [data-testid="stDialog"] [role="dialog"] :is(h1,h2,h3,p,span,label,div) {
+ color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] [data-testid="stDialog"] :is(
+ [data-testid="stMetric"],[data-testid="stExpander"],.product-dialog-card,
+ .package-fact,.settings-v22-card,.profile-fact-card
+) {background:#1D2026!important;border-color:#434850!important}
+html[data-munshi-theme="dark"] [data-testid="stDialog"] [data-testid="stExpander"] summary {
+ background:#1D2026!important;color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] [data-testid="stDialog"] :is(.stButton>button,.stLinkButton>a) {
+ background:#292D34!important;color:#F0F0EE!important;border-color:#515761!important
+}
+html[data-munshi-theme="dark"] [data-testid="stDialog"] :is(
+ .stButton>button[kind="primary"],.stLinkButton>a[kind="primary"]
+) {background:#DDE1E5!important;color:#1B2026!important;border-color:#DDE1E5!important}
+html[data-munshi-theme="dark"] [data-testid="stDialog"] :is(
+ .stButton>button[kind="primary"],.stLinkButton>a[kind="primary"]
+) * {color:#1B2026!important}
+
+/* Page-local custom widgets: N8N live console, resume output and visualization chrome. */
+html[data-munshi-theme="dark"] .stApp [class*="st-key-n8n_live_console_panel"] {
+ background:rgba(31,34,40,.98)!important;border-color:#515761!important;
+ box-shadow:0 22px 60px rgba(0,0,0,.5)!important
+}
+html[data-munshi-theme="dark"] .stApp .n8n-live-title,
+html[data-munshi-theme="dark"] .stApp .n8n-live-stage b {color:#F0F0EE!important}
+html[data-munshi-theme="dark"] .stApp .n8n-live-stage {
+ background:#292D34!important;border-color:#515761!important
+}
+html[data-munshi-theme="dark"] .stApp :is(.n8n-live-kicker,.n8n-live-timeline,.n8n-live-stage span) {
+ color:#BDC3CD!important
+}
+html[data-munshi-theme="dark"] .stApp [data-testid="stVegaLiteChart"],
+html[data-munshi-theme="dark"] .stApp [data-testid="stArrowVegaLiteChart"] {
+ background:#1D2026!important;border-color:#373C44!important
+}
+/* Vega uses SVG whose background/labels inherit the original light chart
+   config. Recolor its presentation primitives, preserving actual data hues. */
+html[data-munshi-theme="dark"] .stApp [data-testid="stVegaLiteChart"] svg.marks {
+  background-color:#1D2026!important
+}
+html[data-munshi-theme="dark"] .stApp [data-testid="stVegaLiteChart"] svg.marks .mark-text text {
+  fill:#C6C9D0!important
+}
+html[data-munshi-theme="dark"] .stApp [data-testid="stVegaLiteChart"] svg.marks .role-axis-grid line,
+html[data-munshi-theme="dark"] .stApp [data-testid="stVegaLiteChart"] svg.marks .role-axis path.foreground {
+  stroke:#424750!important
+}
+/* Glide Data Grid paints text and cells into a canvas rather than HTML cells.
+   Correct ONLY that canvas's light palette, not app content, brands, documents,
+   or chart data. Replaced by native dark canvas theming if Streamlit exposes it. */
+html[data-munshi-theme="dark"] .stApp :is(
+ [data-testid="stDataFrame"],[data-testid="stDataEditor"]
+) canvas {filter:invert(.87) hue-rotate(180deg)!important}
+html[data-munshi-theme="dark"] .stApp [data-testid="stTable"] :is(th,td) {
+  color:#E2E5E9!important;background:#24272E!important;border-color:#424750!important
+}
+/* Embedded resume/PDF canvas and employer logos are deliberately not inverted.
+   Original documents must print and export exactly as before. */
+@media(forced-colors:active) {
+ .munshi-owl {forced-color-adjust:auto}
+ .munshi-switch-track {border:1px solid CanvasText}
+}

@@ -153,7 +153,7 @@ def _native_readiness() -> tuple[bool, str]:
     return True, "Ready to generate from your MUNSHI Profile."
 
 
-def _run_native(job_id: int, *, rewrite_mode: str = "medium") -> tuple[bool, str]:
+def _run_native(job_id: int, *, rewrite_mode: str = "aggressive") -> tuple[bool, str]:
     """Generate Native V5 through the same bounded one-page repair path as Studio."""
     if not native_resume_v5_enabled():
         return False, "Native Resume is temporarily unavailable."
@@ -181,9 +181,9 @@ def _run_native(job_id: int, *, rewrite_mode: str = "medium") -> tuple[bool, str
             "Open Advanced resume settings to finish Native Resume setup.",
         )
 
-    mode = str(rewrite_mode or "medium").strip().casefold()
+    mode = str(rewrite_mode or "aggressive").strip().casefold()
     if mode not in _NATIVE_MODE_LABELS:
-        mode = "medium"
+        mode = "aggressive"
 
     # Browse must use the same actual-render repair path as Resume Studio. Direct
     # materialization can legitimately discover a second page; the guard makes a
@@ -245,7 +245,7 @@ def _engine_dialog(job_id: int) -> None:
         key=f"resume_engine_choice_{job_id}",
     )
 
-    native_mode = "medium"
+    native_mode = "aggressive"
     if choice == "n8n":
         st.info("Uses the existing guarded n8n resume preparation workflow.")
     else:
@@ -257,7 +257,7 @@ def _engine_dialog(job_id: int) -> None:
         native_mode = st.radio(
             "Tailoring strength",
             ["slight", "medium", "aggressive"],
-            index=1,
+            index=2,
             horizontal=True,
             format_func=lambda value: _NATIVE_MODE_LABELS[value],
             key=f"{_NATIVE_MODE_KEY_PREFIX}{job_id}",

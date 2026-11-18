@@ -242,6 +242,8 @@ def test_smtp2go_adapter_uses_environment_secret_without_persisting_it(
     message_id = adapter.send(
         {
             "destination_email": "candidate@example.com",
+            "event_kind": "SUBMISSION_VERIFIED",
+            "job_id": 42,
             "subject": "MUNSHI status",
             "body_text": "SUBMITTED ✓",
         }

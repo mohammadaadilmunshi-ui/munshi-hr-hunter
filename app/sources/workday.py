@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import time
+import re
 from typing import Any, Mapping
 from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 
 import requests
+from app.public_board_http import validate_board_url
 
 
 def _text(value: Any) -> str:
@@ -13,8 +15,10 @@ def _text(value: Any) -> str:
 
 def _origin(url: str) -> str:
     parts = urlsplit(url)
-    if parts.scheme not in {"http", "https"} or not parts.netloc:
-        raise ValueError("Workday board_url must be an absolute HTTP(S) URL")
+    host = str(parts.hostname or "").lower()
+    if not re.fullmatch(r"[a-z0-9-]+\.wd[0-9]+\.myworkdayjobs\.com", host):
+        raise ValueError("Workday requires a verified hosted tenant")
+    validate_board_url(url, {host})
     return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
 
 
@@ -22,7 +26,8 @@ def workday_api_base(board: Mapping[str, Any]) -> str:
     tenant = _text(board.get("tenant"))
     site_name = _text(board.get("site_name"))
     board_url = _text(board.get("board_url") or board.get("careers_url"))
-    if not tenant or not site_name or not board_url:
+    if (not re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", tenant)
+            or not re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", site_name) or not board_url):
         raise ValueError("Workday requires configured tenant, site_name, and board_url")
     return (
         f"{_origin(board_url)}/wday/cxs/"
@@ -31,7 +36,9 @@ def workday_api_base(board: Mapping[str, Any]) -> str:
 
 
 def parse_workday_list(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
-    postings = payload.get("jobPostings") or payload.get("jobs") or []
+    postings = next((payload[k] for k in ("jobPostings", "jobs") if k in payload), None)
+    if not isinstance(postings, list):
+        raise ValueError("Workday response does not contain a public job list")
     return [dict(item) for item in postings if isinstance(item, Mapping)]
 
 
@@ -80,13 +87,16 @@ def _country(detail: Mapping[str, Any], item: Mapping[str, Any]) -> str | None:
 
 def _apply_url(board: Mapping[str, Any], item: Mapping[str, Any], detail: Mapping[str, Any]) -> str:
     absolute = _text(detail.get("externalUrl") or item.get("externalUrl"))
-    if absolute.startswith(("http://", "https://")):
-        return absolute
     path = _text(item.get("externalPath") or detail.get("externalPath"))
     careers = _text(board.get("careers_url") or board.get("board_url"))
-    if not path:
-        return careers
-    return urljoin(careers.rstrip("/") + "/", path.lstrip("/"))
+    host = str(urlsplit(_origin(_text(board.get("board_url")))).hostname)
+    validate_board_url(careers, {host})
+    if not path.startswith("/job/") or any(x in path for x in ("..", "\\", "?", "#")):
+        raise ValueError("Workday exact employer job path required")
+    public = validate_board_url(absolute or urljoin(careers.rstrip("/") + "/", path.lstrip("/")), {host})
+    if not urlsplit(public).path.endswith(path):
+        raise ValueError("Workday employer/job URL mismatch")
+    return public
 
 
 def normalize_workday_job(
@@ -138,12 +148,14 @@ def fetch_workday_board(
     session: requests.Session | None = None,
 ) -> dict[str, Any]:
     client = session or requests.Session()
+    if session is None:
+        client.trust_env = False
     api_base = workday_api_base(board)
     timeout = float(runtime.get("request_timeout_seconds") or 20)
     page_size = max(1, min(int(runtime.get("page_size") or 20), 100))
-    max_pages = max(1, int(runtime.get("max_pages_per_board") or 1))
-    max_jobs = max(1, int(runtime.get("max_jobs_per_board") or page_size))
-    detail_limit = max(0, int(runtime.get("max_detail_requests_per_board") or 0))
+    max_pages = min(3, max(1, int(runtime.get("max_pages_per_board") or 1)))
+    max_jobs = min(300, max(1, int(runtime.get("max_jobs_per_board") or page_size)))
+    detail_limit = min(60, max(0, int(runtime.get("max_detail_requests_per_board") or 0)))
     fetch_details = bool(runtime.get("fetch_job_details", True))
     headers = {
         "Accept": "application/json",
@@ -160,8 +172,11 @@ def fetch_workday_board(
             json={"appliedFacets": {}, "limit": page_size, "offset": offset, "searchText": ""},
             headers=headers,
             timeout=timeout,
+            allow_redirects=False,
         )
         requests_made += 1
+        if 300 <= getattr(response, "status_code", 200) < 400:
+            raise ValueError("Workday board redirect is not approved")
         response.raise_for_status()
         batch = parse_workday_list(response.json())
         postings.extend(batch)
@@ -173,13 +188,20 @@ def fetch_workday_board(
     for index, item in enumerate(postings):
         detail: Mapping[str, Any] | None = None
         external_path = _text(item.get("externalPath"))
+        if external_path and (not external_path.startswith("/job/") or any(
+            x in external_path for x in ("..", "\\", "?", "#")
+        )):
+            raise ValueError("Workday exact public job path required before detail request")
         if fetch_details and external_path and index < detail_limit:
             response = client.get(
                 f"{api_base}{external_path if external_path.startswith('/') else '/' + external_path}",
                 headers=headers,
                 timeout=timeout,
+                allow_redirects=False,
             )
             requests_made += 1
+            if 300 <= getattr(response, "status_code", 200) < 400:
+                raise ValueError("Workday detail redirect is not approved")
             response.raise_for_status()
             value = response.json()
             detail = value if isinstance(value, Mapping) else None

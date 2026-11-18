@@ -24,7 +24,7 @@ def _warn(error: BaseException, kwargs: dict[str, Any]) -> None:
         "site_name": kwargs.get("site_name"),
         "error_type": type(error).__name__,
         "error": str(error),
-        "action": "empty_result_for_this_source_only",
+        "action": "fail_this_source_only",
     }
     print(json.dumps(payload, ensure_ascii=False), file=sys.stderr, flush=True)
 
@@ -36,9 +36,8 @@ def make_site_preserving_wrapper(
     Preserve the exact site_name selected by each dedicated worker.
 
     Google stays Google, Indeed stays Indeed, LinkedIn stays LinkedIn, and the
-    combined JobSpy worker remains ZipRecruiter-only through its own CLI/default
-    configuration. This wrapper only isolates the known JobSpy None/NoneType
-    failures so one free source cannot crash the others.
+    combined JobSpy worker remains ZipRecruiter-only. A broken scraper must
+    propagate a source failure, never masquerade as a genuine empty result.
     """
     @wraps(original)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -50,13 +49,13 @@ def make_site_preserving_wrapper(
             text = str(error)
             if "NoneType" in text and "subscriptable" in text:
                 _warn(error, call_kwargs)
-                return _empty_result()
+                raise RuntimeError("Free scraper failed: invalid NoneType response") from error
             raise
 
         if result is None:
             error = RuntimeError("JobSpy returned None")
             _warn(error, call_kwargs)
-            return _empty_result()
+            raise error
 
         return result
 
@@ -80,10 +79,11 @@ def self_test() -> dict[str, Any]:
     def broken(*args: Any, **kwargs: Any) -> Any:
         raise TypeError("'NoneType' object is not subscriptable")
 
-    isolated = make_site_preserving_wrapper(broken)(
-        site_name=["indeed"],
-        search_term="HR",
-    )
+    isolated = False
+    try:
+        make_site_preserving_wrapper(broken)(site_name=["indeed"], search_term="HR")
+    except RuntimeError:
+        isolated = True
 
     return {
         "success": True,
@@ -101,10 +101,7 @@ def self_test() -> dict[str, Any]:
             "linkedin",
             "zip_recruiter",
         ],
-        "known_failure_isolated": (
-            hasattr(isolated, "empty")
-            or isolated == []
-        ),
+        "known_failure_isolated": isolated,
         "provider_calls": 0,
         "telegram_calls": 0,
         "n8n_calls": 0,

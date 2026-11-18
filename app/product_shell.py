@@ -10,7 +10,11 @@ from app.job_card_interaction_hotfix_v2 import inject_job_card_interaction_css
 from app.product_state import valid_view, volume_policy
 from app.product_ui import esc, inject_css
 from app.product_v22 import brand_logo_data_uri, inject_v22_css, install_product_v22
+from app.product_experience_vnext import inject_presentation_css, render_mobile_dock
 from app.staging_feature_policy import activate_isolated_staging_preparation_features
+from app.product_studio import inject_studio_css, workspace_location
+from app.product_navigation import render_navigation
+from app.appearance_theme_v1 import appearance_toggle_html, appearance_controller_html
 
 
 RESUME_STUDIO_VIEW = "resume-studio"
@@ -101,6 +105,10 @@ def _resolved_subroute_state(
     if view == "settings" and section in SETTINGS_SECTIONS:
         return ("product_settings_section", SETTINGS_SECTIONS[section])
 
+    research_sections = {"opportunities": "Opportunities", "companies": "Companies", "roles": "Role signals", "risks": "Risks"}
+    if view == "research" and section in research_sections:
+        return ("unified_research_section", research_sections[section])
+
     return None
 
 
@@ -127,8 +135,9 @@ def render() -> None:
     activate_isolated_staging_preparation_features()
 
     inject_css()
-    inject_v22_css()
-    inject_job_card_interaction_css()
+    # One static client preference handler: no app rerun, database read, or
+    # backend event. The prepaint counterpart is packaged in index.html.
+    st.html(appearance_controller_html(), unsafe_allow_javascript=True)
 
     view = _query_view()
     st.session_state["product_view"] = view
@@ -136,10 +145,10 @@ def render() -> None:
 
     policy = volume_policy()
     status = {
-        "unlimited": "Automation: Unlimited",
-        "custom_limit": f"Custom target: {policy.get('daily_limit')}",
-        "paused": "Automation: Paused",
-        "pause_after_batch": "Pausing after batch",
+        "unlimited": "Discovery: Unlimited",
+        "custom_limit": f"Discovery limit: {policy.get('daily_limit')}",
+        "paused": "Discovery: Paused",
+        "pause_after_batch": "Discovery: Pausing",
     }[policy["mode"]]
 
     desktop_links = "".join(
@@ -150,30 +159,35 @@ def render() -> None:
         _nav_link(route, label, view, mobile=True)
         for route, label in (*NAVIGATION, ("settings", "Settings"))
     )
-    settings_link = _nav_link("settings", "Settings", view)
     logo = brand_logo_data_uri()
 
     with st.container(key="product_top_bar"):
         st.markdown(
-            f'''<header class="product-header">
+            f'''<a class="munshi-skip-link" href="#munshi-main">Skip to content</a>
+            <header class="product-header">
                 <a class="brand" href="?view=dashboard" target="_self" aria-label="MUNSHI dashboard">
-                    <span class="brand-mark" aria-hidden="true"><img src="{logo}" alt=""></span>
+                    <span class="brand-mark" aria-hidden="true"><img src="{logo}" alt="" width="38" height="38"></span>
                     <span>MUNSHI</span>
                 </a>
                 <nav class="product-nav" aria-label="Primary navigation">
                     {desktop_links}
                 </nav>
                 <div class="product-header-actions">
-                    {settings_link}
-                    <span class="status-pill-product">{esc(status)}</span>
+                    <span class="status-pill-product" title="Job discovery and preparation volume. Not a final-submission confirmation.">{esc(status)}</span>
                 </div>
                 <details class="mobile-nav">
                     <summary aria-label="Open navigation">Menu</summary>
-                    <nav aria-label="Mobile navigation">{mobile_links}</nav>
+                    <nav aria-label="Mobile navigation">{mobile_links}{appearance_toggle_html()}</nav>
                 </details>
             </header>''',
             unsafe_allow_html=True,
         )
+
+    render_mobile_dock(view)
+    render_navigation(view, NAVIGATION)
+    st.markdown('<div id="munshi-main" tabindex="-1"></div>', unsafe_allow_html=True)
+    location_label = dict((*NAVIGATION, ("settings", "Settings"))).get(view, "Dashboard")
+    st.markdown(workspace_location(location_label), unsafe_allow_html=True)
 
     # Preserve this established import line verbatim: profile route contract tests
     # and downstream integrations use it as a compatibility marker.
@@ -289,7 +303,27 @@ def render() -> None:
         "research": product_pages.research,
         "settings": product_pages.settings,
     }
-    pages[view]()
+    # Isolate normal widgets from shell/nav and independent n8n monitoring.
+    # Some routes already contain smaller live-progress fragments. Current
+    # Streamlit supports these nested fragment boundaries; each remains tied
+    # to its own durable status reader. Browse Jobs already owns a fragment
+    # and Applications is explicitly split into two sibling fragments.
+    fragment_safe_routes = frozenset({
+        "dashboard", "tracker", "research", "settings", "profile",
+        "auto-prepare", PREPARE_APPLICATION_VIEW, RESUME_STUDIO_VIEW,
+    })
+    if view in fragment_safe_routes:
+        st.fragment(pages[view])()
+    else:
+        pages[view]()
+    if view == "settings":
+        # Same browser-local appearance switch, also reachable on desktop.
+        st.markdown(
+            '<section class="munshi-appearance-settings">'
+            '<h3>Appearance</h3>' + appearance_toggle_html(settings=True)
+            + '</section>',
+            unsafe_allow_html=True,
+        )
     render_resume_engine_selector()
     # Persistent presentation-only observer for explicit dashboard n8n runs.
     # It survives navigation, reads durable queue/execution/callback evidence,

@@ -100,6 +100,7 @@ jobs:
             tests/test_stage_b_resume_plan.py \
             tests/test_stage_b_claim_trace.py \
             tests/test_stage_b_native_resume_v5.py \
+            tests/test_native_resume_v5_version_discovery_regression.py \
             tests/test_phase17_staging_visibility.py \
             tests/test_resume_profile_details_v31.py \
             tests/test_resume_engine_selector.py \
@@ -129,6 +130,7 @@ jobs:
             tests/test_stage_b_resume_plan.py \
             tests/test_stage_b_claim_trace.py \
             tests/test_stage_b_native_resume_v5.py \
+            tests/test_native_resume_v5_version_discovery_regression.py \
             tests/test_phase17_staging_visibility.py \
             tests/test_resume_profile_details_v31.py \
             tests/test_resume_engine_selector.py \

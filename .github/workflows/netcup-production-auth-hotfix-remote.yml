@@ -1,11 +1,6 @@
 name: Netcup Production Auth Hotfix Remote
 
 on:
-  push:
-    branches:
-      - feat/cloud-migration-foundation
-    paths:
-      - "config/production-auth-hotfix-remote-request.json"
   workflow_dispatch:
 
 permissions:
@@ -173,6 +168,7 @@ jobs:
   deploy-production-auth-only-remote:
     needs: [resolve-request, deployment-ci, auth-hotfix-gate]
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 30
     steps:
       - name: Checkout exact production auth SHA

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextvars import ContextVar
 from functools import lru_cache
 import html
 import importlib
@@ -16,6 +17,8 @@ from urllib.parse import quote, urlparse
 
 import requests
 
+from app.discovery_policy import require_free_url
+
 from app.database import get_connection, get_setting
 from app.job_store import save_job
 from app.telegram_auto_dispatch import (
@@ -27,6 +30,7 @@ from app.runtime_config import telegram_batch_limit
 MARKER = "AADIL_HR_HUNTER_ALL_ADAPTERS_ACTIVATION_V2_4"
 BOARD_SOURCES = {"Personio", "Pinpoint", "Comeet"}
 _REQUEST_METRICS: dict[str, int] = {"attempts": 0}
+_READ_ONLY_FETCH = ContextVar("public_board_read_only_fetch", default=True)
 
 
 @dataclass(frozen=True)
@@ -328,6 +332,7 @@ def _configured_source_tier(source_name: str) -> int:
 
 
 def _request(url: str, *, timeout: float | None = None, **kwargs: Any) -> requests.Response:
+    require_free_url(url)
     _REQUEST_METRICS["attempts"] = int(_REQUEST_METRICS.get("attempts") or 0) + 1
     user_agent = str(_runtime_policy().get("user_agent") or "").strip()
     if not user_agent:
@@ -339,8 +344,11 @@ def _request(url: str, *, timeout: float | None = None, **kwargs: Any) -> reques
         url,
         headers=headers,
         timeout=_request_timeout() if timeout is None else float(timeout),
+        allow_redirects=False,
         **kwargs,
     )
+    if 300 <= getattr(response, "status_code", 200) < 400:
+        raise requests.HTTPError("Unapproved board redirect", response=response)
     response.raise_for_status()
     return response
 
@@ -726,7 +734,25 @@ def fetch_comeet(spec: SourceSpec, limit: int) -> tuple[list[dict[str, Any]], li
                     extra={"department": _flatten(item.get("department")), "experience_level": _flatten(item.get("experience_level"))},
                 ))
         except Exception as exc:
-            errors.append(f"{company_default}: {type(exc).__name__}: {exc}")
+            response = getattr(exc, "response", None)
+            status = int(getattr(response, "status_code", 0) or 0)
+            # Error URLs may include a public board token. Log the class and
+            # HTTP outcome, not requests' credential-bearing exception text.
+            errors.append(f"{company_default}: {type(exc).__name__}: HTTP {status}")
+            if status in (400, 404, 410) and board.get("id") and not _READ_ONLY_FETCH.get():
+                connection = get_connection()
+                try:
+                    connection.execute(
+                        "UPDATE public_adapter_boards SET enabled=0, "
+                        "notes=COALESCE(notes,'') || ?,updated_at=CURRENT_TIMESTAMP "
+                        "WHERE id=? AND source_name='Comeet'",
+                        (f"\nQuarantined invalid public board: HTTP {status}", int(board["id"])),
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
+            if status in (401, 403, 429):
+                break
     return jobs, errors
 
 
@@ -874,7 +900,11 @@ def run_source(source_key: str, *, no_store: bool = False, force: bool = False, 
         ):
             discovery_active = True
         else:
-            raw_jobs, errors = fetcher(spec, limit)
+            read_only_token = _READ_ONLY_FETCH.set(no_store)
+            try:
+                raw_jobs, errors = fetcher(spec, limit)
+            finally:
+                _READ_ONLY_FETCH.reset(read_only_token)
         fetch_duration_ms = (time.perf_counter() - started) * 1000
 
         for job in raw_jobs:

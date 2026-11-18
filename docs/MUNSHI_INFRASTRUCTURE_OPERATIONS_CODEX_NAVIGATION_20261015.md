@@ -2,6 +2,22 @@
 **Evidence date: October 15, 2026**  
 **Purpose:** Find the real system, diagnose its issues, and build safely without confusing the Mac, GitHub, staging, or production. This document does NOT authorize deployment, production database changes, job submissions, or application retries.
 
+### Read-only refresh from the Tsenta implementation audit
+
+The same-day follow-up established the previously unknown Apply source paths and
+corrected the port ownership:
+
+- production Apply source: `/opt/munshi/apply-production/repo`, clean SHA
+  `c9a52141cf6fcfe5f46553d8d43719f0e7810d4a`, loopback API `8505`;
+- staging Apply source: `/home/munshi/munshi-apply-staging-v1/repo`, clean SHA
+  `c3684bf1cce28892507d9b8a1e5c6270f8f12e3c`, loopback API `19000`;
+- production Hunter exact SHA:
+  `b8cd45ea03903cd7811db46ddd3ecb8566bf19bb`;
+- staging Hunter exact SHA:
+  `b8b6234a02f335c24a9930c17539c05195ec2e63`.
+
+This refresh was read-only. Production and staging were not changed.
+
 ## 1. Read before doing anything
 
 Read these in order:
@@ -40,11 +56,15 @@ Netcup verified through STRICT read-only SSH on October 15:
 - Production Hunter branch when checked: fix/workday-production-readiness-20260926
 - Production Hunter SHA prefix: b8cd45ea0; working tree clean on check.
 - Mac feature PR may be at a later SHA, including the Tsenta documentation. It is NOT production.
-- Verified loopback healthy HTTP 200: 8000/health, 8501/_stcore/health, 5678/healthz, 19000/health.
+- Verified loopback healthy HTTP 200: production Hunter 8000/health,
+  dashboard 8501/_stcore/health, n8n 5678/healthz, production Apply
+  8505/health; staging Hunter 18000/health, dashboard 18501/_stcore/health,
+  and Apply 19000/health.
 - Verified containers: munshi-netcup-shadow-hunter-1, munshi-netcup-shadow-n8n-1, munshi-netcup-shadow-ollama-1, munshi-netcup-staging-hunter-1, munshi-netcup-staging-n8n-1, munshi-netcup-staging-ollama-1, munshi-apply-production-apply-1, munshi-apply-production-prepare-worker-1, munshi-apply-staging-apply-1 and munshi-staging-edge-caddy.
 - No production submit-worker container appeared in the read-only docker ps snapshot. Diagnose why; do NOT start it based on this observation.
 - Root disk was about 57% full. Recheck before migrations or builds.
-- Apply backend host-source directory was NOT established; DO NOT invent /opt/munshi-apply or copy code to an assumed folder.
+- Apply backend host-source directories are the exact production/staging paths in
+  the refresh above. Do not invent `/opt/munshi-apply`.
 - Dashboard: https://dashboard.munshi.systems
 - Staging dashboard: https://staging-dashboard.munshi.systems
 
@@ -57,7 +77,8 @@ Netcup verified through STRICT read-only SSH on October 15:
          Hunter Streamlit on 127.0.0.1:8501
          n8n on 127.0.0.1:5678 (published workflows/callbacks)
          Ollama internal-only
-         Hosted Apply API on 127.0.0.1:19000
+         Production hosted Apply API on 127.0.0.1:8505
+         Staging hosted Apply API on 127.0.0.1:19000
          Apply prepare worker + browser/ATS state
          Separate staging containers, DB and edge
       -> MUNSHI Apply extension and owner workspace
@@ -87,6 +108,7 @@ Then safe read-only checks on Netcup:
     curl -m 4 -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/health
     curl -m 4 -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8501/_stcore/health
     curl -m 4 -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5678/healthz
+    curl -m 4 -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8505/health
     curl -m 4 -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:19000/health
 
 Never disable StrictHostKeyChecking or guess server passwords. Older chats reported that key-based root access may exist, but root is a separate privileged scope and is NEVER an automatic escalation path. Do not expose admin ports publicly. Docker logs and environment files may contain applicant details or secrets; never dump these wholesale.

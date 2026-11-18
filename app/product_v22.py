@@ -33,9 +33,8 @@ def brand_logo_data_uri() -> str:
     return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
 
 
-def inject_v22_css() -> None:
-    st.markdown(
-        """
+def v22_css() -> str:
+    return """
 <style>
 /* V2.2: keep the existing MUNSHI light-product language inside dialogs too. */
 .brand-mark{
@@ -370,9 +369,11 @@ body:has(.job-detail-drawer-marker) div[data-baseweb="modal"]::before{
     .pipeline-open{text-align:left!important}
 }
 </style>
-        """,
-        unsafe_allow_html=True,
-    )
+        """
+
+
+def inject_v22_css() -> None:
+    st.markdown(v22_css(), unsafe_allow_html=True)
 
 
 def _consume_query_id(parameter: str, state_key: str) -> int | None:

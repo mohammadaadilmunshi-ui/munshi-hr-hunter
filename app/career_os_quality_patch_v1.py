@@ -11,7 +11,8 @@ submission authority, databases, adapters, or deployment/runtime contracts.
 from __future__ import annotations
 
 import json
-from typing import Any
+import time
+from typing import Any, Callable, MutableMapping
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -20,7 +21,11 @@ from app.database import get_connection
 from app.deterministic_profile_extractor_v1 import extract_profile_from_source
 
 
-_BATCH_SIZE = 48
+_BATCH_SIZE = 24
+_JOB_PAGE_CACHE_KEY = "product_jobs_page_snapshot_v2"
+_JOB_PAGE_CACHE_TTL_SECONDS = 20
+# Retain the prior 48 × 60 browsing capacity while reducing first-render work.
+_MAX_VISIBLE_JOBS = 48 * 60
 _WINDOW_OPTIONS = {
     "Past 1 hour": 1,
     "Past 6 hours": 6,
@@ -113,10 +118,112 @@ def _filter_signature(filters: dict[str, Any]) -> str:
     return json.dumps(normalized, sort_keys=True, separators=(",", ":"), default=str)
 
 
+def _incremental_job_page_rows(
+    *,
+    session: MutableMapping[str, Any],
+    signature: str,
+    batches: int,
+    fetch: Callable[..., tuple[list[dict[str, Any]], int]],
+    now: float | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Cache only read-only job rows inside this browser session.
+
+    Streamlit reruns all visible cards, but existing job pages no longer
+    re-query SQLite on every filter keystroke or load-more click. Status and
+    receipt checks still execute live in each card and are NEVER cached here.
+    A short TTL bounds recency drift; job save/pass callbacks invalidate it.
+    """
+    current = time.monotonic() if now is None else float(now)
+    cached = session.get(_JOB_PAGE_CACHE_KEY)
+    if not (
+        isinstance(cached, dict)
+        and cached.get("signature") == signature
+        and isinstance(cached.get("pages"), dict)
+        and isinstance(cached.get("count"), int)
+        and isinstance(cached.get("created"), (float, int))
+        and 0 <= current - float(cached["created"]) < _JOB_PAGE_CACHE_TTL_SECONDS
+    ):
+        cached = {"signature": signature, "created": current, "pages": {}, "count": -1}
+        # Install only after a successful initial fetch; a failed read is not
+        # silently presented as an empty result on the next rerun.
+
+    count = int(cached["count"])
+    pages: dict[int, list[dict[str, Any]]] = cached["pages"]
+    jobs: list[dict[str, Any]] = []
+    for page in range(1, min(max(1, int(batches)), _MAX_VISIBLE_JOBS // _BATCH_SIZE) + 1):
+        if page not in pages:
+            chunk, total = fetch(page=page, page_size=_BATCH_SIZE,
+                                 include_total_count=(page == 1))
+            pages[page] = chunk
+            if page == 1:
+                count = int(total)
+                cached["count"] = count
+        chunk = pages[page]
+        jobs.extend(chunk)
+        if len(chunk) < _BATCH_SIZE or (count >= 0 and len(jobs) >= count):
+            break
+    session[_JOB_PAGE_CACHE_KEY] = cached
+    return jobs, count
+
+
 def _increase_job_batches() -> None:
     st.session_state["product_jobs_visible_batches_v1"] = min(
         int(st.session_state.get("product_jobs_visible_batches_v1", 1)) + 1,
-        60,
+        (_MAX_VISIBLE_JOBS + _BATCH_SIZE - 1) // _BATCH_SIZE,
+    )
+
+
+def _install_scroll_to_top() -> None:
+    """Small accessible top-of-page control; no Streamlit rerun or side effect."""
+    components.html(
+        """
+<script>
+(() => {
+  try {
+    const parentWin = window.parent;
+    const doc = parentWin.document;
+    const container = doc.querySelector('[data-testid="stAppViewContainer"]');
+    const id = 'munshi-jobs-scroll-top';
+    let button = doc.getElementById(id);
+    if (button) return;
+    button = doc.createElement('button');
+    button.id = id;
+    button.type = 'button';
+    button.textContent = '↑';
+    button.setAttribute('aria-label', 'Scroll to top of job listings');
+    button.title = 'Back to top';
+    button.style.cssText = [
+      'position:fixed', 'right:16px',
+      'bottom:calc(86px + env(safe-area-inset-bottom))',
+      'height:42px', 'width:42px',
+      'border-radius:50%', 'border:1px solid #cbd5d1',
+      'color:#19392f', 'background:#fff', 'font-size:24px',
+      'box-shadow:0 2px 12px rgba(12,25,21,.13)',
+      'cursor:pointer', 'z-index:10001', 'display:none'
+    ].join(';');
+    const scrollAmount = () => Math.max(
+      parentWin.scrollY || 0, doc.documentElement.scrollTop || 0,
+      doc.body.scrollTop || 0, container ? container.scrollTop || 0 : 0
+    );
+    const update = () => {
+      button.style.display = scrollAmount() > 550 ? 'block' : 'none';
+    };
+    button.addEventListener('click', () => {
+      if (container) container.scrollTo({top:0,behavior:'smooth'});
+      parentWin.scrollTo({top:0,behavior:'smooth'});
+    });
+    doc.body.appendChild(button);
+    parentWin.addEventListener('scroll', update, {passive:true});
+    if (container) container.addEventListener('scroll', update, {passive:true});
+    update();
+  } catch (_) {
+    // The job browser still works without this convenience control.
+  }
+})();
+</script>
+        """,
+        height=0,
+        scrolling=False,
     )
 
 
@@ -180,24 +287,21 @@ def _install_infinite_jobs(pages_module: Any) -> None:
             "Search every stored opportunity without losing the targeting, authorization, source, or score evidence behind the match.",
         )
         filters = pages_module._search_filters("jobs")
+        _install_scroll_to_top()
         signature = _filter_signature(filters)
         if st.session_state.get("product_jobs_filter_signature_v1") != signature:
             st.session_state["product_jobs_filter_signature_v1"] = signature
             st.session_state["product_jobs_visible_batches_v1"] = 1
 
         batches = max(1, int(st.session_state.get("product_jobs_visible_batches_v1", 1)))
-        jobs: list[dict[str, Any]] = []
-        count = 0
-        for page in range(1, batches + 1):
-            chunk, total = pages_module.fetch_jobs(
-                **filters,
-                page=page,
-                page_size=_BATCH_SIZE,
-            )
-            count = int(total)
-            jobs.extend(chunk)
-            if len(chunk) < _BATCH_SIZE:
-                break
+        jobs, count = _incremental_job_page_rows(
+            session=st.session_state,
+            signature=signature,
+            batches=batches,
+            fetch=lambda **pagination: pages_module.fetch_jobs(
+                **filters, **pagination
+            ),
+        )
 
         deduplicated: list[dict[str, Any]] = []
         seen: set[int] = set()
@@ -223,13 +327,14 @@ def _install_infinite_jobs(pages_module: Any) -> None:
             pages_module._manual_add()
 
         if jobs:
+            pulse_evidence = pages_module._pulse_evidence()
             with st.container(key="product_job_grid"):
                 for start in range(0, len(jobs), 4):
                     with st.container(key=f"product_job_grid_row_{start}"):
                         cols = st.columns(4, gap="medium")
                         for index, row in enumerate(jobs[start:start + 4]):
                             with cols[index]:
-                                pages_module._job_card(row, key_prefix="jobs")
+                                pages_module._job_card(row, key_prefix="jobs", pulse_evidence=pulse_evidence)
             if len(jobs) < count:
                 _autoload_sentinel()
             else:
@@ -241,7 +346,9 @@ def _install_infinite_jobs(pages_module: Any) -> None:
             )
         pages_module._job_detail()
 
-    pages_module.browse_jobs = browse_jobs_infinite
+    # Save/filter/load-more interactions refresh the browsing surface without
+    # reconstructing the shell, global monitors or unrelated page wrappers.
+    pages_module.browse_jobs = st.fragment(browse_jobs_infinite)
     pages_module._career_os_infinite_jobs_installed = True
 
 

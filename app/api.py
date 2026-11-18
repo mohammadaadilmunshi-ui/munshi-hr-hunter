@@ -72,6 +72,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Dashboard edge-only trusted-device session. No ATS or API submit authority.
+from app.device_auth import router as dashboard_device_auth_router  # noqa: E402
+app.include_router(dashboard_device_auth_router)
+
 
 class JobActionRequest(BaseModel):
     action: str
@@ -357,6 +361,26 @@ def require_api_secret(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid local API secret.",
+        )
+
+
+def require_status_bridge_secret(
+    x_munshi_status_bridge_secret: str | None = Header(default=None),
+) -> None:
+    """Authorize only the extension's read-only application status endpoint.
+
+    This credential never grants Hunter's other API operations. A shared
+    owner-workspace bridge must not possess the general HUNTER_API_SECRET.
+    """
+    expected = str(os.getenv("MUNSHI_HUNTER_STATUS_BRIDGE_SECRET") or "").strip()
+    if (
+        len(expected) < 32
+        or not x_munshi_status_bridge_secret
+        or not secrets.compare_digest(x_munshi_status_bridge_secret, expected)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Application status bridge is not authorized.",
         )
 
 
@@ -1025,6 +1049,13 @@ class ApplicationApproveAndSubmitRequest(BaseModel):
     expected_browser_form_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class ApplicationProviderSelectionRequest(BaseModel):
+    provider: str = Field(pattern=r"^(?i:NATIVE|TSENTA)$")
+    verified_employer_url: str = Field(min_length=9, max_length=4096)
+    preflight_package_id: str = Field(min_length=1, max_length=240)
+    idempotency_key: str = Field(min_length=1, max_length=240)
+
+
 
 @app.post(
     "/api/application-reviews",
@@ -1042,6 +1073,50 @@ def create_application_review(
             idempotency_key=payload.idempotency_key,
         )
     except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.get(
+    "/api/jobs/{job_id}/application-flow",
+    dependencies=[Depends(require_api_secret)],
+)
+def get_job_application_flow(job_id: int) -> dict[str, Any]:
+    from app import product_application_flow_v2
+
+    try:
+        return product_application_flow_v2.flow_for_job(int(job_id))
+    except (LookupError, PermissionError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+
+@app.post(
+    "/api/jobs/{job_id}/application-provider",
+    dependencies=[Depends(require_api_secret)],
+)
+def select_job_application_provider(
+    job_id: int,
+    payload: ApplicationProviderSelectionRequest,
+) -> dict[str, Any]:
+    """Acquire the ownership lock only; this endpoint never starts execution."""
+    from app import application_provider_router_v1, tsenta_backend_readiness_v1
+
+    if payload.provider.upper() == "TSENTA":
+        readiness = tsenta_backend_readiness_v1.connection_status()
+        if readiness.get("execution_ready") is not True:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="MUNSHI Relay is not yet authorized on the MUNSHI backend.",
+            )
+
+    try:
+        return application_provider_router_v1.select_provider(
+            job_id=int(job_id),
+            provider=payload.provider,
+            verified_employer_url=payload.verified_employer_url,
+            preflight_package_id=payload.preflight_package_id,
+            idempotency_key=payload.idempotency_key,
+        )
+    except (FileExistsError, LookupError, PermissionError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 
 
@@ -1114,16 +1189,32 @@ def approve_and_submit_application_review(
     )
 
 
+class JobSubmissionEngineRequest(BaseModel):
+    """Optional engine choice; existing body-free Native callers still work."""
+    execution_provider: str = Field(
+        default="NATIVE",pattern=r"^(?i:NATIVE|TSENTA)$"
+    )
+
+
 @app.post(
     "/api/jobs/{job_id}/approve-and-submit",
     dependencies=[Depends(require_api_secret)],
 )
-def approve_and_submit_job_package(job_id: int) -> dict[str, Any]:
-    """The sole customer approval boundary, before unattended ATS execution."""
+def approve_and_submit_job_package(
+    job_id: int, payload: JobSubmissionEngineRequest | None = None,
+) -> dict[str, Any]:
+    """The sole customer approval, bound to the selected engine."""
     from app import product_application_flow_v2
 
     try:
-        return product_application_flow_v2.approve_and_submit_for_job(int(job_id))
+        if payload is None:
+            # Preserve existing body-free Native API callers exactly.
+            return product_application_flow_v2.approve_and_submit_for_job(
+                int(job_id)
+            )
+        return product_application_flow_v2.approve_and_submit_for_job(
+            int(job_id),execution_provider=payload.execution_provider.upper(),
+        )
     except (LookupError, PermissionError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
 
@@ -1304,3 +1395,213 @@ async def application_execution_mailbox_cancel(request: Request) -> Response:
         return Response(content=body, media_type="application/json", headers=headers)
     except (LookupError, PermissionError, RuntimeError, ValueError) as error:
         raise _account_execution_response_error(error) from error
+
+
+# ---------------------------------------------------------------------------
+# Tsenta backend OAuth: explicit user action, tenant-bound, no token exposure.
+# ---------------------------------------------------------------------------
+
+
+@app.get(
+    "/api/integrations/tsenta/status",
+    dependencies=[Depends(require_api_secret)],
+)
+def get_tsenta_connection_status() -> dict[str, Any]:
+    from app import tsenta_backend_readiness_v1
+    return tsenta_backend_readiness_v1.connection_status()
+
+
+@app.post(
+    "/api/integrations/tsenta/oauth/start",
+    dependencies=[Depends(require_api_secret)],
+)
+def start_tsenta_authorization() -> dict[str, str]:
+    from app import tsenta_oauth_v1
+    try:
+        return tsenta_oauth_v1.begin()
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="MUNSHI Relay authorization could not start safely.",
+        ) from error
+
+
+@app.get("/api/integrations/tsenta/oauth/callback")
+def complete_tsenta_authorization(
+    state: str = Query(min_length=20, max_length=200),
+    code: str = Query(min_length=2, max_length=4096),
+):
+    from fastapi.responses import RedirectResponse
+
+    from app import tsenta_oauth_v1
+    try:
+        tsenta_oauth_v1.complete(state=state, code=code)
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MUNSHI Relay authorization was not completed. Start a new connection.",
+        ) from error
+    return RedirectResponse(
+        url="/?view=dashboard&tsenta_connection=verify_required",
+        status_code=303,
+    )
+
+
+@app.post(
+    "/api/integrations/tsenta/oauth/verify",
+    dependencies=[Depends(require_api_secret)],
+)
+def verify_tsenta_authorization() -> dict[str, Any]:
+    from app import tsenta_oauth_v1
+    try:
+        return tsenta_oauth_v1.verify_profile()
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="MUNSHI Relay profile could not be verified through the backend.",
+        ) from error
+
+
+@app.post(
+    "/api/integrations/tsenta/disconnect",
+    dependencies=[Depends(require_api_secret)],
+)
+def disconnect_tsenta_authorization() -> dict[str, bool]:
+    from app import tsenta_oauth_v1
+    try:
+        return tsenta_oauth_v1.disconnect()
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="MUNSHI Relay connection could not be disconnected safely.",
+        ) from error
+
+
+@app.get(
+    "/api/jobs/{job_id}/application-provider-status",
+    dependencies=[Depends(require_api_secret)],
+)
+def get_job_application_provider_status(job_id: int) -> dict[str, Any]:
+    """Single redacted provider-state contract for dashboard/extension clients."""
+    from app import product_application_flow_v2
+    from app.application_provider_ui_v1 import provider_progress
+
+    try:
+        flow = product_application_flow_v2.flow_for_job(int(job_id), summary=True)
+    except (LookupError, RuntimeError, ValueError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Application provider status is temporarily unavailable.",
+        ) from error
+    route = flow.get("provider_route") or {}
+    progress = provider_progress(route)
+    return {
+        "version": "munshi-application-provider-summary-v1",
+        "job_id": int(job_id),
+        "route_id": str(route.get("route_id") or "") or None,
+        "application_id": str(route.get("application_id") or "") or None,
+        "engine": str(route.get("provider") or "") or None,
+        "provider_state": str(route.get("state") or "") or None,
+        "status_label": progress["status"],
+        "employer_receipt_confirmed": progress["is_employer_confirmed"],
+        "attempt_count": int(route.get("attempt_count") or 0),
+        "updated_at": route.get("updated_at"),
+        "raw_candidate_data_included": False,
+        "submission_authority": False,
+    }
+
+@app.get(
+    "/api/application-provider-status/by-application/{application_id}",
+    dependencies=[Depends(require_status_bridge_secret)],
+)
+def get_application_provider_status_by_application(
+    application_id: str,
+) -> dict[str, Any]:
+    """Read-only Hunter source of truth for an existing Apply/extension ID."""
+    from app import application_provider_router_v1
+    from app.application_provider_ui_v1 import provider_progress
+
+    try:
+        route = application_provider_router_v1.get_route_by_application_id(
+            application_id
+        )
+    except (RuntimeError, ValueError, LookupError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application provider state was not found.",
+        ) from error
+    if route is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Application provider state was not found.",
+        )
+    progress = provider_progress(route)
+    return {
+        "version": "munshi-application-provider-summary-v1",
+        "job_id": int(route["job_id"]),
+        "application_id": str(route["application_id"]),
+        "route_id": str(route["route_id"]),
+        "engine": str(route["provider"]),
+        "provider_state": str(route["state"]),
+        "status_label": progress["status"],
+        "employer_receipt_confirmed": progress["is_employer_confirmed"],
+        "attempt_count": int(route["attempt_count"]),
+        "updated_at": route.get("updated_at"),
+        "raw_candidate_data_included": False,
+        "submission_authority": False,
+    }
+
+@app.post(
+    "/api/integrations/tsenta/learning/sync",
+    dependencies=[Depends(require_api_secret)],
+)
+def sync_tsenta_learning_observations(
+    page: int = 1, limit: int = 15,
+) -> dict[str, Any]:
+    """Read only existing authorized MUNSHI Relay application observations."""
+    from app.tsenta_learning_sync_v1 import sync_authorized_learning
+
+    try:
+        return sync_authorized_learning(page=page, limit=limit)
+    except (ValueError, RuntimeError, TypeError, LookupError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="MUNSHI Relay learning sync is unavailable or its data was invalid.",
+        ) from error
+
+
+@app.get(
+    "/api/integrations/tsenta/learning/cohort",
+    dependencies=[Depends(require_api_secret)],
+)
+def tsenta_learning_cohort_status() -> dict[str, Any]:
+    """Read owner-scoped, platform-agnostic 10-15 application learning progress."""
+    import sqlite3
+
+    from app.tsenta_learning_cohort_v1 import learning_cohort_snapshot
+
+    try:
+        return learning_cohort_snapshot()
+    except (ValueError, RuntimeError, sqlite3.Error, LookupError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="MUNSHI Relay learning evidence is unavailable.",
+        ) from error
+
+
+@app.get(
+    "/api/integrations/tsenta/learning/provider-digest",
+    dependencies=[Depends(require_api_secret)],
+)
+def native_provider_learning_digest_status() -> dict[str, Any]:
+    """Safe, owner-scoped evidence inventory; never activates Native adapters."""
+    import sqlite3
+    from app.native_provider_learning_digest_v1 import provider_learning_digest
+
+    try:
+        return provider_learning_digest()
+    except (ValueError, RuntimeError, sqlite3.Error, LookupError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Provider learning coverage is unavailable.",
+        ) from error

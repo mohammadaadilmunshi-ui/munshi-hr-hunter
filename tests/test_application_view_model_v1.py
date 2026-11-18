@@ -82,7 +82,7 @@ def test_submission_unverified_never_exposes_mutating_recovery(monkeypatch):
     )
     model = view_model.view_for_job(8, seed=_seed(8), heartbeat={"state": "healthy"})
     assert model.submission_attempted is True
-    assert model.next_action == "Verify before any further action"
+    assert model.next_action == "Awaiting independent employer acknowledgment · do not resubmit"
     assert model.allowed_recovery_actions == ("refresh_state", "clear_local_selection")
 
 

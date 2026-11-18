@@ -1,5 +1,5 @@
 {
-  "version": "google_merged_dashboard_serpapi_v5_2",
+  "version": "google_free_jobspy_only_v6",
   "scheduler_check_seconds": 300,
   "sources": {
     "google": {
@@ -20,10 +20,7 @@
         360,
         720
       ],
-      "serpapi_requests_per_run": 2,
-      "jobspy_fallback_requests": 1,
       "provider_order": [
-        "serpapi",
         "jobspy"
       ]
     },
@@ -86,6 +83,6 @@
     "retired_scrapling_routes_locked_disabled": true,
     "global_cross_source_fingerprint_guard": true,
     "single_google_dashboard_row": true,
-    "serpapi_key_never_logged": true
+    "paid_providers_disabled_at_call_boundary": true
   }
 }

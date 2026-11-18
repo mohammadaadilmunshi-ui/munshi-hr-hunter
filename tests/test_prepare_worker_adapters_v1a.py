@@ -156,6 +156,55 @@ def test_native_resume_worker_completes_exact_pdf_docx(worker_db, monkeypatch):
 
 
 
+
+def test_background_prepare_installs_json_transport_guard_before_model_call(
+    worker_db, monkeypatch
+):
+    operation = _start(key="workers-native-json-guard")
+    calls = []
+
+    def install_quality_guard():
+        calls.append("guard-installed")
+        return {"success": True}
+
+    def generate_with_guard(**_kwargs):
+        assert calls == ["guard-installed"], (
+            "Durable Prepare must install the same JSON budget/completion guard "
+            "as the interactive Resume Studio before calling the model."
+        )
+        calls.append("generate")
+        return {
+            "version_id": "guarded-resume",
+            "version_number": 1,
+            "stage_b_bound": True,
+        }
+
+    monkeypatch.setattr(
+        workers.native_resume_quality_hotfix_v2,
+        "install",
+        install_quality_guard,
+    )
+    monkeypatch.setattr(
+        workers.native_resume_service_v5,
+        "generate_resume",
+        generate_with_guard,
+    )
+    monkeypatch.setattr(
+        workers.native_resume_artifact_v5,
+        "materialize",
+        lambda version_id, **_kwargs: _bundle(),
+    )
+
+    result = workers.run_native_resume_once(
+        operation_id=operation["operation_id"],
+        worker_id="native-worker-guarded",
+    )
+
+    assert result["task_status"] == "SUCCEEDED"
+    assert calls == ["guard-installed", "generate"]
+    assert result["submission_authority"] is False
+
+
 def test_native_retry_reuses_validated_version_without_second_model_call(
     worker_db, monkeypatch
 ):
@@ -216,6 +265,7 @@ def test_native_retry_reuses_validated_version_without_second_model_call(
     result = workers.run_native_resume_once(
         operation_id=operation["operation_id"],
         worker_id="native-worker-second",
+        rewrite_mode="medium",
     )
 
     assert result["task_status"] == "SUCCEEDED"
@@ -259,6 +309,7 @@ def test_native_first_attempt_reuses_exact_validated_version_without_model_call(
     result = workers.run_native_resume_once(
         operation_id=operation["operation_id"],
         worker_id="native-worker-first",
+        rewrite_mode="medium",
     )
 
     assert result["task_status"] == "SUCCEEDED"
@@ -543,3 +594,27 @@ def test_native_resume_sqlite_contention_does_not_consume_attempt(
     assert task["status"] == "PENDING"
     assert task["attempts"] == 0
     assert task["error_code"] == "SQLITE_WRITER_BUSY"
+
+def test_aggressive_resume_never_reuses_medium_unsubmitted_version(monkeypatch):
+    import inspect
+    from app import prepare_worker_adapters_v1a as adapter
+    assert inspect.signature(adapter.run_native_resume_once).parameters[
+        "rewrite_mode"
+    ].default == "aggressive"
+    monkeypatch.setattr(adapter.native_resume_service_v5, "list_versions",
+                        lambda **_kw: [{"version_id": "medium-validated"}])
+    monkeypatch.setattr(adapter.native_resume_service_v5, "get_version",
+                        lambda _id: {
+                            "version_id": _id, "stage_b_bound": True,
+                            "candidate_truth_binding": {"profile_digest": "p"},
+                            "job_snapshot_binding": {"job_snapshot_sha256": "j"},
+                            "diagnostics": {"rewrite_mode": "medium"},
+                        })
+    monkeypatch.setattr(adapter.preflight_v1,"reusable_inflight_preflight",
+                        lambda **_kw: None)
+    op={"job_id":9,"application_id":"application-new",
+        "candidate_profile_digest":"p","job_snapshot_sha256":"j"}
+    assert adapter._reusable_generated_resume(
+        operation=op, task={}, rewrite_mode="aggressive") is None
+    assert adapter._reusable_generated_resume(
+        operation=op, task={}, rewrite_mode="medium") is not None

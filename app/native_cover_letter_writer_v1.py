@@ -142,6 +142,49 @@ def _number_tokens(value: str) -> set[str]:
     }
 
 
+def _numbers_outside_verified_role_title(
+    paragraph: str, context: Mapping[str, Any]
+) -> set[str]:
+    """Do not mistake the employer's exact role title for candidate tenure.
+
+    The role is *not* candidate evidence. Remove only a verified job-title
+    mention in an application/position context; every other numeric claim
+    remains subject to the usual cited-candidate-evidence guard.
+    """
+    text = _SPACE_RE.sub(" ", str(paragraph or ""))
+    title = _SPACE_RE.sub(
+        " ", str(dict(context.get("job") or {}).get("title") or "").strip()
+    )
+    if not title or not _number_tokens(title):
+        return _number_tokens(text)
+    title_pattern = re.compile(r"(?<!\w)" + re.escape(title) + r"(?!\w)", re.IGNORECASE)
+    matches = list(title_pattern.finditer(text))
+    for match in reversed(matches):
+        # Only the title of the POSITION BEING APPLIED FOR may be omitted from
+        # the numeric comparison. Citing a former role with the same title is
+        # still a factual candidate claim and must pass the normal evidence gate.
+        prefix = text[max(0, match.start() - 100): match.start()]
+        suffix = text[match.end(): min(len(text), match.end() + 35)]
+        applying_for_role = re.search(
+            r"\b(?:apply|applying|applied)\s+for\s+(?:the\s+|your\s+)?$",
+            prefix,
+            re.IGNORECASE,
+        )
+        interested_in_role = re.search(
+            r"\binterested\s+in\s+(?:the\s+|your\s+)?$",
+            prefix,
+            re.IGNORECASE,
+        )
+        opportunity_reference = re.match(
+            r"\s*(?:position|opening|opportunity|role)\b",
+            suffix,
+            re.IGNORECASE,
+        )
+        if (applying_for_role or interested_in_role) and opportunity_reference:
+            text = text[:match.start()] + " " + text[match.end():]
+    return _number_tokens(text)
+
+
 def _current_context(preflight_package_id: str) -> dict[str, Any]:
     package_id = str(preflight_package_id or "").strip()
     if not package_id:
@@ -322,7 +365,9 @@ def _writer_payload(context: Mapping[str, Any], *, repair: str | None = None) ->
             "Never invent candidate facts, metrics, tenure, credentials, tools, "
             "authorization, sponsorship, education, employers, titles, or achievements.",
             "Do not mention a number, percentage, dollar amount, date, duration, "
-            "or quantity unless that exact token appears in the cited candidate evidence.",
+            "or quantity unless that exact token appears in the cited candidate evidence. "
+            "The one exception is the exact employer job title used to identify the "
+            "position being applied for, not to describe candidate accomplishments.",
             "Write naturally in first person, without AI/meta language.",
             "Do not add a salutation or signature; MUNSHI adds those deterministically.",
             "Keep the full letter concise enough for one US Letter page.",
@@ -488,7 +533,7 @@ def _validate_draft(
             for evidence_id in evidence_ids
         )
         support_numbers = _number_tokens(support_text)
-        paragraph_numbers = _number_tokens(paragraph.text)
+        paragraph_numbers = _numbers_outside_verified_role_title(paragraph.text, context)
         unsupported_numbers = sorted(paragraph_numbers - support_numbers)
         if unsupported_numbers:
             raise ValueError(

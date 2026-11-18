@@ -1,11 +1,6 @@
 name: Netcup Production Auth Hotfix Relay
 
 on:
-  push:
-    branches:
-      - feat/cloud-migration-foundation
-    paths:
-      - "config/production-auth-hotfix-request.json"
   workflow_dispatch:
 
 permissions:
@@ -101,10 +96,7 @@ jobs:
   deploy-production-auth-only:
     needs: [resolve-and-gate, deployment-ci]
     runs-on: ubuntu-latest
-    # Bootstrap lane: staging environment supplies the already-proven shared
-    # Netcup restricted SSH credentials only. The payload remains the exact
-    # production auth candidate and the server executes the production wrapper.
-    environment: staging
+    environment: production
     timeout-minutes: 30
     steps:
       - name: Checkout exact production auth SHA

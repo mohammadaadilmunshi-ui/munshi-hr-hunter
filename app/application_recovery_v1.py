@@ -8,6 +8,7 @@ from typing import Any
 from app import prepare_orchestrator_v1 as orchestrator
 from app import product_application_flow_v2 as application_flow
 from app.application_view_model_v1 import IMMUTABLE_SUBMISSION_STATES, view_for_job
+from app.application_issue_intelligence_v1 import submission_claim_exists
 from app.database import get_connection
 
 EVENT_TYPE = "application_recovery_action_v1"
@@ -49,7 +50,7 @@ def _pre_submit(job_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
     review = dict(flow.get("internal_integrity_review") or {})
     if (
         state in IMMUTABLE_SUBMISSION_STATES
-        or flow.get("production_receipt")
+        or submission_claim_exists(flow)
         or review.get("approval_consumed")
     ):
         raise ValueError(

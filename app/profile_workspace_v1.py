@@ -31,8 +31,8 @@ def _inject_css() -> None:
         """
 <style>
 .profile-workspace{margin-top:-.35rem}
-.profile-subnav{display:flex;align-items:center;gap:.55rem;padding:.52rem .15rem .9rem;border-bottom:1px solid var(--m-border);margin-bottom:1.15rem;overflow-x:auto;white-space:nowrap}
-.profile-selector{display:inline-flex;align-items:center;justify-content:space-between;gap:1rem;min-width:250px;height:46px;padding:0 .95rem;border:1px solid var(--m-strong);border-radius:11px;background:#fff;color:var(--m-ink);font-weight:660;box-shadow:0 2px 7px rgba(20,33,41,.05)}
+.profile-subnav{display:flex;flex-wrap:wrap;align-items:center;gap:.55rem;padding:.52rem .15rem .9rem;border-bottom:1px solid var(--m-border);margin-bottom:1.15rem}
+.profile-selector{display:inline-flex;align-items:center;gap:1rem;min-height:44px;padding:0 .95rem;border:1px solid var(--m-strong);border-radius:11px;background:#fff;color:var(--m-ink);font-weight:660}
 .profile-subaction,.profile-tab-link{display:inline-flex;align-items:center;justify-content:center;height:42px;padding:0 .75rem;border-radius:11px;text-decoration:none!important;color:var(--m-secondary)!important;font-weight:650;font-size:.88rem}
 .profile-subaction:hover,.profile-tab-link:hover{background:var(--m-soft);color:var(--m-forest)!important}.profile-tab-link.active{background:var(--m-active);color:var(--m-forest)!important;border:1px solid #cfddd5}
 .profile-disabled{opacity:.43;cursor:not-allowed}
@@ -79,10 +79,7 @@ def _subnav(tab: str) -> None:
         )
     st.markdown(
         """<div class="profile-workspace"><div class="profile-subnav">
-        <div class="profile-selector"><span>Default</span><span>⌄</span></div>
-        <span class="profile-subaction profile-disabled" title="Multiple profile lanes will be enabled only after independent profile-source authority is added">☆</span>
-        <span class="profile-subaction profile-disabled" title="The Default truth profile cannot be deleted">⌫</span>
-        <span class="profile-subaction profile-disabled" title="Multiple profile lanes are reserved by the architecture but not yet authoritative">＋ Add Profile</span>
+        <span class="profile-selector">Default profile</span>
         %s
         </div></div>""" % "".join(links),
         unsafe_allow_html=True,

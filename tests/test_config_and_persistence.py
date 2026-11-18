@@ -44,6 +44,7 @@ def test_setting_history_is_versioned_and_noop_is_not_duplicated(hunter_db) -> N
 
 
 def test_registry_controls_write_versioned_configuration_history(hunter_db) -> None:
+    database.save_setting("source_worker_registry", {"workers": {"Fixture Source": "app.fake_worker"}})
     connection = database.get_connection()
     try:
         connection.execute(
@@ -118,6 +119,7 @@ def test_registry_controls_write_versioned_configuration_history(hunter_db) -> N
 
 
 def test_source_policy_controls_scheduler_state(hunter_db) -> None:
+    database.save_setting("source_worker_registry", {"workers": {"Fixture Scheduled Source": "app.fake_worker"}})
     connection = database.get_connection()
     try:
         connection.executescript(

@@ -1,11 +1,6 @@
-name: Netcup Remote Production Auto Deploy
+name: Netcup Remote Production Manual Release
 
 on:
-  push:
-    branches:
-      - feat/cloud-migration-foundation
-    paths:
-      - "config/production-remote-release-request.json"
   workflow_dispatch:
 
 permissions:

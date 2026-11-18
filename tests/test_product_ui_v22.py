@@ -10,7 +10,10 @@ def test_v22_brand_assets_and_shell_are_wired() -> None:
 
     assert "brand_logo_data_uri" in shell
     assert "install_product_v22(product_pages)" in shell
-    assert "munshi_crown_favicon.png" in dashboard
+    # Streamlit's default tab icon now uses the high-contrast original-crown
+    # app tile; theme-aware favicon links are inserted in the initial HTML.
+    assert 'ROOT_DIR / "static" / "icon-192.png"' in dashboard
+    assert (root / "static" / "icon-192.png").is_file()
     assert (root / "app" / "assets" / "munshi_crown.png").is_file()
     assert (root / "app" / "assets" / "munshi_crown_favicon.png").is_file()
 

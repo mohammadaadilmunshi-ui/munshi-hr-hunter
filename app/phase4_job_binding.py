@@ -10,6 +10,7 @@ import sqlite3
 from typing import Any, Mapping
 
 from app.database import get_connection
+from app.resume_read_schema_v1 import ensure_existing_read_table
 from app.phase67_common import safe_mapping_digest
 from app.tenant_foundation import current_owner
 
@@ -85,7 +86,7 @@ def resume_job_binding(
     owns = connection is None
     connection = connection or get_connection()
     try:
-        ensure_schema(connection)
+        ensure_existing_read_table(connection, "native_resume_job_bindings", ensure_schema)
         owner = current_owner(connection)
         row = connection.execute(
             """SELECT * FROM native_resume_job_bindings

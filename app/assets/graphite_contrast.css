@@ -1,0 +1,300 @@
+/* Graphite & Platinum · contrast hardening (November 2026)
+ * Evidence: browser inspection of Home, Jobs, Application Center,
+ * Auto Prepare, Tracker, Profile, Resume Studio, Research and Settings.
+ * Opt-in only; no background jobs, data mutations or light-mode changes.
+ */
+html[data-munshi-theme="dark"] {
+  --mn-readable:#F0F0EE;
+  --mn-action-ink:#1B2026;
+  --mn-disabled-ink:#BBC2CB;
+}
+
+/* Streamlit button bodies contain independently colored <p> nodes. A theme on
+ * the outer button alone leaves white text on the platinum primary fill.
+ * Resolve primary foregrounds in both normal and hover states. */
+html[data-munshi-theme="dark"] .stApp :is(
+  .stButton>button[kind="primary"],
+  [data-testid="stFormSubmitButton"]>button[kind="primary"],
+  [data-testid="stDownloadButton"]>button[kind="primary"],
+  .stLinkButton>a[kind="primary"]
+),
+html[data-munshi-theme="dark"] .stApp :is(
+  .stButton>button[kind="primary"],
+  [data-testid="stFormSubmitButton"]>button[kind="primary"],
+  [data-testid="stDownloadButton"]>button[kind="primary"],
+  .stLinkButton>a[kind="primary"]
+) :is(p,span,div,strong,small,label) {
+  color:var(--mn-action-ink)!important;
+  -webkit-text-fill-color:var(--mn-action-ink)!important;
+}
+html[data-munshi-theme="dark"] .stApp :is(
+  .stButton>button[kind="primary"],
+  [data-testid="stFormSubmitButton"]>button[kind="primary"],
+  [data-testid="stDownloadButton"]>button[kind="primary"],
+  .stLinkButton>a[kind="primary"]
+) :is(svg,svg *) {
+  color:var(--mn-action-ink)!important;stroke:currentColor;
+}
+
+/* Ordinary secondary/tertiary actions (including Close/Archive) are still
+ * genuine buttons. Do not make them look disabled just because text is dim. */
+html[data-munshi-theme="dark"] .stApp :is(
+  [data-testid="stButton"]>button:not([kind="primary"]):not(:disabled),
+  [data-testid="stFormSubmitButton"]>button:not([kind="primary"]):not(:disabled),
+  [data-testid="stDownloadButton"]>button:not([kind="primary"]):not(:disabled),
+  .stLinkButton>a:not([kind="primary"]):not([aria-disabled="true"])
+) {
+  background:#292D34!important;border-color:#535B66!important;
+  color:#F0F0EE!important;-webkit-text-fill-color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp :is(
+  [data-testid="stButton"]>button:not([kind="primary"]):not(:disabled),
+  [data-testid="stFormSubmitButton"]>button:not([kind="primary"]):not(:disabled),
+  [data-testid="stDownloadButton"]>button:not([kind="primary"]):not(:disabled),
+  .stLinkButton>a:not([kind="primary"]):not([aria-disabled="true"])
+) :is(p,span,div,strong,small) {
+  color:#F0F0EE!important;-webkit-text-fill-color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp :is(
+  [data-testid="stButton"]>button:not([kind="primary"]):not(:disabled),
+  [data-testid="stFormSubmitButton"]>button:not([kind="primary"]):not(:disabled),
+  [data-testid="stDownloadButton"]>button:not([kind="primary"]):not(:disabled)
+):is(:hover,:focus-visible) {
+  background:#373C45!important;border-color:#7F8897!important
+}
+
+/* Actually disabled buttons must remain recognizably unavailable, while
+ * still readable. This does not alter the disabled DOM flag or callbacks. */
+html[data-munshi-theme="dark"] .stApp :is(
+  .stButton>button:disabled,
+  [data-testid="stFormSubmitButton"]>button:disabled,
+  [data-testid="stDownloadButton"]>button:disabled,
+  .stLinkButton>a[aria-disabled="true"]
+) {
+  background:#262A31!important;border:1px dashed #5B626E!important;
+  color:var(--mn-disabled-ink)!important;
+  -webkit-text-fill-color:var(--mn-disabled-ink)!important;
+  opacity:1!important;cursor:not-allowed!important;
+}
+html[data-munshi-theme="dark"] .stApp :is(
+  .stButton>button:disabled,
+  [data-testid="stFormSubmitButton"]>button:disabled,
+  [data-testid="stDownloadButton"]>button:disabled,
+  .stLinkButton>a[aria-disabled="true"]
+) :is(p,span,div,strong,small) {
+  color:var(--mn-disabled-ink)!important;
+  -webkit-text-fill-color:var(--mn-disabled-ink)!important;
+}
+
+/* The selected route uses the same platinum primary button fill, but
+ * Streamlit nested <p> labels inherited near-white ink. Make its ink dark. */
+html[data-munshi-theme="dark"] .stApp
+  [class*="st-key-product_route_"][class*="_selected"]
+  [data-testid="stButton"]>button :is(p,span,div,strong,small) {
+  background:transparent!important;color:#1B2026!important;
+  -webkit-text-fill-color:#1B2026!important
+}
+html[data-munshi-theme="dark"] .stApp
+  [class*="st-key-product_route_"][class*="_selected"]
+  [data-testid="stButton"]>button:focus-visible {
+  outline:2px solid #CDBA95!important;outline-offset:2px
+}
+
+/* BaseWeb dropdowns are rendered in document.body through a portal, OUTSIDE
+ * .stApp. Previously unselected rows had a white background and almost-white
+ * text. Cover listboxes, multiselects, combobox popovers, and virtualized rows.
+ * List item states must remain distinguishable under mouse and keyboard. */
+html[data-munshi-theme="dark"] body :is(
+  [data-baseweb="popover"],[data-baseweb="menu"],[data-baseweb="select"] [role="listbox"],
+  [data-baseweb="list"],[role="listbox"]
+) {
+  background:#24272E!important;color:#F0F0EE!important;
+  border-color:#505762!important;color-scheme:dark!important
+}
+html[data-munshi-theme="dark"] body :is(
+  [data-baseweb="menu"] li,[data-baseweb="list"] li,
+  [role="listbox"] [role="option"],li[role="option"]
+) {
+  background:#24272E!important;border-color:#424851!important;
+  color:#F0F0EE!important;-webkit-text-fill-color:#F0F0EE!important;
+}
+html[data-munshi-theme="dark"] body :is(
+  [data-baseweb="menu"] li,[data-baseweb="list"] li,
+  [role="listbox"] [role="option"],li[role="option"]
+) :is(div,span,p,strong,small) {
+  color:#F0F0EE!important;-webkit-text-fill-color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] body [role="listbox"] [role="option"]:is(
+  [aria-selected="true"],[data-highlighted="true"],:hover,:focus-visible
+),
+html[data-munshi-theme="dark"] body [data-baseweb="menu"] li:is(
+  [aria-selected="true"],:hover,:focus-visible
+) {
+  background:#393F49!important;color:#FFFFFF!important
+}
+html[data-munshi-theme="dark"] body [role="listbox"] [role="option"][aria-disabled="true"] {
+  color:#AFB5C0!important;background:#292D33!important;
+  -webkit-text-fill-color:#AFB5C0!important
+}
+html[data-munshi-theme="dark"] body :is(
+  [data-baseweb="popover"],[data-baseweb="menu"],[role="listbox"]
+) :is(input,[role="searchbox"]) {
+  background:#24272E!important;color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp
+  [data-baseweb="select"] [aria-expanded] {
+  color:#F0F0EE!important
+}
+
+/* Milestones: all six application stages must keep meaningful
+ * complete/current/pending states with legible labels and markers. */
+html[data-munshi-theme="dark"] .stApp ol.munshi-stage-track .munshi-stage {
+  background:#24282F!important;border:1px solid #4D535E!important;
+  color:#C5CBD4!important;box-shadow:none!important
+}
+html[data-munshi-theme="dark"] .stApp ol.munshi-stage-track .munshi-stage>span:last-child {
+  color:inherit!important;-webkit-text-fill-color:currentColor!important
+}
+html[data-munshi-theme="dark"] .stApp ol.munshi-stage-track .munshi-stage-marker {
+  background:#373D45!important;color:#C6CDD7!important;
+  -webkit-text-fill-color:#C6CDD7!important
+}
+html[data-munshi-theme="dark"] .stApp ol.munshi-stage-track .munshi-stage.is-complete {
+  background:#25372F!important;border-color:#496857!important;color:#C8E9D7!important
+}
+html[data-munshi-theme="dark"] .stApp ol.munshi-stage-track .munshi-stage.is-complete
+  .munshi-stage-marker {
+  background:#A4D8BB!important;color:#142820!important;
+  -webkit-text-fill-color:#142820!important
+}
+html[data-munshi-theme="dark"] .stApp ol.munshi-stage-track .munshi-stage.is-current {
+  background:#3C352A!important;border-color:#A9966A!important;
+  color:#F2E4C6!important;box-shadow:0 0 0 1px #75664A!important
+}
+html[data-munshi-theme="dark"] .stApp ol.munshi-stage-track .munshi-stage.is-current
+  .munshi-stage-marker {
+  background:#E0C792!important;color:#292419!important;
+  -webkit-text-fill-color:#292419!important
+}
+html[data-munshi-theme="dark"] .stApp .munshi-journey-step {
+  background:#24272E!important;border-color:#454B55!important
+}
+html[data-munshi-theme="dark"] .stApp .munshi-journey-step strong {
+  color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp .munshi-journey-step>span:last-child {
+  color:#BCC3CC!important
+}
+
+/* Profile is its own miniature design system, with light fixed badges, skill
+ * captions and fallback initials. Actual employer logos remain untouched. */
+html[data-munshi-theme="dark"] .stApp .profile-avatar {
+  background:#3C414C!important;color:#F0F0EE!important;
+  -webkit-text-fill-color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp .profile-logo-fallback {
+  background:#303740!important;color:#F0F0EE!important;
+  -webkit-text-fill-color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp :is(
+  .profile-mini-heading,.profile-skill-label,.profile-brand-note,
+  .profile-section-edit,.profile-default-row,.profile-cert-issuer
+) {
+  color:#BBC4CF!important;-webkit-text-fill-color:#BBC4CF!important
+}
+html[data-munshi-theme="dark"] .stApp .profile-section-icon.edu {
+  background:#352D45!important;color:#D2BFF5!important
+}
+html[data-munshi-theme="dark"] .stApp .profile-section-icon.exp {
+  background:#293C34!important;color:#B4E1C4!important
+}
+html[data-munshi-theme="dark"] .stApp .profile-section-icon.proj {
+  background:#453428!important;color:#F3C49C!important
+}
+html[data-munshi-theme="dark"] .stApp .profile-section-icon.skill {
+  background:#293A50!important;color:#BCD5F8!important
+}
+html[data-munshi-theme="dark"] .stApp .profile-section-icon.cert {
+  background:#423829!important;color:#E9D29B!important
+}
+html[data-munshi-theme="dark"] .stApp .profile-section-icon.defaults {
+  background:#293A40!important;color:#ADDCE5!important
+}
+
+/* Native Streamlit segmented controls are not standard primary buttons:
+ * unselected options have kind="segmented_control" and keep a hardcoded light
+ * background unless explicitly themed. Active options use a distinct kind. */
+html[data-munshi-theme="dark"] .stApp
+  button[data-testid="stBaseButton-segmented_control"] {
+  background:#292D34!important;border-color:#555D68!important;
+  color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp
+  button[data-testid="stBaseButton-segmented_control"] :is(p,span,div,strong) {
+  color:#F0F0EE!important;-webkit-text-fill-color:#F0F0EE!important
+}
+html[data-munshi-theme="dark"] .stApp
+  button[data-testid^="stBaseButton-segmented_control"][data-testid$="Active"] {
+  background:#DDE1E5!important;color:#1B2026!important;
+  border-color:#DDE1E5!important
+}
+html[data-munshi-theme="dark"] .stApp
+  button[data-testid^="stBaseButton-segmented_control"][data-testid$="Active"]
+  :is(p,span,div,strong) {
+  color:#1B2026!important;-webkit-text-fill-color:#1B2026!important
+}
+/* Theme-specific light document exports stay white, but dark workspace
+ * settings and their actions must never expose white-on-light control text. */
+html[data-munshi-theme="dark"] .stApp
+  [data-testid="stSegmentedControl"] button[aria-pressed="true"] :is(p,span,div),
+html[data-munshi-theme="dark"] .stApp
+  [data-testid="stSegmentedControl"] button[data-state="active"] :is(p,span,div) {
+  color:#1B2026!important;-webkit-text-fill-color:#1B2026!important
+}
+html[data-munshi-theme="dark"] .stApp
+  [data-testid="stSegmentedControl"] button[aria-pressed="false"] :is(p,span,div) {
+  color:#F0F0EE!important;-webkit-text-fill-color:#F0F0EE!important
+}
+/* Champagne Halo — exact original transparent crown over satin champagne.
+ * Only the dark header. No alterations to logo asset or light-mode header.
+ * Static by default; a tiny hover lift on pointer-capable desktop only. */
+html[data-munshi-theme="dark"] .stApp .product-header .brand .brand-mark {
+  position:relative!important;isolation:isolate;
+  display:grid!important;place-items:center!important;flex:none!important;
+  width:46px!important;height:46px!important;min-width:46px!important;
+  background:radial-gradient(circle at 28% 22%,
+    #F9EAD0 0%,#E8D3AD 39%,#C5A67A 74%,#9B7C55 100%)!important;
+  border:1px solid #E8D1AA!important;border-radius:50%!important;
+  clip-path:none!important;overflow:hidden!important;
+  box-shadow:0 0 0 2px rgba(236,207,160,.09),
+    0 5px 13px rgba(0,0,0,.27),
+    inset 0 1px 2px rgba(255,250,233,.64),
+    inset 0 -2px 3px rgba(79,55,30,.22)!important;
+  transform:none;transition:transform .18s ease,box-shadow .18s ease
+}
+html[data-munshi-theme="dark"] .stApp .product-header .brand .brand-mark img {
+  position:relative!important;z-index:1;
+  width:37px!important;height:37px!important;object-fit:contain!important;
+  filter:drop-shadow(0 1px 1px rgba(15,15,20,.2))!important
+}
+@media (hover:hover) and (prefers-reduced-motion:no-preference) {
+  html[data-munshi-theme="dark"] .stApp .product-header .brand:hover .brand-mark {
+    transform:translateY(-1px);
+    box-shadow:0 0 0 2px rgba(236,207,160,.16),
+      0 7px 17px rgba(0,0,0,.31),
+      inset 0 1px 2px rgba(255,250,233,.68)!important
+  }
+}
+@media (max-width:640px) {
+  html[data-munshi-theme="dark"] .stApp .product-header .brand .brand-mark {
+    width:43px!important;height:43px!important;min-width:43px!important
+  }
+  html[data-munshi-theme="dark"] .stApp .product-header .brand .brand-mark img {
+    width:35px!important;height:35px!important
+  }
+}
+@media (prefers-reduced-motion:reduce) {
+  html[data-munshi-theme="dark"] .stApp .product-header .brand .brand-mark {
+    transition:none!important;transform:none!important
+  }
+}

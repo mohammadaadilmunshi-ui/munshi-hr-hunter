@@ -60,3 +60,10 @@ def test_runtime_probe_is_read_only_health_only() -> None:
     assert "httpx.get" in source
     assert "MUNSHI_APPLY_RUNTIME_HEALTH_URL" in source
     assert "timeout=1.25" in source
+
+
+def test_saved_autoapply_preference_is_not_misrepresented_as_authority():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "app" / "autoapply_settings_ui.py").read_text()
+    assert "Saved dashboard preference only. It is not standing submission consent." in source
+    assert "No final submit without an exact frozen review and one-use authorization." in source

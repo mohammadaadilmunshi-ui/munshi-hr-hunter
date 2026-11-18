@@ -540,6 +540,7 @@ def mark_source_completed(
     deferred: bool = False,
     worker_status: str | None = None,
     worker_returncode: int | None = None,
+    retry_after_seconds: int = 0,
 ) -> dict[str, Any]:
     connection = get_connection()
     try:
@@ -612,7 +613,7 @@ def mark_source_completed(
         _write_schedule(
             connection,
             source_name=resolved,
-            next_run_at=now_utc() + timedelta(minutes=delay),
+            next_run_at=now_utc() + timedelta(seconds=max(delay * 60, int(retry_after_seconds))),
             base_cadence_minutes=base,
             jitter_minutes=jitter,
             schedule_reason=reason,
@@ -994,6 +995,7 @@ def mark_source_completed(
     deferred: bool = False,
     worker_status: str | None = None,
     worker_returncode: int | None = None,
+    retry_after_seconds: int = 0,
 ) -> dict[str, Any]:
     import time as _time
 
@@ -1012,6 +1014,7 @@ def mark_source_completed(
                 deferred=deferred,
                 worker_status=worker_status,
                 worker_returncode=worker_returncode,
+                retry_after_seconds=retry_after_seconds,
             )
         except sqlite3.OperationalError as error:
             if "locked" not in str(error).casefold():

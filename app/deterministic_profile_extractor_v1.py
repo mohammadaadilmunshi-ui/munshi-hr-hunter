@@ -311,9 +311,19 @@ def _skills(lines: list[str]) -> list[dict[str, Any]]:
 
 
 def _certifications(lines: list[str]) -> list[dict[str, str]]:
+    # PDF visual wrapping is not a credential boundary. Join physical lines
+    # before separating user-authored pipe delimiters. Keep original spellings.
+    values = [_strip_bullet(line) for line in lines if _strip_bullet(line)]
+    if not values:
+        return []
+    entries = (
+        [part.strip() for part in " ".join(values).split("|") if part.strip()]
+        if any("|" in value for value in values)
+        else values
+    )
     return [
-        {"name": _strip_bullet(line), "issuer": "", "date": "", "credential_id": ""}
-        for line in lines if _strip_bullet(line)
+        {"name": name, "issuer": "", "date": "", "credential_id": ""}
+        for name in entries
     ]
 
 

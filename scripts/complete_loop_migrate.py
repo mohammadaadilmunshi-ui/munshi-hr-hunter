@@ -5,8 +5,8 @@ import argparse
 import importlib
 import os
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 MIGRATIONS = (
     "migrations.041_complete_application_loop_v1",
@@ -24,6 +24,10 @@ MIGRATIONS = (
     "migrations.053_mail_intelligence_v2",
     "migrations.054_application_notifications_v1",
     "migrations.055_application_communication_notifications_v1",
+    "migrations.056_mandatory_mailbox_verification_v1",
+    "migrations.057_universal_brain_v1",
+    "migrations.058_tsenta_provider_learning_foundation_v1",
+    "migrations.059_tsenta_backend_oauth_v1",
 )
 
 REQUIRED_TABLES = {
@@ -46,6 +50,21 @@ REQUIRED_TABLES = {
     "application_communication_events_v2",
     "application_notification_preferences_v1",
     "application_notification_outbox_v1",
+    "mailbox_verification_artifacts",
+    "mailbox_verification_audit",
+    "candidate_knowledge_revisions",
+    "candidate_knowledge_facts",
+    "candidate_knowledge_evidence",
+    "candidate_knowledge_relations",
+    "candidate_knowledge_conflicts",
+    "candidate_derived_fact_cache",
+    "application_semantic_binding_revisions",
+    "application_semantic_bindings",
+    "application_provider_routes_v1",
+    "application_provider_route_events_v1",
+    "tsenta_observations_v1",
+    "tsenta_oauth_intents_v1",
+    "tsenta_oauth_connections_v1",
 }
 REQUIRED_CALLBACK_COLUMNS = {"payload_sha256", "execution_artifact_id"}
 REQUIRED_NOTIFICATION_PREFERENCE_COLUMNS = {
@@ -165,7 +184,7 @@ def apply(
             module = importlib.import_module(module_name)
             migrate = getattr(module, "apply", None)
             if not callable(migrate):
-                raise RuntimeError(f"Migration has no callable apply(): {module_name}")
+                raise TypeError(f"Migration has no callable apply(): {module_name}")
 
             # Deployment migrations 052+ intentionally call sqlite3.executescript()
             # inside their shared ensure_schema() helpers. In Python's sqlite3

@@ -312,7 +312,10 @@ def classify_row(
             and newest_outcome_is_failure
         )
     )
-    setup = health in SETUP_HEALTH
+    readiness = row.get("readiness")
+    setup = health in SETUP_HEALTH or (
+        isinstance(readiness, Mapping) and not readiness.get("ready")
+    )
     due = (
         enabled
         and not running
@@ -487,12 +490,25 @@ def load_rows(
                 ORDER BY source_name
             """
 
-        return [
+        rows = [
             dict(row)
             for row in connection.execute(
                 query
             ).fetchall()
         ]
+        settings_exist = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'"
+        ).fetchone()
+        registry_row = connection.execute(
+            "SELECT value_json FROM settings WHERE setting_key='source_worker_registry'"
+        ).fetchone() if settings_exist else None
+        if registry_row:
+            from app.source_readiness import readiness_with_boards
+
+            registry = json.loads(registry_row[0])
+            for row in rows:
+                row["readiness"] = readiness_with_boards(connection, row, registry)
+        return rows
     finally:
         connection.close()
 

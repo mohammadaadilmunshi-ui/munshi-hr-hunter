@@ -51,7 +51,7 @@ def test_unknown_employer_site_uses_domain_without_fabricating_ats() -> None:
     )
 
     assert result.provider is None
-    assert result.apply_via == "Employer careers site · careers.example.org"
+    assert result.apply_via == "Employer’s website · careers.example.org"
     assert result.confidence == "domain_only"
     assert result.original_url == "https://careers.example.org/openings/people-analyst"
 
@@ -80,7 +80,7 @@ def test_jobspy_is_never_fabricated_as_an_ats_provider() -> None:
     )
 
     assert result.provider is None
-    assert result.apply_via == "Employer careers site · careers.example.org"
+    assert result.apply_via == "Employer’s website · careers.example.org"
     assert result.source == "Indeed"
 
 
@@ -92,3 +92,45 @@ def test_invalid_or_missing_urls_are_never_invented() -> None:
     assert result.original_url is None
     assert result.provider is None
     assert result.apply_via == "Destination not recorded"
+
+
+def test_linkedin_without_employer_destination_does_not_claim_linkedin_is_ats():
+    result = describe_job_destination({'source': 'JobSpy/linkedin',
+        'job_url': 'https://www.linkedin.com/jobs/view/4470721097', 'apply_url': None})
+    assert result.source == 'LinkedIn'
+    assert result.provider is None
+    assert result.apply_via == 'Employer link pending'
+
+
+@pytest.mark.parametrize(('url', 'name'), [
+    ('https://acme.bamboohr.com/careers/12', 'BambooHR'),
+    ('https://recruiting.paylocity.com/Recruiting/Jobs/Details/12', 'Paylocity'),
+    ('https://jobs.lever.co/acme/12?source=linkedin', 'Lever'),
+])
+def test_linkedin_ats_is_identified_from_external_destination(url, name):
+    result = describe_job_destination({'source': 'JobSpy/linkedin',
+        'job_url': 'https://www.linkedin.com/jobs/view/4470721097', 'apply_url': url})
+    assert result.source == 'LinkedIn'
+    assert result.apply_via == name
+    assert result.original_url == url
+
+
+
+@pytest.mark.parametrize(("internal", "visible"), [
+    ("JobSpy/indeed", "Indeed"),
+    ("JobSpy/linkedin", "LinkedIn"),
+    ("JobSpy/glassdoor", "Glassdoor"),
+    ("JobSpy/zip_recruiter", "ZipRecruiter"),
+    ("JobSpy/monster", "Monster"),
+    ("Indeed Jobs (JobSpy)", "Indeed"),
+    ("Indeed via JobSpy", "Indeed"),
+    ("JobSpy", "Job board"),
+    ("python-jobspy", "Job board"),
+    ("JobSpy/NewPlatform", "NewPlatform"),
+])
+def test_source_label_hides_internal_scraper_name(internal, visible):
+    from app.job_destination_v1 import source_platform
+    value = {"source": internal}
+    assert source_platform(value) == visible
+    assert value["source"] == internal
+    assert "JobSpy" not in visible

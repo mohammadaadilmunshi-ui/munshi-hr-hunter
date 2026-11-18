@@ -1,22 +1,6 @@
-name: Netcup Remote Staging Auto Deploy
+name: Netcup Remote Staging Manual Deploy
 
 on:
-  push:
-    branches:
-      - feat/native-resume-studio-v1
-    paths:
-      - "app/**"
-      - "docker/**"
-      - "scripts/**"
-      - "migrations/**"
-      - "tests/**"
-      - "requirements*.txt"
-      - "Dockerfile*"
-      - "compose*.yaml"
-      - "config/production-auth-bootstrap-request.json"
-      - ".github/workflows/native-resume-studio.yml"
-      - ".github/workflows/deployment-ci-reusable.yml"
-      - ".github/workflows/netcup-remote-staging-auto-deploy.yml"
   workflow_dispatch:
     inputs:
       commit_sha:
@@ -356,7 +340,7 @@ jobs:
     if: needs.resolve-release.outputs.mode == 'production_auth_bootstrap'
     needs: [resolve-release, deployment-ci, production-auth-gate]
     runs-on: ubuntu-latest
-    environment: staging
+    environment: production
     timeout-minutes: 30
     steps:
       - name: Checkout exact production auth SHA

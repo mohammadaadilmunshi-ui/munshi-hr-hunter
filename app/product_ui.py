@@ -29,6 +29,37 @@ PASTELS = (
     "#F0E4D2",  # warm oat
 )
 
+# Mirrors the 18 production PASTELS positions exactly; existing job-ID color
+# identity stays stable. Each tuple is (dark surface, accessible accent).
+DARK_JOB_PALETTES = (
+    ("#263735", "#A3D4C0"),  # mint
+    ("#293747", "#BCD4F0"),  # powder blue
+    ("#3C2D35", "#ECC7D6"),  # blush
+    ("#383226", "#E4D092"),  # sand
+    ("#342D41", "#D4C4F0"),  # lavender
+    ("#263A3D", "#A8DEDB"),  # aqua
+    ("#40302B", "#EBC3AE"),  # peach
+    ("#30382D", "#CEE2B4"),  # sage
+    ("#3D302F", "#F0C8BB"),  # warm rose
+    ("#293443", "#BCD0EC"),  # cloud blue
+    ("#273832", "#ADDCC7"),  # soft jade
+    ("#3A3040", "#E6C7EB"),  # lilac mist
+    ("#343A2A", "#D7E2AB"),  # pistachio
+    ("#27374B", "#B8D5F6"),  # sky
+    ("#41302F", "#F2BBAE"),  # coral mist
+    ("#393328", "#E9DAB0"),  # cream
+    ("#2E3344", "#C9CEF2"),  # periwinkle
+    ("#3A322A", "#E7CEAC"),  # warm oat
+)
+
+assert len(DARK_JOB_PALETTES) == len(PASTELS)
+
+
+def dark_palette_for(value: Any) -> tuple[str, str]:
+    """Same job-ID selection as pastel_for, without changing original colors."""
+    digest = hashlib.sha256(str(value or "unknown").encode("utf-8")).digest()
+    return DARK_JOB_PALETTES[digest[0] % len(DARK_JOB_PALETTES)]
+
 
 def esc(value: Any, fallback: str = "Not available") -> str:
     text = str(value or "").strip()
@@ -43,9 +74,24 @@ def pastel_for(value: Any) -> str:
 def product_css() -> str:
     return """
     <style>
-    @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400..800&display=swap");
     :root{color-scheme:light!important;--m-font:"Manrope","Avenir Next",Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--m-bg:#F6F7F4;--m-soft:#EFF2EE;--m-surface:#FFF;--m-ink:#142129;--m-secondary:#44545B;--m-muted:#66737B;--m-border:#DFE5E0;--m-strong:#CED7D0;--m-forest:#123D31;--m-forest-hover:#0B3026;--m-active:#E4EFE9;--m-brass:#9B6E2D;--m-danger:#A84249;--m-radius:18px}
     *{box-sizing:border-box}html,body,.stApp,[data-baseweb]{color-scheme:light!important}html,body,[class*="css"],.stApp{font-family:var(--m-font)!important}button,input,textarea,select,[role="button"],[data-baseweb]{font-family:var(--m-font)!important}html,body{overflow-x:hidden;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;font-feature-settings:"kern" 1,"liga" 1}
+    /*
+     * Streamlit 1.58 marks old widgets data-stale=true during a fragment/page
+     * rerun, then fades their wrapper to 0.33 opacity after 0.5 seconds.
+     * On an iPhone this washes out the entire job/application grid during
+     * otherwise routine filter and scroll updates. Preserve old content at
+     * normal contrast until its new authoritative projection replaces it.
+     *
+     * Scope ONLY to Streamlit's stElementContainer stale wrapper: do not
+     * suppress real per-operation spinners, error indicators, modal overlays,
+     * disabled button states or application/receipt truth checks.
+     */
+    .stApp [data-testid="stElementContainer"][data-stale="true"]{
+      opacity:1!important;
+      transition-property:none!important;
+      filter:none!important;
+    }
     .stApp,[data-testid="stAppViewContainer"],[data-testid="stMain"]{background:var(--m-bg)!important;color:var(--m-ink)}[data-testid="stHeader"],[data-testid="stDecoration"],[data-testid="stStatusWidget"],[data-testid="stSidebar"],button[kind="header"]{display:none!important}.block-container{width:100%!important;max-width:1680px!important;padding:0 2.25rem 4rem!important;margin:0 auto!important}
     h1,h2,h3{color:var(--m-ink)!important;letter-spacing:-.032em!important}h1{font-size:clamp(1.85rem,3vw,2.6rem)!important;line-height:1.08!important;font-weight:750!important;margin:.25rem 0 .65rem!important}h2{font-size:1.38rem!important;font-weight:700!important}h3{font-size:1.05rem!important;font-weight:700!important}p,[data-testid="stCaptionContainer"]{color:var(--m-secondary);letter-spacing:-.008em}
     .st-key-product_top_bar{width:100vw!important;max-width:none!important;margin:0 calc(50% - 50vw) 1.4rem!important;padding:.7rem max(1.25rem,calc((100vw - 1630px)/2))!important;min-height:66px;background:#FFF;border-bottom:1px solid var(--m-border);position:sticky;top:0;z-index:100}.product-header{min-height:50px;display:flex;align-items:center;gap:1.4rem}.brand{display:inline-flex;align-items:center;gap:.58rem;color:var(--m-forest)!important;text-decoration:none!important;font-size:1.12rem;font-weight:800;letter-spacing:-.04em;white-space:nowrap}.brand-mark{display:inline-grid;place-items:center;width:29px;height:29px;font-size:.9rem;font-weight:900;color:#FFF;background:var(--m-forest);clip-path:polygon(50% 0,100% 100%,72% 100%,50% 55%,28% 100%,0 100%)}
@@ -222,7 +268,13 @@ def product_css() -> str:
 
 
 def inject_css() -> None:
-    st.markdown(product_css(), unsafe_allow_html=True)
+    # Older profile/settings renderers reinject the base layer. Keep the final
+    # shared system attached there too, rather than reverting the page mid-run.
+    from app.product_studio import shell_css
+
+    # Streamlit sends style-only HTML to its event container, so CSS does not
+    # create document slots or wait for Markdown parsing/lazy renderer modules.
+    st.html(shell_css())
 
 
 def page_intro(kicker: str, title: str, copy: str) -> None:

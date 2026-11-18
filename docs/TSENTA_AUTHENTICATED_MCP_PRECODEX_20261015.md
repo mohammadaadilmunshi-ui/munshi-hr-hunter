@@ -7,6 +7,21 @@
 
 ## 1. Actual connection and scope
 
+### Same-day implementation refresh
+
+The subsequent read-only authenticated audit exercised the required profile and
+application-read operations and inspected their current schemas. It made no
+apply, upload, approval, submit, preference, automation, or account-setting
+mutation.
+
+- Profile status, resume profile list/full profile, apply preferences and Auto
+  Apply state all returned successfully.
+- Four paused application reviews returned field-level form records.
+- Application status failures and successful provider completions were read.
+- `request_resume_upload` and `check_custom_resume` schemas were inspected but
+  not called.
+- External application operations were not called.
+
 - Mac `codex-cli 0.160.0` registered **tsenta** using `codex mcp add tsenta --url https://api.autojobs.me/api/v1/mcp`.
 - OAuth flow reported **Successfully logged in**. `codex mcp list` displayed Tsenta as enabled, with OAuth authentication, using Streamable HTTP.
 - Credential/token material stayed in the local MCP client. No bearer token, cookie, Workday password, SSN, passport details, raw profile, or resume was committed or reproduced in this audit.
@@ -25,7 +40,7 @@ An authenticated Codex MCP metadata inventory exposed **74** tools in the `mcp__
 | Alternative custom profile and tailored PDF | `apply_with_custom_resume` (`profile`, `uploadId`, plus `url` or `jobId`) | Optional MUNSHI-supplied profile mode rather than Tsenta-account-default mode |
 | Read ATS job | `fetch_job_description` (`url`) | Read-only external URL intake; one historical Figma pilot call **failed**, exact cause not classified |
 | Read applications | `list_applications`, `get_application_status` (`applicationId`) | Provider-reported states and metadata |
-| Inspect paused pre-submission form | `get_application_review` (`applicationId`) | Possible field/answer observations; **not yet successfully exercised on an actual paused application** |
+| Inspect paused pre-submission form | `get_application_review` (`applicationId`) | Successfully exercised on four paused account records; field values may be observed in memory but must not be retained |
 | Track prior entries | `list_tracked_applications` | May help duplicate checks and account history |
 | Actual execution and review | `approve_application`, `submit_application_review` | **Never call during discovery; separate explicit submission authority required** |
 
@@ -48,6 +63,14 @@ The authenticated profile-summary session returned:
 - A read-only application summary reported **74 total**: 60 `submitted`, 4 needing action, 4 failed, 6 skipped, 0 in flight. These are **Tsenta-side status labels, not independently corroborated employer receipts**.
 - Of a bounded 25-record application sample, Workday was common (11), indicating meaningful potential for comparing Workday behavior with MUNSHI Native.
 - `get_application_status` returned metadata fields (execution states, ATS, resume readiness, timestamps, submission identity) but no independently confirmed field-by-field submitted answers or employer receipt in the default observed response.
+- The four bounded paused reviews exposed Dayforce legal checkboxes,
+  SuccessFactors missing State/Province and gender fields, and a BrassRing form
+  containing work authorization, sponsorship, resume, contact, employment,
+  salary, EEO and legal-attestation shapes. Raw answers, field IDs, employer
+  identity and application IDs were not retained.
+- Four bounded failed status records showed two provider-classified manual
+  completion outcomes and two screener-rejection outcomes. These are Tsenta
+  provider records, not independent employer receipts.
 
 **Important evidence grading:** The aggregate account counts and profile field categories above were presented by the authenticated Codex read-only summarization. Separate JSON event traces independently confirm completed profile-status and application-list MCP calls. The raw account response was not stored as a permanent reproducibility artifact, deliberately minimizing personal-data retention.
 
@@ -57,7 +80,12 @@ The authenticated profile-summary session returned:
 
 **Can it reuse the saved Tsenta account profile?** The existing profile is readable through authorized `list_resume_profiles/get_resume_profile`; the default-profile application path is a strong candidate but must be verified through safe real usage. Never copy a browser session or Codex OAuth credentials into backend deployment.
 
-**Can MUNSHI learn how Tsenta filled forms?** The public product describes detailed receipts, and `get_application_review` may expose prepared form fields, but a field-by-field response has not yet been successfully confirmed in MCP. The default application-list/status views do not establish access to actual browser steps, every mapped field, submitted text or employer-side receipt. This remains an explicit unknown.
+**Can MUNSHI learn how Tsenta filled forms?** Yes, narrowly: a paused
+`get_application_review` response exposes every returned field's label, kind,
+required/editable flags, value presence and choice list. MUNSHI may learn those
+observable form shapes while discarding answers and option wire values. It still
+does not establish access to browser steps, DOM/selectors, every submitted
+answer, proprietary mapping logic, or an employer-side receipt.
 
 **What learning is authorized?** Record only visible observations surfaced by user-authorized account/MCP tools: ATS, job and requisition identity, form-field key/type, source Candidate Truth category, validation outcome, upload result, page transition, provider status, error classification and independently verified employer receipt where available. Do not access proprietary/private Tsenta internals, scrape account cookies, or infer hidden algorithms.
 
@@ -83,7 +111,21 @@ MUNSHI Hunter (keep current job finder)
 - Use isolated, tenant-scoped secrets and OAuth flow in production; the Mac Codex OAuth token is not the Netcup backend token.
 - Avoid raw resumes, PII, tokens or user application answers in GitHub, diagnostic logs, link-resolution tables or analytics.
 
-## 6. Codex next build (not yet done)
+## 6. Implementation status
+
+The tested source implementation now lives in:
+
+- `app/tsenta_mcp_adapter_v1.py`;
+- `app/tsenta_profile_bridge_v1.py`;
+- `app/application_provider_router_v1.py`;
+- `app/tsenta_observation_v1.py`;
+- `migrations/058_tsenta_provider_learning_foundation_v1.py`.
+
+See `docs/MUNSHI_TSENTA_NATIVE_INTEGRATION_IMPLEMENTATION_20261015.md` for the
+gap matrix, tests, state model, and staging/real-submission gates. The code is
+not deployed and execution remains off by default.
+
+## 7. Remaining build and staging work
 
 1. Inspect this doc and `AGENTS.md` before changes; refresh actual authenticated schemas and account-scope permissions.
 2. Implement a read-only profile/account adapter first: list/get resume profiles, get profile status, compare Candidate Truth in memory, conflict-only diagnostics.
@@ -93,7 +135,7 @@ MUNSHI Hunter (keep current job finder)
 6. Stage one eligible job, exact application package, validated responses and files, and independently verified receipt. Do not claim success from a tool call alone.
 7. Align extension with the same state store after backend behavior is proven.
 
-## 7. Shipping restrictions
+## 8. Shipping restrictions
 
 - **Do not merge/deploy PR #103** until V5 signed evidence, employer board coverage, staging database migration, two-link UI and Prepare Application E2E are demonstrated.
 - No automatic submit during capability discovery.

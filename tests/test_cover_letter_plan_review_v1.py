@@ -123,7 +123,7 @@ def wire(hunter_db, monkeypatch):
     )
     monkeypatch.setattr(plans.resume_v5, "get_version", lambda _id: resume())
     monkeypatch.setattr(
-        plans.native_resume_artifact_v5, "materialize", lambda _id: arts()
+        plans.native_resume_artifact_v5, "materialize", lambda _id, **_kwargs: arts()
     )
     monkeypatch.setattr(
         plans.application_execution_artifact,

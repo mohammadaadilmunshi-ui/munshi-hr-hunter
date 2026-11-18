@@ -323,7 +323,7 @@ def _job_workspace() -> tuple[int | None, dict[str, Any]]:
     return job_id, context
 
 
-def _rewrite_selector(key: str, default: str = "medium") -> str:
+def _rewrite_selector(key: str, default: str = "aggressive") -> str:
     mode = st.radio(
         "Rewrite strength",
         list(REWRITE_MODES),

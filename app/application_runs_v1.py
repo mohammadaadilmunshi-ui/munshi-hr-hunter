@@ -58,6 +58,12 @@ def hard_work_authorization_block(job: dict[str, Any]) -> tuple[bool, str]:
         )
     ).casefold()
 
+    from app.sponsorship_guard_v1 import explicit_no_future_sponsorship
+
+    explicit_ban = explicit_no_future_sponsorship(job)
+    if explicit_ban:
+        return True, explicit_ban
+
     patterns = tuple(
         str(value).casefold()
         for value in (_contract().get("dispatch_hard_authorization_phrases") or [])
@@ -79,7 +85,8 @@ def enhance_dispatch_payload(
     if blocked:
         raise ValueError(
             "WORK_AUTHORIZATION_BLOCKED: This posting is restricted to "
-            "U.S. citizens/permanent residents or is marked as a CPT trapdoor. "
+            "U.S. citizens/permanent residents, explicitly excludes sponsorship, "
+            "or is marked as a CPT trapdoor. "
             f"Evidence={reason}"
         )
 
@@ -593,17 +600,17 @@ def _canonical_adapter(value: Any) -> str:
     if not text:
         return ""
     if "serpapi" in lower and "google" in lower:
-        return "Google Jobs · SerpAPI"
+        return "Google Jobs"
     mapping = (
-        ("linkedin", "LinkedIn Jobs (JobSpy)"),
-        ("indeed", "Indeed Jobs (JobSpy)"),
+        ("linkedin", "LinkedIn"),
+        ("indeed", "Indeed"),
         ("greenhouse", "Greenhouse"),
         ("smartrecruiters", "SmartRecruiters"),
         ("ashby", "Ashby"),
         ("lever", "Lever"),
         ("dice", "Dice"),
         ("google", "Google Jobs"),
-        ("jobspy", "JobSpy"),
+        ("jobspy", "Job board"),
         ("bamboo", "BambooHR"),
         ("jobvite", "Jobvite"),
         ("recruitee", "Recruitee"),

@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -62,11 +64,7 @@ jobs:
           docker run --rm --entrypoint /usr/bin/chromium munshi-hunter:predeploy --version
           docker run --rm --entrypoint test munshi-hunter:predeploy -f /app/hunter/integrations/hr_agent/n8n_hr_score.py
 
-      - name: Require private repository before release
-        env:
-          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+      - name: Test and verify public repository credential safety
         run: |
-          test "${REPOSITORY_PRIVATE}" = "true" || {
-            echo "PREDEPLOY_BLOCKED: munshi-hr-hunter must be private before release."
-            exit 1
-          }
+          python -m pytest -q tests/test_public_release_safety_v1.py
+          python .github/verify_public_release_safety_v1.py

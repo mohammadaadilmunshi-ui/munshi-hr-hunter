@@ -116,6 +116,7 @@ def test_application_center_projection_uses_readonly_owner_resolution():
         flow._latest_prepare,
         flow._latest_lifecycle,
         flow._production_receipt,
+        flow._provider_route,
         flow._pipeline_candidate_jobs,
     ):
         source = inspect.getsource(projection)
@@ -274,3 +275,69 @@ def test_committed_prepare_identity_survives_secondary_projection_failure(monkey
     assert result["application_id"].startswith("application-")
     assert result["display_status"] == "Preparing"
     assert result["replayed"] is False
+
+def test_mandate_with_pending_ats_task_is_not_incorrectly_submitting(monkeypatch):
+    monkeypatch.setattr(
+        flow, "_latest_prepare",
+        lambda job_id: {
+            "status": "RUNNING",
+            "application_id": "application-42",
+            "tasks": [
+                {
+                    "task_kind": "APPLICATION_PREFLIGHT",
+                    "status": "SUCCEEDED",
+                    "required": True,
+                    "output": {"preflight_package_id": "preflight-42"},
+                },
+                {
+                    "task_kind": "ATS_FORM_PREPARATION",
+                    "status": "PENDING",
+                    "required": True,
+                    "output": {},
+                },
+            ],
+        },
+    )
+    monkeypatch.setattr(flow, "_latest_lifecycle", lambda _: None)
+    monkeypatch.setattr(flow, "_provider_route", lambda _: None)
+    monkeypatch.setattr(flow, "_execution_mandate", lambda preflight, **kw: {"mandate_id":"mandate-42"})
+    monkeypatch.setattr(flow, "_production_receipt", lambda _: None)
+    result = flow.flow_for_job(42, summary=True)
+    assert result["state"] == "PREPARING_ATS"
+    assert result["authority"] == "mandate_waiting_for_ats"
+    assert result["display_status"] == "Preparing application"
+    assert result["submission_authority"] is False
+
+
+def test_relay_claim_and_status_override_stale_ready_for_approval(monkeypatch):
+    from app import product_application_flow_v2 as f
+
+    monkeypatch.setattr(f,"_latest_prepare",lambda _:{"status":"READY_FOR_REVIEW","tasks":[]})
+    monkeypatch.setattr(f,"_latest_lifecycle",lambda _:None)
+    monkeypatch.setattr(f,"_package_review",lambda _:None)
+    monkeypatch.setattr(f,"_execution_mandate",lambda *args,**kw:None)
+    monkeypatch.setattr(f,"_production_receipt",lambda _:None)
+    monkeypatch.setattr(f,"_customer_review",lambda _:None)
+
+    route={"provider":"TSENTA","state":"PREPARATION","dispatch_claim_exists":True}
+    monkeypatch.setattr(f,"_provider_route",lambda _:route)
+    claim=f.flow_for_job(6605)
+    assert claim["state"]=="SUBMITTING"
+    assert claim["authority"]=="relay_outcome_pending"
+    assert claim["display_status"]=="Submission outcome pending"
+
+    route.update({"state":"PROVIDER_SUBMITTED"})
+    sent=f.flow_for_job(6605)
+    assert sent["state"]=="SUBMISSION_UNVERIFIED"
+    assert sent["authority"]=="relay_provider_submitted"
+    assert "Provider reports submitted" in sent["display_status"]
+
+    route.update({
+        "state":"EMPLOYER_CONFIRMED",
+        "receipt_evidence_digest":"f"*64,
+        "employer_confirmed_at":"2026-10-18T01:23:21Z",
+    })
+    confirmed=f.flow_for_job(6605)
+    assert confirmed["state"]=="SUBMITTED"
+    assert confirmed["authority"]=="relay_employer_receipt_verified"
+    assert "Employer confirmation" in confirmed["display_status"]

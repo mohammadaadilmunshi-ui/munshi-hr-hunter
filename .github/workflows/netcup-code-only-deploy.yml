@@ -1,0 +1,167 @@
+name: Netcup Hunter Code-Only Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_kind:
+        description: "Legacy code-only or reviewed one-time crown-only release"
+        required: true
+        default: "legacy"
+        type: choice
+        options:
+          - legacy
+          - crown-20261117
+          - icon-route-20261118
+      commit_sha:
+        description: "Exact approved 40-character release SHA"
+        required: true
+        type: string
+      expected_live_sha:
+        description: "Exact currently running Hunter SHA"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: munshi-netcup-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+      base: ${{ steps.check.outputs.base }}
+      kind: ${{ steps.check.outputs.kind }}
+    steps:
+      - name: Validate exact, one-time code-only release
+        id: check
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.commit_sha }}
+          EXPECTED_LIVE: ${{ inputs.expected_live_sha }}
+          RELEASE_KIND: ${{ inputs.release_kind }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          case "$RELEASE_KIND" in
+            legacy)
+              [[ "$EXPECTED_LIVE" == "cc9dbf29428551a258bbbb619b99071c445ff055" ]] || exit 3
+              ;;
+            crown-20261117)
+              [[ "$RELEASE_SHA" == "b910c4976f3a3c81f57cb89950a6314cdc6b8048" ]] || exit 4
+              [[ "$EXPECTED_LIVE" == "31c6c5b7c2942b7c0416ce1dc2f0dd11898f8d5a" ]] || exit 5
+              ;;
+            icon-route-20261118)
+              [[ "$RELEASE_SHA" == "7998acf6f89a3f9dd00d574f14777efa31772ab3" ]] || exit 7
+              [[ "$EXPECTED_LIVE" == "b910c4976f3a3c81f57cb89950a6314cdc6b8048" ]] || exit 8
+              ;;
+            *) echo "Unapproved release kind" >&2; exit 6 ;;
+          esac
+          echo "kind=$RELEASE_KIND" >> "$GITHUB_OUTPUT"
+          echo "sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "base=$EXPECTED_LIVE" >> "$GITHUB_OUTPUT"
+
+  ci:
+    needs: validate
+    uses: ./.github/workflows/deployment-ci-reusable.yml
+    with:
+      commit_sha: ${{ needs.validate.outputs.sha }}
+
+  deploy-code-only:
+    needs: [validate, ci]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact tested release SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Verify approved source branch and bundle
+        shell: bash
+        env:
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
+          BASE_SHA: ${{ needs.validate.outputs.base }}
+          RELEASE_KIND: ${{ needs.validate.outputs.kind }}
+        run: |
+          set -euo pipefail
+          BRANCH=feat/tsenta-connector-completion-20261015
+          git fetch --no-tags origin "$BRANCH:refs/remotes/origin/$BRANCH"
+          git merge-base --is-ancestor "$BASE_SHA" "$TARGET_SHA"
+          case "$RELEASE_KIND" in
+            legacy)
+              [[ "$(git rev-parse "refs/remotes/origin/$BRANCH")" == "$TARGET_SHA" ]] || {
+                echo 'Approved legacy branch head changed; refusing release' >&2
+                exit 11
+              }
+              bash -n deploy/netcup/deploy_code_only_release.sh
+              ;;
+            crown-20261117)
+              git merge-base --is-ancestor "$TARGET_SHA" "refs/remotes/origin/$BRANCH"
+              # Verify the reviewed release script verbatim. The production
+              # gateway also pins the exact target SHA, not a moving branch tip.
+              script_sha="$(git show "refs/remotes/origin/$BRANCH:deploy/netcup/deploy_crown_no_backup_release_v1.sh" | sha256sum | cut -d' ' -f1)"
+              [[ "$script_sha" == "10a5a1352273d18800522ea0073281bb8ff4a47ded2f389a484ff35a38ef5276" ]] || {
+                echo 'Crown-only release script checksum mismatch' >&2
+                exit 12
+              }
+              git show "refs/remotes/origin/$BRANCH:deploy/netcup/deploy_crown_no_backup_release_v1.sh" | bash -n
+              ;;
+            icon-route-20261118)
+              git merge-base --is-ancestor "$TARGET_SHA" "refs/remotes/origin/$BRANCH"
+              script_sha="$(git show "refs/remotes/origin/$BRANCH:deploy/netcup/deploy_icon_route_no_backup_release_v1.sh" | sha256sum | cut -d' ' -f1)"
+              [[ "$script_sha" == "b6ad6b95acd3bd45228e08e8be8f6d0053df08f6fe2ee661a4955e03f34b450c" ]] || {
+                echo 'Icon-routing release script checksum mismatch' >&2
+                exit 15
+              }
+              git show "refs/remotes/origin/$BRANCH:deploy/netcup/deploy_icon_route_no_backup_release_v1.sh" | bash -n
+              ;;
+            *) exit 13 ;;
+          esac
+          git bundle create "$RUNNER_TEMP/munshi-codeonly.bundle" "refs/remotes/origin/$BRANCH"
+          git bundle verify "$RUNNER_TEMP/munshi-codeonly.bundle"
+
+      - name: Configure restricted pinned-identity SSH
+        shell: bash
+        env:
+          NETCUP_SSH_PRIVATE_KEY: ${{ secrets.NETCUP_SSH_PRIVATE_KEY }}
+          NETCUP_KNOWN_HOSTS: ${{ secrets.NETCUP_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$NETCUP_SSH_PRIVATE_KEY" > "$HOME/.ssh/netcup_codeonly"
+          printf '%s\n' "$NETCUP_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/netcup_codeonly" "$HOME/.ssh/known_hosts"
+
+      - name: Swap Hunter image without a database migration
+        shell: bash
+        env:
+          NETCUP_HOST: ${{ secrets.NETCUP_HOST }}
+          NETCUP_USER: ${{ secrets.NETCUP_DEPLOY_USER }}
+          TARGET_SHA: ${{ needs.validate.outputs.sha }}
+          BASE_SHA: ${{ needs.validate.outputs.base }}
+          RELEASE_KIND: ${{ needs.validate.outputs.kind }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i "$HOME/.ssh/netcup_codeonly" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+          case "$RELEASE_KIND" in
+            legacy)
+              DEPLOY_COMMAND="/opt/munshi/bin/deploy-code-only-release --commit $TARGET_SHA --branch feat/tsenta-connector-completion-20261015"
+              ;;
+            crown-20261117)
+              DEPLOY_COMMAND="/opt/munshi/bin/deploy-crown-no-backup-release --commit $TARGET_SHA --branch feat/tsenta-connector-completion-20261015"
+              ;;
+            icon-route-20261118)
+              DEPLOY_COMMAND="/opt/munshi/bin/deploy-icon-route-no-backup-release --commit $TARGET_SHA --branch feat/tsenta-connector-completion-20261015"
+              ;;
+            *) exit 14 ;;
+          esac
+          # The existing forced-command GitHub key permits ONLY explicit
+          # approved gateway verbs. No arbitrary SSH, SCP, install or mkdir.
+          cat "$RUNNER_TEMP/munshi-codeonly.bundle" | \
+            "${SSH[@]}" "$NETCUP_USER@$NETCUP_HOST" "$DEPLOY_COMMAND"

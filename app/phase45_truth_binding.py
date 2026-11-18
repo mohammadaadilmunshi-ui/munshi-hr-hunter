@@ -13,6 +13,7 @@ from typing import Any
 from app import native_resume_service_v3 as v3
 from app import profile_snapshot_projection
 from app.database import get_connection
+from app.resume_read_schema_v1 import ensure_existing_read_table
 from app.tenant_foundation import current_owner, current_owner_readonly
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -193,7 +194,7 @@ def resume_truth_binding(
     owns = connection is None
     connection = connection or get_connection()
     try:
-        ensure_schema(connection)
+        ensure_existing_read_table(connection, "native_resume_truth_bindings", ensure_schema)
         owner = current_owner(connection)
         row = connection.execute(
             """SELECT * FROM native_resume_truth_bindings
