@@ -18,13 +18,35 @@ from app.appearance_theme_v1 import early_theme_boot
 
 BOOT = """<style>
 #munshi-boot-status{display:none}
+html{
+ --munshi-boot-bg:#F6F7F4;
+ --munshi-boot-heading:#123D31;
+ --munshi-boot-caption:#44545B;
+}
+@media (prefers-color-scheme: dark){
+ html:not([data-munshi-theme="light"]){
+  --munshi-boot-bg:#111317;
+  --munshi-boot-heading:#F0F0EE;
+  --munshi-boot-caption:#C6C9D0;
+ }
+}
+html[data-munshi-theme="dark"]{
+ --munshi-boot-bg:#111317;
+ --munshi-boot-heading:#F0F0EE;
+ --munshi-boot-caption:#C6C9D0;
+}
+html[data-munshi-theme="light"]{
+ --munshi-boot-bg:#F6F7F4;
+ --munshi-boot-heading:#123D31;
+ --munshi-boot-caption:#44545B;
+}
 html:not([data-munshi-ready]) body:not(:has([data-testid=stException])) [data-testid=stMain]{content-visibility:hidden;contain-intrinsic-size:auto 100vh}
 html:not([data-munshi-ready]) body:not(:has([data-testid=stException])) #munshi-boot-status{
  display:flex;position:fixed;inset:0;align-items:center;justify-content:center;
- flex-direction:column;gap:1rem;background:#F6F7F4;color:#123D31;
+ flex-direction:column;gap:1rem;background:var(--munshi-boot-bg);color:var(--munshi-boot-heading);
  font-family:Manrope,system-ui,sans-serif;z-index:9999}
 #munshi-boot-status strong{font-size:1.25rem;font-weight:750;letter-spacing:-.04em}
-#munshi-boot-status span{font-size:.9rem;color:#44545B}
+#munshi-boot-status span{font-size:.9rem;color:var(--munshi-boot-caption)}
 .stApp [data-testid=stElementContainer]:has(.munshi-boot-ready){display:none!important}
 </style><script>
 (()=>{

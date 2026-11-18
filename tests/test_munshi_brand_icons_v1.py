@@ -45,8 +45,8 @@ def test_brand_head_is_installed_once_and_theme_aware():
     for output in (html, again):
         assert output.count('rel="apple-touch-icon"') == 1
         assert output.count('rel="manifest"') == 1
-        assert output.count('(prefers-color-scheme: dark)') == 1
-        assert output.count('(prefers-color-scheme: light)') == 1
+        assert output.count('media="(prefers-color-scheme: dark)"') == 1
+        assert output.count('media="(prefers-color-scheme: light)"') == 1
         assert 'href="/app/static/apple-touch-icon.png"' in output
 
 
