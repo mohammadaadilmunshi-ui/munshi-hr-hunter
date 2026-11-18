@@ -55,5 +55,19 @@ if [[ "$ORIGINAL" == "$CROWN_ONLY_COMMAND" ]]; then
     --expected-base 31c6c5b7c2942b7c0416ce1dc2f0dd11898f8d5a
 fi
 
+# One-time, audited icon 404 routing correction. The previous crown release
+# remains available, but this new command must match all bytes exactly.
+ICON_ROUTE_COMMAND="/opt/munshi/bin/deploy-icon-route-no-backup-release --commit 854fcc01bc80f3a209195274d6e6d099c02d8e66 --branch feat/tsenta-connector-completion-20261015"
+if [[ "$ORIGINAL" == "$ICON_ROUTE_COMMAND" ]]; then
+  [[ -x /opt/munshi/bin/deploy-icon-route-no-backup-release ]] || {
+    echo "reviewed icon routing release gate not installed" >&2
+    exit 75
+  }
+  exec /opt/munshi/bin/deploy-icon-route-no-backup-release \
+    --commit 854fcc01bc80f3a209195274d6e6d099c02d8e66 \
+    --branch feat/tsenta-connector-completion-20261015 \
+    --expected-base b910c4976f3a3c81f57cb89950a6314cdc6b8048
+fi
+
 echo "request rejected by MUNSHI GitHub deployment gateway" >&2
 exit 71
