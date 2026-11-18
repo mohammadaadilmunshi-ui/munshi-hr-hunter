@@ -343,7 +343,9 @@ def run(url: str, output: Path, *, baseline: bool = False):
                 dock_height = page.locator('.st-key-product_mobile_routes').bounding_box()['height']
                 assert dock_height <= 160
                 assert page.locator('.block-container').evaluate('e=>parseFloat(getComputedStyle(e).paddingBottom)') > dock_height
-                assert 'light' in page.evaluate('getComputedStyle(document.documentElement).colorScheme')
+                # An unsaved preference follows the browser's dark system scheme.
+                assert page.evaluate('document.documentElement.dataset.munshiTheme') == 'dark'
+                assert 'dark' in page.evaluate('getComputedStyle(document.documentElement).colorScheme')
                 page.screenshot(path=str(output / f'{engine}-large-text-profile.png'))
                 results['interactions'].append({'engine':engine,'action':'landscape, 32px root text, reduced motion and dark host preference','passed':True})
                 page.close()

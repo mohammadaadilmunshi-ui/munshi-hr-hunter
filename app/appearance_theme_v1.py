@@ -1,7 +1,8 @@
 """Small client-side appearance control. No server writes or app reruns.
 
-Light Mode remains the default. A single tiny, delegated listener handles both
-the mobile Menu's owl switch and the optional Settings appearance switch.
+System appearance is the default until an explicit browser-local preference
+is saved. A single delegated listener handles both the mobile Menu's owl
+switch and the optional Settings appearance switch.
 The preference is local to the browser and is never sent to application services.
 """
 from __future__ import annotations
@@ -43,14 +44,15 @@ def appearance_toggle_html(*, settings: bool = False) -> str:
 
 
 def early_theme_boot() -> str:
-    """Executed in the packaged <head> before first paint; no event handlers."""
+    """Resolve saved preference first, otherwise system appearance, pre-paint."""
     return (
         "<script>(()=>{"
-        "try{"
-        "const v=window.localStorage.getItem('munshi.appearance.v1');"
-        "document.documentElement.dataset.munshiTheme="
-        "(v==='dark'?'dark':'light');"
-        "}catch(_){document.documentElement.dataset.munshiTheme='light'}"
+        "let dark=false;"
+        "try{dark=!!window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches}catch(_){}"
+        "let theme=dark?'dark':'light';"
+        "try{const saved=window.localStorage.getItem('munshi.appearance.v1');"
+        "if(saved==='dark'||saved==='light')theme=saved}catch(_){}"
+        "document.documentElement.dataset.munshiTheme=theme;"
         "})();</script>"
     )
 
@@ -75,12 +77,22 @@ def appearance_controller_html() -> str:
    try{window.localStorage.setItem(key,dark?'dark':'light')}catch(_){}
    syncControls();
  };
- try{
-   const saved=window.localStorage.getItem(key);
-   root.dataset.munshiTheme=saved==='dark'?'dark':'light';
- }catch(_){
-   root.dataset.munshiTheme=root.dataset.munshiTheme==='dark'?'dark':'light';
- }
+ const system=typeof window.matchMedia==='function'?
+   window.matchMedia('(prefers-color-scheme: dark)'):null;
+ const preferredTheme=()=>{
+   let theme=system?.matches?'dark':'light';
+   try{
+     const saved=window.localStorage.getItem(key);
+     if(saved==='dark'||saved==='light')theme=saved;
+   }catch(_){}
+   return theme;
+ };
+ root.dataset.munshiTheme=preferredTheme();
+ // Follow OS appearance changes only when the user has not selected a theme.
+ system?.addEventListener?.('change',()=>{
+   root.dataset.munshiTheme=preferredTheme();
+   syncControls();
+ });
  document.addEventListener('click',(event)=>{
    const button=event.target instanceof Element?
      event.target.closest('[data-munshi-toggle]'):null;

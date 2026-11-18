@@ -1,0 +1,29 @@
+{
+  "name": "MUNSHI Apply | Job Intelligence",
+  "short_name": "MUNSHI",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#202125",
+  "theme_color": "#202125",
+  "icons": [
+    {
+      "src": "/app/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/app/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/app/static/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

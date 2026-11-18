@@ -14,7 +14,7 @@ if str(ROOT_DIR) not in sys.path:
 # Establish viewport geometry before loading the larger product modules.
 st.set_page_config(
     page_title="MUNSHI Apply | Job Intelligence",
-    page_icon=str(Path(__file__).resolve().parent / "assets" / "munshi_crown_favicon.png"),
+    page_icon=str(ROOT_DIR / "static" / "icon-192.png"),
     layout="wide",
     initial_sidebar_state="collapsed",
 )

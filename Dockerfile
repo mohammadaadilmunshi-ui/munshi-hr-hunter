@@ -26,6 +26,7 @@ COPY tools/runners/jobspy_runner.py ./tools/runners/jobspy_runner.py
 # are excluded by .dockerignore and are supplied by Compose volumes/env.
 COPY app ./app
 COPY .streamlit ./.streamlit
+COPY static ./static
 COPY config ./config
 COPY integrations ./integrations
 COPY migrations ./migrations
