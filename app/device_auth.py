@@ -22,7 +22,7 @@ from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 from app.database import DB_PATH
 
@@ -227,6 +227,29 @@ def _no_store(response: Response) -> Response:
     response.headers["Cache-Control"] = "no-store, private"
     response.headers["Pragma"] = "no-cache"
     return response
+
+
+# The reverse proxy routes /app/* to FastAPI (Uvicorn), NOT to Streamlit.
+# The original release put files in /app/hunter/static and authorized these
+# exact paths at the edge, but never registered a FastAPI response for them.
+# Serve only the eight reviewed public branding files. This route never reads
+# the database, user content, credentials, or arbitrary filesystem paths.
+@router.api_route("/app/static/{filename}", methods=["GET", "HEAD"])
+def dashboard_public_brand_asset(filename: str) -> Response:
+    request_path = "/app/static/" + filename
+    if request_path not in _PUBLIC_BRAND_ASSETS:
+        raise HTTPException(status_code=404, detail="Not Found")
+    file_path = Path(__file__).resolve().parent.parent / "static" / filename
+    if file_path.is_symlink() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Not Found")
+    media_type = (
+        "application/manifest+json" if filename == "manifest.json"
+        else "image/x-icon" if filename.endswith(".ico")
+        else "image/png"
+    )
+    response = FileResponse(file_path, media_type=media_type)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return _no_store(response)
 
 
 @router.get("/_munshi-auth/login")
