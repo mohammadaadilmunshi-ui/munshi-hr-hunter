@@ -40,5 +40,20 @@ if [[ "$ORIGINAL" =~ ^/opt/munshi/bin/deploy-code-only-release\ --commit\ ([0-9a
   exec "$CODE_ONLY_DEPLOY" --commit "$commit" --branch "$branch" --expected-base "$CODE_ONLY_BASE"
 fi
 
+# Exactly one pre-reviewed image-only release for the MUNSHI crown and loader.
+# This is disabled until an administrator installs the signed, root-owned
+# matching script. No generic shell, SCP, or installer command is exposed.
+CROWN_ONLY_COMMAND="/opt/munshi/bin/deploy-crown-no-backup-release --commit b910c4976f3a3c81f57cb89950a6314cdc6b8048 --branch feat/tsenta-connector-completion-20261015"
+if [[ "$ORIGINAL" == "$CROWN_ONLY_COMMAND" ]]; then
+  [[ -x /opt/munshi/bin/deploy-crown-no-backup-release ]] || {
+    echo "reviewed crown-only production script is not installed" >&2
+    exit 74
+  }
+  exec /opt/munshi/bin/deploy-crown-no-backup-release \
+    --commit b910c4976f3a3c81f57cb89950a6314cdc6b8048 \
+    --branch feat/tsenta-connector-completion-20261015 \
+    --expected-base 31c6c5b7c2942b7c0416ce1dc2f0dd11898f8d5a
+fi
+
 echo "request rejected by MUNSHI GitHub deployment gateway" >&2
 exit 71
