@@ -95,7 +95,13 @@ def test_gateway_exact_match_additive_without_legacy_access_changes():
     assert f'--expected-base {LIVE}' in script
     assert "CODE_ONLY_BASE=\"cc9dbf29428551a258bbbb619b99071c445ff055\"" in script
     assert 'echo "request rejected by MUNSHI GitHub deployment gateway"' in script
-    assert hashlib.sha256(GATEWAY.read_bytes()).hexdigest() == GATE_HASH
+    gateway_hash = hashlib.sha256(GATEWAY.read_bytes()).hexdigest()
+    if 'ICON_ROUTE_COMMAND="' in script:
+        # The second approved gate adds exactly one pinned icon-404 command,
+        # retaining every previous crown and legacy gateway route.
+        assert gateway_hash == "d5264b5ff54eb3eb4d7f21c7b169d03415db44e6e80b8841b9c2e5db7d7d8c59"
+    else:
+        assert gateway_hash == GATE_HASH
 
 
 def test_workflow_requires_explicit_one_time_kind_and_protected_gate():

@@ -11,6 +11,7 @@ on:
         options:
           - legacy
           - crown-20261117
+          - icon-route-20261118
       commit_sha:
         description: "Exact approved 40-character release SHA"
         required: true
@@ -52,6 +53,10 @@ jobs:
             crown-20261117)
               [[ "$RELEASE_SHA" == "b910c4976f3a3c81f57cb89950a6314cdc6b8048" ]] || exit 4
               [[ "$EXPECTED_LIVE" == "31c6c5b7c2942b7c0416ce1dc2f0dd11898f8d5a" ]] || exit 5
+              ;;
+            icon-route-20261118)
+              [[ "$RELEASE_SHA" == "7998acf6f89a3f9dd00d574f14777efa31772ab3" ]] || exit 7
+              [[ "$EXPECTED_LIVE" == "b910c4976f3a3c81f57cb89950a6314cdc6b8048" ]] || exit 8
               ;;
             *) echo "Unapproved release kind" >&2; exit 6 ;;
           esac
@@ -107,6 +112,15 @@ jobs:
               }
               git show "refs/remotes/origin/$BRANCH:deploy/netcup/deploy_crown_no_backup_release_v1.sh" | bash -n
               ;;
+            icon-route-20261118)
+              git merge-base --is-ancestor "$TARGET_SHA" "refs/remotes/origin/$BRANCH"
+              script_sha="$(git show "refs/remotes/origin/$BRANCH:deploy/netcup/deploy_icon_route_no_backup_release_v1.sh" | sha256sum | cut -d' ' -f1)"
+              [[ "$script_sha" == "b6ad6b95acd3bd45228e08e8be8f6d0053df08f6fe2ee661a4955e03f34b450c" ]] || {
+                echo 'Icon-routing release script checksum mismatch' >&2
+                exit 15
+              }
+              git show "refs/remotes/origin/$BRANCH:deploy/netcup/deploy_icon_route_no_backup_release_v1.sh" | bash -n
+              ;;
             *) exit 13 ;;
           esac
           git bundle create "$RUNNER_TEMP/munshi-codeonly.bundle" "refs/remotes/origin/$BRANCH"
@@ -141,6 +155,9 @@ jobs:
               ;;
             crown-20261117)
               DEPLOY_COMMAND="/opt/munshi/bin/deploy-crown-no-backup-release --commit $TARGET_SHA --branch feat/tsenta-connector-completion-20261015"
+              ;;
+            icon-route-20261118)
+              DEPLOY_COMMAND="/opt/munshi/bin/deploy-icon-route-no-backup-release --commit $TARGET_SHA --branch feat/tsenta-connector-completion-20261015"
               ;;
             *) exit 14 ;;
           esac
