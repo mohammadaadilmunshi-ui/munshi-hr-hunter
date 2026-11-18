@@ -115,6 +115,15 @@ def test_workflow_requires_explicit_one_time_kind_and_protected_gate():
 def test_root_console_installer_is_pinned_and_refuses_nonroot():
     script = ADMIN.read_text()
     assert '[[ "$(id -u)" == 0 ]]' in script
+    # Root may inspect only this specific munshi-owned repo; no global
+    # safe.directory mutation and no wildcard ownership bypass.
+    assert script.count('git -c safe.directory="$ROOT/repo" -C "$ROOT/repo"') == 2
+    assert 'git config --global' not in script
+    assert 'safe.directory=*' not in script
+    assert 'live_head="$(git -c safe.directory=' in script
+    assert 'live_dirty="$(git -c safe.directory=' in script
+    assert 'BLOCKED: unable to verify live commit' in script
+    assert 'BLOCKED: unable to verify live working tree' in script
     for checksum in (DEPLOY_HASH, GATE_HASH):
         assert checksum in script
     assert "12bec74f157de85e91c02764ba648d4b8cdd35785412e8baaf0de0f16fa4df8a" in script

@@ -30,11 +30,17 @@ Once this PR is reviewed and merged into the production release branch, the unpr
 
 The administrator must verify the reviewed Git commit and their SHA-256 checksums before running the installer from an authenticated **Netcup root console**. Do not provide passwords or root SSH keys to a chat.
 
-The administrator command, **after independent review**, is:
+The administrator must verify the installer’s exact checksum **before** running the staged script, because the staging directory is owned by the unprivileged deploy account. From the authenticated Netcup root console:
 
 ```bash
+printf '%s  %s\n' \
+  '807eaeb32197e4311a524f670448186cb1a77945423f5a63ee83afbacbcad6b5' \
+  '/opt/munshi/runtime/crown-no-backup-20261117/install_crown_no_backup_gate_v1.sh' \
+  | sha256sum -c --status && \
 bash /opt/munshi/runtime/crown-no-backup-20261117/install_crown_no_backup_gate_v1.sh
 ```
+
+The installer uses Git’s **command-scoped, exact-path** `safe.directory` option when root reads the `munshi`-owned repository. Do not add a wildcard or global Git trust exception.
 
 The installer refuses altered files and unexpected baseline, insists on a healthy live Hunter, and changes only two small root-owned deployment gate files. It does not restart the app. It retains a roughly 2 KB copy of the prior SSH gateway so this control change can be reversed; **it does not back up or read the 26.6 GB database**.
 

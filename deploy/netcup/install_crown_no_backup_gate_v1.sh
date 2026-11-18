@@ -16,9 +16,16 @@ GATE="$ROOT/bin/github-deploy-gateway"
 DEPLOY="$ROOT/bin/deploy-crown-no-backup-release"
 
 [[ -d "$SRC" && -d "$ROOT/bin" ]] || { echo "BLOCKED: reviewed stage or bin missing"; exit 3; }
-[[ "$(git -C "$ROOT/repo" rev-parse HEAD)" == "$LIVE" ]] ||
-  { echo "BLOCKED: live commit changed"; exit 4; }
-[[ -z "$(git -C "$ROOT/repo" status --porcelain)" ]] ||
+# The repository is deliberately owned by "munshi", not root. Trust this
+# exact path for these two invocations only, without modifying global Git
+# configuration or disabling the ownership check for other repositories.
+live_head="$(git -c safe.directory="$ROOT/repo" -C "$ROOT/repo" rev-parse --verify HEAD)" ||
+  { echo "BLOCKED: unable to verify live commit"; exit 4; }
+[[ "$live_head" == "$LIVE" ]] ||
+  { echo "BLOCKED: live commit differs from approved baseline"; exit 4; }
+live_dirty="$(git -c safe.directory="$ROOT/repo" -C "$ROOT/repo" status --porcelain)" ||
+  { echo "BLOCKED: unable to verify live working tree"; exit 5; }
+[[ -z "$live_dirty" ]] ||
   { echo "BLOCKED: live working tree is dirty"; exit 5; }
 [[ "$(docker inspect -f '{{.State.Health.Status}}' munshi-netcup-shadow-hunter-1)" == healthy ]] ||
   { echo "BLOCKED: Hunter not healthy"; exit 6; }
